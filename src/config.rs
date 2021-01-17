@@ -19,6 +19,10 @@ pub struct Config {
     // Storage params
     pub(crate) storage_backend: StorageKind,
 
+    // caching params
+    pub(crate) cache_rustdoc_page: u32,
+    pub(crate) cache_rustdoc_page_important: u32,
+
     // S3 params
     pub(crate) s3_bucket: String,
     pub(crate) s3_region: Region,
@@ -62,6 +66,9 @@ impl Config {
             database_url: require_env("CRATESFYI_DATABASE_URL")?,
             max_pool_size: env("DOCSRS_MAX_POOL_SIZE", 90)?,
             min_pool_idle: env("DOCSRS_MIN_POOL_IDLE", 10)?,
+
+            cache_rustdoc_page: env("DOCSRS_CACHE_RUSTDOC_PAGE", 24 * 60 * 60)?,
+            cache_rustdoc_page_important: env("DOCSRS_CACHE_RUSTDOC_PAGE_IMPORTANT", 15 * 60)?,
 
             storage_backend: env("DOCSRS_STORAGE_BACKEND", StorageKind::Database)?,
 

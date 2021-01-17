@@ -178,11 +178,8 @@ pub fn rustdoc_redirector_handler(req: &mut Request) -> IronResult<Response> {
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 struct RustdocPage {
-    latest_path: String,
-    latest_version: String,
     target: String,
     inner_path: String,
-    is_latest_version: bool,
     is_prerelease: bool,
     krate: CrateDetails,
     metadata: MetaData,
@@ -227,8 +224,13 @@ impl RustdocPage {
             result => ctry!(req, result),
         };
 
+        let config = extension!(req, Config);
         let mut response = Response::with((Status::Ok, html));
         response.headers.set(ContentType::html());
+        response.headers.set(CacheControl(vec![
+            CacheDirective::Public,
+            CacheDirective::SMaxAge(config.cache_rustdoc_page),
+        ]));
 
         Ok(response)
     }
@@ -356,13 +358,6 @@ pub fn rustdoc_html_server_handler(req: &mut Request) -> IronResult<Response> {
         return Ok(file.serve());
     }
 
-    rendering_time.step("find latest path");
-
-    let latest_release = krate.latest_release();
-
-    // Get the latest version of the crate
-    let latest_version = latest_release.version.to_string();
-    let is_latest_version = latest_version == version;
     let is_prerelease = semver::Version::parse(&version)
         // should be impossible unless there is a semver incompatible version in the db
         // Note that there is a redirect earlier for semver matches to the exact version
@@ -399,28 +394,6 @@ pub fn rustdoc_html_server_handler(req: &mut Request) -> IronResult<Response> {
         (target, inner_path.join("/"))
     };
 
-    // If the requested crate version is the most recent, use it to build the url
-    let mut latest_path = if is_latest_version {
-        format!("/{}/{}", name, latest_version)
-    // If the requested version is not the latest, then find the path of the latest version for the `Go to latest` link
-    } else if latest_release.build_status {
-        let target = if target.is_empty() {
-            &krate.metadata.default_target
-        } else {
-            target
-        };
-        format!(
-            "/crate/{}/{}/target-redirect/{}/{}",
-            name, latest_version, target, inner_path
-        )
-    } else {
-        format!("/crate/{}/{}", name, latest_version)
-    };
-    if let Some(query) = req.url.query() {
-        latest_path.push('?');
-        latest_path.push_str(query);
-    }
-
     metrics
         .recently_accessed_releases
         .record(krate.crate_id, krate.release_id, target);
@@ -433,11 +406,8 @@ pub fn rustdoc_html_server_handler(req: &mut Request) -> IronResult<Response> {
 
     rendering_time.step("rewrite html");
     RustdocPage {
-        latest_path,
-        latest_version,
         target,
         inner_path,
-        is_latest_version,
         is_prerelease,
         metadata: krate.metadata.clone(),
         krate,
