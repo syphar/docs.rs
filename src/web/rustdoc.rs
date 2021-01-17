@@ -2,7 +2,7 @@
 
 use crate::{
     db::Pool,
-    utils,
+    impl_webpage, utils,
     web::{
         crate_details::CrateDetails, error::Nope, file::File, match_version,
         metrics::RenderingTimesRecorder, redirect_base, MatchSemver, MetaData,
@@ -617,6 +617,19 @@ impl Handler for SharedResourceHandler {
         // Just always return a 404 here - the main handler will then try the other handlers
         Err(Nope::ResourceNotFound.into())
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct CrateVersionWarningsPartial {
+    details: CrateDetails,
+}
+
+impl_webpage! {
+    CrateVersionWarningsPartial = "crate/version_warnings_partial.html",
+}
+
+pub fn rustdoc_partial_warning_handler(req: &mut Request) -> IronResult<Response> {
+    Err(Nope::ResourceNotFound.into())
 }
 
 #[cfg(test)]

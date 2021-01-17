@@ -143,6 +143,10 @@ pub(super) fn build_routes() -> Routes {
         "/:crate/:version/:target/*.html",
         super::rustdoc::rustdoc_html_server_handler,
     );
+    routes.rustdoc_page(
+        "/crate/:crate/:version/partial/warning-message",
+        super::rustdoc::rustdoc_partial_warning_handler,
+    );
 
     for redirect in DOC_RUST_LANG_ORG_REDIRECTS {
         routes.internal_page(
