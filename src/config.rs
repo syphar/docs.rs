@@ -38,6 +38,9 @@ pub struct Config {
     // Time between 'git gc --auto' calls in seconds
     pub(crate) registry_gc_interval: u64,
 
+    // max-age cache duration for rustdoc pages
+    pub(crate) rustdoc_pages_cache_duration: u32,
+
     // Build params
     pub(crate) build_attempts: u16,
     pub(crate) rustwide_workspace: PathBuf,
@@ -83,6 +86,8 @@ impl Config {
             // https://github.com/rust-lang/docs.rs/pull/930#issuecomment-667729380
             max_parse_memory: env("DOCSRS_MAX_PARSE_MEMORY", 5 * 1024 * 1024)?,
             registry_gc_interval: env("DOCSRS_REGISTRY_GC_INTERVAL", 60 * 60)?,
+
+            rustdoc_pages_cache_duration: env("DOCSRS_RUSTDOC_PAGES_CACHE_DURATION", 30 * 60)?,
 
             rustwide_workspace: env("CRATESFYI_RUSTWIDE_WORKSPACE", PathBuf::from(".workspace"))?,
             inside_docker: env("DOCS_RS_DOCKER", false)?,

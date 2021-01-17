@@ -227,8 +227,14 @@ impl RustdocPage {
             result => ctry!(req, result),
         };
 
+        let config = extension!(req, Config);
+
         let mut response = Response::with((Status::Ok, html));
         response.headers.set(ContentType::html());
+        response.headers.set(CacheControl(vec![
+            CacheDirective::Public,
+            CacheDirective::MaxAge(config.rustdoc_pages_cache_duration),
+        ]));
 
         Ok(response)
     }
