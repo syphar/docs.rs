@@ -10,6 +10,7 @@ use crate::{db::Pool, Config, Metrics};
 use chrono::{DateTime, Utc};
 use failure::{err_msg, Error};
 use path_slash::PathExt;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
     ffi::OsStr,
@@ -21,7 +22,20 @@ use std::{
 
 const MAX_CONCURRENT_UPLOADS: usize = 1000;
 
-pub type FileRange = std::ops::RangeInclusive<u64>;
+#[derive(Clone, Serialize, Deserialize)]
+pub struct FileRange(std::ops::RangeInclusive<u64>);
+
+impl FileRange {
+    pub fn start(&self) -> &u64 {
+        self.0.start()
+    }
+    pub fn end(&self) -> &u64 {
+        self.0.end()
+    }
+    pub fn len(&self) -> &u64 {
+        self.0.end() - self.0.start() + 1
+    }
+}
 
 #[derive(Debug, failure::Fail)]
 #[fail(display = "path not found")]
