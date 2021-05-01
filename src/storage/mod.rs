@@ -16,6 +16,7 @@ use std::{
     ffi::OsStr,
     fmt, fs,
     io::{self, Write},
+    ops::RangeInclusive,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -23,17 +24,35 @@ use std::{
 const MAX_CONCURRENT_UPLOADS: usize = 1000;
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct FileRange(std::ops::RangeInclusive<u64>);
+pub struct FileRange {
+    inner: RangeInclusive<u64>,
+    len: u64,
+}
 
 impl FileRange {
+    pub fn new(start: u64, end: u64) -> Self {
+        Self {
+            inner: start..=end,
+            len: end - start + 1,
+        }
+    }
     pub fn start(&self) -> &u64 {
-        self.0.start()
+        self.inner.start()
     }
     pub fn end(&self) -> &u64 {
-        self.0.end()
+        self.inner.end()
     }
     pub fn len(&self) -> &u64 {
-        self.0.end() - self.0.start() + 1
+        &self.len
+    }
+}
+
+impl From<RangeInclusive<u64>> for FileRange {
+    fn from(range: RangeInclusive<u64>) -> Self {
+        Self {
+            inner: range,
+            len: range.end() - range.start() + 1,
+        }
     }
 }
 
@@ -562,19 +581,19 @@ mod backend_tests {
         assert_eq!(
             blob.content[0..=4],
             storage
-                .get_range("foo/bar.txt", std::usize::MAX, 0..=4, None)?
+                .get_range("foo/bar.txt", std::usize::MAX, (0..=4).into(), None)?
                 .content
         );
         assert_eq!(
             blob.content[5..=12],
             storage
-                .get_range("foo/bar.txt", std::usize::MAX, 5..=12, None)?
+                .get_range("foo/bar.txt", std::usize::MAX, (5..=12).into(), None)?
                 .content
         );
 
         for path in &["bar.txt", "baz.txt", "foo/baz.txt"] {
             assert!(storage
-                .get_range(path, std::usize::MAX, 0..=4, None)
+                .get_range(path, std::usize::MAX, (0..=4).into(), None)
                 .unwrap_err()
                 .downcast_ref::<PathNotFoundError>()
                 .is_some());
