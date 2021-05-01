@@ -50,8 +50,8 @@ impl FileRange {
 impl From<RangeInclusive<u64>> for FileRange {
     fn from(range: RangeInclusive<u64>) -> Self {
         Self {
-            inner: range,
             len: range.end() - range.start() + 1,
+            inner: range,
         }
     }
 }

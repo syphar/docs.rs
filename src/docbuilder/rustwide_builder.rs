@@ -12,6 +12,7 @@ use crate::utils::{copy_dir_all, parse_rustc_version, CargoMetadata};
 use crate::{db::blacklist::is_blacklisted, utils::MetadataPackage};
 use crate::{Config, Context, Index, Metrics, Storage};
 use docsrs_metadata::{Metadata, DEFAULT_TARGETS, HOST_TARGET};
+use failure::ResultExt;
 use log::{debug, info, warn, LevelFilter};
 use postgres::Client;
 use rustwide::cmd::{Command, SandboxBuilder, SandboxImage};
@@ -522,11 +523,12 @@ impl RustwideBuilder {
                 .and_then(|command| command.run().map_err(failure::Error::from))
                 .is_ok()
         });
-        let doc_coverage = if successful {
-            self.get_coverage(target, build, metadata, limits)?
-        } else {
-            None
-        };
+        let doc_coverage = None;
+        // if successful {
+        //     self.get_coverage(target, build, metadata, limits)?
+        // } else {
+        //     None
+        // };
         // If we're passed a default_target which requires a cross-compile,
         // cargo will put the output in `target/<target>/doc`.
         // However, if this is the default build, we don't want it there,

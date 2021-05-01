@@ -50,7 +50,10 @@ impl Index {
             files.insert(
                 PathBuf::from(zf.name()),
                 FileInfo {
-                    range: zf.data_start()..=(zf.data_start() + zf.compressed_size() - 1),
+                    range: FileRange::new(
+                        zf.data_start(),
+                        zf.data_start() + zf.compressed_size() - 1,
+                    ),
                     compression: match zf.compression() {
                         zip::CompressionMethod::Bzip2 => CompressionAlgorithm::Bzip2,
                         c => failure::bail!("unsupported compression algorithm {} in zip-file", c),
