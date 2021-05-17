@@ -23,7 +23,7 @@ use std::{
 
 const MAX_CONCURRENT_UPLOADS: usize = 1000;
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct FileRange {
     inner: RangeInclusive<u64>,
     len: u64,
@@ -258,9 +258,6 @@ impl Storage {
         let mut zip = zip::ZipWriter::new(io::Cursor::new(Vec::new()));
         for file_path in get_file_list(root_dir)? {
             let mut file = fs::File::open(root_dir.join(&file_path))?;
-
-            // TODO: should we create directories with `start_directory`?
-            // it's not standard, but convention for zip files
 
             zip.start_file(file_path.to_str().unwrap(), options)?;
             io::copy(&mut file, &mut zip)?;
