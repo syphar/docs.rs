@@ -249,9 +249,17 @@ impl Storage {
     ) -> Result<(HashMap<PathBuf, String>, CompressionAlgorithm), Error> {
         let mut file_paths = HashMap::new();
 
-        // due to how we retrieve the archived files, the compression method has to be supported
-        // by our normal content-encoding / compression logic.
-        // Deflate is not supported right now, and is compressing worse anyways.
+        // We are only using the `zip` library to create the archives and the matching
+        // index-file. The ZIP format allows more compression formats, and these can even be mixed
+        // in a single archive.
+        //
+        // Decompression happens by fetching only the part of the remote archive that contains
+        // the compressed stream of the object we put into the archive.
+        // For decompression we are sharing the compression algorithms defined in
+        // `storage::compression`. So every new algorithm to be used inside ZIP archives
+        // also has to be added as supported algorithm for storage compression, together
+        // with a mapping in `storage::archive_index::Index::new_from_zip`.
+
         let options =
             zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Bzip2);
 
