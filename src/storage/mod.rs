@@ -23,7 +23,7 @@ use std::{
 
 const MAX_CONCURRENT_UPLOADS: usize = 1000;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FileRange {
     inner: RangeInclusive<u64>,
     len: u64,
