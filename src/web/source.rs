@@ -248,28 +248,15 @@ pub fn source_browser_handler(req: &mut Request) -> IronResult<Response> {
 
     // try to get actual file first
     // skip if request is a directory
-    let file = if !file_path.ends_with('/') {
-        if archive_storage {
-            DbFile::from_archive_path(
-                &storage, // TODO: unify finding archive names somewhere
-                &format!("sources/{0}/sources-{0}-{1}.zip", crate_name, version),
-                &file_path,
-                &config,
-            )
+    let blob = if !file_path.ends_with('/') {
+        storage
+            .fetch_source_file(crate_name, version, file_path, archive_storage)
             .ok()
-        } else {
-            DbFile::from_path(
-                &storage,
-                &format!("sources/{}/{}/{}", crate_name, version, file_path),
-                &config,
-            )
-            .ok()
-        }
     } else {
         None
     };
 
-    let (file_content, is_rust_source) = if let Some(file) = file {
+    let (file_content, is_rust_source) = if let Some(blob) = blob {
         // serve the file with DatabaseFileHandler if file isn't text and not empty
         if !file.0.mime.starts_with("text") && !file.is_empty() {
             return Ok(file.serve());

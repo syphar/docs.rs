@@ -347,44 +347,30 @@ pub fn rustdoc_html_server_handler(req: &mut Request) -> IronResult<Response> {
     }
     let mut path = ctry!(req, percent_decode(path.as_bytes()).decode_utf8());
 
-    let file = if krate.archive_storage {
-        let archive = format!("rustdoc/{0}/rustdoc-{0}-{1}.zip", name, version);
-        match File::from_archive_path(&storage, &archive, &path, &config) {
-            Ok(file) => file,
-            Err(err) => {
-                log::debug!("got error serving {}: {}", path, err);
-                // If it fails, we try again with /index.html at the end
-                path.to_mut().push_str("/index.html");
-                req_path.push("index.html");
+    let blob = match storage.fetch_rustdoc_file(&name, &version, &path, krate.archive_storage) {
+        Ok(file) => file,
+        Err(err) => {
+            log::debug!("got error serving {}: {}", path, err);
+            // If it fails, we try again with /index.html at the end
+            path.to_mut().push_str("/index.html");
+            req_path.push("index.html");
 
-                return if ctry!(req, storage.exists_in_archive(&archive, &path)) {
-                    redirect(&name, &version, &req_path[3..])
-                } else {
-                    Err(Nope::ResourceNotFound.into())
-                };
-            }
-        }
-    } else {
-        // Add rustdoc prefix, name and version to the path for accessing the file stored in the database
-        let remote_path = format!("rustdoc/{}/{}/{}", name, version, path);
-
-        // Attempt to load the file from the database
-
-        match File::from_path(&storage, &remote_path, &config) {
-            Ok(file) => file,
-            Err(err) => {
-                log::debug!("got error serving {}: {}", path, err);
-                // If it fails, we try again with /index.html at the end
-                path.to_mut().push_str("/index.html");
-                req_path.push("index.html");
-                let remote_path = format!("rustdoc/{}/{}/{}", name, version, path);
-
-                return if ctry!(req, storage.exists(&remote_path)) {
-                    redirect(&name, &version, &req_path[3..])
-                } else {
-                    Err(Nope::ResourceNotFound.into())
-                };
-            }
+            return if ctry!(
+                req,
+                storage.rustdoc_file_exists(&name, &version, &path, krate.archive_storage)
+            ) {
+                redirect(&name, &version, &req_path[3..])
+            } else if req_path.get(3).map_or(false, |p| p.contains('-')) {
+                // This is a target, not a module; it may not have been built.
+                // Redirect to the default target and show a search page instead of a hard 404.
+                redirect(
+                    &format!("/crate/{}", name),
+                    &format!("{}/target-redirect", version),
+                    &req_path[3..],
+                )
+            } else {
+                Err(Nope::ResourceNotFound.into())
+            };
         }
     };
 
@@ -392,7 +378,7 @@ pub fn rustdoc_html_server_handler(req: &mut Request) -> IronResult<Response> {
     if !path.ends_with(".html") {
         rendering_time.step("serve asset");
 
-        return Ok(file.serve());
+        return Ok(File(blob).serve());
     }
 
     rendering_time.step("find latest path");
@@ -478,7 +464,7 @@ pub fn rustdoc_html_server_handler(req: &mut Request) -> IronResult<Response> {
         metadata: krate.metadata.clone(),
         krate,
     }
-    .into_response(&file.0.content, config.max_parse_memory, req, &path)
+    .into_response(&blob.content, config.max_parse_memory, req, &path)
 }
 
 /// Checks whether the given path exists.

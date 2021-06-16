@@ -134,11 +134,15 @@ enum StorageBackend {
 pub struct Storage {
     backend: StorageBackend,
     local_archive_cache_path: PathBuf,
+    max_file_size: usize,
+    max_file_size_html: usize,
 }
 
 impl Storage {
     pub fn new(pool: Pool, metrics: Arc<Metrics>, config: &Config) -> Result<Self, Error> {
         Ok(Storage {
+            max_file_size: config.max_file_size,
+            max_file_size_html: config.max_file_size_html,
             local_archive_cache_path: config.local_archive_cache_path.clone(),
             backend: match config.storage_backend {
                 StorageKind::Database => {
@@ -154,6 +158,64 @@ impl Storage {
             StorageBackend::Database(db) => db.exists(path),
             StorageBackend::S3(s3) => s3.exists(path),
         }
+    }
+
+    fn max_file_size_for(&self, path: &str) -> usize {
+        if path.ends_with(".html") {
+            self.max_file_size_html
+        } else {
+            self.max_file_size
+        }
+    }
+
+    pub(crate) fn fetch_rustdoc_file(
+        &self,
+        name: &str,
+        version: &str,
+        path: &str,
+        archive_storage: bool,
+    ) -> Result<Blob, Error> {
+        Ok(if archive_storage {
+            let archive = format!("rustdoc/{0}/rustdoc-{0}-{1}.zip", name, version);
+            self.get_from_archive(&archive, path, self.max_file_size_for(path))?
+        } else {
+            // Add rustdoc prefix, name and version to the path for accessing the file stored in the database
+            let remote_path = format!("rustdoc/{}/{}/{}", name, version, path);
+            self.get(&remote_path, self.max_file_size_for(path))?
+        })
+    }
+
+    pub(crate) fn fetch_source_file(
+        &self,
+        name: &str,
+        version: &str,
+        path: &str,
+        archive_storage: bool,
+    ) -> Result<Blob, Error> {
+        Ok(if archive_storage {
+            let archive = format!("sources/{0}/sources-{0}-{1}.zip", name, version);
+            self.get_from_archive(&archive, path, self.max_file_size_for(path))?
+        } else {
+            let remote_path = format!("sources/{}/{}/{}", name, version, path);
+            self.get(&remote_path, self.max_file_size_for(path))?
+        })
+    }
+
+    pub(crate) fn rustdoc_file_exists(
+        &self,
+        name: &str,
+        version: &str,
+        path: &str,
+        archive_storage: bool,
+    ) -> Result<bool, Error> {
+        Ok(if archive_storage {
+            let archive = format!("rustdoc/{0}/rustdoc-{0}-{1}.zip", name, version);
+            self.exists_in_archive(&archive, path)?
+        } else {
+            // Add rustdoc prefix, name and version to the path for accessing the file stored in the database
+            let remote_path = format!("rustdoc/{}/{}/{}", name, version, path);
+            self.exists(&remote_path)?
+        })
     }
 
     pub(crate) fn exists_in_archive(&self, archive_path: &str, path: &str) -> Result<bool, Error> {
