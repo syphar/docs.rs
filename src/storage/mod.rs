@@ -69,6 +69,12 @@ pub(crate) struct Blob {
     pub(crate) compression: Option<CompressionAlgorithm>,
 }
 
+impl Blob {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.mime == "application/x-empty"
+    }
+}
+
 fn get_file_list_from_dir<P: AsRef<Path>>(path: P, files: &mut Vec<PathBuf>) -> Result<(), Error> {
     let path = path.as_ref();
 

@@ -224,7 +224,6 @@ pub fn source_browser_handler(req: &mut Request) -> IronResult<Response> {
     let storage = extension!(req, Storage);
     let config = extension!(req, Config);
 
-    // TODO should we use match_version here?
     let archive_storage: bool = {
         let rows = ctry!(
             req,
@@ -250,7 +249,7 @@ pub fn source_browser_handler(req: &mut Request) -> IronResult<Response> {
     // skip if request is a directory
     let blob = if !file_path.ends_with('/') {
         storage
-            .fetch_source_file(crate_name, version, file_path, archive_storage)
+            .fetch_source_file(crate_name, &version, &file_path, archive_storage)
             .ok()
     } else {
         None
@@ -258,12 +257,12 @@ pub fn source_browser_handler(req: &mut Request) -> IronResult<Response> {
 
     let (file_content, is_rust_source) = if let Some(blob) = blob {
         // serve the file with DatabaseFileHandler if file isn't text and not empty
-        if !file.0.mime.starts_with("text") && !file.is_empty() {
-            return Ok(file.serve());
-        } else if file.0.mime.starts_with("text") && !file.is_empty() {
+        if !blob.mime.starts_with("text") && !blob.is_empty() {
+            return Ok(DbFile(blob).serve());
+        } else if blob.mime.starts_with("text") && !blob.is_empty() {
             (
-                String::from_utf8(file.0.content).ok(),
-                file.0.path.ends_with(".rs"),
+                String::from_utf8(blob.content).ok(),
+                blob.path.ends_with(".rs"),
             )
         } else {
             (None, false)

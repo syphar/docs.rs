@@ -19,26 +19,6 @@ impl File {
         Ok(File(storage.get(path, max_size)?))
     }
 
-    /// Gets file from inside a remote archive
-    pub(super) fn from_archive_path(
-        storage: &Storage,
-        archive_path: &str,
-        path: &str,
-        config: &Config,
-    ) -> Result<File> {
-        let max_size = if path.ends_with(".html") {
-            config.max_file_size_html
-        } else {
-            config.max_file_size
-        };
-
-        Ok(File(storage.get_from_archive(
-            archive_path,
-            path,
-            max_size,
-        )?))
-    }
-
     /// Consumes File and creates a iron response
     pub(super) fn serve(self) -> Response {
         use iron::headers::{CacheControl, CacheDirective, ContentType, HttpDate, LastModified};
@@ -61,11 +41,6 @@ impl File {
             .unwrap(),
         )));
         response
-    }
-
-    /// Checks if mime type of file is "application/x-empty"
-    pub(super) fn is_empty(&self) -> bool {
-        self.0.mime == "application/x-empty"
     }
 }
 
