@@ -7,7 +7,7 @@ use crate::{
         error::Nope, file::File as DbFile, match_version, page::WebPage, redirect_base,
         MatchSemver, MetaData, Url,
     },
-    Config, Storage,
+    Storage,
 };
 use iron::{IronResult, Request, Response};
 use postgres::Client;
@@ -222,8 +222,6 @@ pub fn source_browser_handler(req: &mut Request) -> IronResult<Response> {
     };
 
     let storage = extension!(req, Storage);
-    let config = extension!(req, Config);
-
     let archive_storage: bool = {
         let rows = ctry!(
             req,
