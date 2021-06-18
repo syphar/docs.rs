@@ -109,7 +109,7 @@ use iron::{
 };
 use page::TemplateData;
 use postgres::Client;
-use router::NoRoute;
+use router::{NoRoute, TrailingSlash};
 use semver::{Version, VersionReq};
 use serde::Serialize;
 use std::{borrow::Cow, fmt, net::SocketAddr, sync::Arc};
@@ -183,6 +183,17 @@ impl Handler for MainHandler {
         self.shared_resource_handler
             .handle(req)
             .or_else(|e| if_404(e, || self.router_handler.handle(req)))
+            .or_else(|e| {
+                // in some cases the iron router will return a redirect as an `IronError`.
+                // Here we convert these into an `Ok(Response)`.
+                if e.error.downcast_ref::<TrailingSlash>().is_some()
+                    || e.response.status == Some(status::MovedPermanently)
+                {
+                    Ok(e.response)
+                } else {
+                    Err(e)
+                }
+            })
             .or_else(|e| {
                 let err = if let Some(err) = e.error.downcast_ref::<error::Nope>() {
                     *err
@@ -741,6 +752,20 @@ mod test {
     }
 
     #[test]
+    fn double_slash_does_redirect_and_remove_slash() {
+        wrapper(|env| {
+            env.fake_release()
+                .name("bat")
+                .version("0.2.0")
+                .create()
+                .unwrap();
+            let web = env.frontend();
+            assert_redirect("/bat//", "/bat/0.2.0/bat/", web)?;
+            Ok(())
+        })
+    }
+
+    #[test]
     fn binary_docs_redirect_to_crate() {
         wrapper(|env| {
             env.fake_release()
@@ -774,7 +799,7 @@ mod test {
             assert_success("/crate/regex/0.3.0/source/src/main.rs", web)?;
             assert_success("/crate/regex/0.3.0/source", web)?;
             assert_success("/crate/regex/0.3.0/source/src", web)?;
-            assert_success("/regex/0.3.0/src/regex/main.rs", web)?;
+            assert_success("/regex/0.3.0/src/regex/main.rs.html", web)?;
             Ok(())
         })
     }
