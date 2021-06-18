@@ -360,7 +360,7 @@ pub fn rustdoc_html_server_handler(req: &mut Request) -> IronResult<Response> {
                 storage.rustdoc_file_exists(&name, &version, &path, krate.archive_storage)
             ) {
                 redirect(&name, &version, &req_path)
-            } else if req_path.get(3).map_or(false, |p| p.contains('-')) {
+            } else if req_path.get(0).map_or(false, |p| p.contains('-')) {
                 // This is a target, not a module; it may not have been built.
                 // Redirect to the default target and show a search page instead of a hard 404.
                 redirect(
