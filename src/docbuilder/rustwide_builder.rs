@@ -54,7 +54,7 @@ impl RustwideBuilder {
         let mut builder = WorkspaceBuilder::new(&config.rustwide_workspace, USER_AGENT)
             .running_inside_docker(config.inside_docker);
         if let Some(custom_image) = &config.docker_image {
-            let image = match SandboxImage::local(&custom_image) {
+            let image = match SandboxImage::local(custom_image) {
                 Ok(i) => i,
                 Err(CommandError::SandboxImageMissing(_)) => SandboxImage::remote(custom_image)?,
                 Err(err) => return Err(err.into()),
@@ -315,7 +315,7 @@ impl RustwideBuilder {
 
                 // Perform an initial build
                 let res =
-                    self.execute_build(default_target, true, &build, &limits, &metadata, false)?;
+                    self.execute_build(default_target, true, build, &limits, &metadata, false)?;
                 if res.result.successful {
                     if let Some(name) = res.cargo_metadata.root().library_name() {
                         let host_target = build.host_target_dir();
@@ -336,9 +336,9 @@ impl RustwideBuilder {
                         debug!("building package {} {} for {}", name, version, target);
                         self.build_target(
                             target,
-                            &build,
+                            build,
                             &limits,
-                            &local_storage.path(),
+                            local_storage.path(),
                             &mut successful_targets,
                             &metadata,
                         )?;

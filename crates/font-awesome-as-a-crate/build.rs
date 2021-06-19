@@ -31,7 +31,7 @@ fn write_fontawesome_sprite() {
                 .expect("fontawesome file read");
             // if this assert goes off, add more hashes here and in the format! below
             assert!(
-                data.find("###").is_none(),
+                !(data.contains("###")),
                 "file {} breaks raw string",
                 filename,
             );
