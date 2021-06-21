@@ -12,31 +12,56 @@ use docs_rs::{
 };
 use failure::{err_msg, Error, ResultExt};
 use once_cell::sync::OnceCell;
+use sentry_log::SentryLogger;
 use structopt::StructOpt;
 use strum::VariantNames;
 
 pub fn main() {
     let _ = dotenv::dotenv();
-    logger_init();
+
+    let _sentry_guard = if let Ok(sentry_dsn) = env::var("SENTRY_DSN") {
+        rustwide::logging::init_with(SentryLogger::with_dest(logger_init()));
+        Some(sentry::init((
+            sentry_dsn,
+            sentry::ClientOptions {
+                release: Some(docs_rs::BUILD_VERSION.into()),
+                ..Default::default()
+            }
+            .add_integration(sentry_panic::PanicIntegration::default()),
+        )))
+    } else {
+        rustwide::logging::init_with(logger_init());
+        None
+    };
 
     if let Err(err) = CommandLine::from_args().handle_args() {
         let mut msg = format!("Error: {}", err);
         for cause in err.iter_causes() {
             write!(msg, "\n\nCaused by:\n    {}", cause).unwrap();
         }
-        eprintln!("{}", msg);
+
         if !err.backtrace().is_empty() {
-            eprintln!("\nStack backtrace:\n{}", err.backtrace());
+            write!(msg, "\nStack backtrace:\n{}", err.backtrace()).unwrap();
         }
+
+        // capturing the err with sentry-failure didn't work,
+        // until we replaced failure can
+        sentry::capture_message(&msg, sentry::Level::Error);
+
+        eprintln!("{}", msg);
+
+        // we need to drop the sentry guard here so all unsent
+        // errors are sent to sentry
+        drop(_sentry_guard);
         std::process::exit(1);
     }
 }
 
-fn logger_init() {
+fn logger_init() -> env_logger::Logger {
     use std::io::Write;
 
     let env = env_logger::Env::default().filter_or("DOCSRS_LOG", "docs_rs=info");
-    let logger = env_logger::from_env(env)
+    env_logger::from_env(env)
         .format(|buf, record| {
             writeln!(
                 buf,
@@ -47,9 +72,7 @@ fn logger_init() {
                 record.args()
             )
         })
-        .build();
-
-    rustwide::logging::init_with(logger);
+        .build()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumString, strum::EnumVariantNames)]
