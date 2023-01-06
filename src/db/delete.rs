@@ -1,6 +1,6 @@
 use crate::error::Result;
 use crate::storage::{rustdoc_archive_path, source_archive_path, Storage};
-use crate::{Config, Context};
+use crate::{AppContext, Config, Context};
 use anyhow::Context as _;
 use postgres::Client;
 use std::fs;
@@ -52,7 +52,7 @@ pub fn delete_crate(
     Ok(())
 }
 
-pub fn delete_version(ctx: &dyn Context, name: &str, version: &str) -> Result<()> {
+pub fn delete_version(ctx: AppContext, name: &str, version: &str) -> Result<()> {
     let conn = &mut ctx.pool()?.get()?;
     let storage = ctx.storage()?;
 

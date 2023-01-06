@@ -11,11 +11,11 @@ use crate::{
         error::{AxumNope, AxumResult},
         match_version_axum,
     },
-    BuildQueue, Config, Metrics,
+    AppContext, Config, Metrics,
 };
 use anyhow::{anyhow, Context as _, Result};
 use axum::{
-    extract::{Extension, Path, Query},
+    extract::{Extension, Path, Query, State},
     response::{IntoResponse, Response as AxumResponse},
 };
 use chrono::{DateTime, NaiveDate, Utc};
@@ -702,11 +702,10 @@ impl_axum_webpage! {
 }
 
 pub(crate) async fn build_queue_handler(
-    Extension(build_queue): Extension<Arc<BuildQueue>>,
-    Extension(pool): Extension<Pool>,
+    State(ctx): State<AppContext>,
 ) -> AxumResult<impl IntoResponse> {
     let (queue, active_deployments) = spawn_blocking(move || {
-        let mut queue = build_queue.queued_crates()?;
+        let mut queue = ctx.build_queue()?.queued_crates()?;
         for krate in queue.iter_mut() {
             // The priority here is inverted: in the database if a crate has a higher priority it
             // will be built after everything else, which is counter-intuitive for people not
@@ -714,7 +713,7 @@ pub(crate) async fn build_queue_handler(
             krate.priority = -krate.priority;
         }
 
-        let mut conn = pool.get()?;
+        let mut conn = ctx.pool()?.get()?;
         Ok((queue, cdn::active_crate_invalidations(&mut conn)?))
     })
     .await?;

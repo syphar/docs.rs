@@ -1,8 +1,10 @@
-use crate::{db::Pool, utils::spawn_blocking, web::error::AxumResult, BuildQueue, Metrics};
+use crate::{
+    db::Pool, utils::spawn_blocking, web::error::AxumResult, AppContext, BuildQueue, Metrics,
+};
 use anyhow::Context as _;
 use axum::{
     body::Body,
-    extract::{Extension, MatchedPath},
+    extract::{MatchedPath, State},
     http::Request as AxumRequest,
     http::{
         header::{CONTENT_LENGTH, CONTENT_TYPE},
@@ -21,10 +23,12 @@ use std::{
 use tracing::debug;
 
 pub(super) async fn metrics_handler(
-    Extension(pool): Extension<Pool>,
-    Extension(metrics): Extension<Arc<Metrics>>,
-    Extension(queue): Extension<Arc<BuildQueue>>,
+    State(ctx): State<AppContext>,
 ) -> AxumResult<impl IntoResponse> {
+    let metrics = ctx.metrics()?;
+    let pool = ctx.pool()?;
+    let queue = ctx.build_queue()?;
+
     let families = spawn_blocking(move || metrics.gather(&pool, &queue)).await?;
 
     let mut buffer = Vec::new();

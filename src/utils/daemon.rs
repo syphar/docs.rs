@@ -5,7 +5,7 @@
 use crate::{
     utils::{queue_builder, report_error},
     web::start_web_server,
-    BuildQueue, Config, Context, Index, RustwideBuilder,
+    AppContext, BuildQueue, Config, Context, Index, RustwideBuilder,
 };
 use anyhow::{anyhow, Context as _, Error};
 use std::sync::Arc;
@@ -61,7 +61,7 @@ pub fn watch_registry(
     }
 }
 
-fn start_registry_watcher(context: &dyn Context) -> Result<(), Error> {
+fn start_registry_watcher(context: AppContext) -> Result<(), Error> {
     let build_queue = context.build_queue()?;
     let config = context.config()?;
     let index = context.index()?;
@@ -78,7 +78,7 @@ fn start_registry_watcher(context: &dyn Context) -> Result<(), Error> {
     Ok(())
 }
 
-pub fn start_background_repository_stats_updater(context: &dyn Context) -> Result<(), Error> {
+pub fn start_background_repository_stats_updater(context: AppContext) -> Result<(), Error> {
     // This call will still skip github repositories updates and continue if no token is provided
     // (gitlab doesn't require to have a token). The only time this can return an error is when
     // creating a pool or if config fails, which shouldn't happen here because this is run right at
@@ -95,10 +95,7 @@ pub fn start_background_repository_stats_updater(context: &dyn Context) -> Resul
     Ok(())
 }
 
-pub fn start_daemon<C: Context + Send + Sync + 'static>(
-    context: C,
-    enable_registry_watcher: bool,
-) -> Result<(), Error> {
+pub fn start_daemon(context: AppContext, enable_registry_watcher: bool) -> Result<(), Error> {
     let context = Arc::new(context);
 
     // Start the web server before doing anything more expensive
@@ -106,17 +103,17 @@ pub fn start_daemon<C: Context + Send + Sync + 'static>(
     info!("Starting web server");
     let webserver_thread = thread::spawn({
         let context = context.clone();
-        move || start_web_server(None, &*context)
+        move || start_web_server(None, context)
     });
 
     if enable_registry_watcher {
         // check new crates every minute
-        start_registry_watcher(&*context)?;
+        start_registry_watcher(context.clone())?;
     }
 
     // build new crates every minute
     let build_queue = context.build_queue()?;
-    let rustwide_builder = RustwideBuilder::init(&*context)?;
+    let rustwide_builder = RustwideBuilder::init(context.clone())?;
     thread::Builder::new()
         .name("build queue reader".to_string())
         .spawn(move || {
@@ -124,7 +121,7 @@ pub fn start_daemon<C: Context + Send + Sync + 'static>(
         })
         .unwrap();
 
-    start_background_repository_stats_updater(&*context)?;
+    start_background_repository_stats_updater(context)?;
 
     // NOTE: if a error occurred earlier in `start_daemon`, the server will _not_ be joined -
     // instead it will get killed when the process exits.

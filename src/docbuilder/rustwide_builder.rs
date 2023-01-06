@@ -13,7 +13,7 @@ use crate::utils::{
 };
 use crate::RUSTDOC_STATIC_STORAGE_PREFIX;
 use crate::{db::blacklist::is_blacklisted, utils::MetadataPackage};
-use crate::{Config, Context, Index, Metrics, Storage};
+use crate::{AppContext, Config, Index, Metrics, Storage};
 use anyhow::{anyhow, bail, Error};
 use docsrs_metadata::{Metadata, DEFAULT_TARGETS, HOST_TARGET};
 use failure::Error as FailureError;
@@ -52,7 +52,7 @@ pub struct RustwideBuilder {
 }
 
 impl RustwideBuilder {
-    pub fn init(context: &dyn Context) -> Result<Self> {
+    pub fn init(context: AppContext) -> Result<Self> {
         let config = context.config()?;
 
         let mut builder = WorkspaceBuilder::new(&config.rustwide_workspace, USER_AGENT)

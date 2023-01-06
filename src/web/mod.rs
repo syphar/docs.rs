@@ -27,7 +27,7 @@ mod sitemap;
 mod source;
 mod statics;
 
-use crate::{db::Pool, impl_axum_webpage, Context};
+use crate::{db::Pool, impl_axum_webpage, AppContext};
 use anyhow::Error;
 use axum::{
     extract::Extension, http::StatusCode, middleware, response::IntoResponse, Router as AxumRouter,
@@ -245,33 +245,36 @@ async fn match_version_axum(
 
 #[instrument(skip_all)]
 pub(crate) fn build_axum_app(
-    context: &dyn Context,
+    context: AppContext,
     template_data: Arc<TemplateData>,
 ) -> Result<AxumRouter, Error> {
-    Ok(routes::build_axum_routes().layer(
-        // It’s recommended to use tower::ServiceBuilder to apply multiple middleware at once,
-        // instead of calling Router::layer repeatedly:
-        ServiceBuilder::new()
-            .layer(TraceLayer::new_for_http())
-            .layer(sentry_tower::NewSentryLayer::new_from_top())
-            .layer(sentry_tower::SentryHttpLayer::with_transaction())
-            .layer(Extension(context.pool()?))
-            .layer(Extension(context.build_queue()?))
-            .layer(Extension(context.metrics()?))
-            .layer(Extension(context.config()?))
-            .layer(Extension(context.storage()?))
-            .layer(Extension(context.repository_stats_updater()?))
-            .layer(Extension(template_data))
-            .layer(middleware::from_fn(csp::csp_middleware))
-            .layer(middleware::from_fn(
-                page::web_page::render_templates_middleware,
-            ))
-            .layer(middleware::from_fn(cache::cache_middleware)),
-    ))
+    Ok(routes::build_axum_routes()
+        .with_state(context.clone())
+        .layer(
+            // It’s recommended to use tower::ServiceBuilder to apply multiple middleware at once,
+            // instead of calling Router::layer repeatedly:
+            ServiceBuilder::new()
+                .layer(TraceLayer::new_for_http())
+                .layer(sentry_tower::NewSentryLayer::new_from_top())
+                .layer(sentry_tower::SentryHttpLayer::with_transaction())
+                .layer(Extension(template_data))
+                .layer(middleware::from_fn_with_state(
+                    context.clone(),
+                    csp::csp_middleware,
+                ))
+                .layer(middleware::from_fn_with_state(
+                    context.clone(),
+                    page::web_page::render_templates_middleware,
+                ))
+                .layer(middleware::from_fn_with_state(
+                    context,
+                    cache::cache_middleware,
+                )),
+        ))
 }
 
 #[instrument(skip_all)]
-pub fn start_web_server(addr: Option<&str>, context: &dyn Context) -> Result<(), Error> {
+pub fn start_web_server(addr: Option<&str>, context: AppContext) -> Result<(), Error> {
     let template_data = Arc::new(TemplateData::new(&mut *context.pool()?.get()?)?);
 
     let axum_addr: SocketAddr = addr.unwrap_or(DEFAULT_BIND).parse()?;

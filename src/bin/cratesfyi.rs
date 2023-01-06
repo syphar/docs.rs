@@ -134,7 +134,7 @@ enum CommandLine {
 
 impl CommandLine {
     fn handle_args(self) -> Result<()> {
-        let ctx = BinContext::new();
+        let ctx = Arc::new(BinContext::new());
 
         match self {
             Self::Build {
@@ -145,19 +145,19 @@ impl CommandLine {
                 repository_stats_updater,
             } => {
                 if repository_stats_updater == Toggle::Enabled {
-                    docs_rs::utils::daemon::start_background_repository_stats_updater(&ctx)?;
+                    docs_rs::utils::daemon::start_background_repository_stats_updater(ctx.clone())?;
                 }
 
                 docs_rs::utils::watch_registry(ctx.build_queue()?, ctx.config()?, ctx.index()?)?;
             }
             Self::StartBuildServer => {
                 let build_queue = ctx.build_queue()?;
-                let rustwide_builder = RustwideBuilder::init(&ctx)?;
+                let rustwide_builder = RustwideBuilder::init(ctx)?;
                 queue_builder(rustwide_builder, build_queue)?;
             }
             Self::StartWebServer { socket_addr } => {
                 // Blocks indefinitely
-                start_web_server(Some(&socket_addr), &ctx)?;
+                start_web_server(Some(&socket_addr), ctx)?;
             }
             Self::Daemon { registry_watcher } => {
                 docs_rs::utils::start_daemon(ctx, registry_watcher == Toggle::Enabled)?;
@@ -198,7 +198,7 @@ enum QueueSubcommand {
 }
 
 impl QueueSubcommand {
-    fn handle_args(self, ctx: BinContext) -> Result<()> {
+    fn handle_args(self, ctx: Arc<BinContext>) -> Result<()> {
         match self {
             Self::Add {
                 crate_name,
@@ -237,7 +237,7 @@ enum PrioritySubcommand {
 }
 
 impl PrioritySubcommand {
-    fn handle_args(self, ctx: BinContext) -> Result<()> {
+    fn handle_args(self, ctx: Arc<BinContext>) -> Result<()> {
         match self {
             Self::Set { pattern, priority } => {
                 set_crate_priority(&mut *ctx.conn()?, &pattern, priority)
@@ -296,11 +296,11 @@ enum BuildSubcommand {
 }
 
 impl BuildSubcommand {
-    fn handle_args(self, ctx: BinContext, skip_if_exists: bool) -> Result<()> {
+    fn handle_args(self, ctx: Arc<BinContext>, skip_if_exists: bool) -> Result<()> {
         let build_queue = ctx.build_queue()?;
 
         let rustwide_builder = || -> Result<RustwideBuilder> {
-            let mut builder = RustwideBuilder::init(&ctx)?;
+            let mut builder = RustwideBuilder::init(ctx.clone())?;
             builder.set_skip_build_if_exists(skip_if_exists);
             Ok(builder)
         };
@@ -421,7 +421,7 @@ enum DatabaseSubcommand {
 }
 
 impl DatabaseSubcommand {
-    fn handle_args(self, ctx: BinContext) -> Result<()> {
+    fn handle_args(self, ctx: Arc<BinContext>) -> Result<()> {
         match self {
             Self::Migrate { version } => {
                 db::migrate(version, &mut *ctx.conn()?)
@@ -454,7 +454,7 @@ impl DatabaseSubcommand {
             Self::Delete {
                 command: DeleteSubcommand::Version { name, version },
             } => {
-                db::delete_version(&ctx, &name, &version).context("failed to delete the version")?
+                db::delete_version(ctx, &name, &version).context("failed to delete the version")?
             }
             Self::Delete {
                 command: DeleteSubcommand::Crate { name },
@@ -497,7 +497,7 @@ enum BlacklistSubcommand {
 }
 
 impl BlacklistSubcommand {
-    fn handle_args(self, ctx: BinContext) -> Result<()> {
+    fn handle_args(self, ctx: Arc<BinContext>) -> Result<()> {
         let conn = &mut *ctx.conn()?;
         match self {
             Self::List => {

@@ -1,6 +1,7 @@
-use crate::config::Config;
+use crate::AppContext;
 use axum::{
-    http::Request as AxumHttpRequest, middleware::Next, response::Response as AxumResponse,
+    extract::State, http::Request as AxumHttpRequest, middleware::Next,
+    response::Response as AxumResponse,
 };
 use std::{
     fmt::Write,
@@ -94,12 +95,12 @@ enum ContentType {
     Other,
 }
 
-pub(crate) async fn csp_middleware<B>(mut req: AxumHttpRequest<B>, next: Next<B>) -> AxumResponse {
-    let csp_report_only = req
-        .extensions()
-        .get::<Arc<Config>>()
-        .expect("missing config extension in request")
-        .csp_report_only;
+pub(crate) async fn csp_middleware<B>(
+    State(ctx): State<AppContext>,
+    mut req: AxumHttpRequest<B>,
+    next: Next<B>,
+) -> AxumResponse {
+    let csp_report_only = ctx.config().unwrap().csp_report_only;
 
     let csp = Arc::new(Csp::new());
     req.extensions_mut().insert(csp.clone());
