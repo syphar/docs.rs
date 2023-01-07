@@ -53,7 +53,7 @@ pub struct RustwideBuilder {
 
 impl RustwideBuilder {
     pub fn init(context: AppContext) -> Result<Self> {
-        let config = context.config()?;
+        let config = context.config();
 
         let mut builder = WorkspaceBuilder::new(&config.rustwide_workspace, USER_AGENT)
             .running_inside_docker(config.inside_docker);
@@ -89,12 +89,12 @@ impl RustwideBuilder {
             workspace,
             toolchain,
             config,
-            db: context.pool()?,
-            storage: context.storage()?,
-            metrics: context.metrics()?,
-            index: context.index()?,
+            db: context.pool(),
+            storage: context.storage(),
+            metrics: context.metrics(),
+            index: context.index(),
             rustc_version: String::new(),
-            repository_stats_updater: context.repository_stats_updater()?,
+            repository_stats_updater: context.repository_stats_updater(),
             skip_build_if_exists: false,
         })
     }

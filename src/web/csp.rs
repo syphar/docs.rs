@@ -100,7 +100,7 @@ pub(crate) async fn csp_middleware<B>(
     mut req: AxumHttpRequest<B>,
     next: Next<B>,
 ) -> AxumResponse {
-    let csp_report_only = ctx.config().unwrap().csp_report_only;
+    let csp_report_only = ctx.config().csp_report_only;
 
     let csp = Arc::new(Csp::new());
     req.extensions_mut().insert(csp.clone());

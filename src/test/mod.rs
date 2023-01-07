@@ -7,7 +7,7 @@ use crate::error::Result;
 use crate::repositories::RepositoryStatsUpdater;
 use crate::storage::{Storage, StorageKind};
 use crate::web::{build_axum_app, cache, page::TemplateData};
-use crate::{BuildQueue, Config, Context, Index, Metrics};
+use crate::{AppContext, BuildQueue, Config, Context, Index, Metrics};
 use anyhow::Context as _;
 use fn_error_context::context;
 use once_cell::unsync::OnceCell;
@@ -222,7 +222,7 @@ pub(crate) struct TestEnvironment {
     index: OnceCell<Arc<Index>>,
     runtime: OnceCell<Arc<Runtime>>,
     metrics: OnceCell<Arc<Metrics>>,
-    frontend: OnceCell<TestFrontend>,
+    frontend: OnceCell<Arc<TestFrontend>>,
     repository_stats_updater: OnceCell<Arc<RepositoryStatsUpdater>>,
 }
 
@@ -314,88 +314,6 @@ impl TestEnvironment {
         }
     }
 
-    pub(crate) fn build_queue(&self) -> Arc<BuildQueue> {
-        self.build_queue
-            .get_or_init(|| {
-                Arc::new(BuildQueue::new(
-                    self.db().pool(),
-                    self.metrics(),
-                    self.config(),
-                    self.cdn(),
-                    self.storage(),
-                ))
-            })
-            .clone()
-    }
-
-    pub(crate) fn cdn(&self) -> Arc<CdnBackend> {
-        self.cdn
-            .get_or_init(|| Arc::new(CdnBackend::new(&self.config(), &self.runtime())))
-            .clone()
-    }
-
-    pub(crate) fn config(&self) -> Arc<Config> {
-        self.config
-            .get_or_init(|| Arc::new(self.base_config()))
-            .clone()
-    }
-
-    pub(crate) fn storage(&self) -> Arc<Storage> {
-        self.storage
-            .get_or_init(|| {
-                Arc::new(
-                    Storage::new(
-                        self.db().pool(),
-                        self.metrics(),
-                        self.config(),
-                        self.runtime(),
-                    )
-                    .expect("failed to initialize the storage"),
-                )
-            })
-            .clone()
-    }
-
-    pub(crate) fn metrics(&self) -> Arc<Metrics> {
-        self.metrics
-            .get_or_init(|| Arc::new(Metrics::new().expect("failed to initialize the metrics")))
-            .clone()
-    }
-    pub(crate) fn runtime(&self) -> Arc<Runtime> {
-        self.runtime
-            .get_or_init(|| {
-                Arc::new(
-                    Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .expect("failed to initialize runtime"),
-                )
-            })
-            .clone()
-    }
-
-    pub(crate) fn index(&self) -> Arc<Index> {
-        self.index
-            .get_or_init(|| {
-                Arc::new(
-                    Index::new(self.config().registry_index_path.clone())
-                        .expect("failed to initialize the index"),
-                )
-            })
-            .clone()
-    }
-
-    pub(crate) fn repository_stats_updater(&self) -> Arc<RepositoryStatsUpdater> {
-        self.repository_stats_updater
-            .get_or_init(|| {
-                Arc::new(RepositoryStatsUpdater::new(
-                    &self.config(),
-                    self.pool().expect("failed to get the pool"),
-                ))
-            })
-            .clone()
-    }
-
     pub(crate) fn db(&self) -> &TestDatabase {
         self.db.get_or_init(|| {
             TestDatabase::new(&self.config(), self.metrics()).expect("failed to initialize the db")
@@ -411,8 +329,10 @@ impl TestEnvironment {
         self.frontend.get().unwrap()
     }
 
-    pub(crate) fn frontend(&self) -> &TestFrontend {
-        self.frontend.get_or_init(|| TestFrontend::new(self))
+    pub(crate) fn frontend(&self) -> Arc<TestFrontend> {
+        self.frontend
+            .get_or_init(|| Arc::new(TestFrontend::new(self)))
+            .clone()
     }
 
     pub(crate) fn fake_release(&self) -> fakes::FakeRelease {
@@ -421,40 +341,86 @@ impl TestEnvironment {
 }
 
 impl Context for TestEnvironment {
-    fn config(&self) -> Result<Arc<Config>> {
-        Ok(TestEnvironment::config(self))
+    fn config(&self) -> Arc<Config> {
+        self.config
+            .get_or_init(|| Arc::new(self.base_config()))
+            .clone()
     }
 
-    fn build_queue(&self) -> Result<Arc<BuildQueue>> {
-        Ok(TestEnvironment::build_queue(self))
+    fn build_queue(&self) -> Arc<BuildQueue> {
+        self.build_queue
+            .get_or_init(|| {
+                Arc::new(BuildQueue::new(
+                    self.db().pool(),
+                    self.metrics(),
+                    self.config(),
+                    self.cdn(),
+                    self.storage(),
+                ))
+            })
+            .clone()
     }
 
-    fn storage(&self) -> Result<Arc<Storage>> {
-        Ok(TestEnvironment::storage(self))
+    fn storage(&self) -> Arc<Storage> {
+        self.storage
+            .get_or_init(|| {
+                Arc::new(
+                    Storage::new(
+                        self.db().pool(),
+                        self.metrics(),
+                        self.config(),
+                        self.runtime(),
+                    )
+                    .expect("failed to initialize the storage"),
+                )
+            })
+            .clone()
     }
 
-    fn cdn(&self) -> Result<Arc<CdnBackend>> {
-        Ok(TestEnvironment::cdn(self))
+    fn cdn(&self) -> Arc<CdnBackend> {
+        self.cdn
+            .get_or_init(|| Arc::new(CdnBackend::new(&self.config(), &self.runtime())))
+            .clone()
     }
 
-    fn pool(&self) -> Result<Pool> {
-        Ok(self.db().pool())
+    fn pool(&self) -> Pool {
+        self.db().pool()
     }
 
-    fn metrics(&self) -> Result<Arc<Metrics>> {
-        Ok(self.metrics())
+    fn metrics(&self) -> Arc<Metrics> {
+        self.metrics
+            .get_or_init(|| Arc::new(Metrics::new().expect("failed to initialize the metrics")))
+            .clone()
     }
 
-    fn index(&self) -> Result<Arc<Index>> {
-        Ok(self.index())
+    fn index(&self) -> Arc<Index> {
+        self.index
+            .get_or_init(|| {
+                Arc::new(
+                    Index::new(self.config().registry_index_path.clone())
+                        .expect("failed to initialize the index"),
+                )
+            })
+            .clone()
     }
 
-    fn repository_stats_updater(&self) -> Result<Arc<RepositoryStatsUpdater>> {
-        Ok(self.repository_stats_updater())
+    fn repository_stats_updater(&self) -> Arc<RepositoryStatsUpdater> {
+        self.repository_stats_updater
+            .get_or_init(|| Arc::new(RepositoryStatsUpdater::new(&self.config(), self.pool())))
+            .clone()
     }
 
-    fn runtime(&self) -> Result<Arc<Runtime>> {
-        Ok(self.runtime())
+    fn runtime(&self) -> Arc<Runtime> {
+        self.runtime
+            .get_or_init(|| {
+                Arc::new(
+                    Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .expect("failed to initialize runtime"),
+                )
+            })
+            .clone()
     }
 }
 
@@ -556,7 +522,7 @@ impl TestFrontend {
 
         debug!("loading template data");
         let template_data =
-            Arc::new(TemplateData::new(&mut context.pool().unwrap().get().unwrap()).unwrap());
+            Arc::new(TemplateData::new(&mut context.pool().get().unwrap()).unwrap());
 
         debug!("binding local TCP port for axum");
         let axum_listener =
@@ -571,7 +537,7 @@ impl TestFrontend {
         let axum_app = build_axum_app(context, template_data).expect("could not build axum app");
 
         let handle = thread::spawn({
-            let runtime = context.runtime().unwrap();
+            let runtime = context.runtime();
             move || {
                 runtime.block_on(async {
                     axum::Server::from_tcp(axum_listener)

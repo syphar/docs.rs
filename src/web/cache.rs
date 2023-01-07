@@ -67,7 +67,7 @@ pub(crate) async fn cache_middleware<B>(
     req: AxumHttpRequest<B>,
     next: Next<B>,
 ) -> AxumResponse {
-    let config = ctx.config().unwrap().clone();
+    let config = ctx.config().clone();
 
     let mut response = next.run(req).await;
 

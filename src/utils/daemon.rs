@@ -62,9 +62,9 @@ pub fn watch_registry(
 }
 
 fn start_registry_watcher(context: AppContext) -> Result<(), Error> {
-    let build_queue = context.build_queue()?;
-    let config = context.config()?;
-    let index = context.index()?;
+    let build_queue = context.build_queue();
+    let config = context.config();
+    let index = context.index();
 
     thread::Builder::new()
         .name("registry index reader".to_string())
@@ -83,7 +83,7 @@ pub fn start_background_repository_stats_updater(context: AppContext) -> Result<
     // (gitlab doesn't require to have a token). The only time this can return an error is when
     // creating a pool or if config fails, which shouldn't happen here because this is run right at
     // startup.
-    let updater = context.repository_stats_updater()?;
+    let updater = context.repository_stats_updater();
     cron(
         "repositories stats updater",
         Duration::from_secs(60 * 60),
@@ -112,7 +112,7 @@ pub fn start_daemon(context: AppContext, enable_registry_watcher: bool) -> Resul
     }
 
     // build new crates every minute
-    let build_queue = context.build_queue()?;
+    let build_queue = context.build_queue();
     let rustwide_builder = RustwideBuilder::init(context.clone())?;
     thread::Builder::new()
         .name("build queue reader".to_string())

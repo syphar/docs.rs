@@ -275,7 +275,7 @@ pub(crate) fn build_axum_app(
 
 #[instrument(skip_all)]
 pub fn start_web_server(addr: Option<&str>, context: AppContext) -> Result<(), Error> {
-    let template_data = Arc::new(TemplateData::new(&mut *context.pool()?.get()?)?);
+    let template_data = Arc::new(TemplateData::new(&mut *context.pool().get()?)?);
 
     let axum_addr: SocketAddr = addr.unwrap_or(DEFAULT_BIND).parse()?;
 
@@ -288,10 +288,10 @@ pub fn start_web_server(addr: Option<&str>, context: AppContext) -> Result<(), E
     // initialize the storage and the repo-updater in sync context
     // so it can stay sync for now and doesn't fail when they would
     // be initialized while starting the server below.
-    context.storage()?;
-    context.repository_stats_updater()?;
+    context.storage();
+    context.repository_stats_updater();
 
-    context.runtime()?.block_on(async {
+    context.runtime().block_on(async {
         axum::Server::bind(&axum_addr)
             .serve(build_axum_app(context, template_data)?.into_make_service())
             .with_graceful_shutdown(shutdown_signal())

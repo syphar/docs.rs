@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Context as _, Error, Result};
+use anyhow::{anyhow, Context as _, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use docs_rs::cdn::CdnBackend;
 use docs_rs::db::{self, add_path_into_database, Pool, PoolClient};
@@ -16,7 +16,6 @@ use docs_rs::{
     start_web_server, BuildQueue, Config, Context, Index, Metrics, PackageKind, RustwideBuilder,
     Storage,
 };
-use once_cell::sync::OnceCell;
 use tokio::runtime::{Builder, Runtime};
 use tracing_log::LogTracer;
 use tracing_subscriber::{filter::Directive, prelude::*, EnvFilter};
@@ -134,7 +133,7 @@ enum CommandLine {
 
 impl CommandLine {
     fn handle_args(self) -> Result<()> {
-        let ctx = Arc::new(BinContext::new());
+        let ctx = Arc::new(BinContext::new()?);
 
         match self {
             Self::Build {
@@ -148,10 +147,10 @@ impl CommandLine {
                     docs_rs::utils::daemon::start_background_repository_stats_updater(ctx.clone())?;
                 }
 
-                docs_rs::utils::watch_registry(ctx.build_queue()?, ctx.config()?, ctx.index()?)?;
+                docs_rs::utils::watch_registry(ctx.build_queue(), ctx.config(), ctx.index())?;
             }
             Self::StartBuildServer => {
-                let build_queue = ctx.build_queue()?;
+                let build_queue = ctx.build_queue();
                 let rustwide_builder = RustwideBuilder::init(ctx)?;
                 queue_builder(rustwide_builder, build_queue)?;
             }
@@ -204,11 +203,11 @@ impl QueueSubcommand {
                 crate_name,
                 crate_version,
                 build_priority,
-            } => ctx.build_queue()?.add_crate(
+            } => ctx.build_queue().add_crate(
                 &crate_name,
                 &crate_version,
                 build_priority,
-                ctx.config()?.registry_url.as_deref(),
+                ctx.config().registry_url.as_deref(),
             )?,
 
             Self::DefaultPriority { subcommand } => subcommand.handle_args(ctx)?,
@@ -297,7 +296,7 @@ enum BuildSubcommand {
 
 impl BuildSubcommand {
     fn handle_args(self, ctx: Arc<BinContext>, skip_if_exists: bool) -> Result<()> {
-        let build_queue = ctx.build_queue()?;
+        let build_queue = ctx.build_queue();
 
         let rustwide_builder = || -> Result<RustwideBuilder> {
             let mut builder = RustwideBuilder::init(ctx.clone())?;
@@ -324,7 +323,7 @@ impl BuildSubcommand {
                         .build_local_package(&path)
                         .context("Building documentation failed")?;
                 } else {
-                    let registry_url = ctx.config()?.registry_url.clone();
+                    let registry_url = ctx.config().registry_url.clone();
                     builder
                         .build_package(
                             &crate_name
@@ -343,7 +342,7 @@ impl BuildSubcommand {
             Self::UpdateToolchain { only_first_time } => {
                 if only_first_time {
                     let mut conn = ctx
-                        .pool()?
+                        .pool()
                         .get()
                         .context("failed to get a database connection")?;
 
@@ -429,15 +428,15 @@ impl DatabaseSubcommand {
             }
 
             Self::UpdateRepositoryFields => {
-                ctx.repository_stats_updater()?.update_all_crates()?;
+                ctx.repository_stats_updater().update_all_crates()?;
             }
 
             Self::BackfillRepositoryStats => {
-                ctx.repository_stats_updater()?.backfill_repositories()?;
+                ctx.repository_stats_updater().backfill_repositories()?;
             }
 
             Self::UpdateCrateRegistryFields { name } => {
-                let index = ctx.index()?;
+                let index = ctx.index();
 
                 db::update_crate_data_in_database(
                     &mut *ctx.conn()?,
@@ -447,7 +446,7 @@ impl DatabaseSubcommand {
             }
 
             Self::AddDirectory { directory } => {
-                add_path_into_database(&*ctx.storage()?, &ctx.config()?.prefix, directory)
+                add_path_into_database(&ctx.storage(), &ctx.config().prefix, directory)
                     .context("Failed to add directory into database")?;
             }
 
@@ -459,9 +458,9 @@ impl DatabaseSubcommand {
             Self::Delete {
                 command: DeleteSubcommand::Crate { name },
             } => db::delete_crate(
-                &mut *ctx.pool()?.get()?,
-                &*ctx.storage()?,
-                &*ctx.config()?,
+                &mut *ctx.pool().get()?,
+                &ctx.storage(),
+                &ctx.config(),
                 &name,
             )
             .context("failed to delete the crate")?,
@@ -469,7 +468,7 @@ impl DatabaseSubcommand {
 
             #[cfg(feature = "consistency_check")]
             Self::Synchronize { dry_run } => {
-                docs_rs::utils::consistency::run_check(&mut *ctx.conn()?, &*ctx.index()?, dry_run)?;
+                docs_rs::utils::consistency::run_check(&mut *ctx.conn()?, &ctx.index(), dry_run)?;
             }
         }
         Ok(())
@@ -538,91 +537,101 @@ enum DeleteSubcommand {
 }
 
 struct BinContext {
-    build_queue: OnceCell<Arc<BuildQueue>>,
-    storage: OnceCell<Arc<Storage>>,
-    cdn: OnceCell<Arc<CdnBackend>>,
-    config: OnceCell<Arc<Config>>,
-    pool: OnceCell<Pool>,
-    metrics: OnceCell<Arc<Metrics>>,
-    index: OnceCell<Arc<Index>>,
-    repository_stats_updater: OnceCell<Arc<RepositoryStatsUpdater>>,
-    runtime: OnceCell<Arc<Runtime>>,
+    build_queue: Arc<BuildQueue>,
+    storage: Arc<Storage>,
+    cdn: Arc<CdnBackend>,
+    config: Arc<Config>,
+    pool: Pool,
+    metrics: Arc<Metrics>,
+    index: Arc<Index>,
+    repository_stats_updater: Arc<RepositoryStatsUpdater>,
+    runtime: Arc<Runtime>,
 }
 
 impl BinContext {
-    fn new() -> Self {
-        Self {
-            build_queue: OnceCell::new(),
-            storage: OnceCell::new(),
-            cdn: OnceCell::new(),
-            config: OnceCell::new(),
-            pool: OnceCell::new(),
-            metrics: OnceCell::new(),
-            index: OnceCell::new(),
-            repository_stats_updater: OnceCell::new(),
-            runtime: OnceCell::new(),
-        }
-    }
+    fn new() -> Result<Self> {
+        let runtime = Arc::new(Builder::new_multi_thread().enable_all().build()?);
 
-    fn conn(&self) -> Result<PoolClient> {
-        Ok(self.pool()?.get()?)
-    }
-}
+        let config = Arc::new(Config::from_env()?);
+        let metrics = Arc::new(Metrics::new()?);
+        let pool = Pool::new(&config, metrics.clone())?;
 
-macro_rules! lazy {
-    ( $(fn $name:ident($self:ident) -> $type:ty = $init:expr);+ $(;)? ) => {
-        $(fn $name(&$self) -> Result<Arc<$type>> {
-            Ok($self
-                .$name
-                .get_or_try_init::<_, Error>(|| Ok(Arc::new($init)))?
-                .clone())
-        })*
-    }
-}
-
-impl Context for BinContext {
-    lazy! {
-        fn build_queue(self) -> BuildQueue = BuildQueue::new(
-            self.pool()?,
-            self.metrics()?,
-            self.config()?,
-            self.cdn()?,
-            self.storage()?,
-        );
-        fn storage(self) -> Storage = Storage::new(
-            self.pool()?,
-            self.metrics()?,
-            self.config()?,
-            self.runtime()?,
-        )?;
-        fn cdn(self) -> CdnBackend = CdnBackend::new(&self.config()?, &self.runtime()?);
-        fn config(self) -> Config = Config::from_env()?;
-        fn metrics(self) -> Metrics = Metrics::new()?;
-        fn runtime(self) -> Runtime = {
-            Builder::new_multi_thread()
-                .enable_all()
-                .build()?
-        };
-        fn index(self) -> Index = {
-            let config = self.config()?;
+        let index = Arc::new({
             let path = config.registry_index_path.clone();
             if let Some(registry_url) = config.registry_url.clone() {
                 Index::from_url(path, registry_url)
             } else {
                 Index::new(path)
             }?
-        };
-        fn repository_stats_updater(self) -> RepositoryStatsUpdater = {
-            let config = self.config()?;
-            let pool = self.pool()?;
-            RepositoryStatsUpdater::new(&config, pool)
-        };
+        });
+
+        let storage = Arc::new(Storage::new(
+            pool.clone(),
+            metrics.clone(),
+            config.clone(),
+            runtime.clone(),
+        )?);
+        let cdn = Arc::new(CdnBackend::new(&config, &runtime));
+        let repository_stats_updater = Arc::new(RepositoryStatsUpdater::new(&config, pool.clone()));
+
+        Ok(Self {
+            build_queue: Arc::new(BuildQueue::new(
+                pool.clone(),
+                metrics.clone(),
+                config.clone(),
+                cdn.clone(),
+                storage.clone(),
+            )),
+            storage,
+            cdn,
+            config,
+            pool,
+            metrics,
+            index,
+            repository_stats_updater,
+            runtime,
+        })
     }
 
-    fn pool(&self) -> Result<Pool> {
-        Ok(self
-            .pool
-            .get_or_try_init::<_, Error>(|| Ok(Pool::new(&*self.config()?, self.metrics()?)?))?
-            .clone())
+    fn conn(&self) -> Result<PoolClient> {
+        Ok(self.pool.get()?)
+    }
+}
+
+impl Context for BinContext {
+    fn config(&self) -> Arc<Config> {
+        self.config.clone()
+    }
+
+    fn build_queue(&self) -> Arc<BuildQueue> {
+        self.build_queue.clone()
+    }
+
+    fn storage(&self) -> Arc<Storage> {
+        self.storage.clone()
+    }
+
+    fn cdn(&self) -> Arc<CdnBackend> {
+        self.cdn.clone()
+    }
+
+    fn pool(&self) -> Pool {
+        self.pool.clone()
+    }
+
+    fn metrics(&self) -> Arc<Metrics> {
+        self.metrics.clone()
+    }
+
+    fn index(&self) -> Arc<Index> {
+        self.index.clone()
+    }
+
+    fn repository_stats_updater(&self) -> Arc<RepositoryStatsUpdater> {
+        self.repository_stats_updater.clone()
+    }
+
+    fn runtime(&self) -> Arc<Runtime> {
+        self.runtime.clone()
     }
 }

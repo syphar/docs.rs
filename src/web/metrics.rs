@@ -1,6 +1,4 @@
-use crate::{
-    db::Pool, utils::spawn_blocking, web::error::AxumResult, AppContext, BuildQueue, Metrics,
-};
+use crate::{utils::spawn_blocking, web::error::AxumResult, AppContext, Metrics};
 use anyhow::Context as _;
 use axum::{
     body::Body,
@@ -25,9 +23,9 @@ use tracing::debug;
 pub(super) async fn metrics_handler(
     State(ctx): State<AppContext>,
 ) -> AxumResult<impl IntoResponse> {
-    let metrics = ctx.metrics()?;
-    let pool = ctx.pool()?;
-    let queue = ctx.build_queue()?;
+    let metrics = ctx.metrics();
+    let pool = ctx.pool();
+    let queue = ctx.build_queue();
 
     let families = spawn_blocking(move || metrics.gather(&pool, &queue)).await?;
 

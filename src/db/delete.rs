@@ -53,8 +53,8 @@ pub fn delete_crate(
 }
 
 pub fn delete_version(ctx: AppContext, name: &str, version: &str) -> Result<()> {
-    let conn = &mut ctx.pool()?.get()?;
-    let storage = ctx.storage()?;
+    let conn = &mut ctx.pool().get()?;
+    let storage = ctx.storage();
 
     let is_library = delete_version_from_database(conn, name, version)?;
     let paths = if is_library {
@@ -67,7 +67,7 @@ pub fn delete_version(ctx: AppContext, name: &str, version: &str) -> Result<()> 
         storage.delete_prefix(&format!("{}/{}/{}/", prefix, name, version))?;
     }
 
-    let local_archive_cache = &ctx.config()?.local_archive_cache_path;
+    let local_archive_cache = &ctx.config().local_archive_cache_path;
     let mut paths = vec![source_archive_path(name, version)];
     if is_library {
         paths.push(rustdoc_archive_path(name, version));
