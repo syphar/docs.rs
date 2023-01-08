@@ -7,7 +7,7 @@ use crate::error::Result;
 use crate::repositories::RepositoryStatsUpdater;
 use crate::storage::{Storage, StorageKind};
 use crate::web::{build_axum_app, cache, page::TemplateData};
-use crate::{BuildQueue, Config, Context, Index, Metrics};
+use crate::{AppContext, BuildQueue, Config, Context, Index, Metrics};
 use anyhow::Context as _;
 use fn_error_context::context;
 use once_cell::unsync::OnceCell;
@@ -528,6 +528,55 @@ impl Drop for TestDatabase {
     }
 }
 
+struct TestContext {
+    build_queue: Arc<BuildQueue>,
+    storage: Arc<Storage>,
+    cdn: Arc<CdnBackend>,
+    config: Arc<Config>,
+    pool: Pool,
+    metrics: Arc<Metrics>,
+    index: Arc<Index>,
+    repository_stats_updater: Arc<RepositoryStatsUpdater>,
+    runtime: Arc<Runtime>,
+}
+impl Context for TestContext {
+    fn config(&self) -> Arc<Config> {
+        self.config
+    }
+
+    fn build_queue(&self) -> Arc<BuildQueue> {
+        self.build_queue
+    }
+
+    fn storage(&self) -> Arc<Storage> {
+        self.storage
+    }
+
+    fn cdn(&self) -> Arc<CdnBackend> {
+        self.cdn
+    }
+
+    fn pool(&self) -> Pool {
+        self.pool
+    }
+
+    fn metrics(&self) -> Arc<Metrics> {
+        self.metrics
+    }
+
+    fn index(&self) -> Arc<Index> {
+        self.index
+    }
+
+    fn repository_stats_updater(&self) -> Arc<RepositoryStatsUpdater> {
+        self.repository_stats_updater
+    }
+
+    fn runtime(&self) -> Arc<Runtime> {
+        self.runtime
+    }
+}
+
 pub(crate) struct TestFrontend {
     axum_server_thread: JoinHandle<()>,
     axum_server_shutdown_signal: Sender<()>,
@@ -562,8 +611,20 @@ impl TestFrontend {
 
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
 
+        let ctx: AppContext = Arc::new(TestContext {
+            build_queue: context.build_queue(),
+            storage: context.storage(),
+            cdn: context.cdn(),
+            config: context.config(),
+            pool: context.pool(),
+            metrics: context.metrics(),
+            index: context.index(),
+            repository_stats_updater: context.repository_stats_updater(),
+            runtime: context.runtime(),
+        });
+
         debug!("building axum app");
-        let axum_app = build_axum_app(context, template_data).expect("could not build axum app");
+        let axum_app = build_axum_app(ctx, template_data).expect("could not build axum app");
 
         let handle = thread::spawn({
             let runtime = context.runtime();
