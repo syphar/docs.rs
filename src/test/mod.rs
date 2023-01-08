@@ -7,7 +7,7 @@ use crate::error::Result;
 use crate::repositories::RepositoryStatsUpdater;
 use crate::storage::{Storage, StorageKind};
 use crate::web::{build_axum_app, cache, page::TemplateData};
-use crate::{AppContext, BuildQueue, Config, Context, Index, Metrics};
+use crate::{BuildQueue, Config, Context, Index, Metrics};
 use anyhow::Context as _;
 use fn_error_context::context;
 use once_cell::unsync::OnceCell;
@@ -222,7 +222,7 @@ pub(crate) struct TestEnvironment {
     index: OnceCell<Arc<Index>>,
     runtime: OnceCell<Arc<Runtime>>,
     metrics: OnceCell<Arc<Metrics>>,
-    frontend: OnceCell<Arc<TestFrontend>>,
+    frontend: OnceCell<TestFrontend>,
     repository_stats_updater: OnceCell<Arc<RepositoryStatsUpdater>>,
 }
 
@@ -314,40 +314,7 @@ impl TestEnvironment {
         }
     }
 
-    pub(crate) fn db(&self) -> &TestDatabase {
-        self.db.get_or_init(|| {
-            TestDatabase::new(&self.config(), self.metrics()).expect("failed to initialize the db")
-        })
-    }
-
-    pub(crate) fn override_frontend(&self, init: impl FnOnce(&mut TestFrontend)) -> &TestFrontend {
-        let mut frontend = TestFrontend::new(self);
-        init(&mut frontend);
-        if self.frontend.set(frontend).is_err() {
-            panic!("cannot call override_frontend after frontend is initialized");
-        }
-        self.frontend.get().unwrap()
-    }
-
-    pub(crate) fn frontend(&self) -> Arc<TestFrontend> {
-        self.frontend
-            .get_or_init(|| Arc::new(TestFrontend::new(self)))
-            .clone()
-    }
-
-    pub(crate) fn fake_release(&self) -> fakes::FakeRelease {
-        fakes::FakeRelease::new(self.db(), self.storage())
-    }
-}
-
-impl Context for TestEnvironment {
-    fn config(&self) -> Arc<Config> {
-        self.config
-            .get_or_init(|| Arc::new(self.base_config()))
-            .clone()
-    }
-
-    fn build_queue(&self) -> Arc<BuildQueue> {
+    pub(crate) fn build_queue(&self) -> Arc<BuildQueue> {
         self.build_queue
             .get_or_init(|| {
                 Arc::new(BuildQueue::new(
@@ -361,7 +328,19 @@ impl Context for TestEnvironment {
             .clone()
     }
 
-    fn storage(&self) -> Arc<Storage> {
+    pub(crate) fn cdn(&self) -> Arc<CdnBackend> {
+        self.cdn
+            .get_or_init(|| Arc::new(CdnBackend::new(&self.config(), &self.runtime())))
+            .clone()
+    }
+
+    pub(crate) fn config(&self) -> Arc<Config> {
+        self.config
+            .get_or_init(|| Arc::new(self.base_config()))
+            .clone()
+    }
+
+    pub(crate) fn storage(&self) -> Arc<Storage> {
         self.storage
             .get_or_init(|| {
                 Arc::new(
@@ -377,40 +356,12 @@ impl Context for TestEnvironment {
             .clone()
     }
 
-    fn cdn(&self) -> Arc<CdnBackend> {
-        self.cdn
-            .get_or_init(|| Arc::new(CdnBackend::new(&self.config(), &self.runtime())))
-            .clone()
-    }
-
-    fn pool(&self) -> Pool {
-        self.db().pool()
-    }
-
-    fn metrics(&self) -> Arc<Metrics> {
+    pub(crate) fn metrics(&self) -> Arc<Metrics> {
         self.metrics
             .get_or_init(|| Arc::new(Metrics::new().expect("failed to initialize the metrics")))
             .clone()
     }
-
-    fn index(&self) -> Arc<Index> {
-        self.index
-            .get_or_init(|| {
-                Arc::new(
-                    Index::new(self.config().registry_index_path.clone())
-                        .expect("failed to initialize the index"),
-                )
-            })
-            .clone()
-    }
-
-    fn repository_stats_updater(&self) -> Arc<RepositoryStatsUpdater> {
-        self.repository_stats_updater
-            .get_or_init(|| Arc::new(RepositoryStatsUpdater::new(&self.config(), self.pool())))
-            .clone()
-    }
-
-    fn runtime(&self) -> Arc<Runtime> {
+    pub(crate) fn runtime(&self) -> Arc<Runtime> {
         self.runtime
             .get_or_init(|| {
                 Arc::new(
@@ -421,6 +372,84 @@ impl Context for TestEnvironment {
                 )
             })
             .clone()
+    }
+
+    pub(crate) fn index(&self) -> Arc<Index> {
+        self.index
+            .get_or_init(|| {
+                Arc::new(
+                    Index::new(self.config().registry_index_path.clone())
+                        .expect("failed to initialize the index"),
+                )
+            })
+            .clone()
+    }
+
+    pub(crate) fn repository_stats_updater(&self) -> Arc<RepositoryStatsUpdater> {
+        self.repository_stats_updater
+            .get_or_init(|| Arc::new(RepositoryStatsUpdater::new(&self.config(), self.pool())))
+            .clone()
+    }
+
+    pub(crate) fn db(&self) -> &TestDatabase {
+        self.db.get_or_init(|| {
+            TestDatabase::new(&self.config(), self.metrics()).expect("failed to initialize the db")
+        })
+    }
+
+    pub(crate) fn override_frontend(&self, init: impl FnOnce(&mut TestFrontend)) -> &TestFrontend {
+        let mut frontend = TestFrontend::new(self);
+        init(&mut frontend);
+        if self.frontend.set(frontend).is_err() {
+            panic!("cannot call override_frontend after frontend is initialized");
+        }
+        self.frontend.get().unwrap()
+    }
+
+    pub(crate) fn frontend(&self) -> &TestFrontend {
+        self.frontend.get_or_init(|| TestFrontend::new(self))
+    }
+
+    pub(crate) fn fake_release(&self) -> fakes::FakeRelease {
+        fakes::FakeRelease::new(self.db(), self.storage())
+    }
+}
+
+impl Context for TestEnvironment {
+    fn config(&self) -> Arc<Config> {
+        TestEnvironment::config(self)
+    }
+
+    fn build_queue(&self) -> Arc<BuildQueue> {
+        TestEnvironment::build_queue(self)
+    }
+
+    fn storage(&self) -> Arc<Storage> {
+        TestEnvironment::storage(self)
+    }
+
+    fn cdn(&self) -> Arc<CdnBackend> {
+        TestEnvironment::cdn(self)
+    }
+
+    fn pool(&self) -> Pool {
+        self.db().pool()
+    }
+
+    fn metrics(&self) -> Arc<Metrics> {
+        self.metrics()
+    }
+
+    fn index(&self) -> Arc<Index> {
+        self.index()
+    }
+
+    fn repository_stats_updater(&self) -> Arc<RepositoryStatsUpdater> {
+        self.repository_stats_updater()
+    }
+
+    fn runtime(&self) -> Arc<Runtime> {
+        self.runtime()
     }
 }
 
