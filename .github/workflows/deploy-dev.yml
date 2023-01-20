@@ -1,12 +1,13 @@
----
+name: Deploy Dev
 
-name: Deploy
 on:
-  workflow_dispatch: {}
+  push:
+    branches:
+      - master
 
 jobs:
-  prod:
-    name: Production
+  docker:
+    name: Build and upload docker image
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -14,13 +15,13 @@ jobs:
       - name: Build the Docker image
         run: docker build -t docs-rs-web -f dockerfiles/Dockerfile --target web-server .
 
-      - name: Upload the Docker image to ECR (production)
+      - name: Upload the Docker image to ECR (dev)
         uses: rust-lang/simpleinfra/github-actions/upload-docker-image@master
         with:
           image: docs-rs-web
           repository: docs-rs-web
-          region: us-west-1
-          aws_access_key_id: "${{ secrets.aws_access_key_id }}"
-          aws_secret_access_key: "${{ secrets.aws_secret_access_key }}"
-          redeploy_ecs_cluster: rust-ecs-prod
+          region: us-east-1
+          aws_access_key_id: "${{ secrets.staging_aws_access_key_id }}"
+          aws_secret_access_key: "${{ secrets.staging_aws_secret_access_key }}"
+          redeploy_ecs_cluster: docs-rs-staging
           redeploy_ecs_service: docs-rs-web
