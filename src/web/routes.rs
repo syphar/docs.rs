@@ -1,5 +1,6 @@
 use super::{cache::CachePolicy, error::AxumNope, metrics::request_recorder, WebState};
 use axum::{
+    extract::State,
     handler::Handler as AxumHandler,
     http::Request as AxumHttpRequest,
     middleware::{self, Next},
@@ -15,16 +16,19 @@ use tracing::{debug, instrument};
 const INTERNAL_PREFIXES: &[&str] = &["-", "about", "crate", "releases", "sitemap.xml"];
 
 #[instrument(skip_all)]
-fn get_static<H, T, S, B>(handler: H) -> MethodRouter<S, B, Infallible>
+fn get_static<H, T, S, B>(state: State<WebState>, handler: H) -> MethodRouter<S, B, Infallible>
 where
     H: AxumHandler<T, S, B>,
     B: Send + 'static + hyper::body::HttpBody,
     T: 'static,
     S: Clone + Send + Sync + 'static,
 {
-    get(handler).route_layer(middleware::from_fn(|request, next| async {
-        request_recorder(request, next, Some("static resource")).await
-    }))
+    get(handler).route_layer(middleware::from_fn_with_state(
+        state,
+        |state: State<WebState>, request, next| async {
+            request_recorder(request, next, Some("static resource")).await
+        },
+    ))
 }
 
 #[instrument(skip_all)]

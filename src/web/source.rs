@@ -10,7 +10,11 @@ use crate::{
     Storage,
 };
 use anyhow::Result;
-use axum::{extract::Path, headers::HeaderMapExt, response::IntoResponse, State};
+use axum::{
+    extract::{Path, State},
+    headers::HeaderMapExt,
+    response::IntoResponse,
+};
 
 use postgres::Client;
 use serde::{Deserialize, Serialize};

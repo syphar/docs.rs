@@ -121,6 +121,22 @@ impl FromRef<WebState> for Pool {
     }
 }
 
+macro_rules! from_ref_impl {
+    ($type:ty, $attr:ident) => {
+        impl FromRef<WebState> for Arc<$type> {
+            fn from_ref(ctx: &WebState) -> Arc<$type> {
+                ctx.$attr.clone()
+            }
+        }
+    };
+}
+
+from_ref_impl!(RepositoryStatsUpdater, repository_stats_updater);
+from_ref_impl!(BuildQueue, build_queue);
+from_ref_impl!(Metrics, metrics);
+from_ref_impl!(Config, config);
+from_ref_impl!(Storage, storage);
+
 #[derive(Debug)]
 struct MatchVersion {
     /// Represents the crate name that was found when attempting to load a crate release.
@@ -365,6 +381,7 @@ pub fn start_web_server(addr: Option<&str>, context: &dyn Context) -> Result<(),
     // be initialized while starting the server below.
     context.storage()?;
     context.repository_stats_updater()?;
+    context.index()?;
 
     context.runtime()?.block_on(async {
         axum::Server::bind(&axum_addr)

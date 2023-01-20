@@ -22,7 +22,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _};
 use axum::{
-    extract::{Extract, Path, Query, State},
+    extract::{Extension, Path, Query, State},
     http::{StatusCode, Uri},
     response::{Html, IntoResponse, Response as AxumResponse},
     TypedHeader,
@@ -369,11 +369,11 @@ pub(crate) struct RustdocHtmlParams {
 pub(crate) async fn rustdoc_html_server_handler(
     Path(params): Path<RustdocHtmlParams>,
     State(metrics): State<Arc<Metrics>>,
-    State(templates): State<Arc<TemplateData>>,
+    Extension(templates): Extension<Arc<TemplateData>>,
     State(pool): State<Pool>,
     State(storage): State<Arc<Storage>>,
     State(config): State<Arc<Config>>,
-    State(csp): State<Arc<Csp>>,
+    Extension(csp): Extension<Arc<Csp>>,
     State(updater): State<Arc<RepositoryStatsUpdater>>,
     uri: Uri,
 ) -> AxumResult<AxumResponse> {
@@ -856,7 +856,7 @@ pub(crate) async fn badge_handler(
     Ok((
         StatusCode::MOVED_PERMANENTLY,
         [(http::header::LOCATION, url.to_string())],
-        State(CachePolicy::ForeverInCdnAndBrowser),
+        Extension(CachePolicy::ForeverInCdnAndBrowser),
     ))
 }
 

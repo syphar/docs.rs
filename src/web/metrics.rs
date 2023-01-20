@@ -1,4 +1,9 @@
-use crate::{db::Pool, utils::spawn_blocking, web::error::AxumResult, BuildQueue, Metrics};
+use crate::{
+    db::Pool,
+    utils::spawn_blocking,
+    web::{error::AxumResult, WebState},
+    BuildQueue, Metrics,
+};
 use anyhow::Context as _;
 use axum::{
     body::Body,
@@ -61,6 +66,7 @@ fn duration_to_seconds(d: Duration) -> f64 {
 pub(crate) async fn request_recorder<B>(
     request: AxumRequest<B>,
     next: Next<B>,
+    // State(ctx): State<WebState>,
     route_name: Option<&str>,
 ) -> impl IntoResponse {
     let route_name = if let Some(rn) = route_name {
@@ -70,12 +76,6 @@ pub(crate) async fn request_recorder<B>(
     } else {
         Cow::Owned(request.uri().path().to_string())
     };
-
-    let metrics = request
-        .extensions()
-        .get::<Arc<Metrics>>()
-        .expect("metrics missing in request extensions")
-        .clone();
 
     let start = Instant::now();
     let result = next.run(request).await;
