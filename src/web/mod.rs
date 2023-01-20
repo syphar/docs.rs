@@ -27,10 +27,17 @@ mod sitemap;
 mod source;
 mod statics;
 
-use crate::{db::Pool, impl_axum_webpage, Context};
+use crate::{
+    cdn::CdnBackend, db::Pool, impl_axum_webpage, repositories::RepositoryStatsUpdater, BuildQueue,
+    Config, Context, Index, Metrics, Storage,
+};
 use anyhow::Error;
 use axum::{
-    extract::Extension, http::StatusCode, middleware, response::IntoResponse, Router as AxumRouter,
+    extract::{Extension, FromRef},
+    http::StatusCode,
+    middleware,
+    response::IntoResponse,
+    Router as AxumRouter,
 };
 use chrono::{DateTime, Utc};
 use error::AxumNope;
@@ -41,6 +48,7 @@ use semver::{Version, VersionReq};
 use serde::Serialize;
 use std::borrow::Borrow;
 use std::{borrow::Cow, net::SocketAddr, sync::Arc};
+use tokio::runtime::Runtime;
 use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
 use url::form_urlencoded;
@@ -55,6 +63,63 @@ pub(crate) fn encode_url_path(path: &str) -> String {
 }
 
 const DEFAULT_BIND: &str = "0.0.0.0:3000";
+
+#[derive(Clone)]
+pub(crate) struct WebState {
+    build_queue: Arc<BuildQueue>,
+    storage: Arc<Storage>,
+    cdn: Arc<CdnBackend>,
+    config: Arc<Config>,
+    pool: Pool,
+    metrics: Arc<Metrics>,
+    index: Arc<Index>,
+    repository_stats_updater: Arc<RepositoryStatsUpdater>,
+    runtime: Arc<Runtime>,
+}
+
+impl Context for WebState {
+    fn config(&self) -> Result<Arc<crate::Config>> {
+        Ok(self.config.clone())
+    }
+
+    fn build_queue(&self) -> Result<Arc<crate::BuildQueue>> {
+        Ok(self.build_queue.clone())
+    }
+
+    fn storage(&self) -> Result<Arc<crate::Storage>> {
+        Ok(self.storage.clone())
+    }
+
+    fn cdn(&self) -> Result<Arc<crate::cdn::CdnBackend>> {
+        Ok(self.cdn.clone())
+    }
+
+    fn pool(&self) -> Result<Pool> {
+        Ok(self.pool.clone())
+    }
+
+    fn metrics(&self) -> Result<Arc<crate::Metrics>> {
+        Ok(self.metrics.clone())
+    }
+
+    fn index(&self) -> Result<Arc<crate::Index>> {
+        Ok(self.index.clone())
+    }
+
+    fn repository_stats_updater(&self) -> Result<Arc<crate::repositories::RepositoryStatsUpdater>> {
+        Ok(self.repository_stats_updater.clone())
+    }
+
+    fn runtime(&self) -> Result<Arc<tokio::runtime::Runtime>> {
+        Ok(self.runtime.clone())
+    }
+}
+
+impl FromRef<WebState> for Pool {
+    fn from_ref(ctx: &WebState) -> Pool {
+        ctx.pool.clone()
+    }
+}
 
 #[derive(Debug)]
 struct MatchVersion {
@@ -248,25 +313,38 @@ pub(crate) fn build_axum_app(
     context: &dyn Context,
     template_data: Arc<TemplateData>,
 ) -> Result<AxumRouter, Error> {
-    Ok(routes::build_axum_routes().layer(
+    let state = WebState {
+        build_queue: context.build_queue()?,
+        pool: context.pool()?,
+        storage: context.storage()?,
+        cdn: context.cdn()?,
+        config: context.config()?,
+        index: context.index()?,
+        metrics: context.metrics()?,
+        runtime: context.runtime()?,
+        repository_stats_updater: context.repository_stats_updater()?,
+    };
+
+    Ok(routes::build_axum_routes().with_state(state.clone()).layer(
         // It’s recommended to use tower::ServiceBuilder to apply multiple middleware at once,
         // instead of calling Router::layer repeatedly:
         ServiceBuilder::new()
             .layer(TraceLayer::new_for_http())
             .layer(sentry_tower::NewSentryLayer::new_from_top())
             .layer(sentry_tower::SentryHttpLayer::with_transaction())
-            .layer(Extension(context.pool()?))
-            .layer(Extension(context.build_queue()?))
-            .layer(Extension(context.metrics()?))
-            .layer(Extension(context.config()?))
-            .layer(Extension(context.storage()?))
-            .layer(Extension(context.repository_stats_updater()?))
             .layer(Extension(template_data))
-            .layer(middleware::from_fn(csp::csp_middleware))
-            .layer(middleware::from_fn(
+            .layer(middleware::from_fn_with_state(
+                state.clone(),
+                csp::csp_middleware,
+            ))
+            .layer(middleware::from_fn_with_state(
+                state.clone(),
                 page::web_page::render_templates_middleware,
             ))
-            .layer(middleware::from_fn(cache::cache_middleware)),
+            .layer(middleware::from_fn_with_state(
+                state,
+                cache::cache_middleware,
+            )),
     ))
 }
 

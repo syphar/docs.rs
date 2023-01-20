@@ -22,7 +22,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _};
 use axum::{
-    extract::{Extension, Path, Query},
+    extract::{Extract, Path, Query, State},
     http::{StatusCode, Uri},
     response::{Html, IntoResponse, Response as AxumResponse},
     TypedHeader,
@@ -93,10 +93,10 @@ async fn try_serve_legacy_toolchain_asset(
 #[instrument(skip_all)]
 pub(crate) async fn rustdoc_redirector_handler(
     Path(params): Path<RustdocRedirectorParams>,
-    Extension(metrics): Extension<Arc<Metrics>>,
-    Extension(storage): Extension<Arc<Storage>>,
-    Extension(config): Extension<Arc<Config>>,
-    Extension(pool): Extension<Pool>,
+    State(metrics): State<Arc<Metrics>>,
+    State(storage): State<Arc<Storage>>,
+    State(config): State<Arc<Config>>,
+    State(pool): State<Pool>,
     Query(query_pairs): Query<HashMap<String, String>>,
     uri: Uri,
 ) -> AxumResult<impl IntoResponse> {
@@ -368,13 +368,13 @@ pub(crate) struct RustdocHtmlParams {
 #[instrument(skip_all)]
 pub(crate) async fn rustdoc_html_server_handler(
     Path(params): Path<RustdocHtmlParams>,
-    Extension(metrics): Extension<Arc<Metrics>>,
-    Extension(templates): Extension<Arc<TemplateData>>,
-    Extension(pool): Extension<Pool>,
-    Extension(storage): Extension<Arc<Storage>>,
-    Extension(config): Extension<Arc<Config>>,
-    Extension(csp): Extension<Arc<Csp>>,
-    Extension(updater): Extension<Arc<RepositoryStatsUpdater>>,
+    State(metrics): State<Arc<Metrics>>,
+    State(templates): State<Arc<TemplateData>>,
+    State(pool): State<Pool>,
+    State(storage): State<Arc<Storage>>,
+    State(config): State<Arc<Config>>,
+    State(csp): State<Arc<Csp>>,
+    State(updater): State<Arc<RepositoryStatsUpdater>>,
     uri: Uri,
 ) -> AxumResult<AxumResponse> {
     let mut rendering_time = RenderingTimesRecorder::new(&metrics.rustdoc_rendering_times);
@@ -754,9 +754,9 @@ fn path_for_version(file_path: &[&str], crate_details: &CrateDetails) -> String 
 
 pub(crate) async fn target_redirect_handler(
     Path((name, version, req_path)): Path<(String, String, String)>,
-    Extension(pool): Extension<Pool>,
-    Extension(storage): Extension<Arc<Storage>>,
-    Extension(updater): Extension<Arc<RepositoryStatsUpdater>>,
+    State(pool): State<Pool>,
+    State(storage): State<Arc<Storage>>,
+    State(updater): State<Arc<RepositoryStatsUpdater>>,
 ) -> AxumResult<impl IntoResponse> {
     let release_found = match_version_axum(&pool, &name, Some(&version)).await?;
     let (version, version_or_latest, is_latest_url) = match release_found.version {
@@ -856,15 +856,15 @@ pub(crate) async fn badge_handler(
     Ok((
         StatusCode::MOVED_PERMANENTLY,
         [(http::header::LOCATION, url.to_string())],
-        Extension(CachePolicy::ForeverInCdnAndBrowser),
+        State(CachePolicy::ForeverInCdnAndBrowser),
     ))
 }
 
 pub(crate) async fn download_handler(
     Path((name, req_version)): Path<(String, String)>,
-    Extension(pool): Extension<Pool>,
-    Extension(storage): Extension<Arc<Storage>>,
-    Extension(config): Extension<Arc<Config>>,
+    State(pool): State<Pool>,
+    State(storage): State<Arc<Storage>>,
+    State(config): State<Arc<Config>>,
 ) -> AxumResult<impl IntoResponse> {
     let (version, _) = match_version_axum(&pool, &name, Some(&req_version))
         .await?
@@ -911,8 +911,8 @@ pub(crate) async fn download_handler(
 /// This serves files from S3, and is pointed to by the `--static-root-path` flag to rustdoc.
 pub(crate) async fn static_asset_handler(
     Path(path): Path<String>,
-    Extension(storage): Extension<Arc<Storage>>,
-    Extension(config): Extension<Arc<Config>>,
+    State(storage): State<Arc<Storage>>,
+    State(config): State<Arc<Config>>,
 ) -> AxumResult<impl IntoResponse> {
     let storage_path = format!("{}{}", RUSTDOC_STATIC_STORAGE_PREFIX, path);
 

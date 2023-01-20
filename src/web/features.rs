@@ -9,7 +9,7 @@ use crate::{
 };
 use anyhow::anyhow;
 use axum::{
-    extract::{Extension, Path},
+    extract::{Path, State},
     response::IntoResponse,
 };
 use serde::Serialize;
@@ -37,7 +37,7 @@ impl_axum_webpage! {
 
 pub(crate) async fn build_features_handler(
     Path((name, req_version)): Path<(String, String)>,
-    Extension(pool): Extension<Pool>,
+    State(pool): State<Pool>,
 ) -> AxumResult<impl IntoResponse> {
     let (version, version_or_latest, is_latest_url) =
         match match_version_axum(&pool, &name, Some(&req_version))

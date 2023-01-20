@@ -11,7 +11,7 @@ use crate::{
 };
 use anyhow::anyhow;
 use axum::{
-    extract::{Extension, Path},
+    extract::{Path, State},
     response::{IntoResponse, Response as AxumResponse},
 };
 use chrono::{DateTime, Utc};
@@ -313,8 +313,8 @@ pub(crate) struct CrateDetailHandlerParams {
 #[tracing::instrument]
 pub(crate) async fn crate_details_handler(
     Path(params): Path<CrateDetailHandlerParams>,
-    Extension(pool): Extension<Pool>,
-    Extension(repository_stats_updater): Extension<Arc<RepositoryStatsUpdater>>,
+    State(pool): State<Pool>,
+    State(repository_stats_updater): State<Arc<RepositoryStatsUpdater>>,
 ) -> AxumResult<AxumResponse> {
     // this handler must always called with a crate name
     if params.version.is_none() {

@@ -10,7 +10,7 @@ use crate::{
     Config, Storage,
 };
 use axum::{
-    extract::{Extension, Path},
+    extract::{Path, State},
     response::IntoResponse,
 };
 use chrono::{DateTime, Utc};
@@ -39,9 +39,9 @@ impl_axum_webpage! {
 
 pub(crate) async fn build_details_handler(
     Path((name, version, id)): Path<(String, String, String)>,
-    Extension(pool): Extension<Pool>,
-    Extension(config): Extension<Arc<Config>>,
-    Extension(storage): Extension<Arc<Storage>>,
+    State(pool): State<Pool>,
+    State(config): State<Arc<Config>>,
+    State(storage): State<Arc<Storage>>,
 ) -> AxumResult<impl IntoResponse> {
     let id: i32 = id.parse().map_err(|_| AxumNope::BuildNotFound)?;
 

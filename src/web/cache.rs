@@ -1,9 +1,13 @@
-use crate::config::Config;
+use crate::{
+    config::Config,
+    web::{error::AxumResult, WebState},
+    Context,
+};
 use axum::{
-    http::Request as AxumHttpRequest, middleware::Next, response::Response as AxumResponse,
+    extract::State, http::Request as AxumHttpRequest, middleware::Next,
+    response::Response as AxumResponse,
 };
 use http::{header::CACHE_CONTROL, HeaderValue};
-use std::sync::Arc;
 
 pub static NO_CACHING: HeaderValue = HeaderValue::from_static("max-age=0");
 
@@ -62,12 +66,12 @@ impl CachePolicy {
     }
 }
 
-pub(crate) async fn cache_middleware<B>(req: AxumHttpRequest<B>, next: Next<B>) -> AxumResponse {
-    let config = req
-        .extensions()
-        .get::<Arc<Config>>()
-        .cloned()
-        .expect("missing config extension in request");
+pub(crate) async fn cache_middleware<B>(
+    State(ctx): State<WebState>,
+    req: AxumHttpRequest<B>,
+    next: Next<B>,
+) -> AxumResult<AxumResponse> {
+    let config = ctx.config()?;
 
     let mut response = next.run(req).await;
 
@@ -88,7 +92,7 @@ pub(crate) async fn cache_middleware<B>(req: AxumHttpRequest<B>, next: Next<B>) 
             .headers_mut()
             .insert(CACHE_CONTROL, cache_directive);
     }
-    response
+    Ok(response)
 }
 
 #[cfg(test)]

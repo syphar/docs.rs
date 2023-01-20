@@ -1,4 +1,4 @@
-use super::{cache::CachePolicy, error::AxumNope, metrics::request_recorder};
+use super::{cache::CachePolicy, error::AxumNope, metrics::request_recorder, WebState};
 use axum::{
     handler::Handler as AxumHandler,
     http::Request as AxumHttpRequest,
@@ -75,7 +75,7 @@ async fn block_blacklisted_prefixes_middleware<B>(
     next.run(request).await
 }
 
-pub(super) fn build_axum_routes() -> AxumRouter {
+pub(super) fn build_axum_routes() -> AxumRouter<WebState> {
     // hint for naming axum routes:
     // when routes overlap, the route parameters at the same position
     // have to use the same name:

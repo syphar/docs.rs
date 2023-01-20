@@ -10,7 +10,7 @@ use crate::{
     Storage,
 };
 use anyhow::Result;
-use axum::{extract::Path, headers::HeaderMapExt, response::IntoResponse, Extension};
+use axum::{extract::Path, headers::HeaderMapExt, response::IntoResponse, State};
 
 use postgres::Client;
 use serde::{Deserialize, Serialize};
@@ -199,8 +199,8 @@ pub(crate) async fn source_browser_handler(
         version,
         path,
     }): Path<SourceBrowserHandlerParams>,
-    Extension(storage): Extension<Arc<Storage>>,
-    Extension(pool): Extension<Pool>,
+    State(storage): State<Arc<Storage>>,
+    State(pool): State<Pool>,
 ) -> AxumResult<impl IntoResponse> {
     let v = match_version_axum(&pool, &name, Some(&version)).await?;
 

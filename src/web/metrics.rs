@@ -2,7 +2,7 @@ use crate::{db::Pool, utils::spawn_blocking, web::error::AxumResult, BuildQueue,
 use anyhow::Context as _;
 use axum::{
     body::Body,
-    extract::{Extension, MatchedPath},
+    extract::{MatchedPath, State},
     http::Request as AxumRequest,
     http::{
         header::{CONTENT_LENGTH, CONTENT_TYPE},
@@ -21,9 +21,9 @@ use std::{
 use tracing::debug;
 
 pub(super) async fn metrics_handler(
-    Extension(pool): Extension<Pool>,
-    Extension(metrics): Extension<Arc<Metrics>>,
-    Extension(queue): Extension<Arc<BuildQueue>>,
+    State(pool): State<Pool>,
+    State(metrics): State<Arc<Metrics>>,
+    State(queue): State<Arc<BuildQueue>>,
 ) -> AxumResult<impl IntoResponse> {
     let families = spawn_blocking(move || metrics.gather(&pool, &queue)).await?;
 

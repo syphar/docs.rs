@@ -9,7 +9,7 @@ use crate::{
     },
 };
 use axum::{
-    extract::{Extension, Path},
+    extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -53,7 +53,7 @@ impl_axum_webpage! {
 
 pub(crate) async fn sitemap_handler(
     Path(letter): Path<String>,
-    Extension(pool): Extension<Pool>,
+    State(pool): State<Pool>,
 ) -> AxumResult<impl IntoResponse> {
     if letter.len() != 1 {
         return Err(AxumNope::ResourceNotFound);
@@ -111,7 +111,7 @@ struct AboutBuilds {
 impl_axum_webpage!(AboutBuilds = "core/about/builds.html");
 
 pub(crate) async fn about_builds_handler(
-    Extension(pool): Extension<Pool>,
+    State(pool): State<Pool>,
 ) -> AxumResult<impl IntoResponse> {
     let rustc_version = spawn_blocking(move || {
         let mut conn = pool.get()?;

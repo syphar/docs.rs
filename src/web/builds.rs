@@ -8,7 +8,7 @@ use crate::{
 };
 use anyhow::Result;
 use axum::{
-    extract::{Extension, Path},
+    extract::{Extension, Path, State},
     http::header::ACCESS_CONTROL_ALLOW_ORIGIN,
     response::IntoResponse,
     Json,
@@ -39,7 +39,7 @@ impl_axum_webpage! {
 
 pub(crate) async fn build_list_handler(
     Path((name, req_version)): Path<(String, String)>,
-    Extension(pool): Extension<Pool>,
+    State(pool): State<Pool>,
 ) -> AxumResult<impl IntoResponse> {
     let (version, version_or_latest) = match match_version_axum(&pool, &name, Some(&req_version))
         .await?
@@ -81,7 +81,7 @@ pub(crate) async fn build_list_handler(
 
 pub(crate) async fn build_list_json_handler(
     Path((name, req_version)): Path<(String, String)>,
-    Extension(pool): Extension<Pool>,
+    State(pool): State<Pool>,
 ) -> AxumResult<impl IntoResponse> {
     let version = match match_version_axum(&pool, &name, Some(&req_version))
         .await?

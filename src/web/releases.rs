@@ -15,7 +15,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _, Result};
 use axum::{
-    extract::{Extension, Path, Query},
+    extract::{Path, Query, State},
     response::{IntoResponse, Response as AxumResponse},
 };
 use chrono::{DateTime, NaiveDate, Utc};
@@ -269,7 +269,7 @@ impl_axum_webpage! {
     HomePage = "core/home.html",
 }
 
-pub(crate) async fn home_page(Extension(pool): Extension<Pool>) -> AxumResult<impl IntoResponse> {
+pub(crate) async fn home_page(State(pool): State<Pool>) -> AxumResult<impl IntoResponse> {
     let recent_releases = spawn_blocking(move || {
         let mut conn = pool.get()?;
         get_releases(&mut conn, 1, RELEASES_IN_HOME, Order::ReleaseTime, true)
@@ -290,7 +290,7 @@ impl_axum_webpage! {
 }
 
 pub(crate) async fn releases_feed_handler(
-    Extension(pool): Extension<Pool>,
+    State(pool): State<Pool>,
 ) -> AxumResult<impl IntoResponse> {
     let recent_releases = spawn_blocking(move || {
         let mut conn = pool.get()?;
@@ -383,28 +383,28 @@ pub(crate) async fn releases_handler(
 
 pub(crate) async fn recent_releases_handler(
     page: Option<Path<i64>>,
-    Extension(pool): Extension<Pool>,
+    State(pool): State<Pool>,
 ) -> AxumResult<impl IntoResponse> {
     releases_handler(pool, page.map(|p| p.0), ReleaseType::Recent).await
 }
 
 pub(crate) async fn releases_by_stars_handler(
     page: Option<Path<i64>>,
-    Extension(pool): Extension<Pool>,
+    State(pool): State<Pool>,
 ) -> AxumResult<impl IntoResponse> {
     releases_handler(pool, page.map(|p| p.0), ReleaseType::Stars).await
 }
 
 pub(crate) async fn releases_recent_failures_handler(
     page: Option<Path<i64>>,
-    Extension(pool): Extension<Pool>,
+    State(pool): State<Pool>,
 ) -> AxumResult<impl IntoResponse> {
     releases_handler(pool, page.map(|p| p.0), ReleaseType::RecentFailures).await
 }
 
 pub(crate) async fn releases_failures_by_stars_handler(
     page: Option<Path<i64>>,
-    Extension(pool): Extension<Pool>,
+    State(pool): State<Pool>,
 ) -> AxumResult<impl IntoResponse> {
     releases_handler(pool, page.map(|p| p.0), ReleaseType::Failures).await
 }
@@ -510,9 +510,9 @@ impl_axum_webpage! {
 }
 
 pub(crate) async fn search_handler(
-    Extension(pool): Extension<Pool>,
-    Extension(config): Extension<Arc<Config>>,
-    Extension(metrics): Extension<Arc<Metrics>>,
+    State(pool): State<Pool>,
+    State(config): State<Arc<Config>>,
+    State(metrics): State<Arc<Metrics>>,
     Query(mut params): Query<HashMap<String, String>>,
 ) -> AxumResult<AxumResponse> {
     let query = params
@@ -633,9 +633,7 @@ impl_axum_webpage! {
     ReleaseActivity = "releases/activity.html",
 }
 
-pub(crate) async fn activity_handler(
-    Extension(pool): Extension<Pool>,
-) -> AxumResult<impl IntoResponse> {
+pub(crate) async fn activity_handler(State(pool): State<Pool>) -> AxumResult<impl IntoResponse> {
     let data = spawn_blocking(move ||  {
         let mut conn = pool.get()?;
         Ok(conn.query(
@@ -702,8 +700,8 @@ impl_axum_webpage! {
 }
 
 pub(crate) async fn build_queue_handler(
-    Extension(build_queue): Extension<Arc<BuildQueue>>,
-    Extension(pool): Extension<Pool>,
+    State(build_queue): State<Arc<BuildQueue>>,
+    State(pool): State<Pool>,
 ) -> AxumResult<impl IntoResponse> {
     let (queue, active_deployments) = spawn_blocking(move || {
         let mut queue = build_queue.queued_crates()?;
