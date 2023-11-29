@@ -9,29 +9,18 @@ use crate::storage::{AsyncStorage, Storage, StorageKind};
 use crate::web::{build_axum_app, cache, page::TemplateData};
 use crate::{BuildQueue, Config, Context, Index, InstanceMetrics, RegistryApi, ServiceMetrics};
 use anyhow::Context as _;
-use axum::async_trait;
+use axum::{async_trait, body::Bytes, http::Request};
 use fn_error_context::context;
 use futures_util::{stream::TryStreamExt, FutureExt};
 use once_cell::sync::OnceCell;
-use reqwest::{
-    blocking::{Client, ClientBuilder, RequestBuilder, Response},
-    Method,
-};
 use sqlx::Connection as _;
-use std::thread::{self, JoinHandle};
-use std::{
-    fs,
-    future::Future,
-    net::{SocketAddr, TcpListener},
-    panic,
-    rc::Rc,
-    str::FromStr,
-    sync::Arc,
-    time::Duration,
-};
+use std::{fs, future::Future, panic, rc::Rc, str::FromStr, sync::Arc};
 use tokio::runtime::{Builder, Runtime};
-use tokio::sync::oneshot::Sender;
-use tracing::{debug, error, instrument, trace};
+use tower::ServiceExt;
+use tracing::{debug, error, instrument};
+
+pub(crate) type MockRequest = Request<Bytes>;
+pub(crate) type MockResponse = hyper::Response<Bytes>;
 
 #[track_caller]
 pub(crate) fn wrapper(f: impl FnOnce(&TestEnvironment) -> Result<()>) {
@@ -91,7 +80,7 @@ where
 }
 
 /// check a request if the cache control header matches NoCache
-pub(crate) fn assert_no_cache(res: &Response) {
+pub(crate) fn assert_no_cache(res: &MockResponse) {
     assert_eq!(
         res.headers()
             .get("Cache-Control")
@@ -102,7 +91,7 @@ pub(crate) fn assert_no_cache(res: &Response) {
 
 /// check a request if the cache control header matches the given cache config.
 pub(crate) fn assert_cache_control(
-    res: &Response,
+    res: &MockResponse,
     cache_policy: cache::CachePolicy,
     config: &Config,
 ) {
@@ -121,7 +110,7 @@ pub(crate) fn assert_cache_control(
 
 /// Make sure that a URL returns a status code between 200-299
 pub(crate) fn assert_success(path: &str, web: &TestFrontend) -> Result<()> {
-    let status = web.get(path).send()?.status();
+    let status = web.get(path).status();
     assert!(status.is_success(), "failed to GET {path}: {status}");
     Ok(())
 }
@@ -134,7 +123,7 @@ pub(crate) fn assert_success_cached(
     cache_policy: cache::CachePolicy,
     config: &Config,
 ) -> Result<()> {
-    let response = web.get(path).send()?;
+    let response = web.get(path);
     let status = response.status();
     assert!(status.is_success(), "failed to GET {path}: {status}");
     assert_cache_control(&response, cache_policy, config);
@@ -143,7 +132,7 @@ pub(crate) fn assert_success_cached(
 
 /// Make sure that a URL returns a 404
 pub(crate) fn assert_not_found(path: &str, web: &TestFrontend) -> Result<()> {
-    let response = web.get(path).send()?;
+    let response = web.get(path);
 
     // for now, 404s should always have `no-cache`
     assert_no_cache(&response);
@@ -156,8 +145,9 @@ fn assert_redirect_common(
     path: &str,
     expected_target: &str,
     web: &TestFrontend,
-) -> Result<Response> {
-    let response = web.get_no_redirect(path).send()?;
+) -> Result<MockResponse> {
+    // FIXME: let response = web.get_no_redirect(path).send()?;
+    let response = web.get(path);
     let status = response.status();
     if !status.is_redirection() {
         anyhow::bail!("non-redirect from GET {path}: {status}");
@@ -171,12 +161,13 @@ fn assert_redirect_common(
         .context("non-ASCII redirect")?;
 
     if !expected_target.starts_with("http") {
+        // FIXME: ?
         // TODO: Should be able to use Url::make_relative,
         // but https://github.com/servo/rust-url/issues/766
-        let base = format!("http://{}", web.server_addr());
-        redirect_target = redirect_target
-            .strip_prefix(&base)
-            .unwrap_or(redirect_target);
+        // let base = format!("http://{}", web.server_addr());
+        // redirect_target = redirect_target
+        //     .strip_prefix(&base)
+        //     .unwrap_or(redirect_target);
     }
 
     if redirect_target != expected_target {
@@ -194,7 +185,7 @@ pub(crate) fn assert_redirect_unchecked(
     path: &str,
     expected_target: &str,
     web: &TestFrontend,
-) -> Result<Response> {
+) -> Result<MockResponse> {
     assert_redirect_common(path, expected_target, web)
 }
 
@@ -208,7 +199,7 @@ pub(crate) fn assert_redirect_cached_unchecked(
     cache_policy: cache::CachePolicy,
     web: &TestFrontend,
     config: &Config,
-) -> Result<Response> {
+) -> Result<MockResponse> {
     let redirect_response = assert_redirect_common(path, expected_target, web)?;
     assert_cache_control(&redirect_response, cache_policy, config);
     Ok(redirect_response)
@@ -222,10 +213,11 @@ pub(crate) fn assert_redirect(
     path: &str,
     expected_target: &str,
     web: &TestFrontend,
-) -> Result<Response> {
+) -> Result<MockResponse> {
     let redirect_response = assert_redirect_common(path, expected_target, web)?;
 
-    let response = web.get_no_redirect(expected_target).send()?;
+    // FIXME: let response = web.get_no_redirect(expected_target).send()?;
+    let response = web.get(expected_target);
     let status = response.status();
     if !status.is_success() {
         anyhow::bail!("failed to GET {expected_target}: {status}");
@@ -245,11 +237,12 @@ pub(crate) fn assert_redirect_cached(
     cache_policy: cache::CachePolicy,
     web: &TestFrontend,
     config: &Config,
-) -> Result<Response> {
+) -> Result<MockResponse> {
     let redirect_response = assert_redirect_common(path, expected_target, web)?;
     assert_cache_control(&redirect_response, cache_policy, config);
 
-    let response = web.get_no_redirect(expected_target).send()?;
+    // FIXME: let response = web.get_no_redirect(expected_target).send()?;
+    let response = web.get(expected_target);
     let status = response.status();
     if !status.is_success() {
         anyhow::bail!("failed to GET {expected_target}: {status}");
@@ -311,9 +304,6 @@ impl TestEnvironment {
     }
 
     fn cleanup(self) {
-        if let Some(frontend) = self.frontend.into_inner() {
-            frontend.shutdown();
-        }
         if let Some(storage) = self.storage.get() {
             storage
                 .cleanup_after_test()
@@ -676,100 +666,41 @@ impl Drop for TestDatabase {
 }
 
 pub(crate) struct TestFrontend {
-    axum_server_thread: JoinHandle<()>,
-    axum_server_shutdown_signal: Sender<()>,
-    axum_server_address: SocketAddr,
-    pub(crate) client: Client,
-    pub(crate) client_no_redirect: Client,
+    // router: axum::Router,
+    runtime: Arc<Runtime>,
 }
 
 impl TestFrontend {
     #[instrument(skip_all)]
     fn new(context: &dyn Context) -> Self {
-        fn build(f: impl FnOnce(ClientBuilder) -> ClientBuilder) -> Client {
-            let base = Client::builder()
-                .connect_timeout(Duration::from_millis(2000))
-                .timeout(Duration::from_millis(2000))
-                // The test server only supports a single connection, so having two clients with
-                // idle connections deadlocks the tests
-                .pool_max_idle_per_host(0);
-            f(base).build().unwrap()
-        }
-
         debug!("loading template data");
         let template_data = Arc::new(TemplateData::new(1).unwrap());
 
-        debug!("binding local TCP port for axum");
-        let axum_listener =
-            TcpListener::bind("127.0.0.1:0".parse::<SocketAddr>().unwrap()).unwrap();
-
-        let axum_addr = axum_listener.local_addr().unwrap();
-        debug!("bound to local address: {}", axum_addr);
-
-        let (tx, rx) = tokio::sync::oneshot::channel::<()>();
-
-        debug!("building axum app");
-        let axum_app = build_axum_app(context, template_data).expect("could not build axum app");
-
-        let handle = thread::spawn({
-            let runtime = context.runtime().unwrap();
-            move || {
-                runtime.block_on(async {
-                    axum::Server::from_tcp(axum_listener)
-                        .unwrap()
-                        .serve(axum_app.into_make_service())
-                        .with_graceful_shutdown(async {
-                            rx.await.ok();
-                        })
-                        .await
-                        .expect("error from axum server")
-                })
-            }
-        });
-
         Self {
-            axum_server_address: axum_addr,
-            axum_server_thread: handle,
-            axum_server_shutdown_signal: tx,
-            client: build(|b| b),
-            client_no_redirect: build(|b| b.redirect(reqwest::redirect::Policy::none())),
+            // router: build_axum_app(context, template_data).expect("could not build axum app"),
+            runtime: context.runtime().unwrap(),
         }
     }
 
-    #[instrument(skip_all)]
-    fn shutdown(self) {
-        trace!("sending axum shutdown signal");
-        self.axum_server_shutdown_signal
-            .send(())
-            .expect("could not send shutdown signal");
+    /// run a request
+    /// Using hyper::Response so we don't need to use body::to_bytes in all tests.
+    #[track_caller]
+    pub(crate) fn run(&self, request: MockRequest) -> MockResponse {
+        // let rt = self.runtime;
+        // let router = self.router.clone();
 
-        trace!("joining axum server thread");
-        self.axum_server_thread
-            .join()
-            .expect("could not join axum background thread");
+        // let axum_response = rt
+        //     .block_on(router.oneshot(request.map(hyper::Body::from)))
+        //     .unwrap();
+
+        // let (parts, body) = axum_response.into_parts();
+        // let bytes = rt.block_on(hyper::body::to_bytes(body)).unwrap();
+
+        // hyper::Response::from_parts(parts, bytes)
+        todo!()
     }
 
-    fn build_url(&self, url: &str) -> String {
-        if url.is_empty() || url.starts_with('/') {
-            format!("http://{}{}", self.axum_server_address, url)
-        } else {
-            url.to_owned()
-        }
-    }
-
-    pub(crate) fn server_addr(&self) -> SocketAddr {
-        self.axum_server_address
-    }
-
-    pub(crate) fn get(&self, url: &str) -> RequestBuilder {
-        let url = self.build_url(url);
-        debug!("getting {url}");
-        self.client.request(Method::GET, url)
-    }
-
-    pub(crate) fn get_no_redirect(&self, url: &str) -> RequestBuilder {
-        let url = self.build_url(url);
-        debug!("getting {url} (no redirects)");
-        self.client_no_redirect.request(Method::GET, url)
+    pub(crate) fn get(&self, path: &str) -> MockResponse {
+        self.run(Request::get(path).body(Bytes::new()).unwrap())
     }
 }
