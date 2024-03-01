@@ -28,7 +28,7 @@ use sqlx::Row;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::str;
 use std::sync::Arc;
-use tracing::{debug, warn};
+use tracing::{info, info_span, instrument, warn, Instrument, Span};
 use url::form_urlencoded;
 
 use super::cache::CachePolicy;
@@ -138,6 +138,7 @@ struct SearchResult {
 /// Get the search results for a crate search query
 ///
 /// This delegates to the crates.io search API.
+#[instrument(skip(conn, config))]
 async fn get_search_results(
     conn: &mut sqlx::PgConnection,
     config: &Config,
@@ -180,7 +181,6 @@ async fn get_search_results(
     let url = config
         .registry_api_host
         .join(&format!("/api/v1/crates{query_params}"))?;
-    debug!("fetching search results from {}", url);
 
     // extract the query from the query args.
     // This is easier because the query might have been encoded in the bash64-encoded
@@ -193,13 +193,22 @@ async fn get_search_results(
         }
     });
 
+    let current_span = Span::current();
     let response: CratesIoSearchResult = retry_async(
-        || async {
-            Ok(HTTP_CLIENT
-                .get(url.clone())
-                .send()
-                .await?
-                .error_for_status()?)
+        || {
+            async {
+                info!(%url, %USER_AGENT, "fetching crates.io search results");
+                let response = HTTP_CLIENT.get(url.clone()).send().await?;
+                let status = response.status();
+
+                if status.is_client_error() || status.is_server_error() {
+                    let text = response.text().await;
+                    warn!(%status, response=%response.text().await.unwrap_or("".to_string()), "error from crates.io API");
+                } else {
+                    Ok(response)
+                }
+            }
+            .instrument(info_span!(parent: current_span.clone(), "crates.io API request"))
         },
         config.crates_io_api_call_retries,
     )
@@ -525,6 +534,7 @@ impl_axum_webpage! {
     status = |search| search.status,
 }
 
+#[instrument(skip_all)]
 pub(crate) async fn search_handler(
     mut conn: DbConnection,
     Extension(config): Extension<Arc<Config>>,
