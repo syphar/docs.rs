@@ -20,7 +20,7 @@ exclude = [
 consistency_check = ["crates-index", "itertools"]
 
 [dependencies]
-sentry = "0.32.1"
+sentry = { version = "0.32.1", features = ["UNSTABLE_metrics"] }
 sentry-panic = "0.32.1"
 sentry-tracing = "0.32.1"
 sentry-tower = { version = "0.32.1", features = ["http"] }

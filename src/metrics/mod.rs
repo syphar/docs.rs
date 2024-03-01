@@ -6,6 +6,7 @@ use crate::{cdn, db::Pool, target::TargetAtom, BuildQueue, Config};
 use anyhow::Error;
 use dashmap::DashMap;
 use prometheus::proto::MetricFamily;
+use sentry::metrics::Metric;
 use std::{
     collections::HashSet,
     time::{Duration, Instant},
@@ -299,10 +300,17 @@ impl ServiceMetrics {
         queue: &BuildQueue,
         config: &Config,
     ) -> Result<Vec<MetricFamily>, Error> {
-        self.queue_is_locked.set(queue.is_locked()? as i64);
-        self.queued_crates_count.set(queue.pending_count()? as i64);
-        self.prioritized_crates_count
-            .set(queue.prioritized_count()? as i64);
+        let queue_is_locked = queue.is_locked()? as i64;
+        self.queue_is_locked.set(queue_is_locked);
+        Metric::gauge("service.queue_is_locked", queue_is_locked as f64).send();
+
+        let pending_count = queue.pending_count()? as i64;
+        self.queued_crates_count.set(pending_count);
+        Metric::gauge("service.queued_crates_count", pending_count as f64).send();
+
+        let prioritized_count = queue.prioritized_count()? as i64;
+        self.prioritized_crates_count.set(prioritized_count);
+        Metric::gauge("service.prioritized_crates_count", prioritized_count as f64).send();
 
         let queue_pending_count = queue.pending_count_by_priority()?;
 
@@ -325,10 +333,18 @@ impl ServiceMetrics {
 
         for priority in all_priorities {
             let count = queue_pending_count.get(&priority).unwrap_or(&0);
+            let priority = priority.to_string();
 
             self.queued_crates_count_by_priority
-                .with_label_values(&[&priority.to_string()])
+                .with_label_values(&[&priority])
                 .set(*count as i64);
+
+            Metric::gauge(
+                "service.queued_crates_count_by_priority",
+                prioritized_count as f64,
+            )
+            .with_tag("priority", priority)
+            .send();
         }
 
         let mut conn = pool.get()?;
@@ -338,9 +354,18 @@ impl ServiceMetrics {
             self.queued_cdn_invalidations_by_distribution
                 .with_label_values(&[&distribution_id])
                 .set(count);
+
+            Metric::gauge(
+                "service.queued_cdn_invalidations_by_distribution",
+                count as f64,
+            )
+            .with_tag("distribution", distribution_id)
+            .send();
         }
 
-        self.failed_crates_count.set(queue.failed_count()? as i64);
+        let failed_crates_count = queue.failed_count()? as i64;
+        self.failed_crates_count.set(failed_crates_count);
+        Metric::gauge("service.failed_crates_count", failed_crates_count as f64).send();
         Ok(self.registry.gather())
     }
 }
