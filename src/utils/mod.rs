@@ -20,6 +20,7 @@ pub mod consistency;
 mod copy;
 pub mod daemon;
 mod html;
+pub mod logging;
 mod queue;
 pub(crate) mod queue_builder;
 mod rustc_version;

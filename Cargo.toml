@@ -1,5 +1,5 @@
 [package]
-name = "docs-rs"
+name = "docs_rs"
 version = "0.6.0"
 authors = ["Onur Aslan <onuraslan@gmail.com>", "The Rust Project Developers"]
 readme = "README.md"
@@ -9,12 +9,18 @@ build = "build.rs"
 edition = "2021"
 
 [workspace]
+members = ["docs_rs_*"]
 exclude = [
     "ignored",
     "tests",
     ".workspace",
     ".rustwide-docker",
 ]
+
+[workspace.dependencies]
+clap = { version = "4.0.22", features = [ "derive" ] }
+tokio = { version = "1.0", features = ["rt-multi-thread", "signal", "macros"] }
+
 
 [features]
 consistency_check = ["crates-index", "itertools"]
@@ -30,7 +36,7 @@ tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.16", default-features = false, features = ["ansi", "fmt", "env-filter", "tracing-log"] }
 tracing-log = "0.2.0"
 regex = "1"
-clap = { version = "4.0.22", features = [ "derive" ] }
+clap = { workspace = true }
 crates-index = { version = "2.2.0", default-features = false, features = ["git", "git-performance", "parallel"], optional = true }
 rayon = "1.6.1"
 num_cpus = "1.15.0"
@@ -72,7 +78,7 @@ rusqlite = { version = "0.30.0", features = ["bundled"] }
 hex = "0.4.3"
 
 # Async
-tokio = { version = "1.0", features = ["rt-multi-thread", "signal", "macros"] }
+tokio = { workspace = true }
 futures-util = "0.3.5"
 async-stream = "0.3.5"
 aws-config = "1.0.0"
