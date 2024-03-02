@@ -16,6 +16,7 @@ use futures_util::{
     pin_mut,
     stream::{FuturesUnordered, Stream, StreamExt},
 };
+use sentry::metrics::Metric;
 use std::{io::Write, sync::Arc};
 use tracing::{error, warn};
 
@@ -237,6 +238,7 @@ impl S3Backend {
                         .send()
                         .map_ok(|_| {
                             self.metrics.uploaded_files_total.inc();
+                            Metric::count("uploaded_files_total").send();
                         })
                         .map_err(|err| {
                             warn!("Failed to upload blob to S3: {:?}", err);

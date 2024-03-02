@@ -2,6 +2,7 @@ use super::{Blob, FileRange};
 use crate::{db::Pool, error::Result, InstanceMetrics};
 use chrono::{DateTime, Utc};
 use futures_util::stream::{Stream, TryStreamExt};
+use sentry::metrics::Metric;
 use sqlx::Acquire;
 use std::{convert::TryFrom, sync::Arc};
 
@@ -160,6 +161,7 @@ impl DatabaseBackend {
             )
             .execute(&mut *trans).await?;
             self.metrics.uploaded_files_total.inc();
+            Metric::count("uploaded_files_total").send();
         }
         trans.commit().await?;
         Ok(())

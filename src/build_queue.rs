@@ -8,8 +8,8 @@ use crate::Context;
 use crate::{Config, Index, InstanceMetrics, RustwideBuilder};
 use anyhow::Context as _;
 use fn_error_context::context;
-use std::collections::HashMap;
-use std::sync::Arc;
+use sentry::metrics::Metric;
+use std::{collections::HashMap, sync::Arc, time::Instant};
 use tokio::runtime::Runtime;
 use tracing::{debug, error, info};
 
@@ -204,15 +204,19 @@ impl BuildQueue {
             None => return Ok(()),
         };
 
-        let res = self.metrics.build_time.observe_closure_duration(|| {
-            f(&to_process).with_context(|| {
-                format!(
-                    "Failed to build package {}-{} from queue",
-                    to_process.name, to_process.version
-                )
-            })
+        let instant = Instant::now();
+        let res = f(&to_process).with_context(|| {
+            format!(
+                "Failed to build package {}-{} from queue",
+                to_process.name, to_process.version
+            )
         });
+        let elapsed = instant.elapsed();
+        self.metrics.build_time.observe(elapsed.as_secs_f64());
+        Metric::timing("build_time", elapsed).send();
+
         self.metrics.total_builds.inc();
+        Metric::count("total_builds").send();
         if let Err(err) =
             cdn::queue_crate_invalidation(&mut transaction, &self.config, &to_process.name)
         {
@@ -239,6 +243,7 @@ impl BuildQueue {
 
                 if attempt >= self.max_attempts {
                     self.metrics.failed_builds.inc();
+                    Metric::count("failed_builds").send();
                 }
 
                 report_error(&e);
@@ -359,6 +364,7 @@ impl BuildQueue {
                             release.name, release.version
                         );
                         self.metrics.queued_builds.inc();
+                        Metric::count("queued_builds").send();
                         crates_added += 1;
                     }
                     Err(err) => report_error(&err),

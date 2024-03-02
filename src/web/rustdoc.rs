@@ -28,6 +28,7 @@ use axum::{
 use lol_html::errors::RewritingError;
 use once_cell::sync::Lazy;
 use semver::Version;
+use sentry::metrics::Metric;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -295,6 +296,7 @@ impl RustdocPage {
         let html = match utils::rewrite_lol(rustdoc_html, max_parse_memory, ctx, templates) {
             Err(RewritingError::MemoryLimitExceeded(..)) => {
                 metrics.html_rewrite_ooms.inc();
+                Metric::count("html_rewrite_ooms").send();
 
                 return Err(AxumNope::InternalError(
                     anyhow!(
@@ -579,6 +581,17 @@ pub(crate) async fn rustdoc_html_server_handler(
         params.name, target_redirect, query_string
     );
 
+    Metric::set("instance.recently_accessed.crates", &params.name).send();
+    Metric::set(
+        "instance.recently_accessed.releases",
+        &format!("{}/{}", params.name, krate.version),
+    )
+    .send();
+    Metric::set(
+        "instance.recently_accessed.targets",
+        &format!("{}/{}/{}", params.name, krate.version, target),
+    )
+    .send();
     metrics
         .recently_accessed_releases
         .record(krate.crate_id, krate.release_id, target);

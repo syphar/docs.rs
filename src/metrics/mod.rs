@@ -198,8 +198,21 @@ impl RecentlyAccessedReleases {
 impl InstanceMetrics {
     pub(crate) fn gather(&self, pool: &Pool) -> Result<Vec<MetricFamily>, Error> {
         self.idle_db_connections.set(pool.idle_connections() as i64);
+        Metric::gauge(
+            "instance.idle_db_connections",
+            pool.idle_connections().into(),
+        )
+        .send();
+
         self.used_db_connections.set(pool.used_connections() as i64);
+        Metric::gauge(
+            "instance.used_db_connections",
+            pool.used_connections().into(),
+        )
+        .send();
+
         self.max_db_connections.set(pool.max_size() as i64);
+        Metric::gauge("instance.max_db_connections", pool.max_size().into()).send();
 
         self.recently_accessed_releases.gather(self);
         self.gather_system_performance();
@@ -214,10 +227,14 @@ impl InstanceMetrics {
         use procfs::process::Process;
 
         let process = Process::myself().unwrap();
-        self.open_file_descriptors
-            .set(process.fd_count().unwrap() as i64);
-        self.running_threads
-            .set(process.stat().unwrap().num_threads);
+        let fd_count = process.fd_count().unwrap();
+
+        self.open_file_descriptors.set(fd_count as i64);
+        Metric::gauge("instance.open_file_descriptors", fd_count as f64).send();
+
+        let num_threads = process.stat().unwrap().num_threads;
+        self.running_threads.set(num_threads);
+        Metric::gauge("instance.running_threads", num_threads as f64).send();
     }
 }
 

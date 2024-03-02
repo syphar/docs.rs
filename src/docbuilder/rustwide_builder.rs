@@ -23,6 +23,7 @@ use rustwide::cmd::{Command, CommandError, SandboxBuilder, SandboxImage};
 use rustwide::logging::{self, LogStorage};
 use rustwide::toolchain::ToolchainError;
 use rustwide::{AlternativeRegistry, Build, Crate, Toolchain, Workspace, WorkspaceBuilder};
+use sentry::metrics::Metric;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
@@ -530,10 +531,13 @@ impl RustwideBuilder {
                     let has_examples = build.host_source_dir().join("examples").is_dir();
                     if res.result.successful {
                         self.metrics.successful_builds.inc();
+                        Metric::count("successful_builds").send();
                     } else if res.cargo_metadata.root().is_library() {
                         self.metrics.failed_builds.inc();
+                        Metric::count("failed_builds").send();
                     } else {
                         self.metrics.non_library_builds.inc();
+                        Metric::count("non_library_builds").send();
                     }
 
                     let release_data = if !is_local {

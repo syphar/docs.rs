@@ -23,6 +23,7 @@ use base64::{engine::general_purpose::STANDARD as b64, Engine};
 use chrono::{DateTime, Utc};
 use futures_util::stream::TryStreamExt;
 use once_cell::sync::Lazy;
+use sentry::metrics::Metric;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -509,6 +510,7 @@ async fn redirect_to_random_crate(
 
     if let Some(row) = row {
         metrics.im_feeling_lucky_searches.inc();
+        Metric::count("im_feeling_lucky_searches").send();
 
         Ok(axum_redirect(format!(
             "/{}/{}/{}/",
