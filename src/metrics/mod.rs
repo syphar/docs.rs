@@ -6,11 +6,105 @@ use crate::{cdn, db::Pool, target::TargetAtom, BuildQueue, Config};
 use anyhow::Error;
 use dashmap::DashMap;
 use prometheus::proto::MetricFamily;
-use sentry::metrics::Metric;
+use sentry::metrics::{DurationUnit, MetricBuilder, MetricStr, MetricUnit, MetricValue};
+
 use std::{
     collections::HashSet,
     time::{Duration, Instant},
 };
+
+struct CounterMetric {
+    name: MetricStr,
+    unit: MetricUnit,
+}
+
+impl CounterMetric {
+    const fn new(name: impl Into<MetricStr>, unit: impl Into<MetricUnit>) -> Self {
+        Self {
+            name: name.into(),
+            unit: unit.into(),
+        }
+    }
+
+    fn incr(&self, value: f64) -> MetricBuilder {
+        sentry::metrics::Metric::build(self.name, MetricValue::Counter(value)).with_unit(self.unit)
+    }
+
+    fn count(&self) -> MetricBuilder {
+        sentry::metrics::Metric::build(self.name, MetricValue::Counter(1.0)).with_unit(self.unit)
+    }
+}
+
+struct TimingMetric {
+    name: MetricStr,
+}
+
+impl TimingMetric {
+    const fn new(name: impl Into<MetricStr>) -> Self {
+        Self { name: name.into() }
+    }
+
+    fn timing(&self, timing: Duration) -> MetricBuilder {
+        sentry::metrics::Metric::build(self.name, MetricValue::Distribution(timing.as_secs_f64()))
+            .with_unit(DurationUnit::Second)
+    }
+}
+
+struct DistributionMetric {
+    name: MetricStr,
+    unit: MetricUnit,
+}
+
+impl DistributionMetric {
+    const fn new(name: impl Into<MetricStr>, unit: impl Into<MetricUnit>) -> Self {
+        Self {
+            name: name.into(),
+            unit: unit.into(),
+        }
+    }
+
+    pub fn distribution(&self, value: f64) -> MetricBuilder {
+        sentry::metrics::Metric::build(self.name, MetricValue::Distribution(value))
+            .with_unit(self.unit)
+    }
+}
+
+struct GaugeMetric {
+    name: MetricStr,
+    unit: MetricUnit,
+}
+
+impl GaugeMetric {
+    const fn new(name: impl Into<MetricStr>, unit: impl Into<MetricUnit>) -> Self {
+        Self {
+            name: name.into(),
+            unit: unit.into(),
+        }
+    }
+
+    fn gauge(&self, value: f64) -> MetricBuilder {
+        sentry::metrics::Metric::build(self.name, MetricValue::Gauge(value)).with_unit(self.unit)
+    }
+}
+
+struct SetMetric {
+    name: MetricStr,
+    unit: MetricUnit,
+}
+
+impl SetMetric {
+    const fn new(name: impl Into<MetricStr>, unit: impl Into<MetricUnit>) -> Self {
+        Self {
+            name: name.into(),
+            unit: unit.into(),
+        }
+    }
+
+    fn set(&self, string: &str) -> MetricBuilder {
+        sentry::metrics::Metric::build(self.name, MetricValue::set_from_str(string))
+            .with_unit(self.unit)
+    }
+}
 
 load_metric_type!(IntGauge as single);
 load_metric_type!(IntCounter as single);
