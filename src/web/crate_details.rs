@@ -599,10 +599,7 @@ pub(crate) async fn get_all_platforms_inner(
         .unwrap_or(&releases[0]);
 
     let doc_targets = MetaData::parse_doc_targets(krate.doc_targets);
-    let (target, inner_path) = params.split_path_into_target_and_inner_path(
-        // FIXME: can we make the method take an iterator over the targets instead?
-        &doc_targets.iter().map(|s| s.as_ref()).collect::<Vec<_>>(),
-    );
+    let (target, inner_path) = params.split_path_into_target_and_inner_path(doc_targets.iter());
 
     let inner_path = if inner_path.is_empty() {
         format!("{}/index.html", krate.name)
@@ -634,7 +631,7 @@ pub(crate) async fn get_all_platforms_root(
     Path(mut params): Path<RustdocHtmlParams>,
     conn: DbConnection,
 ) -> AxumResult<AxumResponse> {
-    params.path = None;
+    let (target, _inner_path) = params.params.path = None;
     get_all_platforms_inner(Path(params), conn, true).await
 }
 

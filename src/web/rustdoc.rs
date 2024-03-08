@@ -337,19 +337,26 @@ impl RustdocHtmlParams {
     /// out if we have a target in the path or not.
     ///
     /// We do this by comparing the first part of the path with the list of targets for that crate.
-    pub(crate) fn split_path_into_target_and_inner_path(
+    pub(crate) fn split_path_into_target_and_inner_path<I, S>(
         &self,
-        doc_targets: &[&str],
-    ) -> (Option<&str>, &str) {
+        doc_targets: I,
+    ) -> (Option<&str>, &str)
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
         let path = self.path.trim_start_matches('/');
 
         // the path from the axum `*path` extractor doesn't have the `/` prefix.
         debug_assert!(!path.starts_with('/'));
 
         if let Some(pos) = path.find('/') {
-            let potential_target = dbg!(&path[..pos]);
+            let potential_target = &path[..pos];
 
-            if doc_targets.iter().any(|s| s == &potential_target) {
+            if doc_targets
+                .into_iter()
+                .any(|s| s.as_ref() == potential_target)
+            {
                 (
                     Some(potential_target),
                     &path.get((pos + 1)..).unwrap_or("").trim_end_matches('/'),
@@ -359,7 +366,7 @@ impl RustdocHtmlParams {
             }
         } else {
             // no slash in the path, can be target or inner path
-            if doc_targets.iter().any(|s| s == &path) {
+            if doc_targets.into_iter().any(|s| s.as_ref() == path) {
                 (Some(path), "")
             } else {
                 (None, &path)
