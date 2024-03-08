@@ -337,7 +337,10 @@ impl RustdocHtmlParams {
     /// out if we have a target in the path or not.
     ///
     /// We do this by comparing the first part of the path with the list of targets for that crate.
-    fn split_path_into_target_and_inner_path(&self, doc_targets: &[&str]) -> (Option<&str>, &str) {
+    pub(crate) fn split_path_into_target_and_inner_path(
+        &self,
+        doc_targets: &[&str],
+    ) -> (Option<&str>, &str) {
         let path = self.path.trim_start_matches('/');
 
         // the path from the axum `*path` extractor doesn't have the `/` prefix.

@@ -553,18 +553,13 @@ pub(crate) async fn get_all_platforms_inner(
     mut conn: DbConnection,
     is_crate_root: bool,
 ) -> AxumResult<AxumResponse> {
-    let req_path: String = params.path.unwrap_or_default();
-    let req_path: Vec<&str> = req_path.split('/').collect();
-
     let version = match_version(&mut conn, &params.name, &params.version)
         .await?
         .into_exactly_named_or_else(|corrected_name, req_version| {
             AxumNope::Redirect(
                 encode_url_path(&format!(
                     "/platforms/{}/{}/{}",
-                    corrected_name,
-                    req_version,
-                    req_path.join("/")
+                    corrected_name, req_version, params.path,
                 )),
                 CachePolicy::NoCaching,
             )
@@ -573,9 +568,7 @@ pub(crate) async fn get_all_platforms_inner(
             AxumNope::Redirect(
                 encode_url_path(&format!(
                     "/platforms/{}/{}/{}",
-                    &params.name,
-                    version,
-                    req_path.join("/")
+                    &params.name, version, params.path,
                 )),
                 CachePolicy::ForeverInCdn,
             )
@@ -600,32 +593,17 @@ pub(crate) async fn get_all_platforms_inner(
 
     let releases = releases_for_crate(&mut conn, krate.id).await?;
 
-    let doc_targets = MetaData::parse_doc_targets(krate.doc_targets);
-
     let latest_release = releases
         .iter()
         .find(|release| release.version.pre.is_empty() && !release.yanked)
         .unwrap_or(&releases[0]);
 
-    // The path within this crate version's rustdoc output
-    let inner;
-    let (target, inner_path) = {
-        let mut inner_path = req_path.clone();
+    let doc_targets = MetaData::parse_doc_targets(krate.doc_targets);
+    let (target, inner_path) = params.split_path_into_target_and_inner_path(
+        // FIXME: can we make the method take an iterator over the targets instead?
+        &doc_targets.iter().map(|s| s.as_ref()).collect::<Vec<_>>(),
+    );
 
-        let target = if inner_path.len() > 1
-            && doc_targets
-                .iter()
-                .any(|s| Some(s) == params.target.as_ref())
-        {
-            inner_path.remove(0);
-            params.target.as_ref().unwrap()
-        } else {
-            ""
-        };
-
-        inner = inner_path.join("/");
-        (target, inner.trim_end_matches('/'))
-    };
     let inner_path = if inner_path.is_empty() {
         format!("{}/index.html", krate.name)
     } else {
@@ -633,11 +611,7 @@ pub(crate) async fn get_all_platforms_inner(
     };
 
     let current_target = if latest_release.build_status {
-        if target.is_empty() {
-            krate.default_target
-        } else {
-            target.to_owned()
-        }
+        target.unwrap_or(&krate.default_target).to_owned()
     } else {
         String::new()
     };
