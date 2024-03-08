@@ -347,9 +347,6 @@ impl RustdocHtmlParams {
     {
         let path = self.path.trim_start_matches('/');
 
-        // the path from the axum `*path` extractor doesn't have the `/` prefix.
-        debug_assert!(!path.starts_with('/'));
-
         if let Some(pos) = path.find('/') {
             let potential_target = &path[..pos];
 
@@ -2684,18 +2681,18 @@ mod test {
     #[test_case("some-target-name/some/inner/path", Some("some-target-name"), "some/inner/path"; "all without trailing slash")]
     #[test_case("some-target-name/some/inner/path/", Some("some-target-name"), "some/inner/path"; "all with trailing slash")]
     fn test_split_path_and_target_name(
-        input: &str,
+        path: &str,
         expected_target: Option<&str>,
         expected_inner_path: &str,
     ) {
         let params = RustdocHtmlParams {
             name: "krate".into(),
             version: ReqVersion::Latest,
-            path: input.to_string(),
+            path: path.to_string(),
         };
 
         let (target, inner_path) =
-            params.split_path_into_target_and_inner_path(&["some-target-name"]);
+            params.split_path_into_target_and_inner_path(["some-target-name"]);
         assert_eq!(target, expected_target);
         assert_eq!(inner_path, expected_inner_path);
     }

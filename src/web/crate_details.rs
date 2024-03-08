@@ -458,9 +458,6 @@ pub(crate) async fn get_all_releases(
     Path(params): Path<RustdocHtmlParams>,
     mut conn: DbConnection,
 ) -> AxumResult<AxumResponse> {
-    let req_path: String = params.path.clone().unwrap_or_default();
-    let req_path: Vec<&str> = req_path.split('/').collect();
-
     let version = match_version(&mut conn, &params.name, &params.version)
         .await?
         .into_canonical_req_version_or_else(|_| AxumNope::VersionNotFound)?
@@ -485,36 +482,15 @@ pub(crate) async fn get_all_releases(
     let releases: Vec<Release> = releases_for_crate(&mut conn, row.crate_id).await?;
 
     let doc_targets = MetaData::parse_doc_targets(row.doc_targets);
+    let (target, inner_path) = params.split_path_into_target_and_inner_path(doc_targets.iter());
 
-    let inner;
-    let (target, inner_path) = {
-        let mut inner_path = req_path.clone();
-
-        let target = if inner_path.len() > 1
-            && doc_targets
-                .iter()
-                .any(|s| Some(s) == params.target.as_ref())
-        {
-            inner_path.remove(0);
-            params.target.as_ref().unwrap()
-        } else {
-            ""
-        };
-
-        inner = inner_path.join("/");
-        (target, inner.trim_end_matches('/'))
-    };
     let inner_path = if inner_path.is_empty() {
         format!("{}/index.html", row.target_name)
     } else {
         format!("{}/{inner_path}", row.target_name)
     };
 
-    let target = if target.is_empty() {
-        String::new()
-    } else {
-        format!("{target}/")
-    };
+    let target = target.map(|t| format!("{t}/")).unwrap_or_default();
 
     let res = ReleaseList {
         releases,
@@ -631,7 +607,7 @@ pub(crate) async fn get_all_platforms_root(
     Path(mut params): Path<RustdocHtmlParams>,
     conn: DbConnection,
 ) -> AxumResult<AxumResponse> {
-    let (target, _inner_path) = params.params.path = None;
+    params.path.clear();
     get_all_platforms_inner(Path(params), conn, true).await
 }
 
