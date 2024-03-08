@@ -324,11 +324,7 @@ impl RustdocPage {
 pub(crate) struct RustdocHtmlParams {
     pub(crate) name: String,
     pub(crate) version: ReqVersion,
-    // both target and path are only used for matching the route.
-    // The actual path is read from the request `Uri` because
-    // we have some static filenames directly in the routes.
-    pub(crate) target: Option<String>,
-    pub(crate) path: Option<String>,
+    pub(crate) path: String,
 }
 
 impl RustdocHtmlParams {
@@ -337,11 +333,12 @@ impl RustdocHtmlParams {
     /// * `/:crate/:version/:target/:*path`
     /// * `/:crate/:version/:*path`
     ///
-    /// We only know which is which by comparing the first part of the path with the list of
-    /// targets for that crate.
+    /// Since our route matching just contains `/:crate/:version/*path` we need a way to figure
+    /// out if we have a target in the path or not.
+    ///
+    /// We do this by comparing the first part of the path with the list of targets for that crate.
     fn split_path_into_target_and_inner_path(&self, doc_targets: &[&str]) -> (Option<&str>, &str) {
-        let path = self.path.as_ref().unwrap().trim_start_matches('/'); // FIXME: remove target attribute on the struct, make path
-                                                                        // non-optional
+        let path = self.path.trim_start_matches('/');
 
         // the path from the axum `*path` extractor doesn't have the `/` prefix.
         debug_assert!(!path.starts_with('/'));
@@ -2684,8 +2681,7 @@ mod test {
         let params = RustdocHtmlParams {
             name: "krate".into(),
             version: ReqVersion::Latest,
-            target: Some("".into()),
-            path: Some(input.to_string()),
+            path: input.to_string(),
         };
 
         let (target, inner_path) =
