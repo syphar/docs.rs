@@ -485,9 +485,9 @@ pub(crate) async fn get_all_releases(
     let (target, inner_path) = params.split_path_into_target_and_inner_path(doc_targets.iter());
 
     let inner_path = if inner_path.is_empty() {
-        format!("{}/index.html", row.target_name)
+        "index.html"
     } else {
-        format!("{}/{inner_path}", row.target_name)
+        inner_path
     };
 
     let target = target.map(|t| format!("{t}/")).unwrap_or_default();
@@ -495,7 +495,7 @@ pub(crate) async fn get_all_releases(
     let res = ReleaseList {
         releases,
         target,
-        inner_path,
+        inner_path: inner_path.to_owned(),
         crate_name: params.name,
     };
     Ok(res.into_response())
@@ -535,7 +535,9 @@ pub(crate) async fn get_all_platforms_inner(
             AxumNope::Redirect(
                 encode_url_path(&format!(
                     "/platforms/{}/{}/{}",
-                    corrected_name, req_version, params.path,
+                    corrected_name,
+                    req_version,
+                    params.path(),
                 )),
                 CachePolicy::NoCaching,
             )
@@ -544,7 +546,9 @@ pub(crate) async fn get_all_platforms_inner(
             AxumNope::Redirect(
                 encode_url_path(&format!(
                     "/platforms/{}/{}/{}",
-                    &params.name, version, params.path,
+                    &params.name,
+                    version,
+                    params.path(),
                 )),
                 CachePolicy::ForeverInCdn,
             )
@@ -556,6 +560,7 @@ pub(crate) async fn get_all_platforms_inner(
             crates.id,
             crates.name,
             releases.default_target,
+            releases.target_name,
             releases.doc_targets
         FROM releases
         INNER JOIN crates ON releases.crate_id = crates.id
@@ -578,9 +583,10 @@ pub(crate) async fn get_all_platforms_inner(
     let (target, inner_path) = params.split_path_into_target_and_inner_path(doc_targets.iter());
 
     let inner_path = if inner_path.is_empty() {
-        format!("{}/index.html", krate.name)
+        format!("{}/index.html", krate.target_name)
     } else {
-        format!("{}/{inner_path}", krate.name)
+        inner_path.to_owned()
+        // format!("{}/{inner_path}", krate.name)
     };
 
     let current_target = if latest_release.build_status {
@@ -596,7 +602,7 @@ pub(crate) async fn get_all_platforms_inner(
             req_version: params.version.clone(),
             doc_targets,
         },
-        inner_path,
+        inner_path: inner_path.to_owned(),
         use_direct_platform_links: is_crate_root,
         current_target,
     };
@@ -607,7 +613,7 @@ pub(crate) async fn get_all_platforms_root(
     Path(mut params): Path<RustdocHtmlParams>,
     conn: DbConnection,
 ) -> AxumResult<AxumResponse> {
-    params.path.clear();
+    params.path.take();
     get_all_platforms_inner(Path(params), conn, true).await
 }
 
@@ -1357,9 +1363,9 @@ mod tests {
             };
             let response = env
                 .frontend()
-                .get(&format!(
+                .get(&dbg!(format!(
                     "{start}{url_start}/menus/platforms{extra_name}{url_end}{extra}"
-                ))
+                )))
                 .send()
                 .unwrap();
             assert!(response.status().is_success());
