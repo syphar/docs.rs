@@ -8,6 +8,7 @@ use aws_sdk_cloudfront::{
     Client,
 };
 use chrono::{DateTime, Utc};
+use sentry::metrics::Metric;
 use serde::Serialize;
 use std::{
     collections::HashMap,
@@ -370,6 +371,9 @@ pub(crate) fn handle_queued_invalidation_requests(
                 .cdn_invalidation_time
                 .with_label_values(&[distribution_id])
                 .observe(duration_to_seconds(duration));
+            Metric::timing("service.cdn_invalidation_time", duration)
+                .with_tag("distribution", distribution_id.to_owned())
+                .send();
         }
     }
     let possible_path_invalidations: i32 =
@@ -407,6 +411,9 @@ pub(crate) fn handle_queued_invalidation_requests(
                 .cdn_queue_time
                 .with_label_values(&[distribution_id])
                 .observe(duration_to_seconds(duration));
+            Metric::timing("service.cdn_queue_time", duration)
+                .with_tag("distribution", distribution_id.to_owned())
+                .send();
         }
     }
 

@@ -10,7 +10,8 @@ use axum::{
     response::IntoResponse,
 };
 use prometheus::{proto::MetricFamily, Encoder, TextEncoder};
-use std::{borrow::Cow, sync::Arc, time::Instant};
+use sentry::metrics::Metric;
+use std::{sync::Arc, time::Instant};
 
 async fn fetch_and_render_metrics(
     fetch_metrics: impl Fn() -> Result<Vec<MetricFamily>> + Send + 'static,
@@ -81,11 +82,11 @@ pub(crate) async fn request_recorder(
     route_name: Option<&str>,
 ) -> impl IntoResponse {
     let route_name = if let Some(rn) = route_name {
-        Cow::Borrowed(rn)
+        rn.to_string()
     } else if let Some(path) = request.extensions().get::<MatchedPath>() {
-        Cow::Owned(path.as_str().to_string())
+        path.as_str().to_string()
     } else {
-        Cow::Owned(request.uri().path().to_string())
+        request.uri().path().to_string()
     };
 
     let metrics = request
@@ -96,16 +97,25 @@ pub(crate) async fn request_recorder(
 
     let start = Instant::now();
     let result = next.run(request).await;
-    let resp_time = duration_to_seconds(start.elapsed());
+    let resp_time = start.elapsed();
 
     metrics
         .routes_visited
         .with_label_values(&[&route_name])
         .inc();
+
+    Metric::count("routes_visited")
+        .with_tag("route", route_name.clone())
+        .send();
+
     metrics
         .response_time
         .with_label_values(&[&route_name])
-        .observe(resp_time);
+        .observe(duration_to_seconds(resp_time));
+
+    Metric::timing("response_time", resp_time)
+        .with_tag("route", route_name)
+        .send();
 
     result
 }

@@ -15,7 +15,6 @@ macro_rules! metrics {
     ) => {
         $vis struct $name {
             registry: prometheus::Registry,
-            instance_id: String,
             $(
                 $(#[$meta])*
                 $metric_vis $metric: $ty,
