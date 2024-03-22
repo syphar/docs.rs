@@ -14,7 +14,7 @@ use crate::utils::{
 use crate::RUSTDOC_STATIC_STORAGE_PREFIX;
 use crate::{db::blacklist::is_blacklisted, utils::MetadataPackage};
 use crate::{AsyncStorage, Config, Context, InstanceMetrics, RegistryApi, Storage};
-use anyhow::{anyhow, bail, Context as _, Error};
+use anyhow::{anyhow, bail, Context as _};
 use docsrs_metadata::{BuildTargets, Metadata, DEFAULT_TARGETS, HOST_TARGET};
 use failure::Error as FailureError;
 use postgres::Client;
@@ -306,7 +306,7 @@ impl RustwideBuilder {
 
                     let res =
                         self.execute_build(HOST_TARGET, true, build, &limits, &metadata, true)?;
-                    if !res.result.successful {
+                    if !res.result.successful() {
                         bail!("failed to build dummy crate for {}", rustc_version);
                     }
 
@@ -445,7 +445,7 @@ impl RustwideBuilder {
 
                     // If the build fails with the lockfile given, try using only the dependencies listed in Cargo.toml.
                     let cargo_lock = build.host_source_dir().join("Cargo.lock");
-                    if !res.result.successful && cargo_lock.exists() {
+                    if !res.result.successful() && cargo_lock.exists() {
                         info!("removing lockfile and reattempting build");
                         std::fs::remove_file(cargo_lock)?;
                         Command::new(&self.workspace, self.toolchain.cargo())
@@ -466,7 +466,7 @@ impl RustwideBuilder {
                         )?;
                     }
 
-                    if res.result.successful {
+                    if res.result.successful() {
                         if let Some(name) = res.cargo_metadata.root().library_name() {
                             let host_target = build.host_target_dir();
                             has_docs = host_target
@@ -528,7 +528,7 @@ impl RustwideBuilder {
                     };
 
                     let has_examples = build.host_source_dir().join("examples").is_dir();
-                    if res.result.successful {
+                    if res.result.successful() {
                         self.metrics.successful_builds.inc();
                     } else if res.cargo_metadata.root().is_library() {
                         self.metrics.failed_builds.inc();
@@ -582,7 +582,7 @@ impl RustwideBuilder {
                         ))?;
                     }
 
-                    let build_status = if res.result.successful {
+                    let build_status = if res.result.successful() {
                         BuildStatus::Success
                     } else {
                         BuildStatus::Failure
@@ -593,6 +593,7 @@ impl RustwideBuilder {
                         &res.result.rustc_version,
                         &res.result.docsrs_version,
                         build_status,
+                        // FIXME: add res.result.error here as codename?
                     ))?;
 
                     let build_log_path = format!("build-logs/{build_id}/{default_target}.txt");
@@ -615,7 +616,7 @@ impl RustwideBuilder {
                         }
                     }
 
-                    if res.result.successful {
+                    if res.result.successful() {
                         // delete eventually existing files from pre-archive storage.
                         // we're doing this in the end so eventual problems in the build
                         // won't lead to non-existing docs.
@@ -632,7 +633,7 @@ impl RustwideBuilder {
                         drop(async_conn);
                     });
 
-                    Ok(res.result.successful)
+                    Ok(res.result.successful())
                 })()
                 .map_err(|e| failure::Error::from_boxed_compat(e.into()))
             })
@@ -655,7 +656,7 @@ impl RustwideBuilder {
         metadata: &Metadata,
     ) -> Result<FullBuildResult> {
         let target_res = self.execute_build(target, false, build, limits, metadata, false)?;
-        if target_res.result.successful {
+        if target_res.result.successful() {
             // Cargo is not giving any error and not generating documentation of some crates
             // when we use a target compile options. Check documentation exists before
             // adding target to successfully_targets.
@@ -764,16 +765,15 @@ impl RustwideBuilder {
             }
         };
 
-        let successful = logging::capture(&storage, || {
-            self.prepare_command(build, target, metadata, limits, rustdoc_flags)
-                .and_then(|command| command.run().map_err(Error::from))
-                .is_ok()
+        let result: Result<_, BuildError> = logging::capture(&storage, || {
+            let command = self.prepare_command(build, target, metadata, limits, rustdoc_flags)?;
+            command.run().map_err(Into::into)
         });
 
         // For proc-macros, cargo will put the output in `target/doc`.
         // Move it to the target-specific directory for consistency with other builds.
         // NOTE: don't rename this if the build failed, because `target/doc` won't exist.
-        if successful && metadata.proc_macro {
+        if result.is_ok() && metadata.proc_macro {
             assert!(
                 is_default_target && target == HOST_TARGET,
                 "can't handle cross-compiling macros"
@@ -791,7 +791,7 @@ impl RustwideBuilder {
             result: BuildResult {
                 rustc_version: self.rustc_version()?,
                 docsrs_version: format!("docsrs {}", crate::BUILD_VERSION),
-                successful,
+                error: result.err(),
             },
             doc_coverage,
             cargo_metadata,
@@ -931,10 +931,49 @@ pub(crate) struct DocCoverage {
     pub(crate) items_with_examples: i32,
 }
 
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum BuildError {
+    #[error(transparent)]
+    CommandError(#[from] rustwide::cmd::CommandError),
+
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+    // FIXME: idea: if we make all methods here return the BuildError wrapping error,
+    // we could also make the class decide by enum variant if the error should be reported to
+    // sentry or just to the user.
+}
+
+impl BuildError {
+    fn codename(&self) -> &'static str {
+        match *self {
+            BuildError::CommandError(ref cmderr) => match cmderr {
+                CommandError::NoOutputFor(_) => "no_output_for",
+                CommandError::Timeout(_) => "timeout",
+                CommandError::ExecutionFailed(_) => "execution_failed",
+                CommandError::KillAfterTimeoutFailed(_) => "kill_after_timeout_failed",
+                CommandError::SandboxOOM => "sandbox_oom",
+                CommandError::SandboxImagePullFailed(_) => "sandbox_image_pull_failed",
+                CommandError::SandboxImageMissing(_) => "sandbox_image_missing",
+                CommandError::WorkspaceNotMountedCorrectly => "workspace_not_mounted_correctly",
+                CommandError::InvalidDockerInspectOutput(_) => "invalid_docker_inspect_output",
+                CommandError::IO(_) => "io",
+                _ => "other_command_error",
+            },
+            BuildError::Other(_) => "other",
+        }
+    }
+}
+
 pub(crate) struct BuildResult {
     pub(crate) rustc_version: String,
     pub(crate) docsrs_version: String,
-    pub(crate) successful: bool,
+    pub(crate) error: Option<BuildError>,
+}
+impl BuildResult {
+    pub(crate) fn successful(&self) -> bool {
+        self.error.is_none()
+    }
 }
 
 #[cfg(test)]
