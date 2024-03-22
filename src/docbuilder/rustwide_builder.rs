@@ -306,7 +306,7 @@ impl RustwideBuilder {
 
                     let res =
                         self.execute_build(HOST_TARGET, true, build, &limits, &metadata, true)?;
-                    if !res.result.successful {
+                    if !res.result.successful() {
                         bail!("failed to build dummy crate for {}", rustc_version);
                     }
 
@@ -445,7 +445,7 @@ impl RustwideBuilder {
 
                     // If the build fails with the lockfile given, try using only the dependencies listed in Cargo.toml.
                     let cargo_lock = build.host_source_dir().join("Cargo.lock");
-                    if !res.result.successful && cargo_lock.exists() {
+                    if !res.result.successful() && cargo_lock.exists() {
                         info!("removing lockfile and reattempting build");
                         std::fs::remove_file(cargo_lock)?;
                         Command::new(&self.workspace, self.toolchain.cargo())
@@ -466,7 +466,7 @@ impl RustwideBuilder {
                         )?;
                     }
 
-                    if res.result.successful {
+                    if res.result.successful() {
                         if let Some(name) = res.cargo_metadata.root().library_name() {
                             let host_target = build.host_target_dir();
                             has_docs = host_target
@@ -528,7 +528,7 @@ impl RustwideBuilder {
                     };
 
                     let has_examples = build.host_source_dir().join("examples").is_dir();
-                    if res.result.successful {
+                    if res.result.successful() {
                         self.metrics.successful_builds.inc();
                     } else if res.cargo_metadata.root().is_library() {
                         self.metrics.failed_builds.inc();
@@ -582,11 +582,13 @@ impl RustwideBuilder {
                         ))?;
                     }
 
-                    let build_status = if res.result.successful {
+                    let build_status = if res.result.successful() {
                         BuildStatus::Success
                     } else {
                         BuildStatus::Failure
                     };
+                    // FIXME: convert the error from `res.result.error` into the codename,
+                    // and add it to the build result.
                     let build_id = self.runtime.block_on(add_build_into_database(
                         &mut async_conn,
                         release_id,
@@ -615,7 +617,7 @@ impl RustwideBuilder {
                         }
                     }
 
-                    if res.result.successful {
+                    if res.result.successful() {
                         // delete eventually existing files from pre-archive storage.
                         // we're doing this in the end so eventual problems in the build
                         // won't lead to non-existing docs.
@@ -632,7 +634,7 @@ impl RustwideBuilder {
                         drop(async_conn);
                     });
 
-                    Ok(res.result.successful)
+                    Ok(res.result.successful())
                 })()
                 .map_err(|e| failure::Error::from_boxed_compat(e.into()))
             })
@@ -655,7 +657,7 @@ impl RustwideBuilder {
         metadata: &Metadata,
     ) -> Result<FullBuildResult> {
         let target_res = self.execute_build(target, false, build, limits, metadata, false)?;
-        if target_res.result.successful {
+        if target_res.result.successful() {
             // Cargo is not giving any error and not generating documentation of some crates
             // when we use a target compile options. Check documentation exists before
             // adding target to successfully_targets.
@@ -764,16 +766,15 @@ impl RustwideBuilder {
             }
         };
 
-        let successful = logging::capture(&storage, || {
+        let result = logging::capture(&storage, || {
             self.prepare_command(build, target, metadata, limits, rustdoc_flags)
                 .and_then(|command| command.run().map_err(Error::from))
-                .is_ok()
         });
 
         // For proc-macros, cargo will put the output in `target/doc`.
         // Move it to the target-specific directory for consistency with other builds.
         // NOTE: don't rename this if the build failed, because `target/doc` won't exist.
-        if successful && metadata.proc_macro {
+        if result.is_ok() && metadata.proc_macro {
             assert!(
                 is_default_target && target == HOST_TARGET,
                 "can't handle cross-compiling macros"
@@ -791,7 +792,7 @@ impl RustwideBuilder {
             result: BuildResult {
                 rustc_version: self.rustc_version()?,
                 docsrs_version: format!("docsrs {}", crate::BUILD_VERSION),
-                successful,
+                error: result.err(),
             },
             doc_coverage,
             cargo_metadata,
@@ -934,7 +935,36 @@ pub(crate) struct DocCoverage {
 pub(crate) struct BuildResult {
     pub(crate) rustc_version: String,
     pub(crate) docsrs_version: String,
-    pub(crate) successful: bool,
+    pub(crate) error: Option<anyhow::Error>,
+}
+
+impl BuildResult {
+    pub(crate) fn successful(&self) -> bool {
+        self.error.is_none()
+    }
+
+    /// codename to use in the `builds` table.
+    pub(crate) fn error_codename(&self) -> Option<&'static str> {
+        self.error.as_ref().map(|err| {
+            if let Some(command_err) = err.downcast_ref::<CommandError>() {
+                match command_err {
+                    CommandError::NoOutputFor(_) => "no_output_for",
+                    CommandError::Timeout(_) => "timeout",
+                    CommandError::ExecutionFailed(_) => "execution_failed",
+                    CommandError::KillAfterTimeoutFailed(_) => "kill_after_timeout_failed",
+                    CommandError::SandboxOOM => "sandbox_oom",
+                    CommandError::SandboxImagePullFailed(_) => "sandbox_image_pull_failed",
+                    CommandError::SandboxImageMissing(_) => "sandbox_image_missing",
+                    CommandError::WorkspaceNotMountedCorrectly => "workspace_not_mounted_correctly",
+                    CommandError::InvalidDockerInspectOutput(_) => "invalid_docker_inspect_output",
+                    CommandError::IO(_) => "io",
+                    _ => "other_command_error",
+                }
+            } else {
+                "other"
+            }
+        })
+    }
 }
 
 #[cfg(test)]
