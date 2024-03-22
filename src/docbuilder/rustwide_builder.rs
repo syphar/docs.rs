@@ -23,11 +23,13 @@ use rustwide::cmd::{Command, CommandError, SandboxBuilder, SandboxImage};
 use rustwide::logging::{self, LogStorage};
 use rustwide::toolchain::ToolchainError;
 use rustwide::{AlternativeRegistry, Build, Crate, Toolchain, Workspace, WorkspaceBuilder};
-use std::collections::{HashMap, HashSet};
-use std::fs;
-use std::path::Path;
-use std::sync::Arc;
-use std::time::Instant;
+use std::{
+    collections::{HashMap, HashSet},
+    fs, io,
+    path::Path,
+    sync::Arc,
+    time::Instant,
+};
 use tokio::runtime::Runtime;
 use tracing::{debug, info, warn};
 
@@ -35,6 +37,54 @@ const USER_AGENT: &str = "docs.rs builder (https://github.com/rust-lang/docs.rs)
 const COMPONENTS: &[&str] = &["llvm-tools-preview", "rustc-dev", "rustfmt"];
 const DUMMY_CRATE_NAME: &str = "empty-library";
 const DUMMY_CRATE_VERSION: &str = "1.0.0";
+
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum BuildError {
+    #[error(transparent)]
+    CommandError(#[from] rustwide::cmd::CommandError),
+
+    #[error(transparent)]
+    DbPoolError(#[from] crate::db::PoolError),
+
+    #[error(transparent)]
+    Io(#[from] io::Error),
+
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+
+    #[error("legacy error")]
+    OtherLegacy(failure::Error),
+}
+
+impl BuildError {
+    fn codename(&self) -> &'static str {
+        match self {
+            Self::CommandError(ref cmderr) => match cmderr {
+                CommandError::NoOutputFor(_) => "no_output_for",
+                CommandError::Timeout(_) => "timeout",
+                CommandError::ExecutionFailed(_) => "execution_failed",
+                CommandError::KillAfterTimeoutFailed(_) => "kill_after_timeout_failed",
+                CommandError::SandboxOOM => "sandbox_oom",
+                CommandError::SandboxImagePullFailed(_) => "sandbox_image_pull_failed",
+                CommandError::SandboxImageMissing(_) => "sandbox_image_missing",
+                CommandError::WorkspaceNotMountedCorrectly => "workspace_not_mounted_correctly",
+                CommandError::InvalidDockerInspectOutput(_) => "invalid_docker_inspect_output",
+                CommandError::IO(_) => "io",
+                _ => "other_command_error",
+            },
+            Self::DbPoolError(_) => "db_pool_error",
+            Self::Io(_) => "io",
+            Self::Other(_) | Self::OtherLegacy(_) => "other",
+        }
+    }
+}
+
+impl From<failure::Error> for BuildError {
+    fn from(value: failure::Error) -> Self {
+        Self::Other(anyhow!(FailureError::compat(value)))
+    }
+}
 
 fn get_configured_toolchain(conn: &mut Client) -> Result<Toolchain> {
     let name: String = get_config(conn, ConfigName::Toolchain)?.unwrap_or_else(|| "nightly".into());
@@ -51,7 +101,7 @@ fn get_configured_toolchain(conn: &mut Client) -> Result<Toolchain> {
     }
 }
 
-fn build_workspace(context: &dyn Context) -> Result<Workspace> {
+fn build_workspace(context: &dyn Context) -> Result<Workspace, BuildError> {
     let config = context.config()?;
 
     let mut builder = WorkspaceBuilder::new(&config.rustwide_workspace, USER_AGENT)
@@ -68,10 +118,8 @@ fn build_workspace(context: &dyn Context) -> Result<Workspace> {
         builder = builder.fast_init(true);
     }
 
-    let workspace = builder.init().map_err(FailureError::compat)?;
-    workspace
-        .purge_all_build_dirs()
-        .map_err(FailureError::compat)?;
+    let workspace = builder.init()?;
+    workspace.purge_all_build_dirs()?;
     Ok(workspace)
 }
 
@@ -96,7 +144,7 @@ pub struct RustwideBuilder {
 }
 
 impl RustwideBuilder {
-    pub fn init(context: &dyn Context) -> Result<Self> {
+    pub fn init(context: &dyn Context) -> Result<Self, BuildError> {
         let config = context.config()?;
         let pool = context.pool()?;
         let runtime = context.runtime()?;
@@ -137,14 +185,12 @@ impl RustwideBuilder {
             .enable_networking(limits.networking())
     }
 
-    pub fn purge_caches(&self) -> Result<()> {
-        self.workspace
-            .purge_all_caches()
-            .map_err(FailureError::compat)?;
+    pub fn purge_caches(&self) -> Result<(), BuildError> {
+        self.workspace.purge_all_caches()?;
         Ok(())
     }
 
-    pub fn update_toolchain(&mut self) -> Result<bool> {
+    pub fn update_toolchain(&mut self) -> Result<bool, BuildError> {
         self.toolchain = get_configured_toolchain(&mut *self.db.get()?)?;
 
         // For CI builds, a lot of the normal update_toolchain things don't apply.
@@ -156,9 +202,7 @@ impl RustwideBuilder {
         // we fake the rustc version and install from scratch every time since we can't detect
         // the already-installed rustc version.
         if self.toolchain.as_ci().is_some() {
-            self.toolchain
-                .install(&self.workspace)
-                .map_err(FailureError::compat)?;
+            self.toolchain.install(&self.workspace)?;
             self.add_essential_files()?;
             return Ok(true);
         }
@@ -177,7 +221,7 @@ impl RustwideBuilder {
                 if let Some(&ToolchainError::NotInstalled) = err.downcast_ref::<ToolchainError>() {
                     Vec::new()
                 } else {
-                    return Err(err.compat().into());
+                    return Err(err.into());
                 }
             }
         };
@@ -196,20 +240,14 @@ impl RustwideBuilder {
         // and will not be reinstalled until explicitly requested by a crate.
         for target in installed_targets {
             if !targets_to_install.remove(&target) {
-                self.toolchain
-                    .remove_target(&self.workspace, &target)
-                    .map_err(FailureError::compat)?;
+                self.toolchain.remove_target(&self.workspace, &target)?;
             }
         }
 
-        self.toolchain
-            .install(&self.workspace)
-            .map_err(FailureError::compat)?;
+        self.toolchain.install(&self.workspace)?;
 
         for target in &targets_to_install {
-            self.toolchain
-                .add_target(&self.workspace, target)
-                .map_err(FailureError::compat)?;
+            self.toolchain.add_target(&self.workspace, target)?;
         }
         // NOTE: rustup will automatically refuse to update the toolchain
         // if `rustfmt` is not available in the newer version
@@ -268,7 +306,7 @@ impl RustwideBuilder {
         })
     }
 
-    pub fn add_essential_files(&mut self) -> Result<()> {
+    pub fn add_essential_files(&mut self) -> Result<(), BuildError> {
         let rustc_version = self.rustc_version()?;
         let parsed_rustc_version = parse_rustc_version(&rustc_version)?;
 
@@ -286,9 +324,7 @@ impl RustwideBuilder {
         // fill up disk space.
         // This also prevents having multiple builders using the same rustwide workspace,
         // which we don't do. Currently our separate builders use a separate rustwide workspace.
-        self.workspace
-            .purge_all_build_dirs()
-            .map_err(FailureError::compat)?;
+        self.workspace.purge_all_build_dirs()?;
 
         let mut build_dir = self
             .workspace
@@ -296,7 +332,7 @@ impl RustwideBuilder {
 
         // This is an empty library crate that is supposed to always build.
         let krate = Crate::crates_io(DUMMY_CRATE_NAME, DUMMY_CRATE_VERSION);
-        krate.fetch(&self.workspace).map_err(FailureError::compat)?;
+        krate.fetch(&self.workspace)?;
 
         build_dir
             .build(&self.toolchain, &krate, self.prepare_sandbox(&limits))
@@ -340,16 +376,13 @@ impl RustwideBuilder {
                     Ok(())
                 })()
                 .map_err(|e| failure::Error::from_boxed_compat(e.into()))
-            })
-            .map_err(|e| e.compat())?;
+            })?;
 
-        krate
-            .purge_from_cache(&self.workspace)
-            .map_err(FailureError::compat)?;
+        krate.purge_from_cache(&self.workspace)?;
         Ok(())
     }
 
-    pub fn build_local_package(&mut self, path: &Path) -> Result<bool> {
+    pub fn build_local_package(&mut self, path: &Path) -> Result<bool, BuildError> {
         let metadata = CargoMetadata::load_from_rustwide(&self.workspace, &self.toolchain, path)
             .map_err(|err| {
                 err.context(format!("failed to load local package {}", path.display()))
@@ -363,7 +396,7 @@ impl RustwideBuilder {
         name: &str,
         version: &str,
         kind: PackageKind<'_>,
-    ) -> Result<bool> {
+    ) -> Result<bool, BuildError> {
         let mut conn = self.db.get()?;
 
         info!("building package {} {}", name, version);
@@ -403,9 +436,7 @@ impl RustwideBuilder {
         // fill up disk space.
         // This also prevents having multiple builders using the same rustwide workspace,
         // which we don't do. Currently our separate builders use a separate rustwide workspace.
-        self.workspace
-            .purge_all_build_dirs()
-            .map_err(FailureError::compat)?;
+        self.workspace.purge_all_build_dirs()?;
 
         let mut build_dir = self.workspace.build_dir(&format!("{name}-{version}"));
 
@@ -417,7 +448,7 @@ impl RustwideBuilder {
                 Crate::registry(AlternativeRegistry::new(registry), name, version)
             }
         };
-        krate.fetch(&self.workspace).map_err(FailureError::compat)?;
+        krate.fetch(&self.workspace)?;
 
         fs::create_dir_all(&self.config.temp_dir)?;
         let local_storage = tempfile::tempdir_in(&self.config.temp_dir)?;
@@ -636,12 +667,9 @@ impl RustwideBuilder {
                     Ok(res.result.successful())
                 })()
                 .map_err(|e| failure::Error::from_boxed_compat(e.into()))
-            })
-            .map_err(|e| e.compat())?;
+            })?;
 
-        krate
-            .purge_from_cache(&self.workspace)
-            .map_err(FailureError::compat)?;
+        krate.purge_from_cache(&self.workspace)?;
         local_storage.close()?;
         Ok(successful)
     }
@@ -807,7 +835,7 @@ impl RustwideBuilder {
         metadata: &Metadata,
         limits: &Limits,
         mut rustdoc_flags_extras: Vec<String>,
-    ) -> Result<Command<'ws, 'pl>> {
+    ) -> Result<Command<'ws, 'pl>, BuildError> {
         // Add docs.rs specific arguments
         let mut cargo_args = vec![
             "--offline".into(),
@@ -862,9 +890,7 @@ impl RustwideBuilder {
         }) || cargo_args.last().unwrap().starts_with("-Zbuild-std");
         if !docsrs_metadata::DEFAULT_TARGETS.contains(&target) && !has_build_std {
             // This is a no-op if the target is already installed.
-            self.toolchain
-                .add_target(&self.workspace, target)
-                .map_err(FailureError::compat)?;
+            self.toolchain.add_target(&self.workspace, target)?;
         }
 
         let mut command = build
@@ -929,40 +955,6 @@ pub(crate) struct DocCoverage {
     pub(crate) total_items_needing_examples: i32,
     /// The items of the crate that have a code example, used to calculate documentation coverage.
     pub(crate) items_with_examples: i32,
-}
-
-#[derive(Debug, thiserror::Error)]
-#[non_exhaustive]
-pub enum BuildError {
-    #[error(transparent)]
-    CommandError(#[from] rustwide::cmd::CommandError),
-
-    #[error(transparent)]
-    Other(#[from] anyhow::Error),
-    // FIXME: idea: if we make all methods here return the BuildError wrapping error,
-    // we could also make the class decide by enum variant if the error should be reported to
-    // sentry or just to the user.
-}
-
-impl BuildError {
-    fn codename(&self) -> &'static str {
-        match *self {
-            BuildError::CommandError(ref cmderr) => match cmderr {
-                CommandError::NoOutputFor(_) => "no_output_for",
-                CommandError::Timeout(_) => "timeout",
-                CommandError::ExecutionFailed(_) => "execution_failed",
-                CommandError::KillAfterTimeoutFailed(_) => "kill_after_timeout_failed",
-                CommandError::SandboxOOM => "sandbox_oom",
-                CommandError::SandboxImagePullFailed(_) => "sandbox_image_pull_failed",
-                CommandError::SandboxImageMissing(_) => "sandbox_image_missing",
-                CommandError::WorkspaceNotMountedCorrectly => "workspace_not_mounted_correctly",
-                CommandError::InvalidDockerInspectOutput(_) => "invalid_docker_inspect_output",
-                CommandError::IO(_) => "io",
-                _ => "other_command_error",
-            },
-            BuildError::Other(_) => "other",
-        }
-    }
 }
 
 pub(crate) struct BuildResult {
