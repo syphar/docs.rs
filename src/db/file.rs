@@ -17,12 +17,12 @@ use tracing::instrument;
 
 /// represents a file path from our source or documentation builds.
 /// Used to return metadata about the file.
-pub(crate) struct FileInfo {
+pub struct FileEntry {
     pub(crate) path: PathBuf,
     pub(crate) size: u64,
 }
 
-impl FileInfo {
+impl FileEntry {
     pub(crate) fn mime(&self) -> Mime {
         // FIXME: migrate to typed mime first?
         detect_mime(&self.path).parse().unwrap()
@@ -64,9 +64,8 @@ pub async fn add_path_into_database<P: AsRef<Path>>(
     storage: &AsyncStorage,
     prefix: impl AsRef<Path>,
     path: P,
-) -> Result<(Value, CompressionAlgorithm)> {
-    let (file_list, algorithm) = storage.store_all(prefix.as_ref(), path.as_ref()).await?;
-    Ok((file_list_to_json(file_list), algorithm))
+) -> Result<(Vec<FileEntry>, CompressionAlgorithm)> {
+    storage.store_all(prefix.as_ref(), path.as_ref()).await
 }
 
 #[instrument(skip(storage))]
@@ -75,17 +74,17 @@ pub async fn add_path_into_remote_archive<P: AsRef<Path> + std::fmt::Debug>(
     archive_path: &str,
     path: P,
     public_access: bool,
-) -> Result<(Value, CompressionAlgorithm)> {
-    let (file_list, algorithm) = storage
+) -> Result<(Vec<FileEntry>, u64, CompressionAlgorithm)> {
+    let (file_list, compressed_size, algorithm) = storage
         .store_all_in_archive(archive_path, path.as_ref())
         .await?;
     if public_access {
         storage.set_public_access(archive_path, true).await?;
     }
-    Ok((file_list_to_json(file_list), algorithm))
+    Ok((file_list, compressed_size, algorithm))
 }
 
-fn file_list_to_json(files: impl IntoIterator<Item = FileInfo>) -> Value {
+pub(crate) fn file_list_to_json(files: impl IntoIterator<Item = FileEntry>) -> Value {
     Value::Array(
         files
             .into_iter()

@@ -1,4 +1,4 @@
-use crate::db::file::add_path_into_database;
+use crate::db::file::{add_path_into_database, file_list_to_json};
 use crate::db::{
     add_build_into_database, add_doc_coverage, add_package_into_database,
     add_path_into_remote_archive, types::BuildStatus, update_crate_data_in_database, Pool,
@@ -525,19 +525,22 @@ impl RustwideBuilder {
                             )?;
                             target_build_logs.insert(target, target_res.build_log);
                         }
-                        let (_, new_alg) = self.runtime.block_on(add_path_into_remote_archive(
-                            &self.async_storage,
-                            &rustdoc_archive_path(name, version),
-                            local_storage.path(),
-                            true,
-                        ))?;
+                        let (file_list, docs_compressed_size, new_alg) =
+                            self.runtime.block_on(add_path_into_remote_archive(
+                                &self.async_storage,
+                                &rustdoc_archive_path(name, version),
+                                local_storage.path(),
+                                true,
+                            ))?;
+                        let docs_uncompressed_size: u64 =
+                            file_list.iter().map(|info| info.size).sum();
                         algs.insert(new_alg);
                     };
 
                     // Store the sources even if the build fails
                     debug!("adding sources into database");
-                    let files_list = {
-                        let (files_list, new_alg) =
+                    let (files_list, source_compressed_size) = {
+                        let (files_list, compressed_size, new_alg) =
                             self.runtime.block_on(add_path_into_remote_archive(
                                 &self.async_storage,
                                 &source_archive_path(name, version),
@@ -545,8 +548,10 @@ impl RustwideBuilder {
                                 false,
                             ))?;
                         algs.insert(new_alg);
-                        files_list
+                        (files_list, compressed_size)
                     };
+                    let source_uncompressed_size: u64 =
+                        files_list.iter().map(|info| info.size).sum();
 
                     let has_examples = build.host_source_dir().join("examples").is_dir();
                     if res.result.successful {
@@ -585,7 +590,7 @@ impl RustwideBuilder {
                         cargo_metadata,
                         &build.host_source_dir(),
                         &res.target,
-                        files_list,
+                        file_list_to_json(files_list),
                         successful_targets,
                         &release_data,
                         has_docs,

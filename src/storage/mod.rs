@@ -8,7 +8,7 @@ use self::database::DatabaseBackend;
 use self::s3::S3Backend;
 use crate::{
     db::{
-        file::{detect_mime, FileInfo},
+        file::{detect_mime, FileEntry},
         Pool,
     },
     error::Result,
@@ -390,7 +390,7 @@ impl AsyncStorage {
         &self,
         archive_path: &str,
         root_dir: &Path,
-    ) -> Result<(Vec<FileInfo>, CompressionAlgorithm)> {
+    ) -> Result<(Vec<FileEntry>, u64, CompressionAlgorithm)> {
         let (zip_content, compressed_index_content, alg, remote_index_path, file_paths) =
             spawn_blocking({
                 let archive_path = archive_path.to_owned();
@@ -426,7 +426,7 @@ impl AsyncStorage {
 
                             zip.start_file(file_path.to_str().unwrap(), options)?;
                             io::copy(&mut file, &mut zip)?;
-                            file_paths.push(FileInfo{path: file_path, size: file.metadata()?.len()});
+                            file_paths.push(FileEntry{path: file_path, size: file.metadata()?.len()});
                         }
 
                         zip.finish()?.into_inner()
@@ -458,6 +458,7 @@ impl AsyncStorage {
             })
             .await?;
 
+        let compressed_size = zip_content.len();
         self.store_inner(vec![
             Blob {
                 path: archive_path.to_string(),
@@ -477,7 +478,7 @@ impl AsyncStorage {
         .await?;
 
         let file_alg = CompressionAlgorithm::Bzip2;
-        Ok((file_paths, file_alg))
+        Ok((file_paths, compressed_size as u64, file_alg))
     }
 
     /// Store all files in `root_dir` into the backend under `prefix`.
@@ -486,7 +487,7 @@ impl AsyncStorage {
         &self,
         prefix: &Path,
         root_dir: &Path,
-    ) -> Result<(Vec<FileInfo>, CompressionAlgorithm)> {
+    ) -> Result<(Vec<FileEntry>, CompressionAlgorithm)> {
         let alg = CompressionAlgorithm::default();
 
         let (blobs, file_paths_and_mimes) = spawn_blocking({
@@ -510,7 +511,7 @@ impl AsyncStorage {
                     let content = compress(file, alg)?;
                     let bucket_path = prefix.join(&file_path).to_slash().unwrap().to_string();
 
-                    let file_info = FileInfo {
+                    let file_info = FileEntry {
                         path: file_path,
                         size: file_size,
                     };
@@ -745,7 +746,7 @@ impl Storage {
         &self,
         archive_path: &str,
         root_dir: &Path,
-    ) -> Result<(Vec<FileInfo>, CompressionAlgorithm)> {
+    ) -> Result<(Vec<FileEntry>, u64, CompressionAlgorithm)> {
         self.runtime
             .block_on(self.inner.store_all_in_archive(archive_path, root_dir))
     }
@@ -754,7 +755,7 @@ impl Storage {
         &self,
         prefix: &Path,
         root_dir: &Path,
-    ) -> Result<(Vec<FileInfo>, CompressionAlgorithm)> {
+    ) -> Result<(Vec<FileEntry>, CompressionAlgorithm)> {
         self.runtime
             .block_on(self.inner.store_all(prefix, root_dir))
     }
@@ -870,7 +871,7 @@ mod test {
 mod backend_tests {
     use super::*;
 
-    fn get_file_info(files: &[FileInfo], path: impl AsRef<Path>) -> Option<&FileInfo> {
+    fn get_file_info(files: &[FileEntry], path: impl AsRef<Path>) -> Option<&FileEntry> {
         let path = path.as_ref();
         files.iter().find(|info| info.path == path)
     }
