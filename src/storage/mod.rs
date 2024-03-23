@@ -7,11 +7,12 @@ pub use self::compression::{compress, decompress, CompressionAlgorithm, Compress
 use self::database::DatabaseBackend;
 use self::s3::S3Backend;
 use crate::{db::Pool, error::Result, utils::spawn_blocking, Config, InstanceMetrics};
-use anyhow::{anyhow, ensure};
+use anyhow::anyhow;
 use chrono::{DateTime, Utc};
 use fn_error_context::context;
 use futures_util::stream::BoxStream;
 use path_slash::PathExt;
+use std::iter;
 use std::{
     collections::{HashMap, HashSet},
     ffi::OsStr,
@@ -23,6 +24,7 @@ use std::{
 };
 use tokio::{io::AsyncWriteExt, runtime::Runtime};
 use tracing::{error, info_span, instrument, trace};
+use walkdir::WalkDir;
 
 type FileRange = RangeInclusive<u64>;
 
@@ -45,40 +47,40 @@ impl Blob {
     }
 }
 
-fn get_file_list_from_dir<P: AsRef<Path>>(path: P, files: &mut Vec<PathBuf>) -> Result<()> {
-    let path = path.as_ref();
-
-    for file in path.read_dir()? {
-        let file = file?;
-
-        if file.file_type()?.is_file() {
-            files.push(file.path());
-        } else if file.file_type()?.is_dir() {
-            get_file_list_from_dir(file.path(), files)?;
-        }
-    }
-
-    Ok(())
-}
-
-#[instrument]
-pub fn get_file_list<P: AsRef<Path> + std::fmt::Debug>(path: P) -> Result<Vec<PathBuf>> {
-    let path = path.as_ref();
-    let mut files = Vec::new();
-
-    ensure!(path.exists(), "File not found");
-
+pub fn get_file_list<P: AsRef<Path>>(path: P) -> Box<dyn Iterator<Item = Result<PathBuf>>> {
+    let path = path.as_ref().to_path_buf();
     if path.is_file() {
-        files.push(PathBuf::from(path.file_name().unwrap()));
-    } else if path.is_dir() {
-        get_file_list_from_dir(path, &mut files)?;
-        for file_path in &mut files {
-            // We want the paths in this list to not be {path}/bar.txt but just bar.txt
-            *file_path = PathBuf::from(file_path.strip_prefix(path).unwrap());
-        }
-    }
+        let path = if let Some(parent) = path.parent() {
+            path.strip_prefix(parent).unwrap().to_path_buf()
+        } else {
+            path
+        };
 
-    Ok(files)
+        Box::new(iter::once(Ok(path)))
+    } else if path.is_dir() {
+        Box::new(
+            WalkDir::new(path.clone())
+                .into_iter()
+                .filter_map(move |result| {
+                    let direntry = match result {
+                        Ok(de) => de,
+                        Err(err) => return Some(Err(err.into())),
+                    };
+
+                    if !direntry.file_type().is_dir() {
+                        Some(Ok(direntry
+                            .path()
+                            .strip_prefix(&path)
+                            .unwrap()
+                            .to_path_buf()))
+                    } else {
+                        None
+                    }
+                }),
+        )
+    } else {
+        Box::new(iter::empty())
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -411,7 +413,9 @@ impl AsyncStorage {
                             .compression_method(zip::CompressionMethod::Bzip2);
 
                         let mut zip = zip::ZipWriter::new(io::Cursor::new(Vec::new()));
-                        for file_path in get_file_list(&root_dir)? {
+                        for file_path in get_file_list(&root_dir) {
+                            let file_path = file_path?;
+
                             let mut file = fs::File::open(&root_dir.join(&file_path))?;
 
                             zip.start_file(file_path.to_str().unwrap(), options)?;
@@ -487,35 +491,34 @@ impl AsyncStorage {
             move || {
                 let mut file_paths_and_mimes = HashMap::new();
                 let mut algs = HashSet::with_capacity(1);
-                let blobs: Vec<_> = get_file_list(&root_dir)?
-                    .into_iter()
-                    .filter_map(|file_path| {
-                        // Some files have insufficient permissions
-                        // (like .lock file created by cargo in documentation directory).
-                        // Skip these files.
-                        fs::File::open(root_dir.join(&file_path))
-                            .ok()
-                            .map(|file| (file_path, file))
-                    })
-                    .map(|(file_path, file)| -> Result<_> {
-                        let alg = CompressionAlgorithm::default();
-                        let content = compress(file, alg)?;
-                        let bucket_path = prefix.join(&file_path).to_slash().unwrap().to_string();
+                let mut blobs: Vec<Blob> = Vec::new();
+                for file_path in get_file_list(&root_dir) {
+                    let file_path = file_path?;
 
-                        let mime = detect_mime(&file_path);
-                        file_paths_and_mimes.insert(file_path, mime.to_string());
-                        algs.insert(alg);
+                    // Some files have insufficient permissions
+                    // (like .lock file created by cargo in documentation directory).
+                    // Skip these files.
+                    let Ok(file) = fs::File::open(root_dir.join(&file_path)) else {
+                        continue;
+                    };
 
-                        Ok(Blob {
-                            path: bucket_path,
-                            mime: mime.to_string(),
-                            content,
-                            compression: Some(alg),
-                            // this field is ignored by the backend
-                            date_updated: Utc::now(),
-                        })
-                    })
-                    .collect::<Result<Vec<_>>>()?;
+                    let alg = CompressionAlgorithm::default();
+                    let content = compress(file, alg)?;
+                    let bucket_path = prefix.join(&file_path).to_slash().unwrap().to_string();
+
+                    let mime = detect_mime(&file_path);
+                    file_paths_and_mimes.insert(file_path, mime.to_string());
+                    algs.insert(alg);
+
+                    blobs.push(Blob {
+                        path: bucket_path,
+                        mime: mime.to_string(),
+                        content,
+                        compression: Some(alg),
+                        // this field is ignored by the backend
+                        date_updated: Utc::now(),
+                    });
+                }
                 Ok((blobs, file_paths_and_mimes, algs))
             }
         })
@@ -837,14 +840,17 @@ mod test {
     use std::env;
 
     #[test]
-    fn test_get_file_list() {
+    fn test_get_file_list() -> Result<()> {
         crate::test::init_logger();
-        let files = get_file_list(env::current_dir().unwrap());
-        assert!(files.is_ok());
-        assert!(!files.unwrap().is_empty());
+        let dir = env::current_dir().unwrap();
 
-        let files = get_file_list(env::current_dir().unwrap().join("Cargo.toml")).unwrap();
+        let files: Vec<_> = get_file_list(&dir).collect::<Result<Vec<_>>>()?;
+        assert!(!files.is_empty());
+
+        let files: Vec<_> = get_file_list(dir.join("Cargo.toml")).collect::<Result<Vec<_>>>()?;
         assert_eq!(files[0], std::path::Path::new("Cargo.toml"));
+
+        Ok(())
     }
 
     #[test]
