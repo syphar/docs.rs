@@ -37,7 +37,7 @@ pub(crate) async fn add_package_into_database(
     registry_data: &ReleaseData,
     has_docs: bool,
     has_examples: bool,
-    compression_algorithms: std::collections::HashSet<CompressionAlgorithm>,
+    compression_algorithms: impl IntoIterator<Item = CompressionAlgorithm> + std::fmt::Debug,
     repository_id: Option<i32>,
     archive_storage: bool,
 ) -> Result<i32> {

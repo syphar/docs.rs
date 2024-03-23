@@ -5,14 +5,15 @@ use crate::docbuilder::DocCoverage;
 use crate::error::Result;
 use crate::registry_api::{CrateData, CrateOwner, ReleaseData};
 use crate::storage::{
-    rustdoc_archive_path, source_archive_path, AsyncStorage, CompressionAlgorithms,
+    rustdoc_archive_path, source_archive_path, AsyncStorage, CompressionAlgorithm,
 };
 use crate::utils::{Dependency, MetadataPackage, Target};
 use anyhow::{bail, Context};
 use base64::{engine::general_purpose::STANDARD as b64, Engine};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use std::iter;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 use tracing::debug;
@@ -359,7 +360,7 @@ impl<'a> FakeRelease<'a> {
             archive_storage: bool,
             package: &MetadataPackage,
             storage: &AsyncStorage,
-        ) -> Result<(Value, CompressionAlgorithms)> {
+        ) -> Result<(Value, CompressionAlgorithm)> {
             debug!(
                 "adding directory {:?} from {}",
                 kind,
@@ -382,9 +383,7 @@ impl<'a> FakeRelease<'a> {
                     public,
                 )
                 .await?;
-                let mut hm = HashSet::new();
-                hm.insert(new_alg);
-                Ok((files_list, hm))
+                Ok((files_list, new_alg))
             } else {
                 let prefix = match kind {
                     FileKind::Rustdoc => "rustdoc",
@@ -494,7 +493,7 @@ impl<'a> FakeRelease<'a> {
             &self.registry_release_data,
             self.has_docs,
             self.has_examples,
-            algs,
+            iter::once(algs),
             repository,
             archive_storage,
         )
