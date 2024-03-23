@@ -589,6 +589,8 @@ impl RustwideBuilder {
                     };
                     // FIXME: convert the error from `res.result.error` into the codename,
                     // and add it to the build result.
+                    // Also add the debug representation into the `builds.errors` column
+                    // unclear: do we want this to be a database enum?
                     let build_id = self.runtime.block_on(add_build_into_database(
                         &mut async_conn,
                         release_id,
