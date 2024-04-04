@@ -500,6 +500,8 @@ impl RustwideBuilder {
 
                     let mut algs = HashSet::new();
                     let mut target_build_logs = HashMap::new();
+                    let mut documentation_size: Option<u64> = None;
+                    let mut documentation_size_compressed: Option<u64> = None;
                     if has_docs {
                         debug!("adding documentation for the default target to the database");
                         self.copy_docs(
@@ -525,21 +527,21 @@ impl RustwideBuilder {
                             )?;
                             target_build_logs.insert(target, target_res.build_log);
                         }
-                        let (file_list, docs_compressed_size, new_alg) =
+                        let (file_list, doc_size_compressed, new_alg) =
                             self.runtime.block_on(add_path_into_remote_archive(
                                 &self.async_storage,
                                 &rustdoc_archive_path(name, version),
                                 local_storage.path(),
                                 true,
                             ))?;
-                        let docs_uncompressed_size: u64 =
-                            file_list.iter().map(|info| info.size).sum();
+                        documentation_size_compressed = Some(doc_size_compressed);
+                        documentation_size = Some(file_list.iter().map(|info| info.size).sum());
                         algs.insert(new_alg);
                     };
 
                     // Store the sources even if the build fails
                     debug!("adding sources into database");
-                    let (files_list, source_compressed_size) = {
+                    let (files_list, source_size_compressed) = {
                         let (files_list, compressed_size, new_alg) =
                             self.runtime.block_on(add_path_into_remote_archive(
                                 &self.async_storage,
@@ -550,8 +552,7 @@ impl RustwideBuilder {
                         algs.insert(new_alg);
                         (files_list, compressed_size)
                     };
-                    let source_uncompressed_size: u64 =
-                        files_list.iter().map(|info| info.size).sum();
+                    let source_size: u64 = files_list.iter().map(|info| info.size).sum();
 
                     let has_examples = build.host_source_dir().join("examples").is_dir();
                     if res.result.successful {
@@ -619,6 +620,10 @@ impl RustwideBuilder {
                         &res.result.rustc_version,
                         &res.result.docsrs_version,
                         build_status,
+                        documentation_size,
+                        documentation_size_compressed,
+                        source_size,
+                        source_size_compressed,
                     ))?;
 
                     {

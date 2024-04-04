@@ -234,19 +234,37 @@ pub(crate) async fn add_build_into_database(
     rustc_version: &str,
     docsrs_version: &str,
     build_status: BuildStatus,
+    documentation_size: Option<u64>,
+    documentation_size_compressed: Option<u64>,
+    source_size: u64,
+    source_size_compressed: u64,
 ) -> Result<i32> {
     debug!("Adding build into database");
     let hostname = hostname::get()?;
 
     let build_id = sqlx::query_scalar!(
-        "INSERT INTO builds (rid, rustc_version, docsrs_version, build_status, build_server)
-        VALUES ($1, $2, $3, $4, $5)
+        "INSERT INTO builds (
+            rid,
+            rustc_version,
+            docsrs_version,
+            build_status,
+            build_server,
+            documentation_size,
+            documentation_size_compressed,
+            source_size,
+            source_size_compressed
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING id",
         release_id,
         rustc_version,
         docsrs_version,
         build_status as BuildStatus,
         hostname.to_str().unwrap_or(""),
+        documentation_size.map(|s| s as i64),
+        documentation_size_compressed.map(|s| s as i64),
+        TryInto::<i64>::try_into(source_size)?,
+        TryInto::<i64>::try_into(source_size_compressed)?,
     )
     .fetch_one(&mut *conn)
     .await?;
