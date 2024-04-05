@@ -1,6 +1,7 @@
 mod archive_index;
 mod compression;
 mod database;
+mod mimes;
 mod s3;
 
 pub use self::compression::{compress, decompress, CompressionAlgorithm, CompressionAlgorithms};
@@ -11,6 +12,7 @@ use anyhow::{anyhow, ensure};
 use chrono::{DateTime, Utc};
 use fn_error_context::context;
 use futures_util::stream::BoxStream;
+use mime::Mime;
 use path_slash::PathExt;
 use std::{
     collections::{HashMap, HashSet},
@@ -33,7 +35,7 @@ pub(crate) struct PathNotFoundError;
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct Blob {
     pub(crate) path: String,
-    pub(crate) mime: String,
+    pub(crate) mime: Mime,
     pub(crate) date_updated: DateTime<Utc>,
     pub(crate) content: Vec<u8>,
     pub(crate) compression: Option<CompressionAlgorithm>,
@@ -453,14 +455,14 @@ impl AsyncStorage {
         self.store_inner(vec![
             Blob {
                 path: archive_path.to_string(),
-                mime: "application/zip".to_owned(),
+                mime: mimes::APPLICATION_ZIP,
                 content: zip_content,
                 compression: None,
                 date_updated: Utc::now(),
             },
             Blob {
                 path: remote_index_path,
-                mime: "application/octet-stream".to_owned(),
+                mime: mime::APPLICATION_OCTET_STREAM,
                 content: compressed_index_content,
                 compression: Some(alg),
                 date_updated: Utc::now(),
@@ -508,7 +510,7 @@ impl AsyncStorage {
 
                         Ok(Blob {
                             path: bucket_path,
-                            mime: mime.to_string(),
+                            mime,
                             content,
                             compression: Some(alg),
                             // this field is ignored by the backend
@@ -801,24 +803,30 @@ impl std::fmt::Debug for Storage {
     }
 }
 
-fn detect_mime(file_path: impl AsRef<Path>) -> &'static str {
+fn detect_mime(file_path: impl AsRef<Path>) -> Mime {
     let mime = mime_guess::from_path(file_path.as_ref())
-        .first_raw()
-        .unwrap_or("text/plain");
-    match mime {
+        .first()
+        .unwrap_or(mime::TEXT_PLAIN);
+
+    static TEXT_MARKDOWN: Mime = "text/markdown".parse().unwrap();
+    static TEXT_RUST: Mime = "text/rust".parse().unwrap();
+    static TEXT_TOML: Mime = "text/toml".parse().unwrap();
+
+    match mime.as_ref() {
         "text/plain" | "text/troff" | "text/x-markdown" | "text/x-rust" | "text/x-toml" => {
             match file_path.as_ref().extension().and_then(OsStr::to_str) {
-                Some("md") => "text/markdown",
-                Some("rs") => "text/rust",
-                Some("markdown") => "text/markdown",
-                Some("css") => "text/css",
-                Some("toml") => "text/toml",
-                Some("js") => "application/javascript",
-                Some("json") => "application/json",
+                Some("md") => TEXT_MARKDOWN,
+                Some("rs") => TEXT_RUST,
+                Some("markdown") => TEXT_MARKDOWN,
+                Some("css") => mime::TEXT_CSS,
+                Some("toml") => TEXT_TOML,
+                Some("js") => mime::TEXT_JAVASCRIPT,
+                Some("json") => mime::APPLICATION_JSON,
                 _ => mime,
             }
         }
-        "image/svg" => "image/svg+xml",
+        "image/svg" => mime::IMAGE_SVG,
+
         _ => mime,
     }
 }

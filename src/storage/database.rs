@@ -1,5 +1,6 @@
 use super::{Blob, FileRange};
 use crate::{db::Pool, error::Result, InstanceMetrics};
+use anyhow::Context as _;
 use chrono::{DateTime, Utc};
 use futures_util::stream::{Stream, TryStreamExt};
 use sqlx::Acquire;
@@ -136,7 +137,7 @@ impl DatabaseBackend {
         });
         Ok(Blob {
             path: result.path,
-            mime: result.mime,
+            mime: result.mime.parse().context("could not parse mime")?,
             date_updated: result.date_updated,
             content: result.content.unwrap_or_default(),
             compression,
@@ -154,7 +155,7 @@ impl DatabaseBackend {
                  ON CONFLICT (path) DO UPDATE
                     SET mime = EXCLUDED.mime, content = EXCLUDED.content, compression = EXCLUDED.compression",
                 &blob.path,
-                &blob.mime,
+                &blob.mime.to_string(),
                 &blob.content,
                 compression,
             )

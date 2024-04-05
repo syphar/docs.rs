@@ -214,7 +214,9 @@ impl S3Backend {
 
         Ok(Blob {
             path: path.into(),
-            mime: res.content_type.unwrap(),
+            mime: res.content_type.parse().with_context(|| {
+                format!("can't parse mime from content type {}", res.content_type)
+            })?,
             date_updated,
             content: content.into_inner(),
             compression,
@@ -232,7 +234,7 @@ impl S3Backend {
                         .bucket(&self.bucket)
                         .key(&blob.path)
                         .body(blob.content.clone().into())
-                        .content_type(&blob.mime)
+                        .content_type(&blob.mime.to_string())
                         .set_content_encoding(blob.compression.map(|alg| alg.to_string()))
                         .send()
                         .map_ok(|_| {
