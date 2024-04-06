@@ -17,6 +17,7 @@ use tracing::instrument;
 
 /// represents a file path from our source or documentation builds.
 /// Used to return metadata about the file.
+#[derive(Debug)]
 pub struct FileEntry {
     pub(crate) path: PathBuf,
     pub(crate) size: u64,
@@ -74,14 +75,14 @@ pub async fn add_path_into_remote_archive<P: AsRef<Path> + std::fmt::Debug>(
     archive_path: &str,
     path: P,
     public_access: bool,
-) -> Result<(Vec<FileEntry>, u64, CompressionAlgorithm)> {
-    let (file_list, compressed_size, algorithm) = storage
+) -> Result<(Vec<FileEntry>, CompressionAlgorithm)> {
+    let (file_list, algorithm) = storage
         .store_all_in_archive(archive_path, path.as_ref())
         .await?;
     if public_access {
         storage.set_public_access(archive_path, true).await?;
     }
-    Ok((file_list, compressed_size, algorithm))
+    Ok((file_list, algorithm))
 }
 
 pub(crate) fn file_list_to_json(files: impl IntoIterator<Item = FileEntry>) -> Value {

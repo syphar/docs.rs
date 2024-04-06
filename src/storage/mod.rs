@@ -390,7 +390,7 @@ impl AsyncStorage {
         &self,
         archive_path: &str,
         root_dir: &Path,
-    ) -> Result<(Vec<FileEntry>, u64, CompressionAlgorithm)> {
+    ) -> Result<(Vec<FileEntry>, CompressionAlgorithm)> {
         let (zip_content, compressed_index_content, alg, remote_index_path, file_paths) =
             spawn_blocking({
                 let archive_path = archive_path.to_owned();
@@ -458,7 +458,6 @@ impl AsyncStorage {
             })
             .await?;
 
-        let compressed_size = zip_content.len();
         self.store_inner(vec![
             Blob {
                 path: archive_path.to_string(),
@@ -477,8 +476,7 @@ impl AsyncStorage {
         ])
         .await?;
 
-        let file_alg = CompressionAlgorithm::Bzip2;
-        Ok((file_paths, compressed_size as u64, file_alg))
+        Ok((file_paths, CompressionAlgorithm::Bzip2))
     }
 
     /// Store all files in `root_dir` into the backend under `prefix`.
@@ -746,7 +744,7 @@ impl Storage {
         &self,
         archive_path: &str,
         root_dir: &Path,
-    ) -> Result<(Vec<FileEntry>, u64, CompressionAlgorithm)> {
+    ) -> Result<(Vec<FileEntry>, CompressionAlgorithm)> {
         self.runtime
             .block_on(self.inner.store_all_in_archive(archive_path, root_dir))
     }

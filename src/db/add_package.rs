@@ -40,6 +40,7 @@ pub(crate) async fn add_package_into_database(
     compression_algorithms: impl IntoIterator<Item = CompressionAlgorithm> + std::fmt::Debug,
     repository_id: Option<i32>,
     archive_storage: bool,
+    source_size: u64,
 ) -> Result<i32> {
     debug!("Adding package into database");
     let crate_id = initialize_crate(conn, &metadata_pkg.name).await?;
@@ -58,12 +59,12 @@ pub(crate) async fn add_package_into_database(
             keywords, have_examples, downloads, files,
             doc_targets, is_library,
             documentation_url, default_target, features,
-            repository_id, archive_storage
+            repository_id, archive_storage, source_size
          )
          VALUES (
             $1,  $2,  $3,  $4,  $5,  $6,  $7,  $8,  $9,
             $10, $11, $12, $13, $14, $15, $16, $17, $18,
-            $19, $20, $21, $22, $23, $24, $25
+            $19, $20, $21, $22, $23, $24, $25, $26
          )
          ON CONFLICT (crate_id, version) DO UPDATE
             SET release_time = $3,
@@ -88,7 +89,8 @@ pub(crate) async fn add_package_into_database(
                 default_target = $22,
                 features = $23,
                 repository_id = $24,
-                archive_storage = $25
+                archive_storage = $25,
+                source_size = $26
          RETURNING id",
         crate_id,
         &metadata_pkg.version,
@@ -114,7 +116,8 @@ pub(crate) async fn add_package_into_database(
         default_target,
         features as Vec<Feature>,
         repository_id,
-        archive_storage
+        archive_storage,
+        source_size as i64,
     )
     .fetch_one(&mut *conn)
     .await?;
@@ -235,9 +238,6 @@ pub(crate) async fn add_build_into_database(
     docsrs_version: &str,
     build_status: BuildStatus,
     documentation_size: Option<u64>,
-    documentation_size_compressed: Option<u64>,
-    source_size: u64,
-    source_size_compressed: u64,
 ) -> Result<i32> {
     debug!("Adding build into database");
     let hostname = hostname::get()?;
@@ -249,12 +249,9 @@ pub(crate) async fn add_build_into_database(
             docsrs_version,
             build_status,
             build_server,
-            documentation_size,
-            documentation_size_compressed,
-            source_size,
-            source_size_compressed
+            documentation_size
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        VALUES ($1, $2, $3, $4, $5, $6)
         RETURNING id",
         release_id,
         rustc_version,
@@ -262,9 +259,6 @@ pub(crate) async fn add_build_into_database(
         build_status as BuildStatus,
         hostname.to_str().unwrap_or(""),
         documentation_size.map(|s| s as i64),
-        documentation_size_compressed.map(|s| s as i64),
-        TryInto::<i64>::try_into(source_size)?,
-        TryInto::<i64>::try_into(source_size_compressed)?,
     )
     .fetch_one(&mut *conn)
     .await?;

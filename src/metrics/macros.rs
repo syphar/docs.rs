@@ -23,7 +23,7 @@ macro_rules! metrics {
             pub(crate) cdn_invalidation_time: prometheus::HistogramVec,
             pub(crate) cdn_queue_time: prometheus::HistogramVec,
             pub(crate) build_time: prometheus::Histogram,
-            pub(crate) documentation_size_uncompressed: prometheus::Histogram,
+            pub(crate) documentation_size: prometheus::Histogram,
         }
         impl $name {
             $vis fn new() -> Result<Self, prometheus::Error> {
@@ -73,12 +73,13 @@ macro_rules! metrics {
                 )?;
                 registry.register(Box::new(build_time.clone()))?;
 
-                let documentation_size_uncompressed = prometheus::Histogram::with_opts(
+                let documentation_size= prometheus::Histogram::with_opts(
                     prometheus::HistogramOpts::new(
-                        "documentation_size_uncompressed",
-                        "uncompressed size of the documentation"
+                        "documentation_size",
+                        "size of the documentation in MB"
                     )
                     .namespace($namespace)
+                    .buckets($crate::metrics::DOCUMENTATION_SIZE_BUCKETS.to_vec())
                 )?;
                 registry.register(Box::new(build_time.clone()))?;
 
@@ -88,7 +89,7 @@ macro_rules! metrics {
                     cdn_invalidation_time,
                     cdn_queue_time,
                     build_time,
-                    documentation_size_uncompressed,
+                    documentation_size,
                     $(
                         $(#[$meta])*
                         $metric,

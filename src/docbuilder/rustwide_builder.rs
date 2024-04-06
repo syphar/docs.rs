@@ -500,9 +500,7 @@ impl RustwideBuilder {
 
                     let mut algs = HashSet::new();
                     let mut target_build_logs = HashMap::new();
-                    let mut documentation_size: Option<u64> = None;
-                    let mut documentation_size_compressed: Option<u64> = None;
-                    if has_docs {
+                    let documentation_size = if has_docs {
                         debug!("adding documentation for the default target to the database");
                         self.copy_docs(
                             &build.host_target_dir(),
@@ -527,22 +525,27 @@ impl RustwideBuilder {
                             )?;
                             target_build_logs.insert(target, target_res.build_log);
                         }
-                        let (file_list, doc_size_compressed, new_alg) =
+                        let (file_list, new_alg) =
                             self.runtime.block_on(add_path_into_remote_archive(
                                 &self.async_storage,
                                 &rustdoc_archive_path(name, version),
                                 local_storage.path(),
                                 true,
                             ))?;
-                        documentation_size_compressed = Some(doc_size_compressed);
-                        documentation_size = Some(file_list.iter().map(|info| info.size).sum());
+                        let documentation_size = file_list.iter().map(|info| info.size).sum();
+                        self.metrics
+                            .documentation_size
+                            .observe(documentation_size as f64 / 1024.0 / 1024.0);
                         algs.insert(new_alg);
+                        Some(documentation_size)
+                    } else {
+                        None
                     };
 
                     // Store the sources even if the build fails
                     debug!("adding sources into database");
-                    let (files_list, source_size_compressed) = {
-                        let (files_list, compressed_size, new_alg) =
+                    let files_list = {
+                        let (files_list, new_alg) =
                             self.runtime.block_on(add_path_into_remote_archive(
                                 &self.async_storage,
                                 &source_archive_path(name, version),
@@ -550,7 +553,7 @@ impl RustwideBuilder {
                                 false,
                             ))?;
                         algs.insert(new_alg);
-                        (files_list, compressed_size)
+                        files_list
                     };
                     let source_size: u64 = files_list.iter().map(|info| info.size).sum();
 
@@ -599,6 +602,7 @@ impl RustwideBuilder {
                         algs,
                         repository,
                         true,
+                        source_size,
                     ))?;
 
                     if let Some(doc_coverage) = res.doc_coverage {
@@ -621,9 +625,6 @@ impl RustwideBuilder {
                         &res.result.docsrs_version,
                         build_status,
                         documentation_size,
-                        documentation_size_compressed,
-                        source_size,
-                        source_size_compressed,
                     ))?;
 
                     {
