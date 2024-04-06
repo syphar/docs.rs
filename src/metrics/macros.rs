@@ -81,7 +81,7 @@ macro_rules! metrics {
                     .namespace($namespace)
                     .buckets($crate::metrics::DOCUMENTATION_SIZE_BUCKETS.to_vec())
                 )?;
-                registry.register(Box::new(build_time.clone()))?;
+                registry.register(Box::new(documentation_size.clone()))?;
 
                 Ok(Self {
                     registry,

@@ -12,7 +12,6 @@ use crate::utils::{Dependency, MetadataPackage, Target};
 use anyhow::{bail, Context};
 use base64::{engine::general_purpose::STANDARD as b64, Engine};
 use chrono::{DateTime, Utc};
-use serde_json::Value;
 use std::collections::HashMap;
 use std::iter;
 use std::sync::Arc;
