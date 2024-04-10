@@ -73,7 +73,10 @@ mod tests {
                 .create()?;
 
             assert_eq!(
-                load(&mut env.db().conn(), &env.config())?,
+                env.runtime().block_on(async {
+                    let mut conn = env.async_db().await.async_conn().await;
+                    load(&mut conn, &env.config()).await
+                })?,
                 vec![
                     Crate {
                         name: "krate".into(),

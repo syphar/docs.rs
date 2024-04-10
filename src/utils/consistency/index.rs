@@ -1,6 +1,7 @@
 use super::data::{Crate, Crates, Release, Releases};
 use crate::Index;
 use anyhow::Result;
+use rayon::iter::ParallelIterator;
 
 pub(super) fn load(index: &Index) -> Result<Crates> {
     let mut result: Crates = index

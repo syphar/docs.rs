@@ -150,27 +150,29 @@ where
 
 #[cfg(test)]
 mod tests {
-    use postgres_types::FromSql;
-
     use super::diff::Difference;
     use super::*;
     use crate::test::{wrapper, TestEnvironment};
 
     fn count(env: &TestEnvironment, sql: &str) -> Result<i64> {
-        Ok(env.db().conn().query_one(sql, &[])?.get::<_, i64>(0))
+        Ok(env.runtime().block_on(async {
+            let mut conn = env.async_db().await.async_conn().await;
+            sqlx::query_scalar(sql).fetch_one(&mut *conn).await
+        })?)
     }
 
-    fn single_row<T>(env: &TestEnvironment, sql: &str) -> Result<Vec<T>>
-    where
-        T: for<'a> FromSql<'a>,
-    {
-        Ok(env
-            .db()
-            .conn()
-            .query(sql, &[])?
-            .iter()
-            .map(|row| row.get::<_, T>(0))
-            .collect())
+    fn single_bool(env: &TestEnvironment, sql: &str) -> Result<bool> {
+        Ok(env.runtime().block_on(async {
+            let mut conn = env.async_db().await.async_conn().await;
+            sqlx::query_scalar(sql).fetch_one(&mut *conn).await
+        })?)
+    }
+
+    fn single_string(env: &TestEnvironment, sql: &str) -> Result<String> {
+        Ok(env.runtime().block_on(async {
+            let mut conn = env.async_db().await.async_conn().await;
+            sqlx::query_scalar(sql).fetch_one(&mut *conn).await
+        })?)
     }
 
     #[test]
@@ -223,10 +225,7 @@ mod tests {
 
             handle_diff(env, diff.iter(), false)?;
 
-            assert_eq!(
-                single_row::<String>(env, "SELECT version FROM releases")?,
-                vec!["0.1.2"]
-            );
+            assert_eq!(single_string(env, "SELECT version FROM releases")?, "0.1.2");
 
             Ok(())
         })
@@ -249,17 +248,11 @@ mod tests {
 
             handle_diff(env, diff.iter(), true)?;
 
-            assert_eq!(
-                single_row::<bool>(env, "SELECT yanked FROM releases")?,
-                vec![true]
-            );
+            assert!(single_bool(env, "SELECT yanked FROM releases")?);
 
             handle_diff(env, diff.iter(), false)?;
 
-            assert_eq!(
-                single_row::<bool>(env, "SELECT yanked FROM releases")?,
-                vec![false]
-            );
+            assert!(!single_bool(env, "SELECT yanked FROM releases")?);
 
             Ok(())
         })
