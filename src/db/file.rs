@@ -25,7 +25,6 @@ pub struct FileEntry {
 
 impl FileEntry {
     pub(crate) fn mime(&self) -> Mime {
-        // FIXME: migrate to typed mime first?
         detect_mime(&self.path).parse().unwrap()
     }
 }
