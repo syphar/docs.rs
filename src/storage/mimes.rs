@@ -1,3 +1,13 @@
-use mime::Name;
+use mime::Mime;
+use once_cell::sync::Lazy;
 
-pub(crate) const APPLICATION_ZIP: Mime = "application/zip".parse().unwrap();
+macro_rules! mime {
+    ($id:ident, $mime:expr) => {
+        pub(crate) static $id: Lazy<Mime> = Lazy::new(|| $mime.parse().unwrap());
+    };
+}
+
+mime!(APPLICATION_ZIP, "application/zip");
+mime!(TEXT_MARKDOWN, "text/markdown");
+mime!(TEXT_RUST, "text/rust");
+mime!(TEXT_TOML, "text/toml");

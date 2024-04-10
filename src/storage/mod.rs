@@ -372,7 +372,7 @@ impl AsyncStorage {
 
         Ok(Blob {
             path: format!("{archive_path}/{path}"),
-            mime: detect_mime(path).into(),
+            mime: detect_mime(path),
             date_updated: blob.date_updated,
             content: blob.content,
             compression: None,
@@ -384,7 +384,7 @@ impl AsyncStorage {
         &self,
         archive_path: &str,
         root_dir: &Path,
-    ) -> Result<(HashMap<PathBuf, String>, CompressionAlgorithm)> {
+    ) -> Result<(HashMap<PathBuf, Mime>, CompressionAlgorithm)> {
         let (zip_content, compressed_index_content, alg, remote_index_path, file_paths) =
             spawn_blocking({
                 let archive_path = archive_path.to_owned();
@@ -420,7 +420,7 @@ impl AsyncStorage {
                             io::copy(&mut file, &mut zip)?;
 
                             let mime = detect_mime(&file_path);
-                            file_paths.insert(file_path, mime.to_string());
+                            file_paths.insert(file_path, mime);
                         }
 
                         zip.finish()?.into_inner()
@@ -455,7 +455,7 @@ impl AsyncStorage {
         self.store_inner(vec![
             Blob {
                 path: archive_path.to_string(),
-                mime: mimes::APPLICATION_ZIP,
+                mime: mimes::APPLICATION_ZIP.clone(),
                 content: zip_content,
                 compression: None,
                 date_updated: Utc::now(),
@@ -482,7 +482,7 @@ impl AsyncStorage {
         &self,
         prefix: &Path,
         root_dir: &Path,
-    ) -> Result<(HashMap<PathBuf, String>, HashSet<CompressionAlgorithm>)> {
+    ) -> Result<(HashMap<PathBuf, Mime>, HashSet<CompressionAlgorithm>)> {
         let (blobs, file_paths_and_mimes, algs) = spawn_blocking({
             let prefix = prefix.to_owned();
             let root_dir = root_dir.to_owned();
@@ -505,7 +505,7 @@ impl AsyncStorage {
                         let bucket_path = prefix.join(&file_path).to_slash().unwrap().to_string();
 
                         let mime = detect_mime(&file_path);
-                        file_paths_and_mimes.insert(file_path, mime.to_string());
+                        file_paths_and_mimes.insert(file_path, mime.clone());
                         algs.insert(alg);
 
                         Ok(Blob {
@@ -737,7 +737,7 @@ impl Storage {
         &self,
         archive_path: &str,
         root_dir: &Path,
-    ) -> Result<(HashMap<PathBuf, String>, CompressionAlgorithm)> {
+    ) -> Result<(HashMap<PathBuf, Mime>, CompressionAlgorithm)> {
         self.runtime
             .block_on(self.inner.store_all_in_archive(archive_path, root_dir))
     }
@@ -746,7 +746,7 @@ impl Storage {
         &self,
         prefix: &Path,
         root_dir: &Path,
-    ) -> Result<(HashMap<PathBuf, String>, HashSet<CompressionAlgorithm>)> {
+    ) -> Result<(HashMap<PathBuf, Mime>, HashSet<CompressionAlgorithm>)> {
         self.runtime
             .block_on(self.inner.store_all(prefix, root_dir))
     }
@@ -808,18 +808,14 @@ fn detect_mime(file_path: impl AsRef<Path>) -> Mime {
         .first()
         .unwrap_or(mime::TEXT_PLAIN);
 
-    static TEXT_MARKDOWN: Mime = "text/markdown".parse().unwrap();
-    static TEXT_RUST: Mime = "text/rust".parse().unwrap();
-    static TEXT_TOML: Mime = "text/toml".parse().unwrap();
-
     match mime.as_ref() {
         "text/plain" | "text/troff" | "text/x-markdown" | "text/x-rust" | "text/x-toml" => {
             match file_path.as_ref().extension().and_then(OsStr::to_str) {
-                Some("md") => TEXT_MARKDOWN,
-                Some("rs") => TEXT_RUST,
-                Some("markdown") => TEXT_MARKDOWN,
+                Some("md") => mimes::TEXT_MARKDOWN.clone(),
+                Some("rs") => mimes::TEXT_RUST.clone(),
+                Some("markdown") => mimes::TEXT_MARKDOWN.clone(),
                 Some("css") => mime::TEXT_CSS,
-                Some("toml") => TEXT_TOML,
+                Some("toml") => mimes::TEXT_TOML.clone(),
                 Some("js") => mime::TEXT_JAVASCRIPT,
                 Some("json") => mime::APPLICATION_JSON,
                 _ => mime,
@@ -1150,12 +1146,12 @@ mod backend_tests {
             assert!(stored_files.contains_key(name));
         }
         assert_eq!(
-            stored_files.get(Path::new("Cargo.toml")).unwrap(),
-            "text/toml"
+            stored_files.get(Path::new("Cargo.toml")).unwrap().as_ref(),
+            mimes::TEXT_TOML.as_ref()
         );
         assert_eq!(
-            stored_files.get(Path::new("src/main.rs")).unwrap(),
-            "text/rust"
+            stored_files.get(Path::new("src/main.rs")).unwrap().as_ref(),
+            mimes::TEXT_RUST.as_ref()
         );
 
         // delete the existing index to test the download of it
@@ -1207,12 +1203,12 @@ mod backend_tests {
             assert!(stored_files.contains_key(name));
         }
         assert_eq!(
-            stored_files.get(Path::new("Cargo.toml")).unwrap(),
-            "text/toml"
+            stored_files.get(Path::new("Cargo.toml")).unwrap().as_ref(),
+            mimes::TEXT_TOML.as_ref()
         );
         assert_eq!(
-            stored_files.get(Path::new("src/main.rs")).unwrap(),
-            "text/rust"
+            stored_files.get(Path::new("src/main.rs")).unwrap().as_ref(),
+            mimes::TEXT_RUST.as_ref()
         );
 
         let file = storage.get("prefix/Cargo.toml", std::usize::MAX)?;
