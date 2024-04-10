@@ -25,11 +25,13 @@ const BUILD_PRIORITY: i32 = 15;
 /// Even when activities fail, the command can just be re-run. While the diff calculation will
 /// be repeated, we won't re-execute fixing activities.
 pub fn run_check(ctx: &dyn Context, dry_run: bool) -> Result<()> {
-    let mut conn = ctx.pool()?.get()?;
+    let runtime = ctx.runtime()?;
+    let mut conn = runtime.block_on(ctx.pool()?.get_async())?;
     let index = ctx.index()?;
 
     info!("Loading data from database...");
-    let db_data = db::load(&mut conn, &*ctx.config()?)
+    let db_data = runtime
+        .block_on(db::load(&mut conn, &*ctx.config()?))
         .context("Loading crate data from database for consistency check")?;
 
     tracing::info!("Loading data from index...");

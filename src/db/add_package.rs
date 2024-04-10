@@ -529,38 +529,50 @@ mod test {
     use crate::utils::CargoMetadata;
     use test_case::test_case;
 
+    async fn keywords_for_release(
+        conn: &mut sqlx::PgConnection,
+        release_id: i32,
+    ) -> Vec<(String, String)> {
+        sqlx::query!(
+            r#"SELECT kw.name as "name!",kw.slug as "slug!"
+                FROM keywords as kw
+                INNER JOIN keyword_rels as kwr on kw.id = kwr.kid
+                WHERE kwr.rid = $1
+                ORDER BY kw.name,kw.slug"#,
+            release_id
+        )
+        .fetch_all(conn)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|row| (row.name, row.slug))
+        .collect()
+    }
+
     #[test]
     fn new_keywords() {
-        wrapper(|env| {
-            let mut conn = env.db().conn();
+        async_wrapper(|env| async move {
+            let mut conn = env.async_db().await.async_conn().await;
 
             let release_id = env
-                .fake_release()
+                .async_fake_release()
+                .await
                 .name("dummy")
                 .version("0.13.0")
                 .keywords(vec!["kw 1".into(), "kw 2".into()])
-                .create()?;
+                .create_async()
+                .await?;
 
-            let kw_r = conn
-                .query(
-                    "SELECT kw.name,kw.slug
-                    FROM keywords as kw
-                    INNER JOIN keyword_rels as kwr on kw.id = kwr.kid
-                    WHERE kwr.rid = $1
-                    ORDER BY kw.name,kw.slug",
-                    &[&release_id],
-                )?
-                .into_iter()
-                .map(|row| (row.get::<_, String>(0), row.get::<_, String>(1)))
-                .collect::<Vec<_>>();
+            let kw_r = keywords_for_release(&mut conn, release_id).await;
 
             assert_eq!(kw_r[0], ("kw 1".into(), "kw-1".into()));
             assert_eq!(kw_r[1], ("kw 2".into(), "kw-2".into()));
 
-            let all_kw = conn
-                .query("SELECT slug FROM keywords ORDER BY slug", &[])?
+            let all_kw = sqlx::query!("SELECT slug FROM keywords ORDER BY slug")
+                .fetch_all(&mut *conn)
+                .await?
                 .into_iter()
-                .map(|row| row.get::<_, String>(0))
+                .map(|row| row.slug)
                 .collect::<Vec<_>>();
 
             assert_eq!(all_kw, vec![String::from("kw-1"), "kw-2".into()]);
@@ -591,41 +603,34 @@ mod test {
 
     #[test]
     fn updated_keywords() {
-        wrapper(|env| {
-            env.fake_release()
+        async_wrapper(|env| async move {
+            env.async_fake_release()
+                .await
                 .name("dummy")
                 .version("0.13.0")
                 .keywords(vec!["kw 3".into(), "kw 4".into()])
-                .create()?;
+                .create_async()
+                .await?;
 
             let release_id = env
-                .fake_release()
+                .async_fake_release()
+                .await
                 .name("dummy")
                 .version("0.13.0")
                 .keywords(vec!["kw 1".into(), "kw 2".into()])
-                .create()?;
+                .create_async()
+                .await?;
 
-            let mut conn = env.db().conn();
-            let kw_r = conn
-                .query(
-                    "SELECT kw.name,kw.slug
-                    FROM keywords as kw
-                    INNER JOIN keyword_rels as kwr on kw.id = kwr.kid
-                    WHERE kwr.rid = $1
-                    ORDER BY kw.name,kw.slug",
-                    &[&release_id],
-                )?
-                .into_iter()
-                .map(|row| (row.get::<_, String>(0), row.get::<_, String>(1)))
-                .collect::<Vec<_>>();
-
+            let mut conn = env.async_db().await.async_conn().await;
+            let kw_r = keywords_for_release(&mut conn, release_id).await;
             assert_eq!(kw_r[0], ("kw 1".into(), "kw-1".into()));
             assert_eq!(kw_r[1], ("kw 2".into(), "kw-2".into()));
 
-            let all_kw = conn
-                .query("SELECT slug FROM keywords ORDER BY slug", &[])?
+            let all_kw = sqlx::query!("SELECT slug FROM keywords ORDER BY slug")
+                .fetch_all(&mut *conn)
+                .await?
                 .into_iter()
-                .map(|row| row.get::<_, String>(0))
+                .map(|row| row.slug)
                 .collect::<Vec<_>>();
 
             assert_eq!(

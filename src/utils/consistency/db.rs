@@ -5,8 +5,8 @@ use itertools::Itertools;
 use postgres::fallible_iterator::FallibleIterator;
 use std::iter;
 
-pub(super) fn load(conn: &mut postgres::Client, config: &Config) -> Result<Crates> {
-    let rows = conn.query_raw(
+pub(super) async fn load(conn: &mut sqlx::PgConnection, config: &Config) -> Result<Crates> {
+    let rows = sqlx::query!(
         "SELECT name, version, yanked
          FROM (
              SELECT
@@ -31,10 +31,10 @@ pub(super) fn load(conn: &mut postgres::Client, config: &Config) -> Result<Crate
              )
          ) AS inp
          ORDER BY name, version",
-        iter::once(config.build_attempts as i32),
-    )?;
-
-    let mut crates = Crates::new();
+        config.build_attempts as i32
+    )
+    .fetch_all(conn)
+    .await?;
 
     for (crate_name, release_rows) in &rows
         // `rows` is a `FallibleIterator` which needs to be converted before

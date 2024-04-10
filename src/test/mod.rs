@@ -2,7 +2,7 @@ mod fakes;
 
 pub(crate) use self::fakes::FakeBuild;
 use crate::cdn::CdnBackend;
-use crate::db::{self, AsyncPoolClient, Pool, PoolClient};
+use crate::db::{self, AsyncPoolClient, Pool};
 use crate::error::Result;
 use crate::repositories::RepositoryStatsUpdater;
 use crate::storage::{AsyncStorage, Storage, StorageKind};
@@ -333,7 +333,6 @@ impl TestEnvironment {
 
         // Use less connections for each test compared to production.
         config.max_pool_size = 4;
-        config.max_legacy_pool_size = 4;
         config.min_pool_idle = 0;
 
         // Use the database for storage, as it's faster than S3.
@@ -658,30 +657,18 @@ impl TestDatabase {
             .await
             .expect("failed to get a connection out of the pool")
     }
-
-    pub(crate) fn conn(&self) -> PoolClient {
-        self.pool
-            .get()
-            .expect("failed to get a connection out of the pool")
-    }
 }
 
 impl Drop for TestDatabase {
     fn drop(&mut self) {
-        let migration_result = self.runtime.block_on(async {
-            let mut conn = self.async_conn().await;
-            db::migrate(&mut conn, Some(0)).await
-        });
+        let mut conn = self.runtime.block_on(self.async_conn());
+        let migration_result = self.runtime.block_on(db::migrate(&mut conn, Some(0)));
 
-        if let Err(e) = self.conn().execute(
-            format!("DROP SCHEMA {} CASCADE;", self.schema).as_str(),
-            &[],
+        if let Err(e) = self.runtime.block_on(
+            sqlx::query(&format!("DROP SCHEMA {} CASCADE;", self.schema)).execute(&mut *conn),
         ) {
             error!("failed to drop test schema {}: {}", self.schema, e);
         }
-        // Drop the connection pool so we don't leak database connections
-        self.pool.shutdown();
-
         migration_result.expect("downgrading database works");
     }
 }

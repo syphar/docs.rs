@@ -1,0 +1,53 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT\n                            r.rustdoc_status,\n                            r.default_target,\n                            r.doc_targets,\n                            r.archive_storage,\n                            cov.total_items,\n                            b.id as build_id\n                        FROM\n                            crates as c\n                            INNER JOIN releases AS r ON c.id = r.crate_id\n                            INNER JOIN builds as b ON r.id = b.rid\n                            LEFT OUTER JOIN doc_coverage AS cov ON r.id = cov.release_id\n                        WHERE\n                            c.name = $1 AND\n                            r.version = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "rustdoc_status",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 1,
+        "name": "default_target",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 2,
+        "name": "doc_targets",
+        "type_info": "Json"
+      },
+      {
+        "ordinal": 3,
+        "name": "archive_storage",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 4,
+        "name": "total_items",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 5,
+        "name": "build_id",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false
+    ]
+  },
+  "hash": "43d02dbb14c99c6befee6ca21d2ddb0abbd84057a11a8310e58607f38d6cb7a3"
+}

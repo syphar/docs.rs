@@ -463,13 +463,18 @@ mod tests {
             let web = env.frontend();
             assert_success(path, web)?;
 
-            env.db().conn().execute(
-                "UPDATE releases
-                     SET files = NULL
-                     WHERE id = $1",
-                &[&release_id],
-            )?;
-
+            env.runtime().block_on(async {
+                // https://stackoverflow.com/questions/18209625/how-do-i-modify-fields-inside-the-new-postgresql-json-datatype
+                let mut conn = env.async_db().await.async_conn().await;
+                sqlx::query!(
+                    "UPDATE releases
+                         SET files = NULL
+                         WHERE id = $1",
+                    release_id
+                )
+                .execute(&mut *conn)
+                .await
+            })?;
             assert_eq!(web.get(path).send()?.status(), StatusCode::NOT_FOUND);
 
             Ok(())

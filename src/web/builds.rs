@@ -140,10 +140,11 @@ async fn get_builds(
 mod tests {
     use super::BuildStatus;
     use crate::{
+        db::Overrides,
         test::{assert_cache_control, wrapper, FakeBuild},
         web::cache::CachePolicy,
     };
-    use chrono::{DateTime, Duration, Utc};
+    use chrono::{DateTime, Utc};
     use kuchikiki::traits::TendrilSink;
     use reqwest::StatusCode;
 
@@ -315,17 +316,19 @@ mod tests {
         wrapper(|env| {
             env.fake_release().name("foo").version("0.1.0").create()?;
 
-            env.db().conn().query(
-                "INSERT INTO sandbox_overrides
-                    (crate_name, max_memory_bytes, timeout_seconds, max_targets)
-                 VALUES ($1, $2, $3, $4)",
-                &[
-                    &"foo",
-                    &(6 * 1024 * 1024 * 1024i64),
-                    &(Duration::try_hours(2).unwrap().num_seconds() as i32),
-                    &1,
-                ],
-            )?;
+            env.runtime().block_on(async {
+                let mut conn = env.async_db().await.async_conn().await;
+                Overrides::save(
+                    &mut conn,
+                    "foo",
+                    Overrides {
+                        memory: Some(6 * 1024 * 1024 * 1024),
+                        targets: Some(1),
+                        timeout: Some(std::time::Duration::from_secs(2 * 60 * 60)),
+                    },
+                )
+                .await
+            })?;
 
             let page = kuchikiki::parse_html().one(
                 env.frontend()
