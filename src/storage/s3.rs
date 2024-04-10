@@ -214,9 +214,17 @@ impl S3Backend {
 
         Ok(Blob {
             path: path.into(),
-            mime: res.content_type.parse().with_context(|| {
-                format!("can't parse mime from content type {}", res.content_type)
-            })?,
+            mime: res
+                .content_type
+                .as_ref()
+                .unwrap()
+                .parse()
+                .with_context(|| {
+                    format!(
+                        "can't parse mime from content type {}",
+                        res.content_type.unwrap()
+                    )
+                })?,
             date_updated,
             content: content.into_inner(),
             compression,

@@ -891,7 +891,7 @@ mod backend_tests {
         assert!(!storage.exists("path/to/file.txt").unwrap());
         let blob = Blob {
             path: "path/to/file.txt".into(),
-            mime: "text/plain".into(),
+            mime: mime::TEXT_PLAIN,
             date_updated: Utc::now(),
             content: "Hello world!".into(),
             compression: None,
@@ -907,7 +907,7 @@ mod backend_tests {
 
         storage.store_blobs(vec![Blob {
             path: path.into(),
-            mime: "text/plain".into(),
+            mime: mime::TEXT_PLAIN,
             date_updated: Utc::now(),
             compression: None,
             content: b"test content\n".to_vec(),
@@ -934,7 +934,7 @@ mod backend_tests {
         let path: &str = "foo/bar.txt";
         let blob = Blob {
             path: path.into(),
-            mime: "text/plain".into(),
+            mime: mime::TEXT_PLAIN,
             date_updated: Utc::now(),
             compression: None,
             content: b"test content\n".to_vec(),
@@ -969,7 +969,7 @@ mod backend_tests {
     fn test_get_range(storage: &Storage) -> Result<()> {
         let blob = Blob {
             path: "foo/bar.txt".into(),
-            mime: "text/plain".into(),
+            mime: mime::TEXT_PLAIN,
             date_updated: Utc::now(),
             compression: None,
             content: b"test content\n".to_vec(),
@@ -1009,7 +1009,7 @@ mod backend_tests {
                 .iter()
                 .map(|&filename| Blob {
                     path: filename.into(),
-                    mime: "text/plain".into(),
+                    mime: mime::TEXT_PLAIN,
                     date_updated: Utc::now(),
                     compression: None,
                     content: b"test content\n".to_vec(),
@@ -1050,14 +1050,14 @@ mod backend_tests {
 
         let small_blob = Blob {
             path: "small-blob.bin".into(),
-            mime: "text/plain".into(),
+            mime: mime::TEXT_PLAIN,
             date_updated: Utc::now(),
             content: vec![0; MAX_SIZE],
             compression: None,
         };
         let big_blob = Blob {
             path: "big-blob.bin".into(),
-            mime: "text/plain".into(),
+            mime: mime::TEXT_PLAIN,
             date_updated: Utc::now(),
             content: vec![0; MAX_SIZE * 2],
             compression: None,
@@ -1092,7 +1092,7 @@ mod backend_tests {
             .iter()
             .map(|&path| Blob {
                 path: path.into(),
-                mime: "text/plain".into(),
+                mime: mime::TEXT_PLAIN,
                 date_updated: Utc::now(),
                 compression: None,
                 content: b"Hello world!\n".to_vec(),
@@ -1240,7 +1240,7 @@ mod backend_tests {
             .map(|i| {
                 let content = format!("const IDX: usize = {i};").as_bytes().to_vec();
                 Blob {
-                    mime: "text/rust".into(),
+                    mime: mime::TEXT_PLAIN,
                     content,
                     path: format!("{i}.rs"),
                     date_updated: now,
@@ -1305,7 +1305,7 @@ mod backend_tests {
                     path: (*path).to_string(),
                     content: b"foo\n".to_vec(),
                     compression: None,
-                    mime: "text/plain".into(),
+                    mime: mime::TEXT_PLAIN,
                     date_updated: Utc::now(),
                 })
                 .collect(),
