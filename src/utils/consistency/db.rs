@@ -2,12 +2,13 @@ use super::data::{Crate, Crates, Release, Releases};
 use crate::Config;
 use anyhow::Result;
 use itertools::Itertools;
-use postgres::fallible_iterator::FallibleIterator;
-use std::iter;
 
 pub(super) async fn load(conn: &mut sqlx::PgConnection, config: &Config) -> Result<Crates> {
     let rows = sqlx::query!(
-        "SELECT name, version, yanked
+        r#"SELECT
+            name as "name!",
+            version as "version!",
+            yanked
          FROM (
              SELECT
                  crates.name,
@@ -30,28 +31,24 @@ pub(super) async fn load(conn: &mut sqlx::PgConnection, config: &Config) -> Resu
                  releases.id IS NULL
              )
          ) AS inp
-         ORDER BY name, version",
+         ORDER BY name, version"#,
         config.build_attempts as i32
     )
     .fetch_all(conn)
     .await?;
 
-    for (crate_name, release_rows) in &rows
-        // `rows` is a `FallibleIterator` which needs to be converted before
-        // we can use Itertools.group_by on it.
-        .iterator()
-        .map(|row| row.expect("error fetching rows"))
-        .group_by(|row| row.get("name"))
-    {
+    let mut crates = Vec::new();
+
+    for (crate_name, release_rows) in &rows.iter().group_by(|row| &row.name) {
         let releases: Releases = release_rows
             .map(|row| Release {
-                version: row.get("version"),
-                yanked: row.get("yanked"),
+                version: row.version.to_string(),
+                yanked: row.yanked,
             })
             .collect();
 
         crates.push(Crate {
-            name: crate_name,
+            name: crate_name.to_string(),
             releases,
         });
     }
