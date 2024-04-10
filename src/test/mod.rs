@@ -9,7 +9,7 @@ use crate::storage::{AsyncStorage, Storage, StorageKind};
 use crate::web::{build_axum_app, cache, page::TemplateData};
 use crate::{BuildQueue, Config, Context, Index, InstanceMetrics, RegistryApi, ServiceMetrics};
 use anyhow::Context as _;
-use axum::async_trait;
+use axum::{async_trait, Router};
 use fn_error_context::context;
 use futures_util::{stream::TryStreamExt, FutureExt};
 use once_cell::sync::OnceCell;
@@ -517,6 +517,13 @@ impl TestEnvironment {
         self.runtime().block_on(self.async_fake_release())
     }
 
+    pub(crate) async fn web_app(&self) -> Router {
+        let template_data = Arc::new(TemplateData::new(1).unwrap());
+        build_axum_app(self, template_data)
+            .await
+            .expect("could not build axum app")
+    }
+
     pub(crate) async fn async_fake_release(&self) -> fakes::FakeRelease {
         fakes::FakeRelease::new(
             self.async_db().await,
@@ -721,10 +728,12 @@ impl TestFrontend {
         let (tx, rx) = tokio::sync::oneshot::channel::<()>();
 
         debug!("building axum app");
-        let axum_app = build_axum_app(context, template_data).expect("could not build axum app");
+        let runtime = context.runtime().unwrap();
+        let axum_app = runtime
+            .block_on(build_axum_app(context, template_data))
+            .expect("could not build axum app");
 
         let handle = thread::spawn({
-            let runtime = context.runtime().unwrap();
             move || {
                 runtime.block_on(async {
                     axum::serve(axum_listener, axum_app.into_make_service())

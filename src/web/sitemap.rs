@@ -162,14 +162,41 @@ pub(crate) async fn about_handler(subpage: Option<Path<String>>) -> AxumResult<i
 
 #[cfg(test)]
 mod tests {
-    use crate::test::{assert_success, wrapper};
-    use reqwest::StatusCode;
+    use crate::{
+        test::{assert_success, async_wrapper, wrapper},
+        web::build_axum_app,
+    };
+    use axum::{
+        body::Body,
+        extract::connect_info::MockConnectInfo,
+        http::{self, Request, StatusCode},
+    };
+    // use http_body_util::BodyExt; // for `collect`
+    // use reqwest::StatusCode;
+    use serde_json::{json, Value};
+    use tokio::net::TcpListener;
+    use tower::{Service, ServiceExt}; // for `call`, `oneshot`, and `ready`
 
     #[test]
     fn sitemap_index() {
-        wrapper(|env| {
-            let web = env.frontend();
-            assert_success("/sitemap.xml", web)
+        async_wrapper(|env| async move {
+            // let web = env.frontend();
+            // assert_success("/sitemap.xml", web)
+
+            let app = env.web_app().await;
+
+            let response = app
+                .oneshot(
+                    Request::builder()
+                        .uri("/sitemap.xml")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(response.status(), StatusCode::OK);
+            Ok(())
         })
     }
 
