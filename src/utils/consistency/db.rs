@@ -2,12 +2,13 @@ use super::data::{Crate, Crates, Release, Releases};
 use crate::Config;
 use anyhow::Result;
 use itertools::Itertools;
-use postgres::fallible_iterator::FallibleIterator;
-use std::iter;
 
-pub(super) fn load(conn: &mut postgres::Client, config: &Config) -> Result<Crates> {
-    let rows = conn.query_raw(
-        "SELECT name, version, yanked
+pub(super) async fn load(conn: &mut sqlx::PgConnection, config: &Config) -> Result<Crates> {
+    let rows = sqlx::query!(
+        r#"SELECT
+            name as "name!",
+            version as "version!",
+            yanked as "yanked!"
          FROM (
              SELECT
                  crates.name,
@@ -30,28 +31,24 @@ pub(super) fn load(conn: &mut postgres::Client, config: &Config) -> Result<Crate
                  releases.id IS NULL
              )
          ) AS inp
-         ORDER BY name, version",
-        iter::once(config.build_attempts as i32),
-    )?;
+         ORDER BY name, version"#,
+        config.build_attempts as i32,
+    )
+    .fetch_all(conn)
+    .await?;
 
     let mut crates = Crates::new();
 
-    for (crate_name, release_rows) in &rows
-        // `rows` is a `FallibleIterator` which needs to be converted before
-        // we can use Itertools.group_by on it.
-        .iterator()
-        .map(|row| row.expect("error fetching rows"))
-        .group_by(|row| row.get("name"))
-    {
+    for (crate_name, release_rows) in &rows.into_iter().group_by(|row| row.name.clone()) {
         let releases: Releases = release_rows
             .map(|row| Release {
-                version: row.get("version"),
-                yanked: row.get("yanked"),
+                version: row.version,
+                yanked: Some(row.yanked),
             })
             .collect();
 
         crates.push(Crate {
-            name: crate_name,
+            name: crate_name.to_owned(),
             releases,
         });
     }
@@ -75,8 +72,13 @@ mod tests {
                 .yanked(true)
                 .create()?;
 
+            let db = env.db();
+
             assert_eq!(
-                load(&mut env.db().conn(), &env.config())?,
+                env.runtime().block_on(async {
+                    let mut conn = db.async_conn().await;
+                    load(&mut conn, &env.config()).await
+                })?,
                 vec![
                     Crate {
                         name: "krate".into(),
