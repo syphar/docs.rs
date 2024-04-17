@@ -326,116 +326,119 @@ impl BuildQueue {
 
         let (changes, new_reference) = diff.peek_changes_ordered()?;
 
-        let crates_added = self.runtime.block_on(async {
-            let mut conn = self.db.get_async().await?;
-            let mut crates_added = 0;
+        let mut conn = self.runtime.block_on(self.db.get_async())?;
+        let mut crates_added = 0;
 
-            debug!("queueing changes from {last_seen_reference} to {new_reference}");
+        debug!("queueing changes from {last_seen_reference} to {new_reference}");
 
-            for change in &changes {
-                if let Some((ref krate, ..)) = change.crate_deleted() {
-                    match delete_crate(&mut conn, &self.storage, &self.config, krate)
-                        .await
-                        .with_context(|| format!("failed to delete crate {krate}"))
-                    {
-                        Ok(_) => info!(
-                            "crate {} was deleted from the index and the database",
-                            krate
-                        ),
-                        Err(err) => report_error(&err),
-                    }
-                    if let Err(err) =
-                        cdn::queue_crate_invalidation(&mut conn, &self.config, krate).await
-                    {
-                        report_error(&err);
-                    }
-                    continue;
+        for change in &changes {
+            if let Some((ref krate, ..)) = change.crate_deleted() {
+                match self
+                    .runtime
+                    .block_on(delete_crate(&mut conn, &self.storage, &self.config, krate))
+                    .with_context(|| format!("failed to delete crate {krate}"))
+                {
+                    Ok(_) => info!(
+                        "crate {} was deleted from the index and the database",
+                        krate
+                    ),
+                    Err(err) => report_error(&err),
                 }
+                if let Err(err) = self.runtime.block_on(cdn::queue_crate_invalidation(
+                    &mut conn,
+                    &self.config,
+                    krate,
+                )) {
+                    report_error(&err);
+                }
+                continue;
+            }
 
-                if let Some(release) = change.version_deleted() {
-                    match delete_version(
+            if let Some(release) = change.version_deleted() {
+                match self
+                    .runtime
+                    .block_on(delete_version(
                         &mut conn,
                         &self.storage,
                         &self.config,
                         &release.name,
                         &release.version,
-                    )
-                    .await
+                    ))
                     .with_context(|| {
                         format!(
                             "failed to delete version {}-{}",
                             release.name, release.version
                         )
                     }) {
-                        Ok(_) => info!(
-                            "release {}-{} was deleted from the index and the database",
+                    Ok(_) => info!(
+                        "release {}-{} was deleted from the index and the database",
+                        release.name, release.version
+                    ),
+                    Err(err) => report_error(&err),
+                }
+                if let Err(err) = self.runtime.block_on(cdn::queue_crate_invalidation(
+                    &mut conn,
+                    &self.config,
+                    &release.name,
+                )) {
+                    report_error(&err);
+                }
+                continue;
+            }
+
+            if let Some(release) = change.added() {
+                let priority = self
+                    .runtime
+                    .block_on(get_crate_priority(&mut conn, &release.name))?;
+
+                match self
+                    .add_crate(
+                        &release.name,
+                        &release.version,
+                        priority,
+                        index.repository_url(),
+                    )
+                    .with_context(|| {
+                        format!(
+                            "failed adding {}-{} into build queue",
                             release.name, release.version
-                        ),
-                        Err(err) => report_error(&err),
-                    }
-                    if let Err(err) =
-                        cdn::queue_crate_invalidation(&mut conn, &self.config, &release.name).await
-                    {
-                        report_error(&err);
-                    }
-                    continue;
-                }
-
-                if let Some(release) = change.added() {
-                    let priority = get_crate_priority(&mut conn, &release.name).await?;
-
-                    match self
-                        .add_crate(
-                            &release.name,
-                            &release.version,
-                            priority,
-                            index.repository_url(),
                         )
-                        .with_context(|| {
-                            format!(
-                                "failed adding {}-{} into build queue",
-                                release.name, release.version
-                            )
-                        }) {
-                        Ok(()) => {
-                            debug!(
-                                "{}-{} added into build queue",
-                                release.name, release.version
-                            );
-                            self.metrics.queued_builds.inc();
-                            crates_added += 1;
-                        }
-                        Err(err) => report_error(&err),
+                    }) {
+                    Ok(()) => {
+                        debug!(
+                            "{}-{} added into build queue",
+                            release.name, release.version
+                        );
+                        self.metrics.queued_builds.inc();
+                        crates_added += 1;
                     }
-                }
-
-                let yanked = change.yanked();
-                let unyanked = change.unyanked();
-                if let Some(release) = yanked.or(unyanked) {
-                    // FIXME: delay yanks of crates that have not yet finished building
-                    // https://github.com/rust-lang/docs.rs/issues/1934
-                    if let Err(err) = self
-                        .set_yanked_inner(
-                            &mut conn,
-                            release.name.as_str(),
-                            release.version.as_str(),
-                            yanked.is_some(),
-                        )
-                        .await
-                    {
-                        report_error(&err);
-                    }
-
-                    if let Err(err) =
-                        cdn::queue_crate_invalidation(&mut conn, &self.config, &release.name).await
-                    {
-                        report_error(&err);
-                    }
+                    Err(err) => report_error(&err),
                 }
             }
 
-            Ok::<_, anyhow::Error>(crates_added)
-        })?;
+            let yanked = change.yanked();
+            let unyanked = change.unyanked();
+            if let Some(release) = yanked.or(unyanked) {
+                // FIXME: delay yanks of crates that have not yet finished building
+                // https://github.com/rust-lang/docs.rs/issues/1934
+                if let Err(err) = self.runtime.block_on(self.set_yanked_inner(
+                    &mut conn,
+                    release.name.as_str(),
+                    release.version.as_str(),
+                    yanked.is_some(),
+                )) {
+                    report_error(&err);
+                }
+
+                if let Err(err) = self.runtime.block_on(cdn::queue_crate_invalidation(
+                    &mut conn,
+                    &self.config,
+                    &release.name,
+                )) {
+                    report_error(&err);
+                }
+            }
+        }
 
         // set the reference in the database
         // so this survives recreating the registry watcher
