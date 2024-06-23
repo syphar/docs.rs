@@ -8,6 +8,7 @@ use crate::{
     web::crate_details::{latest_release, releases_for_crate},
 };
 use anyhow::Context;
+use derive_more::{Deref, From, Into};
 use futures_util::stream::TryStreamExt;
 use serde_json::Value;
 use slug::slugify;
@@ -18,6 +19,15 @@ use std::{
     path::Path,
 };
 use tracing::{debug, info, instrument};
+
+#[derive(Debug, Clone, Copy, From, Into, Deref)]
+pub(crate) struct CrateId(i32);
+
+#[derive(Debug, Clone, Copy, From, Into, Deref)]
+pub(crate) struct ReleaseId(i32);
+
+#[derive(Debug, Clone, Copy, From, Into, Deref)]
+pub(crate) struct BuildId(i32);
 
 /// Adds a package into database.
 ///
