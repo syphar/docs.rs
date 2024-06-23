@@ -8,7 +8,7 @@ use crate::{
     web::crate_details::{latest_release, releases_for_crate},
 };
 use anyhow::Context;
-use derive_more::{Deref, From, Into};
+use derive_more::{Deref, Display, From, Into};
 use futures_util::stream::TryStreamExt;
 use serde_json::Value;
 use slug::slugify;
@@ -20,14 +20,14 @@ use std::{
 };
 use tracing::{debug, info, instrument};
 
-#[derive(Debug, Clone, Copy, From, Into, Deref)]
-pub(crate) struct CrateId(i32);
+#[derive(Debug, Clone, Copy, From, Into, Deref, Display)]
+pub struct CrateId(i32);
 
-#[derive(Debug, Clone, Copy, From, Into, Deref)]
-pub(crate) struct ReleaseId(i32);
+#[derive(Debug, Clone, Copy, From, Into, Deref, Display)]
+pub struct ReleaseId(i32);
 
-#[derive(Debug, Clone, Copy, From, Into, Deref)]
-pub(crate) struct BuildId(i32);
+#[derive(Debug, Clone, Copy, From, Into, Deref, Display)]
+pub struct BuildId(i32);
 
 /// Adds a package into database.
 ///
@@ -50,7 +50,7 @@ pub(crate) async fn add_package_into_database(
     compression_algorithms: std::collections::HashSet<CompressionAlgorithm>,
     repository_id: Option<i32>,
     archive_storage: bool,
-) -> Result<i32> {
+) -> Result<ReleaseId> {
     debug!("Adding package into database");
     let crate_id = initialize_crate(conn, &metadata_pkg.name).await?;
     let dependencies = convert_dependencies(metadata_pkg);
@@ -59,7 +59,7 @@ pub(crate) async fn add_package_into_database(
     let features = get_features(metadata_pkg);
     let is_library = metadata_pkg.is_library();
 
-    let release_id: i32 = sqlx::query_scalar!(
+    let release_id: ReleaseId = sqlx::query_scalar!(
         "INSERT INTO releases (
             crate_id, version, release_time,
             dependencies, target_name, yanked,
@@ -100,7 +100,7 @@ pub(crate) async fn add_package_into_database(
                 repository_id = $24,
                 archive_storage = $25
          RETURNING id",
-        crate_id,
+        *crate_id,
         &metadata_pkg.version,
         registry_data.release_time,
         serde_json::to_value(dependencies)?,
@@ -127,7 +127,8 @@ pub(crate) async fn add_package_into_database(
         archive_storage
     )
     .fetch_one(&mut *conn)
-    .await?;
+    .await?
+    .into();
 
     add_keywords_into_database(conn, metadata_pkg, release_id).await?;
     add_compression_into_database(conn, compression_algorithms.into_iter(), release_id).await?;
@@ -141,14 +142,17 @@ pub(crate) async fn add_package_into_database(
     Ok(release_id)
 }
 
-pub async fn update_latest_version_id(conn: &mut sqlx::PgConnection, crate_id: i32) -> Result<()> {
+pub async fn update_latest_version_id(
+    conn: &mut sqlx::PgConnection,
+    crate_id: CrateId,
+) -> Result<()> {
     let releases = releases_for_crate(conn, crate_id).await?;
 
     sqlx::query!(
         "UPDATE crates
          SET latest_version_id = $2
          WHERE id = $1",
-        crate_id,
+        *crate_id,
         latest_release(&releases).map(|release| release.id),
     )
     .execute(&mut *conn)
@@ -157,7 +161,10 @@ pub async fn update_latest_version_id(conn: &mut sqlx::PgConnection, crate_id: i
     Ok(())
 }
 
-pub async fn update_build_status(conn: &mut sqlx::PgConnection, release_id: i32) -> Result<()> {
+pub async fn update_build_status(
+    conn: &mut sqlx::PgConnection,
+    release_id: ReleaseId,
+) -> Result<()> {
     sqlx::query!(
         "INSERT INTO release_build_status(rid, last_build_time, build_status)
          SELECT
@@ -187,7 +194,7 @@ pub async fn update_build_status(conn: &mut sqlx::PgConnection, release_id: i32)
          SET
              last_build_time = EXCLUDED.last_build_time,
              build_status=EXCLUDED.build_status",
-        release_id,
+        *release_id,
     )
     .execute(&mut *conn)
     .await?;
@@ -200,15 +207,19 @@ pub async fn update_build_status(conn: &mut sqlx::PgConnection, release_id: i32)
     Ok(())
 }
 
-async fn crate_id_from_release_id(conn: &mut sqlx::PgConnection, release_id: i32) -> Result<i32> {
+async fn crate_id_from_release_id(
+    conn: &mut sqlx::PgConnection,
+    release_id: ReleaseId,
+) -> Result<CrateId> {
     Ok(sqlx::query_scalar!(
         "SELECT crate_id
          FROM releases
          WHERE id = $1",
-        release_id,
+        *release_id,
     )
     .fetch_one(&mut *conn)
-    .await?)
+    .await?
+    .into())
 }
 
 #[instrument(skip(conn))]
@@ -245,7 +256,7 @@ pub(crate) async fn add_doc_coverage(
 #[instrument(skip(conn))]
 pub(crate) async fn finish_build(
     conn: &mut sqlx::PgConnection,
-    build_id: i32,
+    build_id: BuildId,
     rustc_version: &str,
     docsrs_version: &str,
     build_status: BuildStatus,
@@ -254,7 +265,7 @@ pub(crate) async fn finish_build(
     debug!("updating build after finishing");
     let hostname = hostname::get()?;
 
-    let release_id = sqlx::query_scalar!(
+    let release_id: ReleaseId = sqlx::query_scalar!(
         "UPDATE builds
          SET
              rustc_version = $1,
@@ -271,10 +282,11 @@ pub(crate) async fn finish_build(
         build_status as BuildStatus,
         hostname.to_str().unwrap_or(""),
         errors,
-        build_id,
+        *build_id,
     )
     .fetch_one(&mut *conn)
-    .await?;
+    .await?
+    .into();
 
     update_build_status(conn, release_id).await?;
 
@@ -284,11 +296,11 @@ pub(crate) async fn finish_build(
 #[instrument(skip(conn))]
 pub(crate) async fn update_build_with_error(
     conn: &mut sqlx::PgConnection,
-    build_id: i32,
+    build_id: BuildId,
     errors: Option<&str>,
-) -> Result<i32> {
+) -> Result<BuildId> {
     debug!("updating build with error");
-    let release_id = sqlx::query_scalar!(
+    let release_id: ReleaseId = sqlx::query_scalar!(
         "UPDATE builds
          SET
              build_status = $1,
@@ -297,17 +309,18 @@ pub(crate) async fn update_build_with_error(
          RETURNING rid",
         BuildStatus::Failure as BuildStatus,
         errors,
-        build_id,
+        *build_id,
     )
     .fetch_one(&mut *conn)
-    .await?;
+    .await?
+    .into();
 
     update_build_status(conn, release_id).await?;
 
     Ok(build_id)
 }
 
-pub(crate) async fn initialize_crate(conn: &mut sqlx::PgConnection, name: &str) -> Result<i32> {
+pub(crate) async fn initialize_crate(conn: &mut sqlx::PgConnection, name: &str) -> Result<CrateId> {
     sqlx::query_scalar!(
         "INSERT INTO crates (name)
          VALUES ($1)
@@ -320,25 +333,27 @@ pub(crate) async fn initialize_crate(conn: &mut sqlx::PgConnection, name: &str) 
     .fetch_one(&mut *conn)
     .await
     .map_err(Into::into)
+    .map(Into::into)
 }
 
 pub(crate) async fn initialize_release(
     conn: &mut sqlx::PgConnection,
-    crate_id: i32,
+    crate_id: CrateId,
     version: &str,
-) -> Result<i32> {
-    let release_id = sqlx::query_scalar!(
+) -> Result<ReleaseId> {
+    let release_id: ReleaseId = sqlx::query_scalar!(
         "INSERT INTO releases (crate_id, version, archive_storage)
          VALUES ($1, $2, TRUE)
          ON CONFLICT (crate_id, version) DO UPDATE
          SET -- this `SET` is needed so the id is always returned.
             version = EXCLUDED.version
          RETURNING id",
-        crate_id,
+        *crate_id,
         version
     )
     .fetch_one(&mut *conn)
-    .await?;
+    .await?
+    .into();
 
     update_build_status(conn, release_id).await?;
 
@@ -347,20 +362,21 @@ pub(crate) async fn initialize_release(
 
 pub(crate) async fn initialize_build(
     conn: &mut sqlx::PgConnection,
-    release_id: i32,
-) -> Result<i32> {
+    release_id: ReleaseId,
+) -> Result<BuildId> {
     let hostname = hostname::get()?;
 
-    let build_id = sqlx::query_scalar!(
+    let build_id: BuildId = sqlx::query_scalar!(
         "INSERT INTO builds(rid, build_status, build_server)
          VALUES ($1, $2, $3)
          RETURNING id",
-        release_id,
+        *release_id,
         BuildStatus::InProgress as BuildStatus,
         hostname.to_str().unwrap_or(""),
     )
     .fetch_one(&mut *conn)
-    .await?;
+    .await?
+    .into();
 
     update_build_status(conn, release_id).await?;
 
@@ -467,7 +483,7 @@ fn read_rust_doc(file_path: &Path) -> Result<Option<String>> {
 async fn add_keywords_into_database(
     conn: &mut sqlx::PgConnection,
     pkg: &MetadataPackage,
-    release_id: i32,
+    release_id: ReleaseId,
 ) -> Result<()> {
     let wanted_keywords: HashMap<String, String> = pkg
         .keywords
@@ -506,7 +522,7 @@ async fn add_keywords_into_database(
         FROM keywords
         WHERE slug = ANY($2)
         ON CONFLICT DO NOTHING;",
-        release_id,
+        *release_id,
         &wanted_keywords.keys().cloned().collect::<Vec<_>>()[..],
     )
     .execute(&mut *conn)
@@ -522,9 +538,11 @@ pub async fn update_crate_data_in_database(
     registry_data: &CrateData,
 ) -> Result<()> {
     info!("Updating crate data for {}", name);
-    let crate_id = sqlx::query_scalar!("SELECT id FROM crates WHERE crates.name = $1", name)
-        .fetch_one(&mut *conn)
-        .await?;
+    let crate_id: CrateId =
+        sqlx::query_scalar!("SELECT id FROM crates WHERE crates.name = $1", name)
+            .fetch_one(&mut *conn)
+            .await?
+            .into();
 
     update_owners_in_database(conn, &registry_data.owners, crate_id).await?;
 
@@ -535,7 +553,7 @@ pub async fn update_crate_data_in_database(
 async fn update_owners_in_database(
     conn: &mut sqlx::PgConnection,
     owners: &[CrateOwner],
-    crate_id: i32,
+    crate_id: CrateId,
 ) -> Result<()> {
     // Update any existing owner data since it is mutable and could have changed since last
     // time we pulled it
@@ -567,7 +585,7 @@ async fn update_owners_in_database(
              FROM UNNEST($2::int[]) as oid
              ON CONFLICT (cid,oid)
              DO NOTHING",
-        crate_id,
+        *crate_id,
         &oids[..]
     )
     .execute(&mut *conn)
@@ -578,7 +596,7 @@ async fn update_owners_in_database(
          WHERE
             cid = $1 AND
             NOT (oid = ANY($2))",
-        crate_id,
+        *crate_id,
         &oids[..],
     )
     .execute(&mut *conn)
@@ -591,7 +609,7 @@ async fn update_owners_in_database(
 async fn add_compression_into_database<I>(
     conn: &mut sqlx::PgConnection,
     algorithms: I,
-    release_id: i32,
+    release_id: ReleaseId,
 ) -> Result<()>
 where
     I: Iterator<Item = CompressionAlgorithm>,
@@ -601,7 +619,7 @@ where
             "INSERT INTO compression_rels (release, algorithm)
              VALUES ($1, $2)
              ON CONFLICT DO NOTHING;",
-            release_id,
+            *release_id,
             &(alg as i32)
         )
         .execute(&mut *conn)

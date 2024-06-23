@@ -3,7 +3,7 @@ use crate::registry_api::OwnerKind;
 use crate::utils::{get_correct_docsrs_style_file, report_error};
 use crate::web::rustdoc::RustdocHtmlParams;
 use crate::{
-    db::types::BuildStatus,
+    db::{types::BuildStatus, CrateId},
     impl_axum_webpage,
     storage::PathNotFoundError,
     web::{
@@ -371,7 +371,7 @@ pub(crate) fn latest_release(releases: &[Release]) -> Option<&Release> {
 /// Return all releases for a crate, sorted in descending order by semver
 pub(crate) async fn releases_for_crate(
     conn: &mut sqlx::PgConnection,
-    crate_id: i32,
+    crate_id: CrateId,
 ) -> Result<Vec<Release>, anyhow::Error> {
     let mut releases: Vec<Release> = sqlx::query!(
         r#"SELECT
@@ -387,7 +387,7 @@ pub(crate) async fn releases_for_crate(
          WHERE
              releases.crate_id = $1 AND
              release_build_status.build_status != 'in_progress'"#,
-        crate_id,
+        *crate_id,
     )
     .fetch(&mut *conn)
     .try_filter_map(|row| async move {
