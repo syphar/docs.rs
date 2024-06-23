@@ -583,7 +583,7 @@ impl DatabaseSubcommand {
 
                             println!("handling crate {}", row.name);
 
-                            db::update_latest_version_id(&mut update_conn, row.id).await?;
+                            db::update_latest_version_id(&mut update_conn, row.id.into()).await?;
                         }
 
                         Ok::<(), anyhow::Error>(())

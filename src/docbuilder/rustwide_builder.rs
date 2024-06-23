@@ -1,4 +1,5 @@
 use crate::db::file::add_path_into_database;
+use crate::db::BuildId;
 use crate::db::{
     add_doc_coverage, add_package_into_database, add_path_into_remote_archive, finish_build,
     initialize_build, initialize_crate, initialize_release, types::BuildStatus,
@@ -374,7 +375,7 @@ impl RustwideBuilder {
             let crate_id = initialize_crate(&mut conn, name).await?;
             let release_id = initialize_release(&mut conn, crate_id, version).await?;
             let build_id = initialize_build(&mut conn, release_id).await?;
-            Ok::<i32, Error>(build_id)
+            Ok::<BuildId, Error>(build_id)
         })?;
 
         match self.build_package_inner(name, version, kind, build_id) {
@@ -397,7 +398,7 @@ impl RustwideBuilder {
         name: &str,
         version: &str,
         kind: PackageKind<'_>,
-        build_id: i32,
+        build_id: BuildId,
     ) -> Result<bool> {
         let mut conn = self.db.get()?;
         info!("building package {} {}", name, version);

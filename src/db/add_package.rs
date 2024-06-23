@@ -225,7 +225,7 @@ async fn crate_id_from_release_id(
 #[instrument(skip(conn))]
 pub(crate) async fn add_doc_coverage(
     conn: &mut sqlx::PgConnection,
-    release_id: i32,
+    release_id: ReleaseId,
     doc_coverage: DocCoverage,
 ) -> Result<i32> {
     debug!("Adding doc coverage into database");
@@ -242,7 +242,7 @@ pub(crate) async fn add_doc_coverage(
                     total_items_needing_examples = $4,
                     items_with_examples = $5
             RETURNING release_id",
-        &release_id,
+        &*release_id,
         &doc_coverage.total_items,
         &doc_coverage.documented_items,
         &doc_coverage.total_items_needing_examples,

@@ -1,5 +1,5 @@
 use crate::cdn;
-use crate::db::{delete_crate, delete_version, update_latest_version_id, Pool};
+use crate::db::{delete_crate, delete_version, update_latest_version_id, CrateId, Pool};
 use crate::docbuilder::PackageKind;
 use crate::error::Result;
 use crate::storage::Storage;
@@ -440,7 +440,7 @@ impl BuildQueue {
         }
 
         if let Some(row) = result.first() {
-            let crate_id: i32 = row.get(0);
+            let crate_id: CrateId = row.get::<_, i32>(0).into();
 
             self.runtime.block_on(async {
                 let mut conn = self.db.get_async().await?;

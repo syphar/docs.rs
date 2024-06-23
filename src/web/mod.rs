@@ -3,6 +3,7 @@
 pub mod page;
 
 use crate::db::types::BuildStatus;
+use crate::db::CrateId;
 use crate::utils::get_correct_docsrs_style_file;
 use crate::utils::report_error;
 use anyhow::{anyhow, bail, Context as _, Result};
@@ -248,7 +249,7 @@ async fn match_version(
     name: &str,
     input_version: &ReqVersion,
 ) -> Result<MatchedRelease, AxumNope> {
-    let (crate_id, corrected_name) = {
+    let (crate_id, corrected_name): (CrateId, _) = {
         let row = sqlx::query!(
             "SELECT id, name
              FROM crates
@@ -261,9 +262,9 @@ async fn match_version(
         .ok_or(AxumNope::CrateNotFound)?;
 
         if row.name != name {
-            (row.id, Some(row.name))
+            (row.id.into(), Some(row.name))
         } else {
-            (row.id, None)
+            (row.id.into(), None)
         }
     };
 
