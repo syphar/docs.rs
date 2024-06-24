@@ -76,23 +76,6 @@ fn build_workspace(context: &dyn Context) -> Result<Workspace> {
     Ok(workspace)
 }
 
-async fn set_in_progress_builds_to_failed(pool: &Pool) -> Result<()> {
-    let mut conn = pool.get_async().await?;
-    for build in sqlx::query!("SELECT id FROM builds WHERE build_status = 'in_progress'")
-        .fetch_all(&mut *conn)
-        .await?
-    {
-        update_build_with_error(
-            &mut *conn,
-            build.id,
-            Some("cancelled because of server shutdown"),
-        )
-        .await?;
-    }
-
-    Ok(())
-}
-
 #[derive(Debug)]
 pub enum PackageKind<'a> {
     Local(&'a Path),
@@ -106,6 +89,7 @@ pub struct RustwideBuilder {
     runtime: Arc<Runtime>,
     config: Arc<Config>,
     db: Pool,
+    in_progress_builds: HashSet<i32>,
     storage: Arc<Storage>,
     async_storage: Arc<AsyncStorage>,
     metrics: Arc<InstanceMetrics>,
@@ -125,6 +109,7 @@ impl RustwideBuilder {
             toolchain: get_configured_toolchain(&mut *pool.get()?)?,
             config,
             db: pool,
+            in_progress_builds: HashSet::new(),
             runtime: runtime.clone(),
             storage: context.storage()?,
             async_storage: runtime.block_on(context.async_storage())?,
@@ -393,8 +378,9 @@ impl RustwideBuilder {
             let build_id = initialize_build(&mut conn, release_id).await?;
             Ok::<i32, Error>(build_id)
         })?;
+        self.in_progress_builds.insert(build_id);
 
-        match self.build_package_inner(name, version, kind, build_id) {
+        let result = match self.build_package_inner(name, version, kind, build_id) {
             Ok(successful) => Ok(successful),
             Err(err) => self.runtime.block_on(async {
                 // NOTE: this might hide some errors from us, while only surfacing them in the build
@@ -406,7 +392,11 @@ impl RustwideBuilder {
 
                 Ok(false)
             }),
-        }
+        };
+
+        self.in_progress_builds.remove(&build_id);
+
+        result
     }
 
     fn build_package_inner(
@@ -991,12 +981,24 @@ impl RustwideBuilder {
             .map_err(Into::into)
     }
 
+    async fn set_in_progress_builds_to_failed(&self) -> Result<()> {
+        let mut conn = self.db.get_async().await?;
+        for build_id in &self.in_progress_builds {
+            update_build_with_error(
+                &mut *conn,
+                *build_id,
+                Some("cancelled because of server shutdown"),
+            )
+            .await?;
+        }
+
+        Ok(())
+    }
+
     /// shut down the builder, marking eventual in-progress builds as errored.
     pub(crate) fn shutdown(self) -> Result<()> {
-        self.runtime.block_on(async {
-            set_in_progress_builds_to_failed(&self.db).await?;
-            Ok::<_, anyhow::Error>(())
-        })?;
+        self.runtime
+            .block_on(self.set_in_progress_builds_to_failed())?;
 
         Ok(())
     }
@@ -1005,10 +1007,7 @@ impl RustwideBuilder {
 impl Drop for RustwideBuilder {
     fn drop(&mut self) {
         self.runtime
-            .block_on(async {
-                set_in_progress_builds_to_failed(&self.db).await?;
-                Ok::<_, anyhow::Error>(())
-            })
+            .block_on(self.set_in_progress_builds_to_failed())
             .expect("error when shutting down builder, call the shutdown directly to see it.");
     }
 }
