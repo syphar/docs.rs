@@ -76,6 +76,23 @@ fn build_workspace(context: &dyn Context) -> Result<Workspace> {
     Ok(workspace)
 }
 
+async fn set_in_progress_builds_to_failed(pool: &Pool) -> Result<()> {
+    let mut conn = pool.get_async().await?;
+    for build in sqlx::query!("SELECT id FROM builds WHERE build_status = 'in_progress'")
+        .fetch_all(&mut *conn)
+        .await?
+    {
+        update_build_with_error(
+            &mut *conn,
+            build.id,
+            Some("cancelled because of server shutdown"),
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
 #[derive(Debug)]
 pub enum PackageKind<'a> {
     Local(&'a Path),
@@ -972,6 +989,27 @@ impl RustwideBuilder {
         self.runtime
             .block_on(self.repository_stats_updater.load_repository(metadata))
             .map_err(Into::into)
+    }
+
+    /// shut down the builder, marking eventual in-progress builds as errored.
+    pub(crate) fn shutdown(self) -> Result<()> {
+        self.runtime.block_on(async {
+            set_in_progress_builds_to_failed(&self.db).await?;
+            Ok::<_, anyhow::Error>(())
+        })?;
+
+        Ok(())
+    }
+}
+
+impl Drop for RustwideBuilder {
+    fn drop(&mut self) {
+        self.runtime
+            .block_on(async {
+                set_in_progress_builds_to_failed(&self.db).await?;
+                Ok::<_, anyhow::Error>(())
+            })
+            .expect("error when shutting down builder, call the shutdown directly to see it.");
     }
 }
 
