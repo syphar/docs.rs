@@ -1680,6 +1680,7 @@ dependencies = [
  "hostname",
  "http 0.2.12",
  "http 1.1.0",
+ "http-body-util",
  "humantime",
  "hyper 1.4.1",
  "indoc",
@@ -6700,6 +6701,10 @@ version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2873938d487c3cfb9aed7546dc9f2711d867c9f90c46b889989a2cb84eba6b4f"
 dependencies = [
+ "futures-core",
+ "futures-util",
+ "pin-project-lite",
+ "sync_wrapper 0.1.2",
  "tower-layer",
  "tower-service",
 ]
