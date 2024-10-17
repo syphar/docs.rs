@@ -652,6 +652,14 @@ impl BuildQueue {
     }
 }
 
+pub async fn queue_rebuilds(
+    conn: &mut sqlx::PgConnection,
+    config: &Config,
+    build_queue: &AsyncBuildQueue,
+) -> Result<()> {
+    todo!();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
