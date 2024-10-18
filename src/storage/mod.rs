@@ -419,7 +419,9 @@ impl AsyncStorage {
                             .compression_method(zip::CompressionMethod::Bzip2);
 
                         let mut zip = zip::ZipWriter::new(io::Cursor::new(Vec::new()));
-                        for file_path in get_file_list(&root_dir)? {
+                        for file_path in get_file_list(&root_dir) {
+                            let file_path = file_path?;
+
                             let mut file = fs::File::open(root_dir.join(&file_path))?;
                             zip.start_file(file_path.to_str().unwrap(), options)?;
                             io::copy(&mut file, &mut zip)?;
@@ -804,28 +806,6 @@ impl Storage {
 impl std::fmt::Debug for Storage {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "sync wrapper for {:?}", self.inner)
-    }
-}
-
-fn detect_mime(file_path: impl AsRef<Path>) -> &'static str {
-    let mime = mime_guess::from_path(file_path.as_ref())
-        .first_raw()
-        .unwrap_or("text/plain");
-    match mime {
-        "text/plain" | "text/troff" | "text/x-markdown" | "text/x-rust" | "text/x-toml" => {
-            match file_path.as_ref().extension().and_then(OsStr::to_str) {
-                Some("md") => "text/markdown",
-                Some("rs") => "text/rust",
-                Some("markdown") => "text/markdown",
-                Some("css") => "text/css",
-                Some("toml") => "text/toml",
-                Some("js") => "text/javascript",
-                Some("json") => "application/json",
-                _ => mime,
-            }
-        }
-        "image/svg" => "image/svg+xml",
-        _ => mime,
     }
 }
 

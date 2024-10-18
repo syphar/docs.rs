@@ -266,7 +266,7 @@ pub(crate) async fn finish_build(
         build_status as BuildStatus,
         hostname.to_str().unwrap_or(""),
         errors,
-        documentation_size,
+        documentation_size.map(|v| v as i64),
         build_id,
     )
     .fetch_one(&mut *conn)
