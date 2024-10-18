@@ -5,6 +5,8 @@ use crate::{
         error::{AxumNope, AxumResult},
         extractors::{DbConnection, Path},
         file::File,
+        filters,
+        page::templates::{RenderRegular, RenderSolid},
         MetaData,
     },
     AsyncStorage, Config,
@@ -13,31 +15,40 @@ use anyhow::Context as _;
 use axum::{extract::Extension, response::IntoResponse};
 use chrono::{DateTime, Utc};
 use futures_util::TryStreamExt;
+use rinja::Template;
 use semver::Version;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::sync::Arc;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct BuildDetails {
     id: i32,
-    rustc_version: String,
-    docsrs_version: String,
+    rustc_version: Option<String>,
+    docsrs_version: Option<String>,
     build_status: BuildStatus,
-    build_time: DateTime<Utc>,
+    build_time: Option<DateTime<Utc>>,
     output: String,
+    errors: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Template)]
+#[template(path = "crate/build_details.html")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct BuildDetailsPage {
     metadata: MetaData,
     build_details: BuildDetails,
-    use_direct_platform_links: bool,
     all_log_filenames: Vec<String>,
     current_filename: Option<String>,
+    csp_nonce: String,
 }
 
-impl_axum_webpage! {
-    BuildDetailsPage = "crate/build_details.html",
+impl_axum_webpage! { BuildDetailsPage }
+
+// Used for template rendering.
+impl BuildDetailsPage {
+    pub(crate) fn use_direct_platform_links(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Clone, Deserialize, Debug)]
@@ -63,6 +74,7 @@ pub(crate) async fn build_details_handler(
              builds.build_status as "build_status: BuildStatus",
              builds.build_time,
              builds.output,
+             builds.errors,
              releases.default_target
          FROM builds
          INNER JOIN releases ON releases.id = builds.rid
@@ -81,26 +93,33 @@ pub(crate) async fn build_details_handler(
     } else {
         let prefix = format!("build-logs/{}/", id);
 
-        let current_filename = params
+        if let Some(current_filename) = params
             .filename
-            .unwrap_or_else(|| format!("{}.txt", row.default_target));
-
-        let path = format!("{prefix}{current_filename}");
-        let file = File::from_path(&storage, &path, &config).await?;
-        (
-            String::from_utf8(file.0.content).context("non utf8")?,
-            storage
-                .list_prefix(&prefix) // the result from S3 is ordered by key
-                .await
-                .map_ok(|path| {
-                    path.strip_prefix(&prefix)
-                        .expect("since we query for the prefix, it has to be always there")
-                        .to_owned()
-                })
-                .try_collect()
-                .await?,
-            Some(current_filename),
-        )
+            .or(row.default_target.map(|target| format!("{}.txt", target)))
+        {
+            let path = format!("{prefix}{current_filename}");
+            let file = File::from_path(&storage, &path, &config).await?;
+            (
+                String::from_utf8(file.0.content).context("non utf8")?,
+                storage
+                    .list_prefix(&prefix) // the result from S3 is ordered by key
+                    .await
+                    .map_ok(|path| {
+                        path.strip_prefix(&prefix)
+                            .expect("since we query for the prefix, it has to be always there")
+                            .to_owned()
+                    })
+                    .try_collect()
+                    .await?,
+                Some(current_filename),
+            )
+        } else {
+            // this can only happen when `releases.default_target` is NULL,
+            // which is the case for in-progress builds or builds which errored
+            // before we could determine the target.
+            // For the "error" case we show `row.errors`, which should contain what we need to see.
+            ("".into(), Vec::new(), None)
+        }
     };
 
     Ok(BuildDetailsPage {
@@ -112,17 +131,18 @@ pub(crate) async fn build_details_handler(
             build_status: row.build_status,
             build_time: row.build_time,
             output,
+            errors: row.errors,
         },
-        use_direct_platform_links: true,
         all_log_filenames,
         current_filename,
+        csp_nonce: String::new(),
     }
     .into_response())
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::test::{wrapper, FakeBuild};
+    use crate::test::{fake_release_that_failed_before_build, wrapper, FakeBuild};
     use kuchikiki::traits::TendrilSink;
     use test_case::test_case;
 
@@ -140,6 +160,37 @@ mod tests {
     }
 
     #[test]
+    fn test_partial_build_result() {
+        wrapper(|env| {
+            let (_, build_id) = env.runtime().block_on(async {
+                let mut conn = env.async_db().await.async_conn().await;
+                fake_release_that_failed_before_build(
+                    &mut conn,
+                    "foo",
+                    "0.1.0",
+                    "some random error",
+                )
+                .await
+            })?;
+
+            let page = kuchikiki::parse_html().one(
+                env.frontend()
+                    .get(&format!("/crate/foo/0.1.0/builds/{build_id}"))
+                    .send()?
+                    .error_for_status()?
+                    .text()?,
+            );
+
+            let info_text = page.select("pre").unwrap().next().unwrap().text_contents();
+
+            assert!(info_text.contains("# pre-build errors"), "{}", info_text);
+            assert!(info_text.contains("some random error"), "{}", info_text);
+
+            Ok(())
+        });
+    }
+
+    #[test]
     fn db_build_logs() {
         wrapper(|env| {
             env.fake_release()
@@ -154,6 +205,7 @@ mod tests {
                 env.frontend()
                     .get("/crate/foo/0.1.0/builds")
                     .send()?
+                    .error_for_status()?
                     .text()?,
             );
 

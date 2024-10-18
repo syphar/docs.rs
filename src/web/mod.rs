@@ -1,11 +1,15 @@
 //! Web interface of docs.rs
 
 pub mod page;
+// mod tmp;
 
+use crate::db::types::BuildStatus;
 use crate::utils::get_correct_docsrs_style_file;
 use crate::utils::report_error;
+use crate::web::page::templates::{filters, RenderSolid};
 use anyhow::{anyhow, bail, Context as _, Result};
 use axum_extra::middleware::option_layer;
+use rinja::Template;
 use serde_json::Value;
 use tracing::{info, instrument};
 
@@ -24,7 +28,7 @@ mod markdown;
 pub(crate) mod metrics;
 mod releases;
 mod routes;
-mod rustdoc;
+pub(crate) mod rustdoc;
 mod sitemap;
 mod source;
 mod statics;
@@ -45,7 +49,6 @@ use error::AxumNope;
 use page::TemplateData;
 use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
 use semver::{Version, VersionReq};
-use serde::Serialize;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::{
     borrow::{Borrow, Cow},
@@ -57,6 +60,8 @@ use std::{
 use tower::ServiceBuilder;
 use tower_http::{catch_panic::CatchPanicLayer, timeout::TimeoutLayer, trace::TraceLayer};
 use url::form_urlencoded;
+
+use self::crate_details::Release;
 
 // from https://github.com/servo/rust-url/blob/master/url/src/parser.rs
 // and https://github.com/tokio-rs/axum/blob/main/axum-extra/src/lib.rs
@@ -214,16 +219,43 @@ impl MatchedRelease {
         self.release.id
     }
 
-    fn rustdoc_status(&self) -> bool {
-        self.release.rustdoc_status
+    fn build_status(&self) -> BuildStatus {
+        self.release.build_status
     }
 
-    fn target_name(&self) -> &str {
-        &self.release.target_name
+    fn rustdoc_status(&self) -> bool {
+        self.release.rustdoc_status.unwrap_or(false)
+    }
+
+    fn target_name(&self) -> Option<&str> {
+        self.release.target_name.as_deref()
     }
 
     fn is_latest_url(&self) -> bool {
         matches!(self.req_version, ReqVersion::Latest)
+    }
+}
+
+fn semver_match<'a, F: Fn(&Release) -> bool>(
+    releases: &'a [Release],
+    req: &VersionReq,
+    filter: F,
+) -> Option<&'a Release> {
+    // first try standard semver match using `VersionReq::match`, should handle most cases.
+    if let Some(release) = releases
+        .iter()
+        .filter(|release| filter(release))
+        .find(|release| req.matches(&release.version))
+    {
+        Some(release)
+    } else if req == &VersionReq::STAR {
+        // semver `*` does not match pre-releases.
+        // So when we only have pre-releases, `VersionReq::STAR` would lead to an
+        // empty result.
+        // In this case we just return the latest latest prerelase instead of nothing.
+        return releases.iter().find(|release| filter(release));
+    } else {
+        None
     }
 }
 
@@ -262,7 +294,7 @@ async fn match_version(
 
     // first load and parse all versions of this crate,
     // `releases_for_crate` is already sorted, newest version first.
-    let mut releases = crate_details::releases_for_crate(conn, crate_id)
+    let releases = crate_details::releases_for_crate(conn, crate_id)
         .await
         .context("error fetching releases for crate")?;
 
@@ -298,13 +330,12 @@ async fn match_version(
         ReqVersion::Semver(version_req) => version_req.clone(),
     };
 
-    // when matching semver requirements, we only want to look at non-yanked releases.
-    releases.retain(|r| !r.yanked);
-
-    if let Some(release) = releases
-        .iter()
-        .find(|release| req_semver.matches(&release.version))
-    {
+    // when matching semver requirements,
+    // we generally only want to look at non-yanked releases,
+    // excluding releases which just contain in-progress builds
+    if let Some(release) = semver_match(&releases, &req_semver, |r: &Release| {
+        r.build_status != BuildStatus::InProgress && (r.yanked.is_none() || r.yanked == Some(false))
+    }) {
         return Ok(MatchedRelease {
             name: name.to_owned(),
             corrected_name,
@@ -314,21 +345,17 @@ async fn match_version(
         });
     }
 
-    // semver `*` does not match pre-releases.
-    // When someone wants the latest release and we have only pre-releases
-    // just return the latest prerelease.
-    if req_semver == VersionReq::STAR {
-        return releases
-            .first()
-            .cloned()
-            .map(|release| MatchedRelease {
-                name: name.to_owned(),
-                corrected_name: corrected_name.clone(),
-                req_version: input_version.clone(),
-                release,
-                all_releases: releases,
-            })
-            .ok_or(AxumNope::VersionNotFound);
+    // when we don't find any match with "normal" releases, we also look into in-progress releases
+    if let Some(release) = semver_match(&releases, &req_semver, |r: &Release| {
+        r.yanked.is_none() || r.yanked == Some(false)
+    }) {
+        return Ok(MatchedRelease {
+            name: name.to_owned(),
+            corrected_name,
+            req_version: input_version.clone(),
+            release: release.clone(),
+            all_releases: releases,
+        });
     }
 
     // Since we return with a CrateNotFound earlier if the db reply is empty,
@@ -366,14 +393,17 @@ async fn set_sentry_transaction_name_from_axum_route(
     next.run(request).await
 }
 
-fn apply_middleware(
+async fn apply_middleware(
     router: AxumRouter,
     context: &dyn Context,
     template_data: Option<Arc<TemplateData>>,
 ) -> Result<AxumRouter> {
     let config = context.config()?;
     let has_templates = template_data.is_some();
-    let async_storage = context.runtime()?.block_on(context.async_storage())?;
+
+    let async_storage = context.async_storage().await?;
+    let build_queue = context.async_build_queue().await?;
+
     Ok(router.layer(
         ServiceBuilder::new()
             .layer(TraceLayer::new_for_http())
@@ -389,12 +419,11 @@ fn apply_middleware(
                     .then_some(middleware::from_fn(log_timeouts_to_sentry)),
             ))
             .layer(option_layer(config.request_timeout.map(TimeoutLayer::new)))
-            .layer(Extension(context.pool()?))
-            .layer(Extension(context.build_queue()?))
+            .layer(Extension(context.async_pool().await?))
+            .layer(Extension(build_queue))
             .layer(Extension(context.service_metrics()?))
             .layer(Extension(context.instance_metrics()?))
             .layer(Extension(context.config()?))
-            .layer(Extension(context.storage()?))
             .layer(Extension(async_storage))
             .layer(option_layer(template_data.map(Extension)))
             .layer(middleware::from_fn(csp::csp_middleware))
@@ -405,15 +434,15 @@ fn apply_middleware(
     ))
 }
 
-pub(crate) fn build_axum_app(
+pub(crate) async fn build_axum_app(
     context: &dyn Context,
     template_data: Arc<TemplateData>,
 ) -> Result<AxumRouter, Error> {
-    apply_middleware(routes::build_axum_routes(), context, Some(template_data))
+    apply_middleware(routes::build_axum_routes(), context, Some(template_data)).await
 }
 
-pub(crate) fn build_metrics_axum_app(context: &dyn Context) -> Result<AxumRouter, Error> {
-    apply_middleware(routes::build_metric_routes(), context, None)
+pub(crate) async fn build_metrics_axum_app(context: &dyn Context) -> Result<AxumRouter, Error> {
+    apply_middleware(routes::build_metric_routes(), context, None).await
 }
 
 pub fn start_background_metrics_webserver(
@@ -428,8 +457,10 @@ pub fn start_background_metrics_webserver(
         axum_addr.port()
     );
 
-    let metrics_axum_app = build_metrics_axum_app(context)?.into_make_service();
     let runtime = context.runtime()?;
+    let metrics_axum_app = runtime
+        .block_on(build_metrics_axum_app(context))?
+        .into_make_service();
 
     runtime.spawn(async move {
         match tokio::net::TcpListener::bind(axum_addr)
@@ -471,8 +502,10 @@ pub fn start_web_server(addr: Option<SocketAddr>, context: &dyn Context) -> Resu
     context.storage()?;
     context.repository_stats_updater()?;
 
-    let app = build_axum_app(context, template_data)?.into_make_service();
     context.runtime()?.block_on(async {
+        let app = build_axum_app(context, template_data)
+            .await?
+            .into_make_service();
         let listener = tokio::net::TcpListener::bind(axum_addr)
             .await
             .context("error binding socket for metrics web server")?;
@@ -572,7 +605,7 @@ where
 fn axum_cached_redirect<U>(
     uri: U,
     cache_policy: cache::CachePolicy,
-) -> Result<impl IntoResponse, Error>
+) -> Result<axum::response::Response, Error>
 where
     U: TryInto<http::Uri> + std::fmt::Debug,
     <U as TryInto<http::Uri>>::Error: std::fmt::Debug,
@@ -606,7 +639,8 @@ where
 }
 
 /// MetaData used in header
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(test, derive(serde::Serialize))]
 pub(crate) struct MetaData {
     pub(crate) name: String,
     /// The exact version of the release being shown.
@@ -618,10 +652,10 @@ pub(crate) struct MetaData {
     pub(crate) req_version: ReqVersion,
     pub(crate) description: Option<String>,
     pub(crate) target_name: Option<String>,
-    pub(crate) rustdoc_status: bool,
-    pub(crate) default_target: String,
-    pub(crate) doc_targets: Vec<String>,
-    pub(crate) yanked: bool,
+    pub(crate) rustdoc_status: Option<bool>,
+    pub(crate) default_target: Option<String>,
+    pub(crate) doc_targets: Option<Vec<String>>,
+    pub(crate) yanked: Option<bool>,
     /// CSS file to use depending on the rustdoc version used to generate this version of this
     /// crate.
     pub(crate) rustdoc_css_file: Option<String>,
@@ -667,12 +701,11 @@ impl MetaData {
             version: version.clone(),
             req_version: req_version.unwrap_or_else(|| ReqVersion::Exact(version.clone())),
             description: row.description,
-            target_name: Some(row.target_name),
+            target_name: row.target_name,
             rustdoc_status: row.rustdoc_status,
             default_target: row.default_target,
-            doc_targets: MetaData::parse_doc_targets(row.doc_targets),
+            doc_targets: row.doc_targets.map(MetaData::parse_doc_targets),
             yanked: row.yanked,
-            // rustdoc_css_file: get_correct_docsrs_style_file(&row.doc_rustc_version).unwrap(),
             rustdoc_css_file: row
                 .rustc_version
                 .as_deref()
@@ -694,20 +727,34 @@ impl MetaData {
         targets.sort_unstable();
         targets
     }
+
+    fn target_name_url(&self) -> String {
+        if let Some(ref target_name) = self.target_name {
+            format!("{target_name}/index.html")
+        } else {
+            String::new()
+        }
+    }
+
+    pub(crate) fn doc_targets(&self) -> Option<&[String]> {
+        self.doc_targets.as_deref()
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Template)]
+#[template(path = "error.html")]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) struct AxumErrorPage {
     /// The title of the page
     pub title: &'static str,
     /// The error message, displayed as a description
     pub message: Cow<'static, str>,
-    #[serde(skip)]
     pub status: StatusCode,
+    pub csp_nonce: String,
 }
 
 impl_axum_webpage! {
-    AxumErrorPage = "error.html",
+    AxumErrorPage,
     status = |err| err.status,
 }
 
@@ -787,11 +834,14 @@ mod test {
 
             let foo_crate =
                 kuchikiki::parse_html().one(web.get("/crate/foo/0.0.1").send()?.text()?);
-            for value in &["60%", "6", "10", "2", "1"] {
-                assert!(foo_crate
-                    .select(".pure-menu-item b")
-                    .unwrap()
-                    .any(|e| dbg!(e.text_contents()).contains(value)));
+            for (idx, value) in ["60%", "6", "10", "2", "1"].iter().enumerate() {
+                assert!(
+                    foo_crate
+                        .select(".pure-menu-item b")
+                        .unwrap()
+                        .any(|e| dbg!(e.text_contents()).contains(value)),
+                    "({idx}, {value:?})"
+                );
             }
 
             let foo_doc = kuchikiki::parse_html().one(web.get("/foo/0.0.1/foo").send()?.text()?);
@@ -1023,6 +1073,35 @@ mod test {
     }
 
     #[test]
+    fn in_progress_releases_are_ignored_when_others_match() {
+        async_wrapper(|env| async move {
+            let db = env.async_db().await;
+
+            // normal release
+            release("1.0.0", &env).await;
+
+            // in progress release
+            env.async_fake_release()
+                .await
+                .name("foo")
+                .version("1.1.0")
+                .builds(vec![
+                    FakeBuild::default().build_status(BuildStatus::InProgress)
+                ])
+                .create_async()
+                .await?;
+
+            // STAR gives me the prod release
+            assert_eq!(version(Some("*"), db).await, exact("1.0.0"));
+
+            // exact-match query gives me the in progress release
+            assert_eq!(version(Some("=1.1.0"), db).await, exact("1.1.0"));
+
+            Ok(())
+        })
+    }
+
+    #[test]
     // https://github.com/rust-lang/docs.rs/issues/1682
     fn prereleases_are_considered_when_others_dont_match() {
         async_wrapper(|env| async move {
@@ -1076,13 +1155,13 @@ mod test {
             req_version: ReqVersion::Latest,
             description: Some("serde does stuff".to_string()),
             target_name: None,
-            rustdoc_status: true,
-            default_target: "x86_64-unknown-linux-gnu".to_string(),
-            doc_targets: vec![
+            rustdoc_status: Some(true),
+            default_target: Some("x86_64-unknown-linux-gnu".to_string()),
+            doc_targets: Some(vec![
                 "x86_64-unknown-linux-gnu".to_string(),
                 "arm64-unknown-linux-gnu".to_string(),
-            ],
-            yanked: false,
+            ]),
+            yanked: Some(false),
             rustdoc_css_file: Some("rustdoc.css".to_string()),
         };
 
@@ -1163,10 +1242,10 @@ mod test {
                     req_version: ReqVersion::Latest,
                     description: Some("Fake package".to_string()),
                     target_name: Some("foo".to_string()),
-                    rustdoc_status: true,
-                    default_target: "x86_64-unknown-linux-gnu".to_string(),
-                    doc_targets: vec![],
-                    yanked: false,
+                    rustdoc_status: Some(true),
+                    default_target: Some("x86_64-unknown-linux-gnu".to_string()),
+                    doc_targets: Some(vec![]),
+                    yanked: Some(false),
                     rustdoc_css_file: Some("rustdoc.css".to_string()),
                 },
             );

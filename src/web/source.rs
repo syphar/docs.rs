@@ -4,21 +4,27 @@ use crate::{
     impl_axum_webpage,
     storage::PathNotFoundError,
     web::{
-        cache::CachePolicy, error::AxumNope, extractors::Path, file::File as DbFile,
-        headers::CanonicalUrl, MetaData, ReqVersion,
+        cache::CachePolicy,
+        error::AxumNope,
+        extractors::Path,
+        file::File as DbFile,
+        headers::CanonicalUrl,
+        page::templates::{filters, RenderBrands, RenderRegular, RenderSolid},
+        MetaData, ReqVersion,
     },
     AsyncStorage,
 };
 use anyhow::{Context as _, Result};
 use axum::{response::IntoResponse, Extension};
 use axum_extra::headers::HeaderMapExt;
+use rinja::Template;
 use semver::Version;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::{cmp::Ordering, sync::Arc};
 use tracing::instrument;
 
 /// A source file's name and mime type
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd)]
 struct File {
     /// The name of the file
     name: String,
@@ -42,9 +48,8 @@ impl File {
 }
 
 /// A list of source files
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Default)]
 struct FileList {
-    metadata: MetaData,
     files: Vec<File>,
 }
 
@@ -136,29 +141,30 @@ impl FileList {
                 }
             });
 
-            Ok(Some(FileList {
-                metadata: MetaData::from_crate(conn, name, version, req_version).await?,
-                files: file_list,
-            }))
+            Ok(Some(FileList { files: file_list }))
         } else {
             Ok(None)
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Template)]
+#[template(path = "crate/source.html")]
+#[derive(Debug, Clone)]
 struct SourcePage {
     file_list: FileList,
+    metadata: MetaData,
     show_parent_link: bool,
     file: Option<File>,
     file_content: Option<String>,
     canonical_url: CanonicalUrl,
+    is_file_too_large: bool,
     is_latest_url: bool,
-    use_direct_platform_links: bool,
+    csp_nonce: String,
 }
 
 impl_axum_webpage! {
-    SourcePage = "crate/source.html",
+    SourcePage,
     canonical_url = |page| Some(page.canonical_url.clone()),
     cache_policy = |page| if page.is_latest_url {
         CachePolicy::ForeverInCdn
@@ -166,6 +172,13 @@ impl_axum_webpage! {
         CachePolicy::ForeverInCdnAndStaleInBrowser
     },
     cpu_intensive_rendering = true,
+}
+
+// Used in templates.
+impl SourcePage {
+    pub(crate) fn use_direct_platform_links(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -209,7 +222,9 @@ pub(crate) async fn source_browser_handler(
             (
                 SELECT id
                 FROM builds
-                WHERE builds.rid = releases.id
+                WHERE
+                    builds.rid = releases.id AND
+                    builds.build_status = 'success'
                 ORDER BY build_time DESC
                 LIMIT 1
             ) AS latest_build_id
@@ -226,7 +241,7 @@ pub(crate) async fn source_browser_handler(
 
     // try to get actual file first
     // skip if request is a directory
-    let blob = if !params.path.ends_with('/') {
+    let (blob, is_file_too_large) = if !params.path.ends_with('/') {
         match storage
             .fetch_source_file(
                 &params.name,
@@ -238,17 +253,23 @@ pub(crate) async fn source_browser_handler(
             .await
             .context("error fetching source file")
         {
-            Ok(blob) => Some(blob),
-            Err(err) => {
-                if err.is::<PathNotFoundError>() {
-                    None
-                } else {
-                    return Err(err.into());
+            Ok(blob) => (Some(blob), false),
+            Err(err) => match err {
+                err if err.is::<PathNotFoundError>() => (None, false),
+                // if file is too large, set is_file_too_large to true
+                err if err.downcast_ref::<std::io::Error>().is_some_and(|err| {
+                    err.get_ref()
+                        .map(|err| err.is::<crate::error::SizeLimitReached>())
+                        .unwrap_or(false)
+                }) =>
+                {
+                    (None, true)
                 }
-            }
+                _ => return Err(err.into()),
+            },
         }
     } else {
-        None
+        (None, false)
     };
 
     let canonical_url = CanonicalUrl::from_path(format!(
@@ -297,16 +318,24 @@ pub(crate) async fn source_browser_handler(
         current_folder,
     )
     .await?
-    .ok_or(AxumNope::ResourceNotFound)?;
+    .unwrap_or_default();
 
     Ok(SourcePage {
         file_list,
+        metadata: MetaData::from_crate(
+            &mut conn,
+            &params.name,
+            &version,
+            Some(params.version.clone()),
+        )
+        .await?,
         show_parent_link: !current_folder.is_empty(),
         file,
         file_content,
         canonical_url,
+        is_file_too_large,
         is_latest_url: params.version.is_latest(),
-        use_direct_platform_links: true,
+        csp_nonce: String::new(),
     }
     .into_response())
 }
@@ -463,14 +492,19 @@ mod tests {
             let web = env.frontend();
             assert_success(path, web)?;
 
-            env.db().conn().execute(
-                "UPDATE releases
+            env.runtime().block_on(async {
+                let mut conn = env.async_db().await.async_conn().await;
+                sqlx::query!(
+                    "UPDATE releases
                      SET files = NULL
                      WHERE id = $1",
-                &[&release_id],
-            )?;
+                    release_id,
+                )
+                .execute(&mut *conn)
+                .await
+            })?;
 
-            assert_eq!(web.get(path).send()?.status(), StatusCode::NOT_FOUND);
+            assert!(web.get(path).send()?.status().is_success());
 
             Ok(())
         });
@@ -509,7 +543,7 @@ mod tests {
                 .version("0.2.0")
                 .create()?;
             let web = env.frontend();
-            assert_not_found("/crate/mbedtls/0.2.0/source/test/", web)?;
+            assert_success("/crate/mbedtls/0.2.0/source/test/", web)?;
             Ok(())
         })
     }
@@ -726,6 +760,29 @@ mod tests {
                 get_file_list_links(&response.text()?),
                 vec!["../", "./more_filenames.rs", "./some_filename.rs"],
             );
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn large_file_test() {
+        wrapper(|env| {
+            env.override_config(|config| {
+                config.max_file_size = 1;
+                config.max_file_size_html = 1;
+            });
+            env.fake_release()
+                .name("fake")
+                .version("0.1.0")
+                .source_file("large_file.rs", b"some_random_content")
+                .create()?;
+
+            let web = env.frontend();
+            let response = web.get("/crate/fake/0.1.0/source/large_file.rs").send()?;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert!(response
+                .text()?
+                .contains("This file is too large to display"));
             Ok(())
         });
     }

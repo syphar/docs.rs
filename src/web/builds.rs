@@ -1,4 +1,8 @@
-use super::{cache::CachePolicy, error::AxumNope, headers::CanonicalUrl};
+use super::{
+    cache::CachePolicy,
+    error::{AxumNope, JsonAxumNope, JsonAxumResult},
+    headers::CanonicalUrl,
+};
 use crate::{
     db::types::BuildStatus,
     docbuilder::Limits,
@@ -6,39 +10,54 @@ use crate::{
     web::{
         error::AxumResult,
         extractors::{DbConnection, Path},
-        match_version, MetaData, ReqVersion,
+        filters, match_version,
+        page::templates::{RenderRegular, RenderSolid},
+        MetaData, ReqVersion,
     },
-    Config,
+    AsyncBuildQueue, Config,
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use axum::{
     extract::Extension, http::header::ACCESS_CONTROL_ALLOW_ORIGIN, response::IntoResponse, Json,
 };
+use axum_extra::{
+    headers::{authorization::Bearer, Authorization},
+    TypedHeader,
+};
 use chrono::{DateTime, Utc};
+use constant_time_eq::constant_time_eq;
+use http::StatusCode;
+use rinja::Template;
 use semver::Version;
-use serde::Serialize;
 use std::sync::Arc;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Build {
     id: i32,
-    rustc_version: String,
-    docsrs_version: String,
+    rustc_version: Option<String>,
+    docsrs_version: Option<String>,
     build_status: BuildStatus,
-    build_time: DateTime<Utc>,
+    build_time: Option<DateTime<Utc>>,
+    errors: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Template)]
+#[template(path = "crate/builds.html")]
+#[derive(Debug, Clone)]
 struct BuildsPage {
     metadata: MetaData,
     builds: Vec<Build>,
     limits: Limits,
     canonical_url: CanonicalUrl,
-    use_direct_platform_links: bool,
+    csp_nonce: String,
 }
 
-impl_axum_webpage! {
-    BuildsPage = "crate/builds.html",
+impl_axum_webpage! { BuildsPage }
+
+impl BuildsPage {
+    pub(crate) fn use_direct_platform_links(&self) -> bool {
+        true
+    }
 }
 
 pub(crate) async fn build_list_handler(
@@ -62,7 +81,7 @@ pub(crate) async fn build_list_handler(
         builds: get_builds(&mut conn, &name, &version).await?,
         limits: Limits::for_crate(&config, &mut conn, &name).await?,
         canonical_url: CanonicalUrl::from_path(format!("/crate/{name}/latest/builds")),
-        use_direct_platform_links: true,
+        csp_nonce: String::new(),
     }
     .into_response())
 }
@@ -90,25 +109,117 @@ pub(crate) async fn build_list_json_handler(
                 .await?
                 .iter()
                 .filter_map(|build| {
-                    // for backwards compatibility in this API, we
-                    // * filter out in-progress builds
-                    // * convert the build status to a boolean
-                    if build.build_status != BuildStatus::InProgress {
-                        Some(serde_json::json!({
-                            "id": build.id,
-                            "rustc_version": build.rustc_version,
-                            "docsrs_version": build.docsrs_version,
-                            "build_status": build.build_status.is_success(),
-                            "build_time": build.build_time,
-                        }))
-                    } else {
-                        None
+                    if build.build_status == BuildStatus::InProgress {
+                        return None;
                     }
+                    // for backwards compatibility in this API, we
+                    // * convert the build status to a boolean
+                    // * already filter out in-progress builds
+                    //
+                    // even when we start showing in-progress builds in the UI,
+                    // we might still not show them here for backwards
+                    // compatibility.
+                    Some(serde_json::json!({
+                        "id": build.id,
+                        "rustc_version": build.rustc_version,
+                        "docsrs_version": build.docsrs_version,
+                        "build_status": build.build_status.is_success(),
+                        "build_time": build.build_time,
+                    }))
                 })
                 .collect::<Vec<_>>(),
         ),
     )
         .into_response())
+}
+
+async fn crate_version_exists(
+    conn: &mut sqlx::PgConnection,
+    name: &String,
+    version: &Version,
+) -> Result<bool, anyhow::Error> {
+    let row = sqlx::query!(
+        r#"
+        SELECT 1 as "dummy"
+        FROM releases
+        INNER JOIN crates ON crates.id = releases.crate_id
+        WHERE crates.name = $1 AND releases.version = $2
+        LIMIT 1"#,
+        name,
+        version.to_string(),
+    )
+    .fetch_optional(&mut *conn)
+    .await?;
+    Ok(row.is_some())
+}
+
+async fn build_trigger_check(
+    conn: &mut sqlx::PgConnection,
+    name: &String,
+    version: &Version,
+    build_queue: &Arc<AsyncBuildQueue>,
+) -> AxumResult<impl IntoResponse> {
+    if !crate_version_exists(&mut *conn, name, version).await? {
+        return Err(AxumNope::VersionNotFound);
+    }
+
+    let crate_version_is_in_queue = build_queue
+        .has_build_queued(name, &version.to_string())
+        .await?;
+
+    if crate_version_is_in_queue {
+        return Err(AxumNope::BadRequest(anyhow!(
+            "crate {name} {version} already queued for rebuild"
+        )));
+    }
+
+    Ok(())
+}
+
+// Priority according to issue #2442; positive here as it's inverted.
+// FUTURE: move to a crate-global enum with all special priorities?
+const TRIGGERED_REBUILD_PRIORITY: i32 = 5;
+
+pub(crate) async fn build_trigger_rebuild_handler(
+    Path((name, version)): Path<(String, Version)>,
+    mut conn: DbConnection,
+    Extension(build_queue): Extension<Arc<AsyncBuildQueue>>,
+    Extension(config): Extension<Arc<Config>>,
+    opt_auth_header: Option<TypedHeader<Authorization<Bearer>>>,
+) -> JsonAxumResult<impl IntoResponse> {
+    let expected_token =
+        config
+            .cratesio_token
+            .as_ref()
+            .ok_or(JsonAxumNope(AxumNope::Unauthorized(
+                "Endpoint is not configured",
+            )))?;
+
+    // (Future: would it be better to have standard middleware handle auth?)
+    let TypedHeader(auth_header) = opt_auth_header.ok_or(JsonAxumNope(AxumNope::Unauthorized(
+        "Missing authentication token",
+    )))?;
+    if !constant_time_eq(auth_header.token().as_bytes(), expected_token.as_bytes()) {
+        return Err(JsonAxumNope(AxumNope::Unauthorized(
+            "The token used for authentication is not valid",
+        )));
+    }
+
+    build_trigger_check(&mut conn, &name, &version, &build_queue)
+        .await
+        .map_err(JsonAxumNope)?;
+
+    build_queue
+        .add_crate(
+            &name,
+            &version.to_string(),
+            TRIGGERED_REBUILD_PRIORITY,
+            None, /* because crates.io is the only service that calls this endpoint */
+        )
+        .await
+        .map_err(|e| JsonAxumNope(e.into()))?;
+
+    Ok((StatusCode::CREATED, Json(serde_json::json!({}))))
 }
 
 async fn get_builds(
@@ -123,11 +234,14 @@ async fn get_builds(
             builds.rustc_version,
             builds.docsrs_version,
             builds.build_status as "build_status: BuildStatus",
-            builds.build_time
+            builds.build_time,
+            builds.errors
          FROM builds
          INNER JOIN releases ON releases.id = builds.rid
          INNER JOIN crates ON releases.crate_id = crates.id
-         WHERE crates.name = $1 AND releases.version = $2
+         WHERE
+            crates.name = $1 AND
+            releases.version = $2
          ORDER BY id DESC"#,
         name,
         version.to_string(),
@@ -140,12 +254,43 @@ async fn get_builds(
 mod tests {
     use super::BuildStatus;
     use crate::{
-        test::{assert_cache_control, wrapper, FakeBuild},
+        db::Overrides,
+        test::{assert_cache_control, fake_release_that_failed_before_build, wrapper, FakeBuild},
         web::cache::CachePolicy,
     };
-    use chrono::{DateTime, Duration, Utc};
+    use chrono::{DateTime, Utc};
     use kuchikiki::traits::TendrilSink;
     use reqwest::StatusCode;
+
+    #[test]
+    fn build_list_empty_build() {
+        wrapper(|env| {
+            env.runtime().block_on(async {
+                let mut conn = env.async_db().await.async_conn().await;
+                fake_release_that_failed_before_build(&mut conn, "foo", "0.1.0", "some errors")
+                    .await
+            })?;
+
+            let response = env
+                .frontend()
+                .get("/crate/foo/0.1.0/builds")
+                .send()?
+                .error_for_status()?;
+            assert_cache_control(&response, CachePolicy::NoCaching, &env.config());
+            let page = kuchikiki::parse_html().one(response.text()?);
+
+            let rows: Vec<_> = page
+                .select("ul > li a.release")
+                .unwrap()
+                .map(|row| row.text_contents())
+                .collect();
+
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].chars().filter(|&c| c == '—').count(), 3);
+
+            Ok(())
+        });
+    }
 
     #[test]
     fn build_list() {
@@ -164,6 +309,10 @@ mod tests {
                     FakeBuild::default()
                         .rustc_version("rustc (blabla 2021-01-01)")
                         .docsrs_version("docs.rs 3.0.0"),
+                    FakeBuild::default()
+                        .build_status(BuildStatus::InProgress)
+                        .rustc_version("rustc (blabla 2022-01-01)")
+                        .docsrs_version("docs.rs 4.0.0"),
                 ])
                 .create()?;
 
@@ -277,6 +426,114 @@ mod tests {
     }
 
     #[test]
+    fn build_trigger_rebuild_missing_config() {
+        wrapper(|env| {
+            env.override_config(|config| config.cratesio_token = None);
+            env.fake_release().name("foo").version("0.1.0").create()?;
+
+            {
+                let response = env.frontend().get("/crate/regex/1.3.1/rebuild").send()?;
+                // Needs POST
+                assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+            }
+
+            {
+                let response = env.frontend().post("/crate/regex/1.3.1/rebuild").send()?;
+                assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+                let json: serde_json::Value = response.json()?;
+                assert_eq!(
+                    json,
+                    serde_json::json!({
+                        "title": "Unauthorized",
+                        "message": "Endpoint is not configured"
+                    })
+                );
+            }
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn build_trigger_rebuild_with_config() {
+        wrapper(|env| {
+            let correct_token = "foo137";
+            env.override_config(|config| config.cratesio_token = Some(correct_token.into()));
+
+            env.fake_release().name("foo").version("0.1.0").create()?;
+
+            {
+                let response = env.frontend().post("/crate/regex/1.3.1/rebuild").send()?;
+                assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+                let json: serde_json::Value = response.json()?;
+                assert_eq!(
+                    json,
+                    serde_json::json!({
+                        "title": "Unauthorized",
+                        "message": "Missing authentication token"
+                    })
+                );
+            }
+
+            {
+                let response = env
+                    .frontend()
+                    .post("/crate/regex/1.3.1/rebuild")
+                    .bearer_auth("someinvalidtoken")
+                    .send()?;
+                assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+                let json: serde_json::Value = response.json()?;
+                assert_eq!(
+                    json,
+                    serde_json::json!({
+                        "title": "Unauthorized",
+                        "message": "The token used for authentication is not valid"
+                    })
+                );
+            }
+
+            assert_eq!(env.build_queue().pending_count()?, 0);
+            assert!(!env.build_queue().has_build_queued("foo", "0.1.0")?);
+
+            {
+                let response = env
+                    .frontend()
+                    .post("/crate/foo/0.1.0/rebuild")
+                    .bearer_auth(correct_token)
+                    .send()?;
+                assert_eq!(response.status(), StatusCode::CREATED);
+                let json: serde_json::Value = response.json()?;
+                assert_eq!(json, serde_json::json!({}));
+            }
+
+            assert_eq!(env.build_queue().pending_count()?, 1);
+            assert!(env.build_queue().has_build_queued("foo", "0.1.0")?);
+
+            {
+                let response = env
+                    .frontend()
+                    .post("/crate/foo/0.1.0/rebuild")
+                    .bearer_auth(correct_token)
+                    .send()?;
+                assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+                let json: serde_json::Value = response.json()?;
+                assert_eq!(
+                    json,
+                    serde_json::json!({
+                        "title": "Bad request",
+                        "message": "crate foo 0.1.0 already queued for rebuild"
+                    })
+                );
+            }
+
+            assert_eq!(env.build_queue().pending_count()?, 1);
+            assert!(env.build_queue().has_build_queued("foo", "0.1.0")?);
+
+            Ok(())
+        });
+    }
+
+    #[test]
     fn build_empty_list() {
         wrapper(|env| {
             env.fake_release()
@@ -286,6 +543,7 @@ mod tests {
                 .create()?;
 
             let response = env.frontend().get("/crate/foo/0.1.0/builds").send()?;
+
             assert_cache_control(&response, CachePolicy::NoCaching, &env.config());
             let page = kuchikiki::parse_html().one(response.text()?);
 
@@ -315,17 +573,15 @@ mod tests {
         wrapper(|env| {
             env.fake_release().name("foo").version("0.1.0").create()?;
 
-            env.db().conn().query(
-                "INSERT INTO sandbox_overrides
-                    (crate_name, max_memory_bytes, timeout_seconds, max_targets)
-                 VALUES ($1, $2, $3, $4)",
-                &[
-                    &"foo",
-                    &(6 * 1024 * 1024 * 1024i64),
-                    &(Duration::try_hours(2).unwrap().num_seconds() as i32),
-                    &1,
-                ],
-            )?;
+            env.runtime().block_on(async {
+                let mut conn = env.async_db().await.async_conn().await;
+                let limits = Overrides {
+                    memory: Some(6 * 1024 * 1024 * 1024),
+                    targets: Some(1),
+                    timeout: Some(std::time::Duration::from_secs(2 * 60 * 60)),
+                };
+                Overrides::save(&mut conn, "foo", limits).await
+            })?;
 
             let page = kuchikiki::parse_html().one(
                 env.frontend()
@@ -345,9 +601,9 @@ mod tests {
             let values: Vec<_> = values.iter().map(|v| &**v).collect();
 
             dbg!(&values);
-            assert!(values.contains(&"6 GB"));
+            assert!(values.contains(&"6.44 GB"));
             assert!(values.contains(&"2 hours"));
-            assert!(values.contains(&"100 kB"));
+            assert!(values.contains(&"102.40 kB"));
             assert!(values.contains(&"blocked"));
             assert!(values.contains(&"1"));
 

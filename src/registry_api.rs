@@ -3,7 +3,8 @@ use anyhow::{anyhow, Context};
 use chrono::{DateTime, Utc};
 use reqwest::header::{HeaderValue, ACCEPT, USER_AGENT};
 use semver::Version;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::fmt;
 use tracing::instrument;
 use url::Url;
 
@@ -46,6 +47,26 @@ impl Default for ReleaseData {
 pub struct CrateOwner {
     pub(crate) avatar: String,
     pub(crate) login: String,
+    pub(crate) kind: OwnerKind,
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, sqlx::Type,
+)]
+#[sqlx(type_name = "owner_kind", rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+pub enum OwnerKind {
+    User,
+    Team,
+}
+
+impl fmt::Display for OwnerKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::User => f.write_str("user"),
+            Self::Team => f.write_str("team"),
+        }
+    }
 }
 
 impl RegistryApi {
@@ -168,6 +189,8 @@ impl RegistryApi {
             avatar: Option<String>,
             #[serde(default)]
             login: Option<String>,
+            #[serde(default)]
+            kind: Option<OwnerKind>,
         }
 
         let response: Response = retry_async(
@@ -198,6 +221,7 @@ impl RegistryApi {
             .map(|data| CrateOwner {
                 avatar: data.avatar.unwrap_or_default(),
                 login: data.login.unwrap_or_default(),
+                kind: data.kind.unwrap_or(OwnerKind::User),
             })
             .collect();
 

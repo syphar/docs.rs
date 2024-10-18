@@ -11,6 +11,12 @@ the nightly release of the Rust compiler.
 
 This readme is for developing docs.rs. See [the about page](https://docs.rs/about) for user-facing documentation.
 
+
+## How the documentation is generated
+
+docs.rs uses [rustdoc](https://github.com/rust-lang/rust/tree/master/src/librustdoc) to generate the documentation for every crate release on crates.io.
+You can read the [the rustdoc book](https://doc.rust-lang.org/nightly/rustdoc/what-is-rustdoc.html) for more details.
+
 ## Changing the build environment
 
 To make a change to [the build environment](https://github.com/rust-lang/crates-build-env)
@@ -62,7 +68,7 @@ cp .env.sample .env
 # Create the DOCSRS_PREFIX directory
 mkdir -p ignored/cratesfyi-prefix/crates.io-index
 # Builds the docs.rs binary
-cargo build
+SQLX_OFFLINE=1 cargo build
 # Start the external services.
 # It may be `docker compose` in newer versions
 docker-compose up -d db s3
@@ -272,5 +278,5 @@ When updating Font Awesome, make sure to change `$fa-font-path` in `scss/_variab
 
 ### Contact
 
-Docs.rs is run and maintained by the [docs.rs team](https://www.rust-lang.org/governance/teams/dev-tools#docs-rs).
+Docs.rs is run and maintained by the [docs.rs team](https://www.rust-lang.org/governance/teams/dev-tools#team-docs-rs).
 You can find us in #t-docs-rs on [zulip](https://rust-lang.zulipchat.com/#narrow/stream/t-docs-rs)

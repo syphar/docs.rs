@@ -1,26 +1,21 @@
-{%- extends "base.html" -%}
+{% extends "base.html" %}
 {%- import "header/package_navigation.html" as navigation -%}
 
 {%- block title -%}
-    {{ macros::doc_title(name=metadata.name, version=metadata.version) }}
+    {% call macros::doc_title(name=metadata.name, version=metadata.version) %}
 {%- endblock title -%}
 
 {%- block meta -%}
-<link rel="canonical" href="{{ canonical_url | safe }}" />
+<link rel="canonical" href="{{ canonical_url|safe }}" />
 {%- endblock -%}
 
 {%- block topbar -%}
-  {%- set latest_version = "" -%}
-  {%- set latest_path = "" -%}
-  {%- set target = "" -%}
-  {%- set inner_path = metadata.target_name ~ "/index.html" -%}
-  {%- set is_latest_version = true -%}
-  {%- set is_prerelease = false -%}
+  {%- set inner_path = metadata.target_name_url() -%}
   {%- include "rustdoc/topbar.html" -%}
 {%- endblock topbar -%}
 
 {%- block header -%}
-    {{ navigation::package_navigation(metadata=metadata, active_tab="features") }}
+    {% call navigation::package_navigation(metadata=metadata, active_tab="features") %}
 {%- endblock header -%}
 
 {%- block body -%}
@@ -30,21 +25,26 @@
                 <div class="pure-menu package-menu">
                     <ul class="pure-menu-list">
                         <li class="pure-menu-heading">Feature flags</li>
-                        {%- if features -%}
-                            {%- for feature in features -%}
+                        {%- if let Some(features) = sorted_features -%}
+                            {%- if features.is_empty() -%}
                                 <li class="pure-menu-item">
-                                    <a href="#{{ feature.name }}" class="pure-menu-link text-center">
-                                        {{ feature.name }}
-                                    </a>
+                                   <span class="documented-info">This release does not have any feature flags.</span>
                                 </li>
-                            {%- endfor -%}
-                        {%- elif features is iterable -%}
+                            {%- else %}
+                                {%- for feature in features -%}
+                                    <li class="pure-menu-item">
+                                        <a href="#{{ feature.name }}" class="pure-menu-link text-center">
+                                            {{- feature.name -}}
+                                        </a>
+                                    </li>
+                                {%- endfor %}
+                            {%- endif -%}
+                        {%- else %}
                             <li class="pure-menu-item">
-                                <span class="documented-info">This release does not have any feature flags.</span>
-                            </li>
-                        {%- else -%}
-                            <li class="pure-menu-item">
-                                <span class="documented-info">Feature flags are not available for this release because it was built before features were collected by docs.rs.</span>
+                                <span class="documented-info">
+                                    Feature flags are not available for this release because the build failed before we could retrieve them,
+                                    or it was built before features were collected by docs.rs.
+                                </span>
                             </li>
                         {%- endif -%}
                     </ul>
@@ -56,30 +56,54 @@
                 <div class="info">
                     There is very little structured metadata to build this page
                     from currently. You should check the
-                    <a href="/{{ metadata.name }}/{{ metadata.req_version }}/{{ metadata.target_name }}/">main library docs</a>,
+                    <a href="/{{ metadata.name }}/{{ metadata.req_version }}/{{ metadata.target_name.as_deref().unwrap_or_default() }}/">main library docs</a>,
                     <a href="/crate/{{ metadata.name }}/{{ metadata.req_version }}/">readme</a>, or
                     <a href="/crate/{{ metadata.name }}/{{ metadata.req_version }}/source/Cargo.toml.orig">Cargo.toml</a>
                     in case the author documented the features in them.
                 </div>
-                {%- if features -%}
-                    <p>This version has <b>{{ features | length }}</b> feature flags, <b data-id="default-feature-len">{{ default_len }}</b> of them enabled by <b>default</b>.</p>
-                    {%- for feature in features -%}
-                        <h3 id="{{ feature.name }}">{{ feature.name }}</h3>
-                        <ul class="pure-menu-list">
-                            {%- if feature.subfeatures -%}
-                                {%- for subfeature in feature.subfeatures -%}
-                                    <li class="pure-menu-item">
-                                        <span>{{ subfeature }}</span>
-                                    </li>
-                                {%- endfor -%}
+                {%- if let Some(features) = sorted_features -%}
+                    {%- if features.is_empty() -%}
+                        <p data-id="empty-features">This release does not have any feature flags.</p>
+                    {%- else -%}
+                        <p>This version has <b>{{ features.len() }}</b> feature flags, <b data-id="default-feature-len">{{ default_features.len() }}</b> of them enabled by <b>default</b>.</p>
+                        {%- for feature in features -%}
+                            {%- let is_default = feature.name != "default" && is_default_feature(feature.name) -%}
+                            <h3 id="{{ feature.name }}">{{ feature.name }}{%- if is_default  %} (default){%- endif -%}</h3>
+                            {%- if !feature.subfeatures.is_empty() -%}
+                                <ul class="pure-menu-list">
+                                    {%- for (name, feature) in feature.subfeatures -%}
+                                        {%- let is_default = is_default_feature(name) -%}
+                                        <li class="pure-menu-item">
+                                            {%- match feature -%}
+                                                {%- when SubFeature::Feature with (feature) -%}
+                                                    <a href="#{{ feature }}">
+                                                        {{- feature -}}
+                                                    </a>
+                                                {% when SubFeature::Dependency with (dependency) %}
+                                                    {%- let version = dependency_version(dependency) -%}
+                                                    dep:<a href="/crate/{{ dependency }}/{{ version }}">
+                                                        {{- dependency -}}
+                                                    </a>
+                                                {% when SubFeature::DependencyFeature with {dependency, feature, optional} %}
+                                                    {%- let version = dependency_version(dependency) -%}
+                                                    <a href="/crate/{{ dependency }}/{{ version }}">
+                                                        {{- dependency -}}
+                                                    </a>
+                                                    {%- if optional -%}?{%- endif -%}
+                                                    /<a href="/crate/{{ dependency }}/{{ version }}/features#{{ feature }}">
+                                                        {{- feature -}}
+                                                    </a>
+                                            {% endmatch %}
+                                            {%- if is_default %} <span class="is-default-feature">(default)</span>{%- endif -%}
+                                        </li>
+                                    {%- endfor -%}
+                                </ul>
                             {%- else -%}
                                 <p>This feature flag does not enable additional features.</p>
                             {%- endif -%}
-                        </ul>
-                    {%- endfor -%}
-                {%- elif features is iterable  -%}
-                    <p data-id="empty-features">This release does not have any feature flags.</p>
-                {%- else -%}
+                        {%- endfor -%}
+                    {% endif -%}
+                {% else -%}
                     <p data-id="null-features">Feature flags are not available for this release because it was built before features were collected by docs.rs.</p>
                 {%- endif -%}
             </div>

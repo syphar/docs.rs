@@ -1,8 +1,7 @@
-use postgres_types::{FromSql, ToSql};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, FromSql, ToSql, sqlx::Type)]
-#[postgres(name = "feature")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, sqlx::Type)]
+#[sqlx(type_name = "feature")]
 pub struct Feature {
     pub(crate) name: String,
     pub(crate) subfeatures: Vec<String>,
@@ -15,12 +14,6 @@ impl Feature {
 
     pub fn is_private(&self) -> bool {
         self.name.starts_with('_')
-    }
-}
-
-impl sqlx::postgres::PgHasArrayType for Feature {
-    fn array_type_info() -> sqlx::postgres::PgTypeInfo {
-        sqlx::postgres::PgTypeInfo::with_name("_feature")
     }
 }
 
@@ -39,9 +32,13 @@ impl BuildStatus {
     }
 }
 
-impl sqlx::postgres::PgHasArrayType for BuildStatus {
-    fn array_type_info() -> sqlx::postgres::PgTypeInfo {
-        sqlx::postgres::PgTypeInfo::with_name("_build_status")
+impl<'a> PartialEq<&'a str> for BuildStatus {
+    fn eq(&self, other: &&str) -> bool {
+        match self {
+            Self::Success => *other == "success",
+            Self::Failure => *other == "failure",
+            Self::InProgress => *other == "in_progress",
+        }
     }
 }
 

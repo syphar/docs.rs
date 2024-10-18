@@ -12,7 +12,7 @@
     "parameters": {
       "Left": [
         "Int4",
-        "Varchar",
+        "Text",
         "Timestamptz",
         "Json",
         "Varchar",
@@ -35,7 +35,7 @@
         "Varchar",
         {
           "Custom": {
-            "name": "_feature",
+            "name": "feature[]",
             "kind": {
               "Array": {
                 "Custom": {

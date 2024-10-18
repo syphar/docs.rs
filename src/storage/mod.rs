@@ -325,7 +325,7 @@ impl AsyncStorage {
             .join(format!("{archive_path}.{latest_build_id}.index"));
 
         if !local_index_path.exists() {
-            let index_content = self.get(&remote_index_path, std::usize::MAX).await?.content;
+            let index_content = self.get(&remote_index_path, usize::MAX).await?.content;
 
             tokio::fs::create_dir_all(
                 local_index_path
@@ -415,15 +415,12 @@ impl AsyncStorage {
                         let _span =
                             info_span!("create_zip_archive", %archive_path, root_dir=%root_dir.display()).entered();
 
-                        let options = zip::write::FileOptions::default()
+                        let options = zip::write::SimpleFileOptions::default()
                             .compression_method(zip::CompressionMethod::Bzip2);
 
                         let mut zip = zip::ZipWriter::new(io::Cursor::new(Vec::new()));
-                        for file_path in get_file_list(&root_dir) {
-                            let file_path = file_path?;
-
-                            let mut file = fs::File::open(&root_dir.join(&file_path))?;
-
+                        for file_path in get_file_list(&root_dir)? {
+                            let mut file = fs::File::open(root_dir.join(&file_path))?;
                             zip.start_file(file_path.to_str().unwrap(), options)?;
                             io::copy(&mut file, &mut zip)?;
                             file_paths.push(FileEntry{path: file_path, size: file.metadata()?.len()});
@@ -810,6 +807,28 @@ impl std::fmt::Debug for Storage {
     }
 }
 
+fn detect_mime(file_path: impl AsRef<Path>) -> &'static str {
+    let mime = mime_guess::from_path(file_path.as_ref())
+        .first_raw()
+        .unwrap_or("text/plain");
+    match mime {
+        "text/plain" | "text/troff" | "text/x-markdown" | "text/x-rust" | "text/x-toml" => {
+            match file_path.as_ref().extension().and_then(OsStr::to_str) {
+                Some("md") => "text/markdown",
+                Some("rs") => "text/rust",
+                Some("markdown") => "text/markdown",
+                Some("css") => "text/css",
+                Some("toml") => "text/toml",
+                Some("js") => "text/javascript",
+                Some("json") => "application/json",
+                _ => mime,
+            }
+        }
+        "image/svg" => "image/svg+xml",
+        _ => mime,
+    }
+}
+
 pub(crate) fn rustdoc_archive_path(name: &str, version: &str) -> String {
     format!("rustdoc/{name}/{version}.zip")
 }
@@ -842,7 +861,7 @@ mod test {
         check_mime(".gitignore", "text/plain");
         check_mime("hello.toml", "text/toml");
         check_mime("hello.css", "text/css");
-        check_mime("hello.js", "application/javascript");
+        check_mime("hello.js", "text/javascript");
         check_mime("hello.html", "text/html");
         check_mime("hello.hello.md", "text/markdown");
         check_mime("hello.markdown", "text/markdown");
@@ -929,7 +948,7 @@ mod backend_tests {
 
         storage.store_blobs(vec![blob.clone()])?;
 
-        let found = storage.get(path, std::usize::MAX)?;
+        let found = storage.get(path, usize::MAX)?;
         assert_eq!(blob.mime, found.mime);
         assert_eq!(blob.content, found.content);
 
@@ -938,7 +957,7 @@ mod backend_tests {
 
         for path in &["bar.txt", "baz.txt", "foo/baz.txt"] {
             assert!(storage
-                .get(path, std::usize::MAX)
+                .get(path, usize::MAX)
                 .unwrap_err()
                 .downcast_ref::<PathNotFoundError>()
                 .is_some());
@@ -967,19 +986,19 @@ mod backend_tests {
         assert_eq!(
             blob.content[0..=4],
             storage
-                .get_range("foo/bar.txt", std::usize::MAX, 0..=4, None)?
+                .get_range("foo/bar.txt", usize::MAX, 0..=4, None)?
                 .content
         );
         assert_eq!(
             blob.content[5..=12],
             storage
-                .get_range("foo/bar.txt", std::usize::MAX, 5..=12, None)?
+                .get_range("foo/bar.txt", usize::MAX, 5..=12, None)?
                 .content
         );
 
         for path in &["bar.txt", "baz.txt", "foo/baz.txt"] {
             assert!(storage
-                .get_range(path, std::usize::MAX, 0..=4, None)
+                .get_range(path, usize::MAX, 0..=4, None)
                 .unwrap_err()
                 .downcast_ref::<PathNotFoundError>()
                 .is_some());
@@ -1089,7 +1108,7 @@ mod backend_tests {
         storage.store_blobs(blobs.clone()).unwrap();
 
         for blob in &blobs {
-            let actual = storage.get(&blob.path, std::usize::MAX)?;
+            let actual = storage.get(&blob.path, usize::MAX)?;
             assert_eq!(blob.path, actual.path);
             assert_eq!(blob.mime, actual.mime);
         }
@@ -1157,13 +1176,12 @@ mod backend_tests {
         assert!(local_index_location.exists());
         assert!(storage.exists_in_archive("folder/test.zip", 0, "src/main.rs",)?);
 
-        let file = storage.get_from_archive("folder/test.zip", 0, "Cargo.toml", std::usize::MAX)?;
+        let file = storage.get_from_archive("folder/test.zip", 0, "Cargo.toml", usize::MAX)?;
         assert_eq!(file.content, b"data");
         assert_eq!(file.mime, "text/toml");
         assert_eq!(file.path, "folder/test.zip/Cargo.toml");
 
-        let file =
-            storage.get_from_archive("folder/test.zip", 0, "src/main.rs", std::usize::MAX)?;
+        let file = storage.get_from_archive("folder/test.zip", 0, "src/main.rs", usize::MAX)?;
         assert_eq!(file.content, b"data");
         assert_eq!(file.mime, "text/rust");
         assert_eq!(file.path, "folder/test.zip/src/main.rs");
@@ -1200,12 +1218,12 @@ mod backend_tests {
             "text/rust"
         );
 
-        let file = storage.get("prefix/Cargo.toml", std::usize::MAX)?;
+        let file = storage.get("prefix/Cargo.toml", usize::MAX)?;
         assert_eq!(file.content, b"data");
         assert_eq!(file.mime, "text/toml");
         assert_eq!(file.path, "prefix/Cargo.toml");
 
-        let file = storage.get("prefix/src/main.rs", std::usize::MAX)?;
+        let file = storage.get("prefix/src/main.rs", usize::MAX)?;
         assert_eq!(file.content, b"data");
         assert_eq!(file.mime, "text/rust");
         assert_eq!(file.path, "prefix/src/main.rs");
@@ -1235,7 +1253,7 @@ mod backend_tests {
         storage.store_blobs(uploads.clone())?;
 
         for blob in &uploads {
-            let stored = storage.get(&blob.path, std::usize::MAX)?;
+            let stored = storage.get(&blob.path, usize::MAX)?;
             assert_eq!(&stored.content, &blob.content);
         }
 
@@ -1297,11 +1315,11 @@ mod backend_tests {
         storage.delete_prefix(prefix)?;
 
         for existing in present {
-            assert!(storage.get(existing, std::usize::MAX).is_ok());
+            assert!(storage.get(existing, usize::MAX).is_ok());
         }
         for missing in missing {
             assert!(storage
-                .get(missing, std::usize::MAX)
+                .get(missing, usize::MAX)
                 .unwrap_err()
                 .downcast_ref::<PathNotFoundError>()
                 .is_some());

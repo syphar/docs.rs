@@ -1,11 +1,10 @@
-use std::sync::atomic::AtomicBool;
-use std::{path::PathBuf, process::Command};
-
-use anyhow::Context;
-use crates_index_diff::gix;
-
 use crate::error::Result;
 use crate::utils::report_error;
+use anyhow::Context;
+use crates_index_diff::gix;
+use std::path::PathBuf;
+use std::process::Command;
+use std::sync::atomic::AtomicBool;
 
 pub struct Index {
     path: PathBuf,
@@ -57,7 +56,6 @@ impl Index {
         Ok(diff)
     }
 
-    #[cfg(feature = "consistency_check")]
     pub(crate) fn crates(&self) -> Result<crates_index::GitIndex> {
         tracing::debug!("Opening with `crates_index`");
         // crates_index requires the repo url to match the existing origin or it tries to reinitialize the repo

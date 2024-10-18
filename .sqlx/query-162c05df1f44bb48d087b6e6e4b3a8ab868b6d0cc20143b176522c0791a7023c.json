@@ -11,7 +11,7 @@
       {
         "ordinal": 1,
         "name": "version",
-        "type_info": "Varchar"
+        "type_info": "Text"
       },
       {
         "ordinal": 2,
@@ -59,10 +59,10 @@
       false,
       false,
       false,
-      false,
-      false,
-      false,
-      false
+      true,
+      true,
+      true,
+      true
     ]
   },
   "hash": "162c05df1f44bb48d087b6e6e4b3a8ab868b6d0cc20143b176522c0791a7023c"

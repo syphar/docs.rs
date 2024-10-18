@@ -2,17 +2,17 @@
 
 use crate::{
     build_queue::QueuedCrate,
-    cdn,
-    db::Pool,
-    impl_axum_webpage,
-    utils::{report_error, retry_async, spawn_blocking},
+    cdn, impl_axum_webpage,
+    utils::{report_error, retry_async},
     web::{
         axum_parse_uri_with_params, axum_redirect, encode_url_path,
         error::{AxumNope, AxumResult},
         extractors::{DbConnection, Path},
-        match_version, ReqVersion,
+        match_version,
+        page::templates::{filters, RenderRegular, RenderSolid},
+        ReqVersion,
     },
-    BuildQueue, Config, InstanceMetrics,
+    AsyncBuildQueue, Config, InstanceMetrics,
 };
 use anyhow::{anyhow, bail, Context as _, Result};
 use axum::{
@@ -23,6 +23,7 @@ use base64::{engine::general_purpose::STANDARD as b64, Engine};
 use chrono::{DateTime, Utc};
 use futures_util::stream::TryStreamExt;
 use once_cell::sync::Lazy;
+use rinja::Template;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -44,12 +45,12 @@ const RELEASES_IN_FEED: i64 = 150;
 pub struct Release {
     pub(crate) name: String,
     pub(crate) version: String,
-    description: Option<String>,
-    target_name: Option<String>,
-    rustdoc_status: bool,
-    pub(crate) build_time: DateTime<Utc>,
-    stars: i32,
-    has_unyanked_releases: Option<bool>,
+    pub(crate) description: Option<String>,
+    pub(crate) target_name: Option<String>,
+    pub(crate) rustdoc_status: bool,
+    pub(crate) build_time: Option<DateTime<Utc>>,
+    pub(crate) stars: i32,
+    pub(crate) has_unyanked_releases: Option<bool>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -89,7 +90,7 @@ pub(crate) async fn get_releases(
             releases.description,
             releases.target_name,
             releases.rustdoc_status,
-            release_build_status.last_build_time AS build_time,
+            release_build_status.last_build_time,
             repositories.stars
         FROM crates
         {1}
@@ -97,7 +98,8 @@ pub(crate) async fn get_releases(
         LEFT JOIN repositories ON releases.repository_id = repositories.id
         WHERE
             ((NOT $3) OR (release_build_status.build_status = 'failure' AND releases.is_library = TRUE))
-            AND {0} IS NOT NULL
+            AND {0} IS NOT NULL AND
+            release_build_status.build_status != 'in_progress'
 
         ORDER BY {0} DESC
         LIMIT $1 OFFSET $2",
@@ -119,7 +121,7 @@ pub(crate) async fn get_releases(
             version: row.get(1),
             description: row.get(2),
             target_name: row.get(3),
-            rustdoc_status: row.get(4),
+            rustdoc_status: row.get::<Option<bool>, _>(4).unwrap_or(false),
             build_time: row.get(5),
             stars: row.get::<Option<i32>, _>(6).unwrap_or(0),
             has_unyanked_releases: None,
@@ -239,7 +241,7 @@ async fn get_search_results(
                crates.name,
                releases.version,
                releases.description,
-               builds.build_time,
+               release_build_status.last_build_time,
                releases.target_name,
                releases.rustdoc_status,
                repositories.stars as "stars?",
@@ -253,10 +255,12 @@ async fn get_search_results(
 
            FROM crates
            INNER JOIN releases ON crates.latest_version_id = releases.id
-           INNER JOIN builds ON releases.id = builds.rid
+           INNER JOIN release_build_status ON releases.id = release_build_status.rid
            LEFT JOIN repositories ON releases.repository_id = repositories.id
 
-           WHERE crates.name = ANY($1)"#,
+           WHERE
+               crates.name = ANY($1) AND
+               release_build_status.build_status <> 'in_progress'"#,
         &names[..],
     )
     .fetch(&mut *conn)
@@ -267,9 +271,9 @@ async fn get_search_results(
                 name: row.name,
                 version: row.version,
                 description: row.description,
-                build_time: row.build_time,
-                target_name: Some(row.target_name),
-                rustdoc_status: row.rustdoc_status,
+                build_time: row.last_build_time,
+                target_name: row.target_name,
+                rustdoc_status: row.rustdoc_status.unwrap_or(false),
                 stars: row.stars.unwrap_or(0),
                 has_unyanked_releases: row.has_unyanked_releases,
             },
@@ -293,13 +297,16 @@ async fn get_search_results(
     })
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Template)]
+#[template(path = "core/home.html")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct HomePage {
     recent_releases: Vec<Release>,
+    csp_nonce: String,
 }
 
 impl_axum_webpage! {
-    HomePage = "core/home.html",
+    HomePage,
     cache_policy = |_| CachePolicy::ShortInCdnAndBrowser,
 }
 
@@ -307,26 +314,37 @@ pub(crate) async fn home_page(mut conn: DbConnection) -> AxumResult<impl IntoRes
     let recent_releases =
         get_releases(&mut conn, 1, RELEASES_IN_HOME, Order::ReleaseTime, true).await?;
 
-    Ok(HomePage { recent_releases })
+    Ok(HomePage {
+        recent_releases,
+        csp_nonce: String::new(),
+    })
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Template)]
+#[template(path = "releases/feed.xml")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ReleaseFeed {
     recent_releases: Vec<Release>,
+    csp_nonce: String,
 }
 
 impl_axum_webpage! {
-    ReleaseFeed  = "releases/feed.xml",
+    ReleaseFeed,
     content_type = "application/xml",
 }
 
 pub(crate) async fn releases_feed_handler(mut conn: DbConnection) -> AxumResult<impl IntoResponse> {
     let recent_releases =
         get_releases(&mut conn, 1, RELEASES_IN_FEED, Order::ReleaseTime, true).await?;
-    Ok(ReleaseFeed { recent_releases })
+    Ok(ReleaseFeed {
+        recent_releases,
+        csp_nonce: String::new(),
+    })
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Template)]
+#[template(path = "releases/releases.html")]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ViewReleases {
     releases: Vec<Release>,
     description: String,
@@ -335,20 +353,41 @@ struct ViewReleases {
     show_previous_page: bool,
     page_number: i64,
     owner: Option<String>,
+    csp_nonce: String,
 }
 
-impl_axum_webpage! {
-    ViewReleases = "releases/releases.html",
-}
+impl_axum_webpage! { ViewReleases }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum ReleaseType {
     Recent,
     Stars,
     RecentFailures,
     Failures,
     Search,
+}
+
+impl<'a> PartialEq<&'a str> for ReleaseType {
+    fn eq(&self, other: &&str) -> bool {
+        self.as_str() == *other
+    }
+}
+impl PartialEq<str> for ReleaseType {
+    fn eq(&self, other: &str) -> bool {
+        self.as_str() == other
+    }
+}
+
+impl ReleaseType {
+    fn as_str(&self) -> &str {
+        match self {
+            Self::Recent => "recent",
+            Self::Stars => "stars",
+            Self::RecentFailures => "recent_failures",
+            Self::Failures => "failures",
+            Self::Search => "search",
+        }
+    }
 }
 
 pub(crate) async fn releases_handler(
@@ -400,6 +439,7 @@ pub(crate) async fn releases_handler(
         show_previous_page,
         page_number,
         owner: None,
+        csp_nonce: String::new(),
     })
 }
 
@@ -439,32 +479,34 @@ pub(crate) async fn owner_handler(Path(owner): Path<String>) -> AxumResult<impl 
     .map_err(|_| AxumNope::OwnerNotFound)
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Template)]
+#[template(path = "releases/search_results.html")]
+#[derive(Debug, Clone, PartialEq)]
 pub(super) struct Search {
     pub(super) title: String,
-    #[serde(rename = "releases")]
-    pub(super) results: Vec<Release>,
+    pub(super) releases: Vec<Release>,
     pub(super) search_query: Option<String>,
     pub(super) search_sort_by: Option<String>,
     pub(super) previous_page_link: Option<String>,
     pub(super) next_page_link: Option<String>,
     /// This should always be `ReleaseType::Search`
     pub(super) release_type: ReleaseType,
-    #[serde(skip)]
     pub(super) status: http::StatusCode,
+    pub(super) csp_nonce: String,
 }
 
 impl Default for Search {
     fn default() -> Self {
         Self {
             title: String::default(),
-            results: Vec::default(),
+            releases: Vec::default(),
             search_query: None,
             previous_page_link: None,
             next_page_link: None,
             search_sort_by: None,
             release_type: ReleaseType::Search,
             status: http::StatusCode::OK,
+            csp_nonce: String::new(),
         }
     }
 }
@@ -512,7 +554,10 @@ async fn redirect_to_random_crate(
 
         Ok(axum_redirect(format!(
             "/{}/{}/{}/",
-            row.name, row.version, row.target_name
+            row.name,
+            row.version,
+            row.target_name
+                .expect("we only look at releases with docs, so target_name will exist")
         ))?)
     } else {
         report_error(&anyhow!("found no result in random crate search"));
@@ -521,7 +566,7 @@ async fn redirect_to_random_crate(
 }
 
 impl_axum_webpage! {
-    Search = "releases/search_results.html",
+    Search,
     status = |search| search.status,
 }
 
@@ -575,7 +620,9 @@ pub(crate) async fn search_handler(
                         "/{}/{}/{}/",
                         matchver.name,
                         matchver.version(),
-                        matchver.target_name(),
+                        matchver
+                            .target_name()
+                            .expect("target name will exist when rustdoc_status is true"),
                     ),
                     queries,
                 )?
@@ -647,7 +694,7 @@ pub(crate) async fn search_handler(
 
     Ok(Search {
         title,
-        results: search_result.results,
+        releases: search_result.results,
         search_query: Some(executed_query),
         search_sort_by: Some(sort_by),
         next_page_link: search_result
@@ -661,17 +708,18 @@ pub(crate) async fn search_handler(
     .into_response())
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Template)]
+#[template(path = "releases/activity.html")]
+#[derive(Debug, Clone, PartialEq)]
 struct ReleaseActivity {
     description: &'static str,
     dates: Vec<String>,
     counts: Vec<i64>,
     failures: Vec<i64>,
+    csp_nonce: String,
 }
 
-impl_axum_webpage! {
-    ReleaseActivity = "releases/activity.html",
-}
+impl_axum_webpage! { ReleaseActivity }
 
 pub(crate) async fn activity_handler(mut conn: DbConnection) -> AxumResult<impl IntoResponse> {
     let rows: Vec<_> = sqlx::query!(
@@ -724,64 +772,83 @@ pub(crate) async fn activity_handler(mut conn: DbConnection) -> AxumResult<impl 
             .collect(),
         counts: rows.iter().map(|rows| rows.counts).collect(),
         failures: rows.iter().map(|rows| rows.failures).collect(),
+        csp_nonce: String::new(),
     })
 }
 
+#[derive(Template)]
+#[template(path = "releases/build_queue.html")]
 #[derive(Debug, Clone, PartialEq, Serialize)]
 struct BuildQueuePage {
     description: &'static str,
     queue: Vec<QueuedCrate>,
-    active_deployments: Vec<String>,
+    active_cdn_deployments: Vec<String>,
+    in_progress_builds: Vec<(String, String)>,
+    csp_nonce: String,
 }
 
-impl_axum_webpage! {
-    BuildQueuePage = "releases/build_queue.html",
-}
+impl_axum_webpage! { BuildQueuePage }
 
 pub(crate) async fn build_queue_handler(
-    Extension(build_queue): Extension<Arc<BuildQueue>>,
-    Extension(pool): Extension<Pool>,
+    Extension(build_queue): Extension<Arc<AsyncBuildQueue>>,
+    mut conn: DbConnection,
 ) -> AxumResult<impl IntoResponse> {
-    let (queue, active_deployments) = spawn_blocking(move || {
-        let mut queue = build_queue.queued_crates()?;
-        for krate in queue.iter_mut() {
-            // The priority here is inverted: in the database if a crate has a higher priority it
-            // will be built after everything else, which is counter-intuitive for people not
-            // familiar with docs.rs's inner workings.
-            krate.priority = -krate.priority;
-        }
+    let mut active_cdn_deployments: Vec<_> = cdn::queued_or_active_crate_invalidations(&mut conn)
+        .await?
+        .into_iter()
+        .map(|i| i.krate)
+        .collect();
 
-        let mut conn = pool.get()?;
-        let mut active_deployments: Vec<_> = cdn::queued_or_active_crate_invalidations(&mut *conn)?
-            .into_iter()
-            .map(|i| i.krate)
-            .collect();
+    // deduplicate the list of crates while keeping their order
+    let mut set = HashSet::new();
+    active_cdn_deployments.retain(|k| set.insert(k.clone()));
 
-        // deduplicate the list of crates while keeping their order
-        let mut set = HashSet::new();
-        active_deployments.retain(|k| set.insert(k.clone()));
+    // reverse the list, so the oldest comes first
+    active_cdn_deployments.reverse();
 
-        // reverse the list, so the oldest comes first
-        active_deployments.reverse();
+    let mut queue = build_queue.queued_crates().await?;
+    for krate in queue.iter_mut() {
+        // The priority here is inverted: in the database if a crate has a higher priority it
+        // will be built after everything else, which is counter-intuitive for people not
+        // familiar with docs.rs's inner workings.
+        krate.priority = -krate.priority;
+    }
 
-        Ok((queue, active_deployments))
-    })
-    .await?;
+    let in_progress_builds: Vec<(String, String)> = sqlx::query!(
+        r#"SELECT
+            crates.name,
+            releases.version
+         FROM builds
+         INNER JOIN releases ON releases.id = builds.rid
+         INNER JOIN crates ON releases.crate_id = crates.id
+         WHERE
+            builds.build_status = 'in_progress'
+         ORDER BY builds.id ASC"#
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .map(|rec| (rec.name, rec.version))
+    .collect();
 
     Ok(BuildQueuePage {
         description: "crate documentation scheduled to build & deploy",
         queue,
-        active_deployments,
+        active_cdn_deployments,
+        in_progress_builds,
+        csp_nonce: String::new(),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::registry_api::CrateOwner;
+    use crate::db::types::BuildStatus;
+    use crate::db::{finish_build, initialize_build, initialize_crate, initialize_release};
+    use crate::registry_api::{CrateOwner, OwnerKind};
     use crate::test::{
-        assert_cache_control, assert_redirect, assert_redirect_unchecked, assert_success, wrapper,
-        TestFrontend,
+        assert_cache_control, assert_redirect, assert_redirect_unchecked, assert_success,
+        async_wrapper, fake_release_that_failed_before_build, wrapper, FakeBuild, TestFrontend,
     };
     use anyhow::Error;
     use chrono::{Duration, TimeZone};
@@ -790,6 +857,40 @@ mod tests {
     use reqwest::StatusCode;
     use serde_json::json;
     use test_case::test_case;
+
+    #[test]
+    fn test_release_list_with_incomplete_release_and_successful_build() {
+        async_wrapper(|env| async move {
+            let db = env.async_db().await;
+            let mut conn = db.async_conn().await;
+
+            let crate_id = initialize_crate(&mut conn, "foo").await?;
+            let release_id = initialize_release(&mut conn, crate_id, "0.1.0").await?;
+            let build_id = initialize_build(&mut conn, release_id).await?;
+
+            finish_build(
+                &mut conn,
+                build_id,
+                "rustc-version",
+                "docs.rs 4.0.0",
+                BuildStatus::Success,
+                None,
+            )
+            .await?;
+
+            let releases = get_releases(&mut conn, 1, 10, Order::ReleaseTime, false).await?;
+
+            assert_eq!(
+                vec!["foo"],
+                releases
+                    .iter()
+                    .map(|release| release.name.as_str())
+                    .collect::<Vec<_>>(),
+            );
+
+            Ok(())
+        })
+    }
 
     #[test]
     fn get_releases_by_stars() {
@@ -806,8 +907,23 @@ mod tests {
                 .version("1.0.0")
                 .github_stats("ghost/bar", 20, 20, 20)
                 .create()?;
+            env.fake_release()
+                .name("bar")
+                .version("1.0.0")
+                .github_stats("ghost/bar", 20, 20, 20)
+                .create()?;
             // release without stars will not be shown
             env.fake_release().name("baz").version("1.0.0").create()?;
+
+            // release with only in-progress build (= in progress release) will not be shown
+            env.fake_release()
+                .name("in_progress")
+                .version("0.1.0")
+                .builds(vec![FakeBuild::default()
+                    .build_status(BuildStatus::InProgress)
+                    .rustc_version("rustc (blabla 2022-01-01)")
+                    .docsrs_version("docs.rs 4.0.0")])
+                .create()?;
 
             let releases = env
                 .runtime()
@@ -868,7 +984,7 @@ mod tests {
     #[test]
     fn im_feeling_lucky_with_stars() {
         wrapper(|env| {
-            {
+            env.runtime().block_on(async {
                 // The normal test-setup will offset all primary sequences by 10k
                 // to prevent errors with foreign key relations.
                 // Random-crate-search relies on the sequence for the crates-table
@@ -876,9 +992,11 @@ mod tests {
                 // crate in the db breaks this test.
                 // That's why we reset the id-sequence to zero for this test.
 
-                let mut conn = env.db().conn();
-                conn.execute(r#"ALTER SEQUENCE crates_id_seq RESTART WITH 1"#, &[])?;
-            }
+                let mut conn = env.async_db().await.async_conn().await;
+                sqlx::query!(r#"ALTER SEQUENCE crates_id_seq RESTART WITH 1"#)
+                    .execute(&mut *conn)
+                    .await
+            })?;
 
             let web = env.frontend();
             env.fake_release()
@@ -1264,6 +1382,28 @@ mod tests {
                 .yanked(true)
                 .create()?;
 
+            // release with only in-progress build (= in progress release) will not be shown
+            env.fake_release()
+                .name("in_progress")
+                .version("0.1.0")
+                .builds(vec![FakeBuild::default()
+                    .build_status(BuildStatus::InProgress)
+                    .rustc_version("rustc (blabla 2022-01-01)")
+                    .docsrs_version("docs.rs 4.0.0")])
+                .create()?;
+
+            // release that failed in the fetch-step, will miss some details
+            env.runtime().block_on(async {
+                let mut conn = env.async_db().await.async_conn().await;
+                fake_release_that_failed_before_build(
+                    &mut conn,
+                    "failed_hard",
+                    "0.1.0",
+                    "some random error",
+                )
+                .await
+            })?;
+
             let _m = crates_io
                 .mock("GET", "/api/v1/crates")
                 .match_query(Matcher::AllOf(vec![
@@ -1278,7 +1418,9 @@ mod tests {
                             { "name": "some_random_crate" },
                             { "name": "some_other_crate" },
                             { "name": "and_another_one" },
-                            { "name": "yet_another_crate" }
+                            { "name": "yet_another_crate" },
+                            { "name": "in_progress" },
+                            { "name": "failed_hard" }
                         ],
                         "meta": {
                             "next_page": null,
@@ -1292,7 +1434,7 @@ mod tests {
             let links = get_release_links("/releases/search?query=some_random_crate", web)?;
 
             // `some_other_crate` won't be shown since we don't have it yet
-            assert_eq!(links.len(), 3);
+            assert_eq!(links.len(), 4);
             // * `max_version` from the crates.io search result will be ignored since we
             //   might not have it yet, or the doc-build might be in progress.
             // * ranking/order from crates.io result is preserved
@@ -1300,6 +1442,7 @@ mod tests {
             assert_eq!(links[0], "/some_random_crate/latest/some_random_crate/");
             assert_eq!(links[1], "/and_another_one/latest/and_another_one/");
             assert_eq!(links[2], "/yet_another_crate/0.1.0/yet_another_crate/");
+            assert_eq!(links[3], "/crate/failed_hard/0.1.0");
             Ok(())
         })
     }
@@ -1496,12 +1639,13 @@ mod tests {
         wrapper(|env| {
             let web = env.frontend();
 
-            let empty_data = format!("data: [{}]", vec!["0"; 30].join(","));
+            let empty_data = format!("data: [{}]", vec!["0"; 30].join(", "));
 
             // no data / only zeros without releases
             let response = web.get("/releases/activity/").send()?;
             assert!(response.status().is_success());
-            assert_eq!(response.text().unwrap().matches(&empty_data).count(), 2);
+            let text = response.text();
+            assert_eq!(text.unwrap().matches(&empty_data).count(), 2);
 
             env.fake_release().name("some_random_crate").create()?;
             env.fake_release()
@@ -1529,9 +1673,9 @@ mod tests {
             assert!(response.status().is_success());
             let text = response.text().unwrap();
             // counts contain both releases
-            assert!(text.contains(&format!("data: [{},2]", vec!["0"; 29].join(","))));
+            assert!(text.contains(&format!("data: [{}, 2]", vec!["0"; 29].join(", "))));
             // failures only one
-            assert!(text.contains(&format!("data: [{},1]", vec!["0"; 29].join(","))));
+            assert!(text.contains(&format!("data: [{}, 1]", vec!["0"; 29].join(", "))));
 
             Ok(())
         })
@@ -1561,11 +1705,14 @@ mod tests {
 
             let web = env.frontend();
 
-            cdn::queue_crate_invalidation(&mut *env.db().conn(), &env.config(), "krate_2")?;
+            env.runtime().block_on(async move {
+                let mut conn = env.async_db().await.async_conn().await;
+                cdn::queue_crate_invalidation(&mut conn, &env.config(), "krate_2").await
+            })?;
 
             let empty = kuchikiki::parse_html().one(web.get("/releases/queue").send()?.text()?);
             assert!(empty
-                .select(".release > strong")
+                .select(".release > div > strong")
                 .expect("missing heading")
                 .any(|el| el.text_contents().contains("active CDN deployments")));
 
@@ -1587,7 +1734,6 @@ mod tests {
     #[test]
     fn test_releases_queue() {
         wrapper(|env| {
-            let queue = env.build_queue();
             let web = env.frontend();
 
             let empty = kuchikiki::parse_html().one(web.get("/releases/queue").send()?.text()?);
@@ -1601,6 +1747,7 @@ mod tests {
                 .expect("missing heading")
                 .any(|el| el.text_contents().contains("active CDN deployments")));
 
+            let queue = env.build_queue();
             queue.add_crate("foo", "1.0.0", 0, None)?;
             queue.add_crate("bar", "0.1.0", -10, None)?;
             queue.add_crate("baz", "0.0.1", 10, None)?;
@@ -1642,6 +1789,7 @@ mod tests {
                 .add_owner(CrateOwner {
                     login: "foobar".into(),
                     avatar: "https://example.org/foobar".into(),
+                    kind: OwnerKind::User,
                 })
                 .create()?;
 
