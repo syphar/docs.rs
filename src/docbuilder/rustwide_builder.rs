@@ -476,6 +476,7 @@ impl RustwideBuilder {
                     algs.insert(new_alg);
                     files_list
                 };
+                let source_size: u64 = files_list.iter().map(|info| info.size).sum();
                 let metadata = Metadata::from_crate_root(build.host_source_dir())?;
                 let BuildTargets {
                     default_target,
