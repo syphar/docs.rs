@@ -6,10 +6,11 @@ use axum::{
     handler::Handler as AxumHandler,
     middleware::{self, Next},
     response::{IntoResponse, Redirect},
-    routing::{get, MethodRouter},
+    routing::{get, post, MethodRouter},
     Router as AxumRouter,
 };
 use axum_extra::routing::RouterExt;
+use rinja::Template;
 use std::convert::Infallible;
 use tracing::{debug, instrument};
 
@@ -35,6 +36,18 @@ where
     S: Clone + Send + Sync + 'static,
 {
     get(handler).route_layer(middleware::from_fn(|request, next| async {
+        request_recorder(request, next, None).await
+    }))
+}
+
+#[instrument(skip_all)]
+fn post_internal<H, T, S>(handler: H) -> MethodRouter<S, Infallible>
+where
+    H: AxumHandler<T, S>,
+    T: 'static,
+    S: Clone + Send + Sync + 'static,
+{
+    post(handler).route_layer(middleware::from_fn(|request, next| async {
         request_recorder(request, next, None).await
     }))
 }
@@ -213,6 +226,10 @@ pub(super) fn build_axum_routes() -> AxumRouter {
             get_internal(super::builds::build_list_json_handler),
         )
         .route(
+            "/crate/:name/:version/rebuild",
+            post_internal(super::builds::build_trigger_rebuild_handler),
+        )
+        .route(
             "/crate/:name/:version/status.json",
             get_internal(super::status::status_handler),
         )
@@ -291,13 +308,19 @@ pub(super) fn build_axum_routes() -> AxumRouter {
         .route(
             "/-/storage-change-detection.html",
             get_internal(|| async {
-                #[derive(Debug, Clone, serde::Serialize)]
-                struct StorageChangeDetection {}
+                #[derive(Template)]
+                #[template(path = "storage-change-detection.html")]
+                #[derive(Debug, Clone)]
+                struct StorageChangeDetection {
+                    csp_nonce: String,
+                }
                 crate::impl_axum_webpage!(
-                    StorageChangeDetection = "storage-change-detection.html",
+                    StorageChangeDetection,
                     cache_policy = |_| CachePolicy::ForeverInCdnAndBrowser,
                 );
-                StorageChangeDetection {}
+                StorageChangeDetection {
+                    csp_nonce: String::new(),
+                }
             }),
         )
         .route_with_tsr(

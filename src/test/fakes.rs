@@ -1,6 +1,8 @@
 use super::TestDatabase;
 
-use crate::docbuilder::{BuildResult, DocCoverage};
+use crate::db::types::BuildStatus;
+use crate::db::{initialize_build, initialize_crate, initialize_release, update_build_status};
+use crate::docbuilder::DocCoverage;
 use crate::error::Result;
 use crate::registry_api::{CrateData, CrateOwner, ReleaseData};
 use crate::storage::{
@@ -16,13 +18,43 @@ use std::sync::Arc;
 use tokio::runtime::Runtime;
 use tracing::debug;
 
+/// Create a fake release in the database that failed before the build.
+/// This is a temporary small factory function only until we refactored the
+/// `FakeRelelease` and `FakeBuild` factories to be more flexible.
+pub(crate) async fn fake_release_that_failed_before_build(
+    conn: &mut sqlx::PgConnection,
+    name: &str,
+    version: &str,
+    errors: &str,
+) -> Result<(i32, i32)> {
+    let crate_id = initialize_crate(&mut *conn, name).await?;
+    let release_id = initialize_release(&mut *conn, crate_id, version).await?;
+    let build_id = initialize_build(&mut *conn, release_id).await?;
+
+    sqlx::query_scalar!(
+        "UPDATE builds
+         SET
+             build_status = 'failure',
+             errors = $2
+         WHERE id = $1",
+        build_id,
+        errors,
+    )
+    .execute(&mut *conn)
+    .await?;
+
+    update_build_status(conn, release_id).await?;
+
+    Ok((release_id, build_id))
+}
+
 #[must_use = "FakeRelease does nothing until you call .create()"]
 pub(crate) struct FakeRelease<'a> {
     db: &'a TestDatabase,
     storage: Arc<AsyncStorage>,
     runtime: Arc<Runtime>,
     package: MetadataPackage,
-    builds: Vec<FakeBuild>,
+    builds: Option<Vec<FakeBuild>>,
     /// name, content
     source_files: Vec<(&'a str, &'a [u8])>,
     /// name, content
@@ -45,7 +77,9 @@ pub(crate) struct FakeBuild {
     s3_build_log: Option<String>,
     other_build_logs: HashMap<String, String>,
     db_build_log: Option<String>,
-    result: BuildResult,
+    rustc_version: String,
+    docsrs_version: String,
+    build_status: BuildStatus,
 }
 
 const DEFAULT_CONTENT: &[u8] =
@@ -90,7 +124,7 @@ impl<'a> FakeRelease<'a> {
                 .cloned()
                 .collect::<HashMap<String, Vec<String>>>(),
             },
-            builds: vec![],
+            builds: None,
             source_files: Vec::new(),
             rustdoc_files: Vec::new(),
             doc_targets: Vec::new(),
@@ -147,20 +181,31 @@ impl<'a> FakeRelease<'a> {
     // TODO: How should `has_docs` actually be handled?
     pub(crate) fn build_result_failed(self) -> Self {
         assert!(
-            self.builds.is_empty(),
+            self.builds.is_none(),
             "cannot use custom builds with build_result_failed"
         );
         Self {
             has_docs: false,
-            builds: vec![FakeBuild::default().successful(false)],
+            builds: Some(vec![FakeBuild::default().successful(false)]),
             ..self
         }
     }
 
     pub(crate) fn builds(self, builds: Vec<FakeBuild>) -> Self {
-        assert!(self.builds.is_empty());
+        assert!(self.builds.is_none());
         assert!(!builds.is_empty());
-        Self { builds, ..self }
+        Self {
+            builds: Some(builds),
+            ..self
+        }
+    }
+
+    pub(crate) fn no_builds(self) -> Self {
+        assert!(self.builds.is_none());
+        Self {
+            builds: Some(vec![]),
+            ..self
+        }
     }
 
     pub(crate) fn yanked(mut self, new: bool) -> Self {
@@ -281,7 +326,7 @@ impl<'a> FakeRelease<'a> {
     }
 
     /// Returns the release_id
-    pub(crate) async fn create_async(mut self) -> Result<i32> {
+    pub(crate) async fn create_async(self) -> Result<i32> {
         use std::fs;
         use std::path::Path;
 
@@ -417,12 +462,9 @@ impl<'a> FakeRelease<'a> {
         debug!("added source files {}", source_meta);
 
         // If the test didn't add custom builds, inject a default one
-        if self.builds.is_empty() {
-            self.builds.push(FakeBuild::default());
-        }
-        let last_build_result = &self.builds.last().unwrap().result;
+        let builds = self.builds.unwrap_or_else(|| vec![FakeBuild::default()]);
 
-        if last_build_result.successful {
+        if builds.last().map(|b| b.build_status) == Some(BuildStatus::Success) {
             let index = [&package.name, "index.html"].join("/");
             if package.is_library() && !rustdoc_files.iter().any(|(path, _)| path == &index) {
                 rustdoc_files.push((&index, DEFAULT_CONTENT));
@@ -477,7 +519,6 @@ impl<'a> FakeRelease<'a> {
             &mut async_conn,
             &package,
             crate_dir,
-            last_build_result,
             default_target,
             source_meta,
             self.doc_targets,
@@ -495,7 +536,7 @@ impl<'a> FakeRelease<'a> {
             &self.registry_crate_data,
         )
         .await?;
-        for build in &self.builds {
+        for build in builds {
             build
                 .create(&mut async_conn, &storage, release_id, default_target)
                 .await?;
@@ -537,20 +578,14 @@ impl FakeGithubStats {
 impl FakeBuild {
     pub(crate) fn rustc_version(self, rustc_version: impl Into<String>) -> Self {
         Self {
-            result: BuildResult {
-                rustc_version: rustc_version.into(),
-                ..self.result
-            },
+            rustc_version: rustc_version.into(),
             ..self
         }
     }
 
     pub(crate) fn docsrs_version(self, docsrs_version: impl Into<String>) -> Self {
         Self {
-            result: BuildResult {
-                docsrs_version: docsrs_version.into(),
-                ..self.result
-            },
+            docsrs_version: docsrs_version.into(),
             ..self
         }
     }
@@ -587,11 +622,16 @@ impl FakeBuild {
     }
 
     pub(crate) fn successful(self, successful: bool) -> Self {
+        self.build_status(if successful {
+            BuildStatus::Success
+        } else {
+            BuildStatus::Failure
+        })
+    }
+
+    pub(crate) fn build_status(self, build_status: BuildStatus) -> Self {
         Self {
-            result: BuildResult {
-                successful,
-                ..self.result
-            },
+            build_status,
             ..self
         }
     }
@@ -603,8 +643,17 @@ impl FakeBuild {
         release_id: i32,
         default_target: &str,
     ) -> Result<()> {
-        let build_id =
-            crate::db::add_build_into_database(&mut *conn, release_id, &self.result).await?;
+        let build_id = crate::db::initialize_build(&mut *conn, release_id).await?;
+
+        crate::db::finish_build(
+            &mut *conn,
+            build_id,
+            &self.rustc_version,
+            &self.docsrs_version,
+            self.build_status,
+            None,
+        )
+        .await?;
 
         if let Some(db_build_log) = self.db_build_log.as_deref() {
             sqlx::query!(
@@ -636,16 +685,15 @@ impl FakeBuild {
 }
 
 impl Default for FakeBuild {
+    /// create a default fake _finished_ build
     fn default() -> Self {
         Self {
             s3_build_log: Some("It works!".into()),
             db_build_log: None,
             other_build_logs: HashMap::new(),
-            result: BuildResult {
-                rustc_version: "rustc 2.0.0-nightly (000000000 1970-01-01)".into(),
-                docsrs_version: "docs.rs 1.0.0 (000000000 1970-01-01)".into(),
-                successful: true,
-            },
+            rustc_version: "rustc 2.0.0-nightly (000000000 1970-01-01)".into(),
+            docsrs_version: "docs.rs 1.0.0 (000000000 1970-01-01)".into(),
+            build_status: BuildStatus::Success,
         }
     }
 }

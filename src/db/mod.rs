@@ -4,14 +4,15 @@ use sqlx::migrate::{Migrate, Migrator};
 
 pub use self::add_package::update_latest_version_id;
 pub(crate) use self::add_package::{
-    add_build_into_database, add_doc_coverage, add_package_into_database,
+    add_doc_coverage, add_package_into_database, finish_build, initialize_build, initialize_crate,
+    initialize_release, update_build_with_error,
 };
 pub use self::{
-    add_package::update_crate_data_in_database,
+    add_package::{update_build_status, update_crate_data_in_database},
     delete::{delete_crate, delete_version},
     file::{add_path_into_database, add_path_into_remote_archive},
     overrides::Overrides,
-    pool::{AsyncPoolClient, Pool, PoolClient, PoolError},
+    pool::{AsyncPoolClient, Pool, PoolError},
 };
 
 mod add_package;

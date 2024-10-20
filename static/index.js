@@ -1,47 +1,35 @@
-function formatCrateName(crateTitleAndVersion) {
-    const stringParts = crateTitleAndVersion.split(" ", 2);
-    return stringParts[0] + ' = "' + stringParts[1] + '"';
-}
-
 (function() {
     const clipboard = document.getElementById("clipboard");
     if (clipboard) {
         let resetClipboardTimeout = null;
-        let resetClipboardIcon = clipboard.innerHTML;
+        const resetClipboardIcon = clipboard.innerHTML;
 
-        function resetClipboard() {
-            resetClipboardTimeout = null;
-            clipboard.innerHTML = resetClipboardIcon;
-        }
+        clipboard.addEventListener("click", () => {
+            const metadata = JSON.parse(document.getElementById("crate-metadata").innerText);
 
-        function copyTextHandler() {
-            const crateTitleAndVersion = document.getElementById("crate-title");
-            // On rustdoc pages, we use `textTransform: uppercase`, which copies as uppercase.
-            // To avoid that, reset the styles temporarily.
-            const oldTransform = crateTitleAndVersion.style.textTransform;
-            crateTitleAndVersion.style.textTransform = "none";
             const temporaryInput = document.createElement("input");
-
             temporaryInput.type = "text";
-            temporaryInput.value = formatCrateName(crateTitleAndVersion.innerText);
+            temporaryInput.value = `${metadata.name} = "${metadata.version}"`;
 
             document.body.append(temporaryInput);
             temporaryInput.select();
             document.execCommand("copy");
-
             temporaryInput.remove();
-            crateTitleAndVersion.style.textTransform = oldTransform;
 
             clipboard.textContent = "✓";
             if (resetClipboardTimeout !== null) {
                 clearTimeout(resetClipboardTimeout);
             }
-            resetClipboardTimeout = setTimeout(resetClipboard, 1000);
-        }
-
-        clipboard.addEventListener("click", copyTextHandler);
+            resetClipboardTimeout = setTimeout(() => {
+                resetClipboardTimeout = null;
+                clipboard.innerHTML = resetClipboardIcon;
+            }, 1000);
+        });
     }
-    for (const e of document.querySelectorAll('a[data-fragment="retain"]')) {
-        e.addEventListener('mouseover', () => e.hash = document.location.hash);
+
+    for (const e of document.querySelectorAll("a[data-fragment=\"retain\"]")) {
+        e.addEventListener("mouseover", () => {
+            e.hash = document.location.hash;
+        });
     }
 })();

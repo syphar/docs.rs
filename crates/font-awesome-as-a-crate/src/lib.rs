@@ -6,7 +6,7 @@ If you have problems, [contact us](https://github.com/rust-lang/docs.rs/issues),
 */
 
 use std::error::Error;
-use std::fmt::{self, Display, Formatter};
+use std::fmt::{self, Debug, Display, Formatter};
 
 #[cfg(font_awesome_out_dir)]
 include!(concat!(env!("OUT_DIR"), "/fontawesome.rs"));
@@ -85,6 +85,29 @@ pub const fn svg(type_: Type, name: &str) -> Result<&'static str, NameError> {
         return Err(NameError);
     }
     Ok(svg)
+}
+
+pub trait IconStr {
+    /// Name of the icon, like "triangle-exclamation".
+    fn icon_name(&self) -> &'static str;
+    /// The SVG content of the icon.
+    fn icon_svg(&self) -> &'static str;
+}
+
+pub trait Brands: IconStr + Debug {
+    fn get_type() -> Type {
+        Type::Brands
+    }
+}
+pub trait Regular: IconStr + Debug {
+    fn get_type() -> Type {
+        Type::Regular
+    }
+}
+pub trait Solid: IconStr + Debug {
+    fn get_type() -> Type {
+        Type::Solid
+    }
 }
 
 #[cfg(test)]

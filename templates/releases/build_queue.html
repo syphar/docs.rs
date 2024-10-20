@@ -1,33 +1,60 @@
-{%- extends "base.html" -%}
+{% extends "base.html" %}
 {%- import "releases/header.html" as release_macros -%}
 
 {%- block title -%}Queue - Docs.rs{%- endblock title -%}
 
 {%- block header -%}
-    {{ release_macros::header(title="Queue", description=description, tab="queue") }}
+    {% call release_macros::header(title="Queue", description=description, tab="queue", owner="") %}
 {%- endblock header -%}
+
+{%- block topbar -%}
+    {% let search_query = Some(String::new()) %}
+    {%- include "header/topbar.html" -%}
+{%- endblock topbar -%}
 
 {%- block body -%}
     <div class="container">
         <div class="recent-releases-container">
-            {%- if active_deployments %}
-                <div class="release">
-                    <strong>active CDN deployments</strong>
+            <div class="release pure-g">
+                <div class="pure-u-1-2">
+                    <strong>currently being built</strong>
                 </div>
+                <div class="pure-u-1-2">
+                    {%- if !active_cdn_deployments.is_empty() %}
+                        <strong>active CDN deployments</strong>
+                    {%- endif %}
+                </div>
+            </div>
 
-                <div class = "pure-g">
-                    <div class="pure-u-1-2">
+            <div class = "pure-g">
+                <div class="pure-u-1-2">
+                    {%- if !in_progress_builds.is_empty() %}
                         <ol class="queue-list">
-                            {% for krate in active_deployments -%}
+                            {% for release in in_progress_builds -%}
                                 <li>
-                                    <a href="https://docs.rs/{{ krate }}">
+                                    <a href="/crate/{{ release.0 }}/{{ release.1 }}/builds">
+                                        {{ release.0 }} {{ release.1 }}
+                                    </a>
+                                </li>
+                            {%- endfor %}
+                        </ol>
+                    {%- else %}
+                        <div class="about">
+                            <p><strong>There is nothing currently being built</strong></p>
+                        </div>
+                    {%- endif %}
+                </div>
+                <div class="pure-u-1-2">
+                    {%- if !active_cdn_deployments.is_empty() %}
+                        <ol class="queue-list">
+                            {% for krate in active_cdn_deployments -%}
+                                <li>
+                                    <a href="/{{ krate }}">
                                         {{ krate }}
                                     </a>
                                 </li>
                             {%- endfor %}
                         </ol>
-                    </div>
-                    <div class="pure-u-1-2">
                         <div class="about">
                             <p>
                                 After the build finishes it may take up to 20 minutes for all documentation
@@ -35,24 +62,24 @@
                             </p>
                             <p>Especially <code>/latest/</code> URLs might be affected.</p>
                         </div>
-                    </div>
+                    {%- endif %}
                 </div>
-            {%- endif %}
+            </div>
 
             <div class="release">
                 <strong>Build Queue</strong>
             </div>
 
             <ol class="queue-list">
-                {%- if queue -%}
-                    {% for crate in queue -%}
+                {%- if !queue.is_empty() -%}
+                    {% for crate_item in queue -%}
                         <li>
-                            <a href="https://crates.io/crates/{{ crate.name }}">
-                                {{ crate.name }} {{ crate.version }}
+                            <a href="https://crates.io/crates/{{ crate_item.name }}">
+                                {{- crate_item.name }} {{ crate_item.version -}}
                             </a>
 
-                            {% if crate.priority != 0 -%}
-                                (priority: {{ crate.priority }})
+                            {% if crate_item.priority != 0 -%}
+                                (priority: {{ crate_item.priority }})
                             {%- endif %}
                         </li>
                     {%- endfor %}

@@ -26,7 +26,8 @@ fn build_static_css_response(content: &'static str) -> impl IntoResponse {
 }
 
 async fn set_needed_static_headers(req: Request, next: Next) -> Response {
-    let is_opensearch_xml = req.uri().path().ends_with("/opensearch.xml");
+    let req_path = req.uri().path();
+    let is_opensearch_xml = req_path.ends_with("/opensearch.xml");
 
     let mut response = next.run(req).await;
 
@@ -145,7 +146,7 @@ mod tests {
         });
     }
 
-    #[test_case("/-/static/index.js", "copyTextHandler")]
+    #[test_case("/-/static/index.js", "resetClipboardTimeout")]
     #[test_case("/-/static/menu.js", "closeMenu")]
     #[test_case("/-/static/keyboard.js", "handleKey")]
     #[test_case("/-/static/source.js", "toggleSource")]
@@ -158,7 +159,7 @@ mod tests {
             assert_cache_control(&resp, CachePolicy::ForeverInCdnAndBrowser, &env.config());
             assert_eq!(
                 resp.headers().get("Content-Type"),
-                Some(&"application/javascript".parse().unwrap()),
+                Some(&"text/javascript".parse().unwrap()),
             );
             assert!(resp.content_length().unwrap() > 10);
             assert!(resp.text()?.contains(expected_content));

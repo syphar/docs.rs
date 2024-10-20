@@ -14,6 +14,7 @@ use crate::{
         extractors::{DbConnection, Path},
         file::File,
         match_version,
+        page::templates::{filters, RenderRegular, RenderSolid},
         page::TemplateData,
         MetaData, ReqVersion,
     },
@@ -27,8 +28,9 @@ use axum::{
 };
 use lol_html::errors::RewritingError;
 use once_cell::sync::Lazy;
+use rinja::Template;
 use semver::Version;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::{
     collections::{BTreeMap, HashMap},
     sync::Arc,
@@ -86,7 +88,7 @@ async fn try_serve_legacy_toolchain_asset(
 
 /// Handler called for `/:crate` and `/:crate/:version` URLs. Automatically redirects to the docs
 /// or crate details page based on whether the given crate version was successfully built.
-#[instrument(skip_all)]
+#[instrument(skip(storage, config, conn))]
 pub(crate) async fn rustdoc_redirector_handler(
     Path(params): Path<RustdocRedirectorParams>,
     Extension(storage): Extension<Arc<AsyncStorage>>,
@@ -167,9 +169,9 @@ pub(crate) async fn rustdoc_redirector_handler(
     trace!(?matched_release, "matched version");
     let crate_name = matched_release.name.clone();
 
-    // we might get requests to crate-specific JS files here.
+    // we might get requests to crate-specific JS/CSS files here.
     if let Some(ref target) = params.target {
-        if target.ends_with(".js") {
+        if target.ends_with(".js") || target.ends_with(".css") {
             // this URL is actually from a crate-internal path, serve it there instead
             return async {
                 let krate = CrateDetails::from_matched_release(&mut conn, matched_release).await?;
@@ -207,30 +209,31 @@ pub(crate) async fn rustdoc_redirector_handler(
                     }
                 }
             }
-            .instrument(info_span!("serve JS for crate"))
+            .instrument(info_span!("serve asset for crate"))
             .await;
         }
     }
 
     let matched_release = matched_release.into_canonical_req_version();
 
-    let mut target = params.target.as_deref();
-    if target == Some("index.html") || target == Some(matched_release.target_name()) {
-        target = None;
-    }
-
     if matched_release.rustdoc_status() {
+        let target_name = matched_release
+            .target_name()
+            .expect("when rustdoc_status is true, target name exists");
+        let mut target = params.target.as_deref();
+        if target == Some("index.html") || target == Some(target_name) {
+            target = None;
+        }
+
         let url_str = if let Some(target) = target {
             format!(
                 "/{crate_name}/{}/{target}/{}/",
-                matched_release.req_version,
-                matched_release.target_name(),
+                matched_release.req_version, target_name
             )
         } else {
             format!(
                 "/{crate_name}/{}/{}/",
-                matched_release.req_version,
-                matched_release.target_name(),
+                matched_release.req_version, target_name
             )
         };
 
@@ -256,22 +259,22 @@ pub(crate) async fn rustdoc_redirector_handler(
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct RustdocPage {
-    latest_path: String,
-    permalink_path: String,
-    latest_version: String,
-    target: String,
-    inner_path: String,
+#[derive(Template)]
+#[template(path = "rustdoc/topbar.html")]
+#[derive(Debug, Clone)]
+pub struct RustdocPage {
+    pub latest_path: String,
+    pub permalink_path: String,
+    pub inner_path: String,
     // true if we are displaying the latest version of the crate, regardless
     // of whether the URL specifies a version number or the string "latest."
-    is_latest_version: bool,
+    pub is_latest_version: bool,
     // true if the URL specifies a version using the string "latest."
-    is_latest_url: bool,
-    is_prerelease: bool,
-    krate: CrateDetails,
-    metadata: MetaData,
-    current_target: String,
+    pub is_latest_url: bool,
+    pub is_prerelease: bool,
+    pub krate: CrateDetails,
+    pub metadata: MetaData,
+    pub current_target: String,
 }
 
 impl RustdocPage {
@@ -279,20 +282,15 @@ impl RustdocPage {
         self,
         rustdoc_html: &[u8],
         max_parse_memory: usize,
-        templates: &TemplateData,
         metrics: &InstanceMetrics,
         config: &Config,
         file_path: &str,
     ) -> AxumResult<AxumResponse> {
         let is_latest_url = self.is_latest_url;
 
-        // Build the page of documentation
-        let mut ctx = tera::Context::from_serialize(self).context("error creating tera context")?;
-        ctx.insert("DEFAULT_MAX_TARGETS", &crate::DEFAULT_MAX_TARGETS);
-
         // Extract the head and body of the rustdoc file so that we can insert it into our own html
         // while logging OOM errors from html rewriting
-        let html = match utils::rewrite_lol(rustdoc_html, max_parse_memory, ctx, templates) {
+        let html = match utils::rewrite_lol(rustdoc_html, max_parse_memory, &self) {
             Err(RewritingError::MemoryLimitExceeded(..)) => {
                 metrics.html_rewrite_ooms.inc();
 
@@ -317,6 +315,10 @@ impl RustdocPage {
             Html(html),
         )
             .into_response())
+    }
+
+    pub(crate) fn use_direct_platform_links(&self) -> bool {
+        !self.latest_path.contains("/target-redirect/")
     }
 }
 
@@ -451,11 +453,7 @@ pub(crate) async fn rustdoc_html_server_handler(
             )
         })?;
 
-    trace!("crate details");
-    // Get the crate's details from the database
-    let krate = CrateDetails::from_matched_release(&mut conn, matched_release).await?;
-
-    if !krate.rustdoc_status {
+    if !matched_release.rustdoc_status() {
         return Ok(axum_cached_redirect(
             format!("/crate/{}/{}", params.name, params.version),
             CachePolicy::ForeverInCdn,
@@ -543,7 +541,7 @@ pub(crate) async fn rustdoc_html_server_handler(
                 )?
                 .into_response())
             } else {
-                if storage_path == format!("{}/index.html", krate.target_name) {
+                if storage_path == format!("{}/index.html", krate.target_name.expect("we check rustdoc_status = true above, and with docs we have target_name")) {
                     error!(
                         krate = params.name,
                         version = krate.version.to_string(),
@@ -584,6 +582,8 @@ pub(crate) async fn rustdoc_html_server_handler(
             && krate
                 .metadata
                 .doc_targets
+                .as_ref()
+                .expect("with rustdoc_status=true we always have doc_targets")
                 .iter()
                 .any(|s| s == inner_path[0])
         {
@@ -597,15 +597,18 @@ pub(crate) async fn rustdoc_html_server_handler(
 
     // Find the path of the latest version for the `Go to latest` and `Permalink` links
     let mut current_target = String::new();
-    let target_redirect = if latest_release.build_status {
-        let target = if target.is_empty() {
-            current_target = krate.metadata.default_target.clone();
-            &krate.metadata.default_target
+    let target_redirect = if latest_release.build_status.is_success() {
+        current_target = if target.is_empty() {
+            krate
+                .metadata
+                .default_target
+                .as_ref()
+                .expect("with docs we always have a default_target")
+                .clone()
         } else {
-            current_target = target.to_owned();
-            target
+            target.to_owned()
         };
-        format!("/target-redirect/{target}/{inner_path}")
+        format!("/target-redirect/{current_target}/{inner_path}")
     } else {
         "".to_string()
     };
@@ -630,23 +633,15 @@ pub(crate) async fn rustdoc_html_server_handler(
         .recently_accessed_releases
         .record(krate.crate_id, krate.release_id, target);
 
-    let target = if target.is_empty() {
-        String::new()
-    } else {
-        format!("{target}/")
-    };
-
     // Build the page of documentation,
     templates
         .render_in_threadpool({
             let metrics = metrics.clone();
-            move |templates| {
+            move || {
                 let metadata = krate.metadata.clone();
                 Ok(RustdocPage {
                     latest_path,
                     permalink_path,
-                    latest_version: latest_version.to_string(),
-                    target,
                     inner_path,
                     is_latest_version,
                     is_latest_url: params.version.is_latest(),
@@ -658,7 +653,6 @@ pub(crate) async fn rustdoc_html_server_handler(
                 .into_response(
                     &blob.content,
                     config.max_parse_memory,
-                    templates,
                     &metrics,
                     &config,
                     &storage_path,
@@ -688,6 +682,8 @@ fn path_for_version(
     let platform = if crate_details
         .metadata
         .doc_targets
+        .as_ref()
+        .expect("this method is only used when we have docs, so this field contains data")
         .iter()
         .any(|s| s == file_path[0])
         && !file_path.is_empty()
@@ -720,7 +716,10 @@ fn path_for_version(
         // else, don't try searching at all, we don't know how to find it
         last_component.strip_suffix(".rs.html")
     };
-    let target_name = &crate_details.target_name;
+    let target_name = &crate_details
+        .target_name
+        .as_ref()
+        .expect("this method is only used when we have docs, so this field contains data");
     let path = if platform.is_empty() {
         format!("{target_name}/")
     } else {
@@ -746,6 +745,18 @@ pub(crate) async fn target_redirect_handler(
 
     let crate_details = CrateDetails::from_matched_release(&mut conn, matched_release).await?;
 
+    // this handler should only be used when we have docs.
+    // So we can assume here that we always have a default_target.
+    // the only case where this would be empty is when the build failed before calling rustdoc.
+    let default_target = crate_details
+        .metadata
+        .default_target
+        .as_ref()
+        .ok_or_else(|| {
+            error!("target_redirect_handler was called with release with missing default_target");
+            AxumNope::VersionNotFound
+        })?;
+
     // We're trying to find the storage location
     // for the requested path in the target-redirect.
     // *path always contains the target,
@@ -756,10 +767,8 @@ pub(crate) async fn target_redirect_handler(
     let storage_location_for_path = {
         let mut pieces: Vec<_> = req_path.split('/').map(str::to_owned).collect();
 
-        if let Some(target) = pieces.first() {
-            if target == &crate_details.metadata.default_target {
-                pieces.remove(0);
-            }
+        if pieces.first() == Some(default_target) {
+            pieces.remove(0);
         }
 
         if let Some(last) = pieces.last_mut() {
@@ -882,6 +891,7 @@ pub(crate) async fn static_asset_handler(
 #[cfg(test)]
 mod test {
     use crate::{
+        registry_api::{CrateOwner, OwnerKind},
         test::*,
         utils::Dependency,
         web::{cache::CachePolicy, ReqVersion},
@@ -1916,6 +1926,25 @@ mod test {
     }
 
     #[test]
+    fn test_target_redirect_with_corrected_name() {
+        wrapper(|env| {
+            env.fake_release()
+                .name("foo_ab")
+                .version("0.0.1")
+                .archive_storage(true)
+                .create()?;
+
+            let web = env.frontend();
+            assert_redirect_unchecked(
+                "/crate/foo-ab/0.0.1/target-redirect/x86_64-unknown-linux-gnu",
+                "/foo-ab/0.0.1/foo_ab/",
+                web,
+            )?;
+            Ok(())
+        })
+    }
+
+    #[test]
     fn test_target_redirect_not_found() {
         wrapper(|env| {
             let web = env.frontend();
@@ -2051,17 +2080,21 @@ mod test {
     // regression test for https://github.com/rust-lang/docs.rs/pull/885#issuecomment-655147643
     fn test_no_panic_on_missing_kind() {
         wrapper(|env| {
-            let db = env.db();
             let id = env
                 .fake_release()
                 .name("strum")
                 .version("0.13.0")
                 .create()?;
-            // https://stackoverflow.com/questions/18209625/how-do-i-modify-fields-inside-the-new-postgresql-json-datatype
-            db.conn().query(
-                r#"UPDATE releases SET dependencies = dependencies::jsonb #- '{0,2}' WHERE id = $1"#,
-                &[&id],
-            )?;
+
+            env.runtime().block_on(async {
+                let mut conn = env.async_db().await.async_conn().await;
+                // https://stackoverflow.com/questions/18209625/how-do-i-modify-fields-inside-the-new-postgresql-json-datatype
+                sqlx::query!(
+                    r#"UPDATE releases SET dependencies = dependencies::jsonb #- '{0,2}' WHERE id = $1"#, id)
+                    .execute(&mut *conn)
+                    .await
+            })?;
+
             let web = env.frontend();
             assert_success("/strum/0.13.0/strum/", web)?;
             assert_success("/crate/strum/0.13.0/", web)?;
@@ -2353,6 +2386,60 @@ mod test {
     }
 
     #[test]
+    fn test_owner_links_with_team() {
+        wrapper(|env| {
+            env.fake_release()
+                .name("testing")
+                .version("0.1.0")
+                .add_owner(CrateOwner {
+                    login: "some-user".into(),
+                    kind: OwnerKind::User,
+                    avatar: "".into(),
+                })
+                .add_owner(CrateOwner {
+                    login: "some-team".into(),
+                    kind: OwnerKind::Team,
+                    avatar: "".into(),
+                })
+                .create()?;
+
+            let dom = kuchikiki::parse_html().one(
+                env.frontend()
+                    .get("/testing/0.1.0/testing/")
+                    .send()?
+                    .text()?,
+            );
+
+            let owner_links: Vec<_> = dom
+                .select(r#"#topbar-owners > li > a"#)
+                .expect("invalid selector")
+                .map(|el| {
+                    let attributes = el.attributes.borrow();
+                    let url = attributes.get("href").expect("href").trim().to_string();
+                    let name = el.text_contents().trim().to_string();
+                    (name, url)
+                })
+                .collect();
+
+            assert_eq!(
+                owner_links,
+                vec![
+                    (
+                        "some-user".into(),
+                        "https://crates.io/users/some-user".into()
+                    ),
+                    (
+                        "some-team".into(),
+                        "https://crates.io/teams/some-team".into()
+                    ),
+                ]
+            );
+
+            Ok(())
+        })
+    }
+
+    #[test]
     fn test_dependency_optional_suffix() {
         wrapper(|env| {
             env.fake_release()
@@ -2575,6 +2662,26 @@ mod test {
             assert!(env.storage().get_public_access("rustdoc/dummy/0.2.0.zip")?);
             Ok(())
         });
+    }
+
+    #[test_case("something.js")]
+    #[test_case("someting.css")]
+    fn serve_release_specific_static_assets(name: &str) {
+        wrapper(|env| {
+            env.fake_release()
+                .name("dummy")
+                .version("0.1.0")
+                .archive_storage(true)
+                .rustdoc_file_with(name, b"content")
+                .create()?;
+
+            let web = env.frontend();
+            let response = web.get(&format!("/dummy/0.1.0/{name}")).send()?;
+            assert!(response.status().is_success());
+            assert_eq!(response.text()?, "content");
+
+            Ok(())
+        })
     }
 
     #[test_case("search-1234.js")]

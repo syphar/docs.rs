@@ -22,7 +22,7 @@ use std::{
     sync::Arc,
 };
 use tokio::{io::AsyncWriteExt, runtime::Runtime};
-use tracing::{error, instrument, trace};
+use tracing::{error, info_span, instrument, trace};
 
 type FileRange = RangeInclusive<u64>;
 
@@ -61,7 +61,8 @@ fn get_file_list_from_dir<P: AsRef<Path>>(path: P, files: &mut Vec<PathBuf>) -> 
     Ok(())
 }
 
-pub fn get_file_list<P: AsRef<Path>>(path: P) -> Result<Vec<PathBuf>> {
+#[instrument]
+pub fn get_file_list<P: AsRef<Path> + std::fmt::Debug>(path: P) -> Result<Vec<PathBuf>> {
     let path = path.as_ref();
     let mut files = Vec::new();
 
@@ -316,7 +317,7 @@ impl AsyncStorage {
             .join(format!("{archive_path}.{latest_build_id}.index"));
 
         if !local_index_path.exists() {
-            let index_content = self.get(&remote_index_path, std::usize::MAX).await?.content;
+            let index_content = self.get(&remote_index_path, usize::MAX).await?.content;
 
             tokio::fs::create_dir_all(
                 local_index_path
@@ -376,6 +377,7 @@ impl AsyncStorage {
         })
     }
 
+    #[instrument(skip(self))]
     pub(crate) async fn store_all_in_archive(
         &self,
         archive_path: &str,
@@ -401,35 +403,42 @@ impl AsyncStorage {
                     // also has to be added as supported algorithm for storage compression, together
                     // with a mapping in `storage::archive_index::Index::new_from_zip`.
 
-                    let options = zip::write::FileOptions::default()
-                        .compression_method(zip::CompressionMethod::Bzip2);
+                    let mut zip_content = {
+                        let _span =
+                            info_span!("create_zip_archive", %archive_path, root_dir=%root_dir.display()).entered();
 
-                    let mut zip = zip::ZipWriter::new(io::Cursor::new(Vec::new()));
-                    for file_path in get_file_list(&root_dir)? {
-                        let mut file = fs::File::open(&root_dir.join(&file_path))?;
+                        let options = zip::write::SimpleFileOptions::default()
+                            .compression_method(zip::CompressionMethod::Bzip2);
 
-                        zip.start_file(file_path.to_str().unwrap(), options)?;
-                        io::copy(&mut file, &mut zip)?;
+                        let mut zip = zip::ZipWriter::new(io::Cursor::new(Vec::new()));
+                        for file_path in get_file_list(&root_dir)? {
+                            let mut file = fs::File::open(root_dir.join(&file_path))?;
 
-                        let mime = detect_mime(&file_path);
-                        file_paths.insert(file_path, mime.to_string());
-                    }
+                            zip.start_file(file_path.to_str().unwrap(), options)?;
+                            io::copy(&mut file, &mut zip)?;
 
-                    let mut zip_content = zip.finish()?.into_inner();
+                            let mime = detect_mime(&file_path);
+                            file_paths.insert(file_path, mime.to_string());
+                        }
+
+                        zip.finish()?.into_inner()
+                    };
 
                     let remote_index_path = format!("{}.index", &archive_path);
-
-                    fs::create_dir_all(&temp_dir)?;
-                    let local_index_path =
-                        tempfile::NamedTempFile::new_in(&temp_dir)?.into_temp_path();
-                    archive_index::create(
-                        &mut io::Cursor::new(&mut zip_content),
-                        &local_index_path,
-                    )?;
-
                     let alg = CompressionAlgorithm::default();
-                    let compressed_index_content =
-                        compress(BufReader::new(fs::File::open(&local_index_path)?), alg)?;
+                    let compressed_index_content = {
+                        let _span = info_span!("create_archive_index", %remote_index_path).entered();
+
+                        fs::create_dir_all(&temp_dir)?;
+                        let local_index_path =
+                            tempfile::NamedTempFile::new_in(&temp_dir)?.into_temp_path();
+                        archive_index::create(
+                            &mut io::Cursor::new(&mut zip_content),
+                            &local_index_path,
+                        )?;
+
+                        compress(BufReader::new(fs::File::open(&local_index_path)?), alg)?
+                    };
                     Ok((
                         zip_content,
                         compressed_index_content,
@@ -466,6 +475,7 @@ impl AsyncStorage {
     // Store all files in `root_dir` into the backend under `prefix`.
     //
     // This returns (map<filename, mime type>, set<compression algorithms>).
+    #[instrument(skip(self))]
     pub(crate) async fn store_all(
         &self,
         prefix: &Path,
@@ -522,9 +532,10 @@ impl AsyncStorage {
 
     // Store file into the backend at the given path (also used to detect mime type), returns the
     // chosen compression algorithm
+    #[instrument(skip(self, content))]
     pub(crate) async fn store_one(
         &self,
-        path: impl Into<String>,
+        path: impl Into<String> + std::fmt::Debug,
         content: impl Into<Vec<u8>>,
     ) -> Result<CompressionAlgorithm> {
         let path = path.into();
@@ -745,9 +756,10 @@ impl Storage {
 
     // Store file into the backend at the given path (also used to detect mime type), returns the
     // chosen compression algorithm
+    #[instrument(skip(self, content))]
     pub(crate) fn store_one(
         &self,
-        path: impl Into<String>,
+        path: impl Into<String> + std::fmt::Debug,
         content: impl Into<Vec<u8>>,
     ) -> Result<CompressionAlgorithm> {
         self.runtime.block_on(self.inner.store_one(path, content))
@@ -769,6 +781,7 @@ impl Storage {
             .into_iter()
     }
 
+    #[instrument(skip(self))]
     pub(crate) fn delete_prefix(&self, prefix: &str) -> Result<()> {
         self.runtime.block_on(self.inner.delete_prefix(prefix))
     }
@@ -800,7 +813,7 @@ fn detect_mime(file_path: impl AsRef<Path>) -> &'static str {
                 Some("markdown") => "text/markdown",
                 Some("css") => "text/css",
                 Some("toml") => "text/toml",
-                Some("js") => "application/javascript",
+                Some("js") => "text/javascript",
                 Some("json") => "application/json",
                 _ => mime,
             }
@@ -839,7 +852,7 @@ mod test {
         check_mime(".gitignore", "text/plain");
         check_mime("hello.toml", "text/toml");
         check_mime("hello.css", "text/css");
-        check_mime("hello.js", "application/javascript");
+        check_mime("hello.js", "text/javascript");
         check_mime("hello.html", "text/html");
         check_mime("hello.hello.md", "text/markdown");
         check_mime("hello.markdown", "text/markdown");
@@ -865,7 +878,6 @@ mod test {
 #[cfg(test)]
 mod backend_tests {
     use super::*;
-    use std::fs;
 
     fn test_exists(storage: &Storage) -> Result<()> {
         assert!(!storage.exists("path/to/file.txt").unwrap());
@@ -922,7 +934,7 @@ mod backend_tests {
 
         storage.store_blobs(vec![blob.clone()])?;
 
-        let found = storage.get(path, std::usize::MAX)?;
+        let found = storage.get(path, usize::MAX)?;
         assert_eq!(blob.mime, found.mime);
         assert_eq!(blob.content, found.content);
 
@@ -931,7 +943,7 @@ mod backend_tests {
 
         for path in &["bar.txt", "baz.txt", "foo/baz.txt"] {
             assert!(storage
-                .get(path, std::usize::MAX)
+                .get(path, usize::MAX)
                 .unwrap_err()
                 .downcast_ref::<PathNotFoundError>()
                 .is_some());
@@ -960,19 +972,19 @@ mod backend_tests {
         assert_eq!(
             blob.content[0..=4],
             storage
-                .get_range("foo/bar.txt", std::usize::MAX, 0..=4, None)?
+                .get_range("foo/bar.txt", usize::MAX, 0..=4, None)?
                 .content
         );
         assert_eq!(
             blob.content[5..=12],
             storage
-                .get_range("foo/bar.txt", std::usize::MAX, 5..=12, None)?
+                .get_range("foo/bar.txt", usize::MAX, 5..=12, None)?
                 .content
         );
 
         for path in &["bar.txt", "baz.txt", "foo/baz.txt"] {
             assert!(storage
-                .get_range(path, std::usize::MAX, 0..=4, None)
+                .get_range(path, usize::MAX, 0..=4, None)
                 .unwrap_err()
                 .downcast_ref::<PathNotFoundError>()
                 .is_some());
@@ -1082,7 +1094,7 @@ mod backend_tests {
         storage.store_blobs(blobs.clone()).unwrap();
 
         for blob in &blobs {
-            let actual = storage.get(&blob.path, std::usize::MAX)?;
+            let actual = storage.get(&blob.path, usize::MAX)?;
             assert_eq!(blob.path, actual.path);
             assert_eq!(blob.mime, actual.mime);
         }
@@ -1151,13 +1163,12 @@ mod backend_tests {
         assert!(local_index_location.exists());
         assert!(storage.exists_in_archive("folder/test.zip", 0, "src/main.rs",)?);
 
-        let file = storage.get_from_archive("folder/test.zip", 0, "Cargo.toml", std::usize::MAX)?;
+        let file = storage.get_from_archive("folder/test.zip", 0, "Cargo.toml", usize::MAX)?;
         assert_eq!(file.content, b"data");
         assert_eq!(file.mime, "text/toml");
         assert_eq!(file.path, "folder/test.zip/Cargo.toml");
 
-        let file =
-            storage.get_from_archive("folder/test.zip", 0, "src/main.rs", std::usize::MAX)?;
+        let file = storage.get_from_archive("folder/test.zip", 0, "src/main.rs", usize::MAX)?;
         assert_eq!(file.content, b"data");
         assert_eq!(file.mime, "text/rust");
         assert_eq!(file.path, "folder/test.zip/src/main.rs");
@@ -1195,12 +1206,12 @@ mod backend_tests {
             "text/rust"
         );
 
-        let file = storage.get("prefix/Cargo.toml", std::usize::MAX)?;
+        let file = storage.get("prefix/Cargo.toml", usize::MAX)?;
         assert_eq!(file.content, b"data");
         assert_eq!(file.mime, "text/toml");
         assert_eq!(file.path, "prefix/Cargo.toml");
 
-        let file = storage.get("prefix/src/main.rs", std::usize::MAX)?;
+        let file = storage.get("prefix/src/main.rs", usize::MAX)?;
         assert_eq!(file.content, b"data");
         assert_eq!(file.mime, "text/rust");
         assert_eq!(file.path, "prefix/src/main.rs");
@@ -1232,7 +1243,7 @@ mod backend_tests {
         storage.store_blobs(uploads.clone())?;
 
         for blob in &uploads {
-            let stored = storage.get(&blob.path, std::usize::MAX)?;
+            let stored = storage.get(&blob.path, usize::MAX)?;
             assert_eq!(&stored.content, &blob.content);
         }
 
@@ -1294,11 +1305,11 @@ mod backend_tests {
         storage.delete_prefix(prefix)?;
 
         for existing in present {
-            assert!(storage.get(existing, std::usize::MAX).is_ok());
+            assert!(storage.get(existing, usize::MAX).is_ok());
         }
         for missing in missing {
             assert!(storage
-                .get(missing, std::usize::MAX)
+                .get(missing, usize::MAX)
                 .unwrap_err()
                 .downcast_ref::<PathNotFoundError>()
                 .is_some());

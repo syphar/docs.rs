@@ -1,7 +1,8 @@
 use crate::db::file::add_path_into_database;
 use crate::db::{
-    add_build_into_database, add_doc_coverage, add_package_into_database,
-    add_path_into_remote_archive, update_crate_data_in_database, Pool,
+    add_doc_coverage, add_package_into_database, add_path_into_remote_archive, finish_build,
+    initialize_build, initialize_crate, initialize_release, types::BuildStatus,
+    update_build_with_error, update_crate_data_in_database, Pool,
 };
 use crate::docbuilder::Limits;
 use crate::error::Result;
@@ -16,8 +17,6 @@ use crate::{db::blacklist::is_blacklisted, utils::MetadataPackage};
 use crate::{AsyncStorage, Config, Context, InstanceMetrics, RegistryApi, Storage};
 use anyhow::{anyhow, bail, Context as _, Error};
 use docsrs_metadata::{BuildTargets, Metadata, DEFAULT_TARGETS, HOST_TARGET};
-use failure::Error as FailureError;
-use postgres::Client;
 use regex::Regex;
 use rustwide::cmd::{Command, CommandError, SandboxBuilder, SandboxImage};
 use rustwide::logging::{self, LogStorage};
@@ -29,15 +28,17 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::runtime::Runtime;
-use tracing::{debug, info, warn};
+use tracing::{debug, info, info_span, instrument, warn};
 
 const USER_AGENT: &str = "docs.rs builder (https://github.com/rust-lang/docs.rs)";
 const COMPONENTS: &[&str] = &["llvm-tools-preview", "rustc-dev", "rustfmt"];
 const DUMMY_CRATE_NAME: &str = "empty-library";
 const DUMMY_CRATE_VERSION: &str = "1.0.0";
 
-fn get_configured_toolchain(conn: &mut Client) -> Result<Toolchain> {
-    let name: String = get_config(conn, ConfigName::Toolchain)?.unwrap_or_else(|| "nightly".into());
+async fn get_configured_toolchain(conn: &mut sqlx::PgConnection) -> Result<Toolchain> {
+    let name: String = get_config(conn, ConfigName::Toolchain)
+        .await?
+        .unwrap_or_else(|| "nightly".into());
 
     // If the toolchain is all hex, assume it references an artifact from
     // CI, for instance an `@bors try` build.
@@ -68,13 +69,12 @@ fn build_workspace(context: &dyn Context) -> Result<Workspace> {
         builder = builder.fast_init(true);
     }
 
-    let workspace = builder.init().map_err(FailureError::compat)?;
-    workspace
-        .purge_all_build_dirs()
-        .map_err(FailureError::compat)?;
+    let workspace = builder.init()?;
+    workspace.purge_all_build_dirs()?;
     Ok(workspace)
 }
 
+#[derive(Debug)]
 pub enum PackageKind<'a> {
     Local(&'a Path),
     CratesIo,
@@ -100,10 +100,14 @@ impl RustwideBuilder {
         let config = context.config()?;
         let pool = context.pool()?;
         let runtime = context.runtime()?;
+        let toolchain = runtime.block_on(async {
+            let mut conn = pool.get_async().await?;
+            get_configured_toolchain(&mut conn).await
+        })?;
 
         Ok(RustwideBuilder {
             workspace: build_workspace(context)?,
-            toolchain: get_configured_toolchain(&mut *pool.get()?)?,
+            toolchain,
             config,
             db: pool,
             runtime: runtime.clone(),
@@ -130,6 +134,7 @@ impl RustwideBuilder {
         Ok(())
     }
 
+    #[instrument(skip(self))]
     fn prepare_sandbox(&self, limits: &Limits) -> SandboxBuilder {
         SandboxBuilder::new()
             .cpu_limit(self.config.build_cpu_limit.map(|limit| limit as f32))
@@ -138,14 +143,15 @@ impl RustwideBuilder {
     }
 
     pub fn purge_caches(&self) -> Result<()> {
-        self.workspace
-            .purge_all_caches()
-            .map_err(FailureError::compat)?;
+        self.workspace.purge_all_caches()?;
         Ok(())
     }
 
     pub fn update_toolchain(&mut self) -> Result<bool> {
-        self.toolchain = get_configured_toolchain(&mut *self.db.get()?)?;
+        self.toolchain = self.runtime.block_on(async {
+            let mut conn = self.db.get_async().await?;
+            get_configured_toolchain(&mut conn).await
+        })?;
 
         // For CI builds, a lot of the normal update_toolchain things don't apply.
         // CI builds are only for one platform (https://forge.rust-lang.org/infra/docs/rustc-ci.html#try-builds)
@@ -156,9 +162,7 @@ impl RustwideBuilder {
         // we fake the rustc version and install from scratch every time since we can't detect
         // the already-installed rustc version.
         if self.toolchain.as_ci().is_some() {
-            self.toolchain
-                .install(&self.workspace)
-                .map_err(FailureError::compat)?;
+            self.toolchain.install(&self.workspace)?;
             self.add_essential_files()?;
             return Ok(true);
         }
@@ -177,7 +181,7 @@ impl RustwideBuilder {
                 if let Some(&ToolchainError::NotInstalled) = err.downcast_ref::<ToolchainError>() {
                     Vec::new()
                 } else {
-                    return Err(err.compat().into());
+                    return Err(err);
                 }
             }
         };
@@ -196,20 +200,14 @@ impl RustwideBuilder {
         // and will not be reinstalled until explicitly requested by a crate.
         for target in installed_targets {
             if !targets_to_install.remove(&target) {
-                self.toolchain
-                    .remove_target(&self.workspace, &target)
-                    .map_err(FailureError::compat)?;
+                self.toolchain.remove_target(&self.workspace, &target)?;
             }
         }
 
-        self.toolchain
-            .install(&self.workspace)
-            .map_err(FailureError::compat)?;
+        self.toolchain.install(&self.workspace)?;
 
         for target in &targets_to_install {
-            self.toolchain
-                .add_target(&self.workspace, target)
-                .map_err(FailureError::compat)?;
+            self.toolchain.add_target(&self.workspace, target)?;
         }
         // NOTE: rustup will automatically refuse to update the toolchain
         // if `rustfmt` is not available in the newer version
@@ -257,6 +255,7 @@ impl RustwideBuilder {
         }
     }
 
+    #[instrument(skip(self))]
     fn get_limits(&self, krate: &str) -> Result<Limits> {
         self.runtime.block_on({
             let db = self.db.clone();
@@ -274,7 +273,6 @@ impl RustwideBuilder {
 
         info!("building a dummy crate to get essential files");
 
-        let mut conn = self.db.get()?;
         let limits = self.get_limits(DUMMY_CRATE_NAME)?;
 
         // FIXME: for now, purge all build dirs before each build.
@@ -286,9 +284,7 @@ impl RustwideBuilder {
         // fill up disk space.
         // This also prevents having multiple builders using the same rustwide workspace,
         // which we don't do. Currently our separate builders use a separate rustwide workspace.
-        self.workspace
-            .purge_all_build_dirs()
-            .map_err(FailureError::compat)?;
+        self.workspace.purge_all_build_dirs()?;
 
         let mut build_dir = self
             .workspace
@@ -296,60 +292,56 @@ impl RustwideBuilder {
 
         // This is an empty library crate that is supposed to always build.
         let krate = Crate::crates_io(DUMMY_CRATE_NAME, DUMMY_CRATE_VERSION);
-        krate.fetch(&self.workspace).map_err(FailureError::compat)?;
+        krate.fetch(&self.workspace)?;
 
         build_dir
             .build(&self.toolchain, &krate, self.prepare_sandbox(&limits))
             .run(|build| {
-                (|| -> Result<()> {
-                    let metadata = Metadata::from_crate_root(build.host_source_dir())?;
+                let metadata = Metadata::from_crate_root(build.host_source_dir())?;
 
-                    let res =
-                        self.execute_build(HOST_TARGET, true, build, &limits, &metadata, true)?;
-                    if !res.result.successful {
-                        bail!("failed to build dummy crate for {}", rustc_version);
-                    }
+                let res = self.execute_build(HOST_TARGET, true, build, &limits, &metadata, true)?;
+                if !res.result.successful {
+                    bail!("failed to build dummy crate for {}", rustc_version);
+                }
 
-                    info!("copying essential files for {}", rustc_version);
-                    assert!(!metadata.proc_macro);
-                    let source = build.host_target_dir().join(HOST_TARGET).join("doc");
-                    let dest = tempfile::Builder::new()
-                        .prefix("essential-files")
-                        .tempdir()?;
-                    copy_dir_all(source, &dest)?;
+                info!("copying essential files for {}", rustc_version);
+                assert!(!metadata.proc_macro);
+                let source = build.host_target_dir().join(HOST_TARGET).join("doc");
+                let dest = tempfile::Builder::new()
+                    .prefix("essential-files")
+                    .tempdir()?;
+                copy_dir_all(source, &dest)?;
 
-                    // One https://github.com/rust-lang/rust/pull/101702 lands, static files will be
-                    // put in their own directory, "static.files". To make sure those files are
-                    // available at --static-root-path, we add files from that subdirectory, if present.
-                    let static_files = dest.as_ref().join("static.files");
-                    if static_files.try_exists()? {
-                        self.runtime.block_on(add_path_into_database(
-                            &self.async_storage,
-                            RUSTDOC_STATIC_STORAGE_PREFIX,
-                            &static_files,
-                        ))?;
-                    } else {
-                        self.runtime.block_on(add_path_into_database(
-                            &self.async_storage,
-                            RUSTDOC_STATIC_STORAGE_PREFIX,
-                            &dest,
-                        ))?;
-                    }
+                // One https://github.com/rust-lang/rust/pull/101702 lands, static files will be
+                // put in their own directory, "static.files". To make sure those files are
+                // available at --static-root-path, we add files from that subdirectory, if present.
+                let static_files = dest.as_ref().join("static.files");
+                if static_files.try_exists()? {
+                    self.runtime.block_on(add_path_into_database(
+                        &self.async_storage,
+                        RUSTDOC_STATIC_STORAGE_PREFIX,
+                        &static_files,
+                    ))?;
+                } else {
+                    self.runtime.block_on(add_path_into_database(
+                        &self.async_storage,
+                        RUSTDOC_STATIC_STORAGE_PREFIX,
+                        &dest,
+                    ))?;
+                }
 
-                    set_config(&mut conn, ConfigName::RustcVersion, rustc_version)?;
-                    Ok(())
-                })()
-                .map_err(|e| failure::Error::from_boxed_compat(e.into()))
-            })
-            .map_err(|e| e.compat())?;
+                self.runtime.block_on(async {
+                    let mut conn = self.db.get_async().await?;
+                    set_config(&mut conn, ConfigName::RustcVersion, rustc_version).await
+                })?;
+                Ok(())
+            })?;
 
-        krate
-            .purge_from_cache(&self.workspace)
-            .map_err(FailureError::compat)?;
+        krate.purge_from_cache(&self.workspace)?;
         Ok(())
     }
 
-    pub fn build_local_package(&mut self, path: &Path) -> Result<bool> {
+    pub fn build_local_package(&mut self, path: &Path) -> Result<BuildPackageSummary> {
         let metadata = CargoMetadata::load_from_rustwide(&self.workspace, &self.toolchain, path)
             .map_err(|err| {
                 err.context(format!("failed to load local package {}", path.display()))
@@ -358,17 +350,59 @@ impl RustwideBuilder {
         self.build_package(&package.name, &package.version, PackageKind::Local(path))
     }
 
+    #[instrument(name = "docbuilder.build_package", parent = None, skip(self, name), fields(krate=name))]
     pub fn build_package(
         &mut self,
         name: &str,
         version: &str,
         kind: PackageKind<'_>,
-    ) -> Result<bool> {
-        let mut conn = self.db.get()?;
+    ) -> Result<BuildPackageSummary> {
+        let build_id = self.runtime.block_on(async {
+            let mut conn = self.db.get_async().await?;
+            let crate_id = initialize_crate(&mut conn, name).await?;
+            let release_id = initialize_release(&mut conn, crate_id, version).await?;
+            let build_id = initialize_build(&mut conn, release_id).await?;
+            Ok::<i32, Error>(build_id)
+        })?;
 
+        match self.build_package_inner(name, version, kind, build_id) {
+            Ok(successful) => Ok(BuildPackageSummary {
+                successful,
+                should_reattempt: false,
+            }),
+            Err(err) => self.runtime.block_on(async {
+                // NOTE: this might hide some errors from us, while only surfacing them in the build
+                // result.
+                // At some point we might introduce a special error type which additionally reports
+                // to sentry.
+                let mut conn = self.db.get_async().await?;
+
+                update_build_with_error(&mut conn, build_id, Some(&format!("{:?}", err))).await?;
+
+                Ok(BuildPackageSummary {
+                    successful: false,
+                    should_reattempt: true,
+                })
+            }),
+        }
+    }
+
+    fn build_package_inner(
+        &mut self,
+        name: &str,
+        version: &str,
+        kind: PackageKind<'_>,
+        build_id: i32,
+    ) -> Result<bool> {
         info!("building package {} {}", name, version);
 
-        if is_blacklisted(&mut conn, name)? {
+        let is_blacklisted = self.runtime.block_on(async {
+            let mut conn = self.db.get_async().await?;
+
+            is_blacklisted(&mut conn, name).await
+        })?;
+
+        if is_blacklisted {
             info!("skipping build of {}, crate has been blacklisted", name);
             return Ok(false);
         }
@@ -403,21 +437,24 @@ impl RustwideBuilder {
         // fill up disk space.
         // This also prevents having multiple builders using the same rustwide workspace,
         // which we don't do. Currently our separate builders use a separate rustwide workspace.
-        self.workspace
-            .purge_all_build_dirs()
-            .map_err(FailureError::compat)?;
+        info_span!("purge_all_build_dirs").in_scope(|| self.workspace.purge_all_build_dirs())?;
 
         let mut build_dir = self.workspace.build_dir(&format!("{name}-{version}"));
 
         let is_local = matches!(kind, PackageKind::Local(_));
-        let krate = match kind {
-            PackageKind::Local(path) => Crate::local(path),
-            PackageKind::CratesIo => Crate::crates_io(name, version),
-            PackageKind::Registry(registry) => {
-                Crate::registry(AlternativeRegistry::new(registry), name, version)
-            }
+        let krate = {
+            let _span = info_span!("krate.fetch").entered();
+
+            let krate = match kind {
+                PackageKind::Local(path) => Crate::local(path),
+                PackageKind::CratesIo => Crate::crates_io(name, version),
+                PackageKind::Registry(registry) => {
+                    Crate::registry(AlternativeRegistry::new(registry), name, version)
+                }
+            };
+            krate.fetch(&self.workspace)?;
+            krate
         };
-        krate.fetch(&self.workspace).map_err(FailureError::compat)?;
 
         fs::create_dir_all(&self.config.temp_dir)?;
         let local_storage = tempfile::tempdir_in(&self.config.temp_dir)?;
@@ -425,6 +462,20 @@ impl RustwideBuilder {
         let successful = build_dir
             .build(&self.toolchain, &krate, self.prepare_sandbox(&limits))
             .run(|build| {
+                let mut algs = HashSet::new();
+
+                debug!("adding sources into database");
+                let files_list = {
+                    let (files_list, new_alg) =
+                        self.runtime.block_on(add_path_into_remote_archive(
+                            &self.async_storage,
+                            &source_archive_path(name, version),
+                            build.host_source_dir(),
+                            false,
+                        ))?;
+                    algs.insert(new_alg);
+                    files_list
+                };
                 let metadata = Metadata::from_crate_root(build.host_source_dir())?;
                 let BuildTargets {
                     default_target,
@@ -432,212 +483,212 @@ impl RustwideBuilder {
                 } = metadata.targets(self.config.include_default_targets);
                 let mut targets = vec![default_target];
                 targets.extend(&other_targets);
-                // Fetch this before we enter the sandbox, so networking isn't blocked.
-                build.fetch_build_std_dependencies(&targets)?;
 
-                (|| -> Result<bool> {
-                    let mut has_docs = false;
-                    let mut successful_targets = Vec::new();
+                {
+                    let _span = info_span!("fetch_build_std_dependencies").entered();
+                    // Fetch this before we enter the sandbox, so networking isn't blocked.
+                    build.fetch_build_std_dependencies(&targets)?;
+                }
 
-                    // Perform an initial build
-                    let mut res =
-                        self.execute_build(default_target, true, build, &limits, &metadata, false)?;
+                let mut has_docs = false;
+                let mut successful_targets = Vec::new();
 
-                    // If the build fails with the lockfile given, try using only the dependencies listed in Cargo.toml.
-                    let cargo_lock = build.host_source_dir().join("Cargo.lock");
-                    if !res.result.successful && cargo_lock.exists() {
-                        info!("removing lockfile and reattempting build");
-                        std::fs::remove_file(cargo_lock)?;
+                // Perform an initial build
+                let mut res =
+                    self.execute_build(default_target, true, build, &limits, &metadata, false)?;
+
+                // If the build fails with the lockfile given, try using only the dependencies listed in Cargo.toml.
+                let cargo_lock = build.host_source_dir().join("Cargo.lock");
+                if !res.result.successful && cargo_lock.exists() {
+                    info!("removing lockfile and reattempting build");
+                    std::fs::remove_file(cargo_lock)?;
+                    {
+                        let _span = info_span!("cargo_generate_lockfile").entered();
                         Command::new(&self.workspace, self.toolchain.cargo())
                             .cd(build.host_source_dir())
                             .args(&["generate-lockfile"])
-                            .run()?;
+                            .run_capture()?;
+                    }
+                    {
+                        let _span = info_span!("cargo fetch --locked").entered();
                         Command::new(&self.workspace, self.toolchain.cargo())
                             .cd(build.host_source_dir())
                             .args(&["fetch", "--locked"])
-                            .run()?;
-                        res = self.execute_build(
-                            default_target,
-                            true,
+                            .run_capture()?;
+                    }
+                    res =
+                        self.execute_build(default_target, true, build, &limits, &metadata, false)?;
+                }
+
+                if res.result.successful {
+                    if let Some(name) = res.cargo_metadata.root().library_name() {
+                        let host_target = build.host_target_dir();
+                        has_docs = host_target
+                            .join(default_target)
+                            .join("doc")
+                            .join(name)
+                            .is_dir();
+                    }
+                }
+
+                let mut target_build_logs = HashMap::new();
+                if has_docs {
+                    debug!("adding documentation for the default target to the database");
+                    self.copy_docs(
+                        &build.host_target_dir(),
+                        local_storage.path(),
+                        default_target,
+                        true,
+                    )?;
+
+                    successful_targets.push(res.target.clone());
+
+                    // Then build the documentation for all the targets
+                    // Limit the number of targets so that no one can try to build all 200000 possible targets
+                    for target in other_targets.into_iter().take(limits.targets()) {
+                        debug!("building package {} {} for {}", name, version, target);
+                        let target_res = self.build_target(
+                            target,
                             build,
                             &limits,
+                            local_storage.path(),
+                            &mut successful_targets,
                             &metadata,
-                            false,
                         )?;
+                        target_build_logs.insert(target, target_res.build_log);
                     }
-
-                    if res.result.successful {
-                        if let Some(name) = res.cargo_metadata.root().library_name() {
-                            let host_target = build.host_target_dir();
-                            has_docs = host_target
-                                .join(default_target)
-                                .join("doc")
-                                .join(name)
-                                .is_dir();
-                        }
-                    }
-
-                    let mut algs = HashSet::new();
-                    let mut target_build_logs = HashMap::new();
-                    if has_docs {
-                        debug!("adding documentation for the default target to the database");
-                        self.copy_docs(
-                            &build.host_target_dir(),
-                            local_storage.path(),
-                            default_target,
-                            true,
-                        )?;
-
-                        successful_targets.push(res.target.clone());
-
-                        // Then build the documentation for all the targets
-                        // Limit the number of targets so that no one can try to build all 200000 possible targets
-                        for target in other_targets.into_iter().take(limits.targets()) {
-                            debug!("building package {} {} for {}", name, version, target);
-                            let target_res = self.build_target(
-                                target,
-                                build,
-                                &limits,
-                                local_storage.path(),
-                                &mut successful_targets,
-                                &metadata,
-                            )?;
-                            target_build_logs.insert(target, target_res.build_log);
-                        }
-                        let (_, new_alg) = self.runtime.block_on(add_path_into_remote_archive(
-                            &self.async_storage,
-                            &rustdoc_archive_path(name, version),
-                            local_storage.path(),
-                            true,
-                        ))?;
-                        algs.insert(new_alg);
-                    };
-
-                    // Store the sources even if the build fails
-                    debug!("adding sources into database");
-                    let files_list = {
-                        let (files_list, new_alg) =
-                            self.runtime.block_on(add_path_into_remote_archive(
-                                &self.async_storage,
-                                &source_archive_path(name, version),
-                                build.host_source_dir(),
-                                false,
-                            ))?;
-                        algs.insert(new_alg);
-                        files_list
-                    };
-
-                    let has_examples = build.host_source_dir().join("examples").is_dir();
-                    if res.result.successful {
-                        self.metrics.successful_builds.inc();
-                    } else if res.cargo_metadata.root().is_library() {
-                        self.metrics.failed_builds.inc();
-                    } else {
-                        self.metrics.non_library_builds.inc();
-                    }
-
-                    let release_data = if !is_local {
-                        match self
-                            .runtime
-                            .block_on(self.registry_api.get_release_data(name, version))
-                            .with_context(|| {
-                                format!("could not fetch releases-data for {name}-{version}")
-                            }) {
-                            Ok(data) => Some(data),
-                            Err(err) => {
-                                report_error(&err);
-                                None
-                            }
-                        }
-                    } else {
-                        None
-                    }
-                    .unwrap_or_default();
-
-                    let cargo_metadata = res.cargo_metadata.root();
-                    let repository = self.get_repo(cargo_metadata)?;
-
-                    let mut async_conn = self.runtime.block_on(self.db.get_async())?;
-
-                    let release_id = self.runtime.block_on(add_package_into_database(
-                        &mut async_conn,
-                        cargo_metadata,
-                        &build.host_source_dir(),
-                        &res.result,
-                        &res.target,
-                        files_list,
-                        successful_targets,
-                        &release_data,
-                        has_docs,
-                        has_examples,
-                        algs,
-                        repository,
+                    let (_, new_alg) = self.runtime.block_on(add_path_into_remote_archive(
+                        &self.async_storage,
+                        &rustdoc_archive_path(name, version),
+                        local_storage.path(),
                         true,
                     ))?;
+                    algs.insert(new_alg);
+                };
 
-                    if let Some(doc_coverage) = res.doc_coverage {
-                        self.runtime.block_on(add_doc_coverage(
-                            &mut async_conn,
-                            release_id,
-                            doc_coverage,
-                        ))?;
+                let has_examples = build.host_source_dir().join("examples").is_dir();
+                if res.result.successful {
+                    self.metrics.successful_builds.inc();
+                } else if res.cargo_metadata.root().is_library() {
+                    self.metrics.failed_builds.inc();
+                } else {
+                    self.metrics.non_library_builds.inc();
+                }
+
+                let release_data = if !is_local {
+                    match self
+                        .runtime
+                        .block_on(self.registry_api.get_release_data(name, version))
+                        .with_context(|| {
+                            format!("could not fetch releases-data for {name}-{version}")
+                        }) {
+                        Ok(data) => Some(data),
+                        Err(err) => {
+                            report_error(&err);
+                            None
+                        }
                     }
+                } else {
+                    None
+                }
+                .unwrap_or_default();
 
-                    let build_id = self.runtime.block_on(add_build_into_database(
+                let cargo_metadata = res.cargo_metadata.root();
+                let repository = self.get_repo(cargo_metadata)?;
+
+                let mut async_conn = self.runtime.block_on(self.db.get_async())?;
+
+                let release_id = self.runtime.block_on(add_package_into_database(
+                    &mut async_conn,
+                    cargo_metadata,
+                    &build.host_source_dir(),
+                    &res.target,
+                    files_list,
+                    successful_targets,
+                    &release_data,
+                    has_docs,
+                    has_examples,
+                    algs,
+                    repository,
+                    true,
+                ))?;
+
+                if let Some(doc_coverage) = res.doc_coverage {
+                    self.runtime.block_on(add_doc_coverage(
                         &mut async_conn,
                         release_id,
-                        &res.result,
+                        doc_coverage,
                     ))?;
+                }
+
+                let build_status = if res.result.successful {
+                    BuildStatus::Success
+                } else {
+                    BuildStatus::Failure
+                };
+                self.runtime.block_on(finish_build(
+                    &mut async_conn,
+                    build_id,
+                    &res.result.rustc_version,
+                    &res.result.docsrs_version,
+                    build_status,
+                    None,
+                ))?;
+
+                {
+                    let _span = info_span!("store_build_logs").entered();
                     let build_log_path = format!("build-logs/{build_id}/{default_target}.txt");
                     self.storage.store_one(build_log_path, res.build_log)?;
                     for (target, log) in target_build_logs {
                         let build_log_path = format!("build-logs/{build_id}/{target}.txt");
                         self.storage.store_one(build_log_path, log)?;
                     }
+                }
 
-                    // Some crates.io crate data is mutable, so we proactively update it during a release
-                    if !is_local {
-                        match self
-                            .runtime
-                            .block_on(self.registry_api.get_crate_data(name))
-                        {
-                            Ok(crate_data) => self.runtime.block_on(
-                                update_crate_data_in_database(&mut async_conn, name, &crate_data),
-                            )?,
-                            Err(err) => warn!("{:#?}", err),
-                        }
+                // Some crates.io crate data is mutable, so we proactively update it during a release
+                if !is_local {
+                    match self
+                        .runtime
+                        .block_on(self.registry_api.get_crate_data(name))
+                    {
+                        Ok(crate_data) => self.runtime.block_on(update_crate_data_in_database(
+                            &mut async_conn,
+                            name,
+                            &crate_data,
+                        ))?,
+                        Err(err) => warn!("{:#?}", err),
                     }
+                }
 
-                    if res.result.successful {
-                        // delete eventually existing files from pre-archive storage.
-                        // we're doing this in the end so eventual problems in the build
-                        // won't lead to non-existing docs.
-                        for prefix in &["rustdoc", "sources"] {
-                            let prefix = format!("{prefix}/{name}/{version}/");
-                            debug!("cleaning old storage folder {}", prefix);
-                            self.storage.delete_prefix(&prefix)?;
-                        }
+                if res.result.successful {
+                    // delete eventually existing files from pre-archive storage.
+                    // we're doing this in the end so eventual problems in the build
+                    // won't lead to non-existing docs.
+                    for prefix in &["rustdoc", "sources"] {
+                        let prefix = format!("{prefix}/{name}/{version}/");
+                        debug!("cleaning old storage folder {}", prefix);
+                        self.storage.delete_prefix(&prefix)?;
                     }
+                }
 
-                    self.runtime.block_on(async move {
-                        // we need to drop the async connection inside an async runtime context
-                        // so sqlx can use a runtime to handle the pool.
-                        drop(async_conn);
-                    });
+                self.runtime.block_on(async move {
+                    // we need to drop the async connection inside an async runtime context
+                    // so sqlx can use a runtime to handle the pool.
+                    drop(async_conn);
+                });
 
-                    Ok(res.result.successful)
-                })()
-                .map_err(|e| failure::Error::from_boxed_compat(e.into()))
-            })
-            .map_err(|e| e.compat())?;
+                Ok(res.result.successful)
+            })?;
 
-        krate
-            .purge_from_cache(&self.workspace)
-            .map_err(FailureError::compat)?;
-        local_storage.close()?;
+        {
+            let _span = info_span!("purge_from_cache").entered();
+            krate.purge_from_cache(&self.workspace)?;
+            local_storage.close()?;
+        }
         Ok(successful)
     }
 
+    #[instrument(skip(self, build))]
     fn build_target(
         &self,
         target: &str,
@@ -661,6 +712,7 @@ impl RustwideBuilder {
         Ok(target_res)
     }
 
+    #[instrument(skip(self, build))]
     fn get_coverage(
         &self,
         target: &str,
@@ -704,7 +756,7 @@ impl RustwideBuilder {
                     }
                 }
             })
-            .log_output(false)
+            .log_output(true)
             .run()?;
 
         Ok(
@@ -716,6 +768,7 @@ impl RustwideBuilder {
         )
     }
 
+    #[instrument(skip(self, build))]
     fn execute_build(
         &self,
         target: &str,
@@ -757,11 +810,14 @@ impl RustwideBuilder {
             }
         };
 
-        let successful = logging::capture(&storage, || {
-            self.prepare_command(build, target, metadata, limits, rustdoc_flags)
-                .and_then(|command| command.run().map_err(Error::from))
-                .is_ok()
-        });
+        let successful = {
+            let _span = info_span!("cargo_build", target = %target, is_default_target).entered();
+            logging::capture(&storage, || {
+                self.prepare_command(build, target, metadata, limits, rustdoc_flags)
+                    .and_then(|command| command.run().map_err(Error::from))
+                    .is_ok()
+            })
+        };
 
         // For proc-macros, cargo will put the output in `target/doc`.
         // Move it to the target-specific directory for consistency with other builds.
@@ -855,9 +911,7 @@ impl RustwideBuilder {
         }) || cargo_args.last().unwrap().starts_with("-Zbuild-std");
         if !docsrs_metadata::DEFAULT_TARGETS.contains(&target) && !has_build_std {
             // This is a no-op if the target is already installed.
-            self.toolchain
-                .add_target(&self.workspace, target)
-                .map_err(FailureError::compat)?;
+            self.toolchain.add_target(&self.workspace, target)?;
         }
 
         let mut command = build
@@ -872,6 +926,7 @@ impl RustwideBuilder {
         Ok(command.args(&cargo_args))
     }
 
+    #[instrument(skip(self))]
     fn copy_docs(
         &self,
         target_dir: &Path,
@@ -910,7 +965,7 @@ struct FullBuildResult {
     build_log: String,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct DocCoverage {
     /// The total items that could be documented in the current crate, used to calculate
     /// documentation coverage.
@@ -924,17 +979,57 @@ pub(crate) struct DocCoverage {
     pub(crate) items_with_examples: i32,
 }
 
+#[derive(Debug)]
 pub(crate) struct BuildResult {
     pub(crate) rustc_version: String,
     pub(crate) docsrs_version: String,
     pub(crate) successful: bool,
 }
 
+#[derive(Debug)]
+pub struct BuildPackageSummary {
+    pub successful: bool,
+    pub should_reattempt: bool,
+}
+
+#[cfg(test)]
+impl Default for BuildPackageSummary {
+    fn default() -> Self {
+        Self {
+            successful: true,
+            should_reattempt: false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::{assert_redirect, assert_success, wrapper, TestEnvironment};
-    use serde_json::Value;
+    use crate::{
+        db::types::Feature,
+        test::{assert_redirect, assert_success, wrapper, TestEnvironment},
+    };
+
+    fn get_features(
+        env: &TestEnvironment,
+        name: &str,
+        version: &str,
+    ) -> Result<Option<Vec<Feature>>, sqlx::Error> {
+        env.runtime().block_on(async {
+            let mut conn = env.async_db().await.async_conn().await;
+            sqlx::query_scalar!(
+                r#"SELECT
+                        releases.features "features?: Vec<Feature>"
+                     FROM releases
+                     INNER JOIN crates ON crates.id = releases.crate_id
+                     WHERE crates.name = $1 AND releases.version = $2"#,
+                name,
+                version,
+            )
+            .fetch_one(&mut *conn)
+            .await
+        })
+    }
 
     fn remove_cache_files(env: &TestEnvironment, crate_: &str, version: &str) -> Result<()> {
         let paths = [
@@ -983,19 +1078,26 @@ mod tests {
 
             let mut builder = RustwideBuilder::init(env).unwrap();
             builder.update_toolchain()?;
-            assert!(builder.build_package(crate_, version, PackageKind::CratesIo)?);
+            assert!(
+                builder
+                    .build_package(crate_, version, PackageKind::CratesIo)?
+                    .successful
+            );
 
             // check release record in the db (default and other targets)
-            let mut conn = env.db().conn();
-            let row = conn
-                .query_one(
-                    "SELECT
+            let row = env.runtime().block_on(async {
+                let mut conn = env.async_db().await.async_conn().await;
+                sqlx::query!(
+                    r#"SELECT
                         r.rustdoc_status,
                         r.default_target,
                         r.doc_targets,
                         r.archive_storage,
                         cov.total_items,
-                        b.id as build_id
+                        b.id as build_id,
+                        b.build_status::TEXT as build_status,
+                        b.docsrs_version,
+                        b.rustc_version
                     FROM
                         crates as c
                         INNER JOIN releases AS r ON c.id = r.crate_id
@@ -1003,18 +1105,25 @@ mod tests {
                         LEFT OUTER JOIN doc_coverage AS cov ON r.id = cov.release_id
                     WHERE
                         c.name = $1 AND
-                        r.version = $2",
-                    &[&crate_, &version],
+                        r.version = $2"#,
+                    crate_,
+                    version,
                 )
-                .unwrap();
+                .fetch_one(&mut *conn)
+                .await
+            })?;
 
-            assert!(row.get::<_, bool>("rustdoc_status"));
-            assert_eq!(row.get::<_, String>("default_target"), default_target);
-            assert!(row.get::<_, Option<i32>>("total_items").is_some());
-            assert!(row.get::<_, bool>("archive_storage"));
+            assert_eq!(row.rustdoc_status, Some(true));
+            assert_eq!(row.default_target, Some(default_target.into()));
+            assert!(row.total_items.is_some());
+            assert!(row.archive_storage);
+            assert!(!row.docsrs_version.unwrap().is_empty());
+            assert!(!row.rustc_version.unwrap().is_empty());
+            assert_eq!(row.build_status.unwrap(), "success");
 
             let mut targets: Vec<String> = row
-                .get::<_, Value>("doc_targets")
+                .doc_targets
+                .unwrap()
                 .as_array()
                 .unwrap()
                 .iter()
@@ -1095,10 +1204,7 @@ mod tests {
                     assert_success(&target_url, web)?;
 
                     assert!(storage
-                        .exists(&format!(
-                            "build-logs/{}/{target}.txt",
-                            row.get::<_, i32>("build_id")
-                        ))
+                        .exists(&format!("build-logs/{}/{target}.txt", row.build_id))
                         .unwrap());
                 }
             }
@@ -1123,12 +1229,16 @@ mod tests {
 
             let mut builder = RustwideBuilder::init(env).unwrap();
             builder.update_toolchain()?;
-            assert!(!builder.build_package(crate_, version, PackageKind::CratesIo)?);
+            assert!(
+                !builder
+                    .build_package(crate_, version, PackageKind::CratesIo)?
+                    .successful
+            );
 
             // check release record in the db (default and other targets)
-            let mut conn = env.db().conn();
-            let rows = conn
-                .query(
+            let row = env.runtime().block_on(async {
+                let mut conn = env.async_db().await.async_conn().await;
+                sqlx::query!(
                     "SELECT
                         r.rustdoc_status,
                         r.is_library
@@ -1139,13 +1249,15 @@ mod tests {
                     WHERE
                         c.name = $1 AND
                         r.version = $2",
-                    &[&crate_, &version],
+                    crate_,
+                    version
                 )
-                .unwrap();
-            let row = rows.first().unwrap();
+                .fetch_one(&mut *conn)
+                .await
+            })?;
 
-            assert!(!row.get::<_, bool>("rustdoc_status"));
-            assert!(!row.get::<_, bool>("is_library"));
+            assert_eq!(row.rustdoc_status, Some(false));
+            assert_eq!(row.is_library, Some(false));
 
             // doc archive exists
             let doc_archive = rustdoc_archive_path(crate_, version);
@@ -1171,7 +1283,11 @@ mod tests {
             let version = "1.0.26";
             let mut builder = RustwideBuilder::init(env).unwrap();
             builder.update_toolchain()?;
-            assert!(builder.build_package(crate_, version, PackageKind::CratesIo)?);
+            assert!(
+                builder
+                    .build_package(crate_, version, PackageKind::CratesIo)?
+                    .successful
+            );
 
             let storage = env.storage();
 
@@ -1198,7 +1314,11 @@ mod tests {
             if builder.toolchain.as_ci().is_some() {
                 return Ok(());
             }
-            assert!(builder.build_package(crate_, version, PackageKind::CratesIo)?);
+            assert!(
+                builder
+                    .build_package(crate_, version, PackageKind::CratesIo)?
+                    .successful
+            );
 
             let storage = env.storage();
 
@@ -1248,7 +1368,11 @@ mod tests {
             let version = "0.1.2";
             let mut builder = RustwideBuilder::init(env).unwrap();
             builder.update_toolchain()?;
-            assert!(builder.build_package(crate_, version, PackageKind::CratesIo)?);
+            assert!(
+                builder
+                    .build_package(crate_, version, PackageKind::CratesIo)?
+                    .successful
+            );
 
             Ok(())
         });
@@ -1271,7 +1395,11 @@ mod tests {
             let version = "0.2.0";
             let mut builder = RustwideBuilder::init(env).unwrap();
             builder.update_toolchain()?;
-            assert!(builder.build_package(crate_, version, PackageKind::CratesIo)?);
+            assert!(
+                builder
+                    .build_package(crate_, version, PackageKind::CratesIo)?
+                    .successful
+            );
 
             Ok(())
         });
@@ -1285,7 +1413,89 @@ mod tests {
             let version = "1.0.33";
             let mut builder = RustwideBuilder::init(env).unwrap();
             builder.update_toolchain()?;
-            assert!(builder.build_package(crate_, version, PackageKind::CratesIo)?);
+            assert!(
+                builder
+                    .build_package(crate_, version, PackageKind::CratesIo)?
+                    .successful
+            );
+            Ok(())
+        });
+    }
+
+    #[test]
+    #[ignore]
+    fn test_sources_are_added_even_for_build_failures_before_build() {
+        wrapper(|env| {
+            // https://github.com/rust-lang/docs.rs/issues/2523
+            // package with invalid cargo metadata.
+            // Will succeed in the crate fetch step, so sources are
+            // added. Will fail when we try to build.
+            let crate_ = "simconnect-sys";
+            let version = "0.23.1";
+            let mut builder = RustwideBuilder::init(env).unwrap();
+            builder.update_toolchain()?;
+
+            // `Result` is `Ok`, but the build-result is `false`
+            assert!(
+                !builder
+                    .build_package(crate_, version, PackageKind::CratesIo)?
+                    .successful
+            );
+
+            // source archice exists
+            let source_archive = source_archive_path(crate_, version);
+            assert!(
+                env.storage().exists(&source_archive)?,
+                "archive doesnt exist: {}",
+                source_archive
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    #[ignore]
+    fn test_build_failures_before_build() {
+        wrapper(|env| {
+            // https://github.com/rust-lang/docs.rs/issues/2491
+            // package without Cargo.toml, so fails directly in the fetch stage.
+            let crate_ = "emheap";
+            let version = "0.1.0";
+            let mut builder = RustwideBuilder::init(env).unwrap();
+            builder.update_toolchain()?;
+
+            // `Result` is `Ok`, but the build-result is `false`
+            let summary = builder.build_package(crate_, version, PackageKind::CratesIo)?;
+
+            assert!(!summary.successful);
+            assert!(summary.should_reattempt);
+
+            let row = env.runtime().block_on(async {
+                let mut conn = env.async_db().await.async_conn().await;
+                sqlx::query!(
+                    r#"SELECT
+                       rustc_version,
+                       docsrs_version,
+                       build_status as "build_status: BuildStatus",
+                       errors
+                       FROM
+                       crates as c
+                       INNER JOIN releases as r on c.id = r.crate_id
+                       INNER JOIN builds as b on b.rid = r.id
+                       WHERE c.name = $1 and r.version = $2"#,
+                    crate_,
+                    version,
+                )
+                .fetch_one(&mut *conn)
+                .await
+            })?;
+
+            assert!(row.rustc_version.is_none());
+            assert!(row.docsrs_version.is_none());
+            assert_eq!(row.build_status, BuildStatus::Failure);
+            assert!(row.errors.unwrap().contains("missing Cargo.toml"));
+
             Ok(())
         });
     }
@@ -1298,20 +1508,16 @@ mod tests {
             let version = "1.0.152";
             let mut builder = RustwideBuilder::init(env).unwrap();
             builder.update_toolchain()?;
-            assert!(builder.build_package(crate_, version, PackageKind::CratesIo)?);
+            assert!(
+                builder
+                    .build_package(crate_, version, PackageKind::CratesIo)?
+                    .successful
+            );
 
-            let mut conn = env.db().conn();
-            let features: Vec<crate::db::types::Feature> = conn
-                .query_opt(
-                    "SELECT releases.features FROM releases
-                     INNER JOIN crates ON crates.id = releases.crate_id
-                     WHERE crates.name = $1 AND releases.version = $2",
-                    &[&crate_, &version],
-                )?
-                .context("missing release")?
-                .get(0);
-
-            assert!(features.iter().any(|f| f.name == "serde_derive"));
+            assert!(get_features(env, crate_, version)?
+                .unwrap()
+                .iter()
+                .any(|f| f.name == "serde_derive"));
 
             Ok(())
         });
@@ -1325,20 +1531,16 @@ mod tests {
             let version = "0.1.1";
             let mut builder = RustwideBuilder::init(env).unwrap();
             builder.update_toolchain()?;
-            assert!(builder.build_package(crate_, version, PackageKind::CratesIo)?);
+            assert!(
+                builder
+                    .build_package(crate_, version, PackageKind::CratesIo)?
+                    .successful
+            );
 
-            let mut conn = env.db().conn();
-            let features: Vec<crate::db::types::Feature> = conn
-                .query_opt(
-                    "SELECT releases.features FROM releases
-                     INNER JOIN crates ON crates.id = releases.crate_id
-                     WHERE crates.name = $1 AND releases.version = $2",
-                    &[&crate_, &version],
-                )?
-                .context("missing release")?
-                .get(0);
-
-            assert!(!features.iter().any(|f| f.name == "with_builtin_macros"));
+            assert!(!get_features(env, crate_, version)?
+                .unwrap()
+                .iter()
+                .any(|f| f.name == "with_builtin_macros"));
 
             Ok(())
         });
@@ -1350,7 +1552,11 @@ mod tests {
         wrapper(|env| {
             let mut builder = RustwideBuilder::init(env)?;
             builder.update_toolchain()?;
-            assert!(builder.build_local_package(Path::new("tests/crates/build-std"))?);
+            assert!(
+                builder
+                    .build_local_package(Path::new("tests/crates/build-std"))?
+                    .successful
+            );
             Ok(())
         })
     }
@@ -1362,7 +1568,11 @@ mod tests {
             let mut builder = RustwideBuilder::init(env)?;
             builder.update_toolchain()?;
             builder.reinitialize_workspace_if_interval_passed(env)?;
-            assert!(builder.build_local_package(Path::new("tests/crates/build-std"))?);
+            assert!(
+                builder
+                    .build_local_package(Path::new("tests/crates/build-std"))?
+                    .successful
+            );
             Ok(())
         })
     }
@@ -1378,10 +1588,18 @@ mod tests {
             });
             let mut builder = RustwideBuilder::init(env)?;
             builder.update_toolchain()?;
-            assert!(builder.build_local_package(Path::new("tests/crates/build-std"))?);
+            assert!(
+                builder
+                    .build_local_package(Path::new("tests/crates/build-std"))?
+                    .successful
+            );
             sleep(Duration::from_secs(1));
             builder.reinitialize_workspace_if_interval_passed(env)?;
-            assert!(builder.build_local_package(Path::new("tests/crates/build-std"))?);
+            assert!(
+                builder
+                    .build_local_package(Path::new("tests/crates/build-std"))?
+                    .successful
+            );
             Ok(())
         })
     }
@@ -1398,11 +1616,11 @@ mod tests {
             // new builder should detect the existing rustc version from the previous builder
             // (simulating running `update-toolchain` and `build crate` in separate invocations)
             let mut builder = RustwideBuilder::init(env)?;
-            assert!(builder.build_package(
-                DUMMY_CRATE_NAME,
-                DUMMY_CRATE_VERSION,
-                PackageKind::CratesIo
-            )?);
+            assert!(
+                builder
+                    .build_package(DUMMY_CRATE_NAME, DUMMY_CRATE_VERSION, PackageKind::CratesIo)?
+                    .successful
+            );
             assert_eq!(old_version, builder.rustc_version()?);
 
             Ok(())

@@ -3,7 +3,7 @@ use crate::{db::Pool, error::Result, InstanceMetrics};
 use chrono::{DateTime, Utc};
 use futures_util::stream::{Stream, TryStreamExt};
 use sqlx::Acquire;
-use std::{convert::TryFrom, sync::Arc};
+use std::sync::Arc;
 
 pub(crate) struct DatabaseBackend {
     pool: Pool,
@@ -66,7 +66,7 @@ impl DatabaseBackend {
     ) -> Result<Blob> {
         // The maximum size for a BYTEA (the type used for `content`) is 1GB, so this cast is safe:
         // https://www.postgresql.org/message-id/162867790712200946i7ba8eb92v908ac595c0c35aee%40mail.gmail.com
-        let max_size = max_size.min(std::i32::MAX as usize) as i32;
+        let max_size = max_size.min(i32::MAX as usize) as i32;
 
         struct Result {
             path: String,

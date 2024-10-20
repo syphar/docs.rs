@@ -98,7 +98,7 @@ pub enum MetadataError {
 /// ```
 ///
 /// You can define one or more fields in your `Cargo.toml`.
-#[derive(Default, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct Metadata {
     /// Whether the current crate is a proc-macro (used by docs.rs to hack around cargo bugs).
@@ -288,13 +288,11 @@ impl Metadata {
             cargo_args.push(format!("host.rustflags={rustflags}"));
         }
 
-        if !all_rustdoc_args.is_empty() {
-            cargo_args.push("--config".into());
-            let rustdocflags = toml::Value::try_from(&all_rustdoc_args)
-                .expect("serializing a string should never fail")
-                .to_string();
-            cargo_args.push(format!("build.rustdocflags={rustdocflags}"));
-        }
+        cargo_args.push("--config".into());
+        let rustdocflags = toml::Value::try_from(&all_rustdoc_args)
+            .expect("serializing a string should never fail")
+            .to_string();
+        cargo_args.push(format!("build.rustdocflags={rustdocflags}"));
 
         cargo_args.extend(additional_args.iter().map(|s| s.to_owned()));
         cargo_args.extend_from_slice(&self.cargo_args);
@@ -671,8 +669,8 @@ mod test_calculations {
         assert_eq!(metadata.cargo_args(&[], &[]), default_cargo_args(&[]));
         let env = metadata.environment_variables();
         assert_eq!(env.get("DOCS_RS").map(String::as_str), Some("1"));
-        assert!(env.get("RUSTDOCFLAGS").is_none());
-        assert!(env.get("RUSTFLAGS").is_none());
+        assert!(!env.contains_key("RUSTDOCFLAGS"));
+        assert!(!env.contains_key("RUSTFLAGS"));
     }
 
     #[test]

@@ -1,7 +1,8 @@
-use super::{markdown, match_version, MetaData};
+use super::{match_version, MetaData};
+use crate::registry_api::OwnerKind;
 use crate::utils::{get_correct_docsrs_style_file, report_error};
-use crate::web::rustdoc::RustdocHtmlParams;
 use crate::{
+    db::types::BuildStatus,
     impl_axum_webpage,
     storage::PathNotFoundError,
     web::{
@@ -9,6 +10,8 @@ use crate::{
         encode_url_path,
         error::{AxumNope, AxumResult},
         extractors::{DbConnection, Path},
+        page::templates::{filters, RenderRegular, RenderSolid},
+        rustdoc::RustdocHtmlParams,
         MatchedRelease, ReqVersion,
     },
     AsyncStorage,
@@ -21,53 +24,50 @@ use axum::{
 use chrono::{DateTime, Utc};
 use futures_util::stream::TryStreamExt;
 use log::warn;
+use rinja::Template;
 use semver::Version;
 use serde::Deserialize;
-use serde::{ser::Serializer, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
 
 // TODO: Add target name and versions
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct CrateDetails {
-    name: String,
-    pub version: Version,
-    description: Option<String>,
-    owners: Vec<(String, String)>,
-    dependencies: Option<Value>,
-    #[serde(serialize_with = "optional_markdown")]
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct CrateDetails {
+    pub(crate) name: String,
+    pub(crate) version: Version,
+    pub(crate) description: Option<String>,
+    pub(crate) owners: Vec<(String, String, OwnerKind)>,
+    pub(crate) dependencies: Option<Value>,
     readme: Option<String>,
-    #[serde(serialize_with = "optional_markdown")]
     rustdoc: Option<String>, // this is description_long in database
-    release_time: DateTime<Utc>,
-    build_status: bool,
+    release_time: Option<DateTime<Utc>>,
+    build_status: BuildStatus,
     pub latest_build_id: Option<i32>,
     last_successful_build: Option<String>,
-    pub rustdoc_status: bool,
+    pub rustdoc_status: Option<bool>,
     pub archive_storage: bool,
-    repository_url: Option<String>,
-    homepage_url: Option<String>,
+    pub repository_url: Option<String>,
+    pub homepage_url: Option<String>,
     keywords: Option<Value>,
-    have_examples: bool, // need to check this manually
-    pub target_name: String,
+    have_examples: Option<bool>, // need to check this manually
+    pub target_name: Option<String>,
     releases: Vec<Release>,
     repository_metadata: Option<RepositoryMetadata>,
     pub(crate) metadata: MetaData,
-    is_library: bool,
-    license: Option<String>,
+    is_library: Option<bool>,
+    pub(crate) license: Option<String>,
     pub(crate) documentation_url: Option<String>,
-    total_items: Option<i32>,
-    documented_items: Option<i32>,
-    total_items_needing_examples: Option<i32>,
-    items_with_examples: Option<i32>,
+    pub(crate) total_items: Option<i32>,
+    pub(crate) documented_items: Option<i32>,
+    pub(crate) total_items_needing_examples: Option<i32>,
+    pub(crate) items_with_examples: Option<i32>,
     /// Database id for this crate
     pub(crate) crate_id: i32,
     /// Database id for this release
     pub(crate) release_id: i32,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 struct RepositoryMetadata {
     stars: i32,
     forks: i32,
@@ -75,25 +75,27 @@ struct RepositoryMetadata {
     name: Option<String>,
 }
 
-fn optional_markdown<S>(markdown: &Option<String>, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    markdown
-        .as_ref()
-        .map(|markdown| markdown::render(markdown))
-        .serialize(serializer)
-}
-
-#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
-pub struct Release {
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub(crate) struct Release {
     pub id: i32,
     pub version: semver::Version,
-    pub build_status: bool,
-    pub yanked: bool,
-    pub is_library: bool,
-    pub rustdoc_status: bool,
-    pub target_name: String,
+    /// Aggregated build status of the release.
+    /// * no builds -> build In progress
+    /// * any build is successful -> Success
+    ///   -> even with failed or in-progress builds we have docs to show
+    /// * any build is failed -> Failure
+    ///   -> we can only have Failure or InProgress here, so the Failure is the
+    ///      important part on this aggregation level.
+    /// * the rest is all builds are in-progress -> InProgress
+    ///   -> if we have any builds, and the previous conditions don't match, we end
+    ///      up here, but we still check.
+    ///
+    /// calculated in a database view : `release_build_status`
+    pub build_status: BuildStatus,
+    pub yanked: Option<bool>,
+    pub is_library: Option<bool>,
+    pub rustdoc_status: Option<bool>,
+    pub target_name: Option<String>,
 }
 
 impl CrateDetails {
@@ -104,7 +106,7 @@ impl CrateDetails {
     ) -> Result<Self> {
         Ok(Self::new(
             conn,
-            &release.name,
+            &release.corrected_name.unwrap_or(release.name),
             &release.release.version,
             Some(release.req_version),
             release.all_releases,
@@ -131,13 +133,15 @@ impl CrateDetails {
                 releases.readme,
                 releases.description_long,
                 releases.release_time,
-                releases.build_status,
+                release_build_status.build_status as "build_status!: BuildStatus",
                 (
+                    -- this is the latest build ID that generated content
+                    -- it's used to invalidate some blob storage related caches.
                     SELECT id
                     FROM builds
                     WHERE
                         builds.rid = releases.id AND
-                        builds.build_status = TRUE
+                        builds.build_status = 'success'
                     ORDER BY build_time DESC
                     LIMIT 1
                 ) AS latest_build_id,
@@ -159,12 +163,24 @@ impl CrateDetails {
                 releases.license,
                 releases.documentation_url,
                 releases.default_target,
-                releases.doc_rustc_version,
+                (
+                    -- we're using the rustc version here to set the correct CSS file
+                    -- in the metadata.
+                    -- So we're only interested in successful builds here.
+                    SELECT rustc_version
+                    FROM builds
+                    WHERE
+                        builds.rid = releases.id AND
+                        builds.build_status = 'success'
+                    ORDER BY builds.build_time
+                    DESC LIMIT 1
+                ) as "rustc_version?",
                 doc_coverage.total_items,
                 doc_coverage.documented_items,
                 doc_coverage.total_items_needing_examples,
                 doc_coverage.items_with_examples
             FROM releases
+            INNER JOIN release_build_status ON releases.id = release_build_status.rid
             INNER JOIN crates ON releases.crate_id = crates.id
             LEFT JOIN doc_coverage ON doc_coverage.release_id = releases.id
             LEFT JOIN repositories ON releases.repository_id = repositories.id
@@ -192,11 +208,15 @@ impl CrateDetails {
             req_version: req_version.unwrap_or_else(|| ReqVersion::Exact(version.clone())),
             description: krate.description.clone(),
             rustdoc_status: krate.rustdoc_status,
-            target_name: Some(krate.target_name.clone()),
+            target_name: krate.target_name.clone(),
             default_target: krate.default_target,
-            doc_targets: MetaData::parse_doc_targets(krate.doc_targets),
+            doc_targets: krate.doc_targets.map(MetaData::parse_doc_targets),
             yanked: krate.yanked,
-            rustdoc_css_file: get_correct_docsrs_style_file(&krate.doc_rustc_version)?,
+            rustdoc_css_file: krate
+                .rustc_version
+                .as_deref()
+                .map(get_correct_docsrs_style_file)
+                .transpose()?,
         };
 
         let mut crate_details = CrateDetails {
@@ -234,22 +254,24 @@ impl CrateDetails {
 
         // get owners
         crate_details.owners = sqlx::query!(
-            "SELECT login, avatar
+            r#"SELECT login, avatar, kind as "kind: OwnerKind"
              FROM owners
              INNER JOIN owner_rels ON owner_rels.oid = owners.id
-             WHERE cid = $1",
+             WHERE cid = $1"#,
             krate.crate_id,
         )
         .fetch(&mut *conn)
-        .map_ok(|row| (row.login, row.avatar))
+        .map_ok(|row| (row.login, row.avatar, row.kind))
         .try_collect()
         .await?;
 
-        if !crate_details.build_status {
+        if crate_details.build_status != BuildStatus::Success {
             crate_details.last_successful_build = crate_details
                 .releases
                 .iter()
-                .filter(|release| release.build_status && !release.yanked)
+                .filter(|release| {
+                    release.build_status == BuildStatus::Success && release.yanked == Some(false)
+                })
                 .map(|release| release.version.to_string())
                 .next();
         }
@@ -322,13 +344,16 @@ impl CrateDetails {
 }
 
 pub(crate) fn latest_release(releases: &[Release]) -> Option<&Release> {
-    if let Some(release) = releases
-        .iter()
-        .find(|release| release.version.pre.is_empty() && !release.yanked)
-    {
+    if let Some(release) = releases.iter().find(|release| {
+        release.version.pre.is_empty()
+            && release.yanked == Some(false)
+            && release.build_status != BuildStatus::InProgress
+    }) {
         Some(release)
     } else {
-        releases.first()
+        releases
+            .iter()
+            .find(|release| release.build_status != BuildStatus::InProgress)
     }
 }
 
@@ -338,43 +363,44 @@ pub(crate) async fn releases_for_crate(
     crate_id: i32,
 ) -> Result<Vec<Release>, anyhow::Error> {
     let mut releases: Vec<Release> = sqlx::query!(
-        "SELECT
-            id,
-            version,
-            build_status,
-            yanked,
-            is_library,
-            rustdoc_status,
-            target_name
+        r#"SELECT
+             releases.id,
+             releases.version,
+             release_build_status.build_status as "build_status!: BuildStatus",
+             releases.yanked,
+             releases.is_library,
+             releases.rustdoc_status,
+             releases.target_name
          FROM releases
+         INNER JOIN release_build_status ON releases.id = release_build_status.rid
          WHERE
-             releases.crate_id = $1",
+             releases.crate_id = $1"#,
         crate_id,
     )
     .fetch(&mut *conn)
     .try_filter_map(|row| async move {
-        Ok(
-            match semver::Version::parse(&row.version).with_context(|| {
-                format!(
-                    "invalid semver in database for crate {crate_id}: {}",
-                    row.version
-                )
-            }) {
-                Ok(semversion) => Some(Release {
-                    id: row.id,
-                    version: semversion,
-                    build_status: row.build_status,
-                    yanked: row.yanked,
-                    is_library: row.is_library,
-                    rustdoc_status: row.rustdoc_status,
-                    target_name: row.target_name,
-                }),
-                Err(err) => {
-                    report_error(&err);
-                    None
-                }
-            },
-        )
+        let semversion = match semver::Version::parse(&row.version).with_context(|| {
+            format!(
+                "invalid semver in database for crate {crate_id}: {}",
+                row.version
+            )
+        }) {
+            Ok(semver) => semver,
+            Err(err) => {
+                report_error(&err);
+                return Ok(None);
+            }
+        };
+
+        Ok(Some(Release {
+            id: row.id,
+            version: semversion,
+            build_status: row.build_status,
+            yanked: row.yanked,
+            is_library: row.is_library,
+            rustdoc_status: row.rustdoc_status,
+            target_name: row.target_name,
+        }))
     })
     .try_collect()
     .await?;
@@ -383,13 +409,42 @@ pub(crate) async fn releases_for_crate(
     Ok(releases)
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Template)]
+#[template(path = "crate/details.html")]
+#[derive(Debug, Clone, PartialEq)]
 struct CrateDetailsPage {
-    details: CrateDetails,
+    version: Version,
+    name: String,
+    owners: Vec<(String, String, OwnerKind)>,
+    metadata: MetaData,
+    documented_items: Option<i32>,
+    total_items: Option<i32>,
+    total_items_needing_examples: Option<i32>,
+    items_with_examples: Option<i32>,
+    homepage_url: Option<String>,
+    documentation_url: Option<String>,
+    repository_url: Option<String>,
+    repository_metadata: Option<RepositoryMetadata>,
+    dependencies: Option<Value>,
+    releases: Vec<Release>,
+    readme: Option<String>,
+    build_status: BuildStatus,
+    rustdoc_status: Option<bool>,
+    is_library: Option<bool>,
+    last_successful_build: Option<String>,
+    rustdoc: Option<String>, // this is description_long in database
+    csp_nonce: String,
+}
+
+impl CrateDetailsPage {
+    // Used by templates.
+    pub(crate) fn use_direct_platform_links(&self) -> bool {
+        true
+    }
 }
 
 impl_axum_webpage! {
-    CrateDetailsPage = "crate/details.html",
+    CrateDetailsPage,
     cpu_intensive_rendering = true,
 }
 
@@ -429,7 +484,54 @@ pub(crate) async fn crate_details_handler(
         Err(e) => warn!("error fetching readme: {:?}", &e),
     }
 
-    let mut res = CrateDetailsPage { details }.into_response();
+    let CrateDetails {
+        version,
+        name,
+        owners,
+        metadata,
+        documented_items,
+        total_items,
+        total_items_needing_examples,
+        items_with_examples,
+        homepage_url,
+        documentation_url,
+        repository_url,
+        repository_metadata,
+        dependencies,
+        releases,
+        readme,
+        build_status,
+        rustdoc_status,
+        is_library,
+        last_successful_build,
+        rustdoc,
+        ..
+    } = details;
+
+    let mut res = CrateDetailsPage {
+        version,
+        name,
+        owners,
+        metadata,
+        documented_items,
+        total_items,
+        total_items_needing_examples,
+        items_with_examples,
+        homepage_url,
+        documentation_url,
+        repository_url,
+        repository_metadata,
+        dependencies,
+        releases,
+        readme,
+        build_status,
+        rustdoc_status,
+        is_library,
+        last_successful_build,
+        rustdoc,
+        csp_nonce: String::new(),
+    }
+    .into_response();
     res.extensions_mut()
         .insert::<CachePolicy>(if req_version.is_latest() {
             CachePolicy::ForeverInCdn
@@ -439,16 +541,19 @@ pub(crate) async fn crate_details_handler(
     Ok(res.into_response())
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Template)]
+#[template(path = "rustdoc/releases.html")]
+#[derive(Debug, Clone, PartialEq)]
 struct ReleaseList {
     releases: Vec<Release>,
     crate_name: String,
     inner_path: String,
     target: String,
+    csp_nonce: String,
 }
 
 impl_axum_webpage! {
-    ReleaseList = "rustdoc/releases.html",
+    ReleaseList,
     cache_policy = |_| CachePolicy::ForeverInCdn,
     cpu_intensive_rendering = true,
 }
@@ -458,30 +563,31 @@ pub(crate) async fn get_all_releases(
     Path(params): Path<RustdocHtmlParams>,
     mut conn: DbConnection,
 ) -> AxumResult<AxumResponse> {
-    let version = match_version(&mut conn, &params.name, &params.version)
+    let matched_release = match_version(&mut conn, &params.name, &params.version)
         .await?
-        .into_canonical_req_version_or_else(|_| AxumNope::VersionNotFound)?
-        .into_version();
+        .into_canonical_req_version_or_else(|_| AxumNope::VersionNotFound)?;
 
-    let row = sqlx::query!(
+    if matched_release.build_status() != BuildStatus::Success {
+        // This handler should only be used for successful builds, so then we have all rows in the
+        // `releases` table filled with data.
+        // If we need this view at some point for in-progress releases or failed releases, we need
+        // to handle empty doc targets.
+        return Err(AxumNope::CrateNotFound);
+    }
+
+    let doc_targets = sqlx::query_scalar!(
         "SELECT
-            crates.id AS crate_id,
-            releases.doc_targets,
-            releases.target_name
-        FROM crates
-        INNER JOIN releases on crates.id = releases.crate_id
-        WHERE crates.name = $1 and releases.version = $2;",
-        params.name,
-        &version.to_string(),
+            releases.doc_targets
+         FROM releases
+         WHERE releases.id = $1;",
+        matched_release.id(),
     )
     .fetch_optional(&mut *conn)
     .await?
-    .ok_or(AxumNope::CrateNotFound)?;
+    .ok_or(AxumNope::CrateNotFound)?
+    .map(MetaData::parse_doc_targets)
+    .ok_or_else(|| anyhow!("empty doc targets for successful release"))?;
 
-    // get releases, sorted by semver
-    let releases: Vec<Release> = releases_for_crate(&mut conn, row.crate_id).await?;
-
-    let doc_targets = MetaData::parse_doc_targets(row.doc_targets);
     let (target, inner_path) = params.split_path_into_target_and_inner_path(doc_targets.iter());
 
     let inner_path = if inner_path.is_empty() {
@@ -493,15 +599,16 @@ pub(crate) async fn get_all_releases(
     let target = target.map(|t| format!("{t}/")).unwrap_or_default();
 
     let res = ReleaseList {
-        releases,
+        releases: matched_release.all_releases,
         target,
         inner_path: inner_path.to_owned(),
         crate_name: params.name,
+        csp_nonce: String::new(),
     };
     Ok(res.into_response())
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq)]
 struct ShortMetadata {
     name: String,
     version: Version,
@@ -509,16 +616,26 @@ struct ShortMetadata {
     doc_targets: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+impl ShortMetadata {
+    // Used in templates.
+    pub(crate) fn doc_targets(&self) -> Option<&[String]> {
+        Some(&self.doc_targets)
+    }
+}
+
+#[derive(Template)]
+#[template(path = "rustdoc/platforms.html")]
+#[derive(Debug, Clone, PartialEq)]
 struct PlatformList {
     metadata: ShortMetadata,
     inner_path: String,
     use_direct_platform_links: bool,
     current_target: String,
+    csp_nonce: String,
 }
 
 impl_axum_webpage! {
-    PlatformList = "rustdoc/platforms.html",
+    PlatformList,
     cache_policy = |_| CachePolicy::ForeverInCdn,
     cpu_intensive_rendering = true,
 }
@@ -529,7 +646,7 @@ pub(crate) async fn get_all_platforms_inner(
     mut conn: DbConnection,
     is_crate_root: bool,
 ) -> AxumResult<AxumResponse> {
-    let version = match_version(&mut conn, &params.name, &params.version)
+    let matched_release = match_version(&mut conn, &params.name, &params.version)
         .await?
         .into_exactly_named_or_else(|corrected_name, req_version| {
             AxumNope::Redirect(
@@ -552,32 +669,41 @@ pub(crate) async fn get_all_platforms_inner(
                 )),
                 CachePolicy::ForeverInCdn,
             )
-        })?
-        .into_version();
+        })?;
 
     let krate = sqlx::query!(
         "SELECT
-            crates.id,
-            crates.name,
             releases.default_target,
             releases.target_name,
             releases.doc_targets
         FROM releases
-        INNER JOIN crates ON releases.crate_id = crates.id
-        WHERE crates.name = $1 AND releases.version = $2;",
-        params.name,
-        version.to_string(),
+        WHERE releases.id = $1;",
+        matched_release.id(),
     )
     .fetch_optional(&mut *conn)
     .await?
     .ok_or(AxumNope::CrateNotFound)?;
 
-    let releases = releases_for_crate(&mut conn, krate.id).await?;
-
-    let latest_release = releases
-        .iter()
-        .find(|release| release.version.pre.is_empty() && !release.yanked)
-        .unwrap_or(&releases[0]);
+    if krate.doc_targets.is_none()
+        || krate.default_target.is_none()
+        || matched_release.target_name().is_none()
+    {
+        // when the build wasn't finished, we don't have any target platforms
+        // we could read from.
+        return Ok(PlatformList {
+            metadata: ShortMetadata {
+                name: params.name,
+                version: matched_release.version().clone(),
+                req_version: params.version.clone(),
+                doc_targets: Vec::new(),
+            },
+            inner_path: "".into(),
+            use_direct_platform_links: is_crate_root,
+            current_target: "".into(),
+            csp_nonce: String::new(),
+        }
+        .into_response());
+    }
 
     let doc_targets = MetaData::parse_doc_targets(krate.doc_targets);
     let (target, inner_path) = params.split_path_into_target_and_inner_path(doc_targets.iter());
@@ -595,18 +721,19 @@ pub(crate) async fn get_all_platforms_inner(
         String::new()
     };
 
-    let res = PlatformList {
+    Ok(PlatformList {
         metadata: ShortMetadata {
-            name: krate.name,
-            version: version.clone(),
+            name: params.name,
+            version: matched_release.version().clone(),
             req_version: params.version.clone(),
             doc_targets,
         },
         inner_path: inner_path.to_owned(),
         use_direct_platform_links: is_crate_root,
         current_target,
-    };
-    Ok(res.into_response())
+        csp_nonce: String::new(),
+    }
+    .into_response())
 }
 
 pub(crate) async fn get_all_platforms_root(
@@ -627,15 +754,45 @@ pub(crate) async fn get_all_platforms(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::registry_api::CrateOwner;
     use crate::test::{
-        assert_cache_control, assert_redirect, assert_redirect_cached, async_wrapper, wrapper,
-        TestDatabase, TestEnvironment,
+        assert_cache_control, assert_redirect, assert_redirect_cached, async_wrapper,
+        fake_release_that_failed_before_build, wrapper, FakeBuild, TestDatabase, TestEnvironment,
     };
+    use crate::{db::update_build_status, registry_api::CrateOwner};
     use anyhow::Error;
     use kuchikiki::traits::TendrilSink;
-    use semver::Version;
+    use pretty_assertions::assert_eq;
+    use reqwest::StatusCode;
     use std::collections::HashMap;
+
+    async fn release_build_status(
+        conn: &mut sqlx::PgConnection,
+        name: &str,
+        version: &str,
+    ) -> BuildStatus {
+        let status = sqlx::query_scalar!(
+            r#"
+            SELECT build_status as "build_status!: BuildStatus"
+            FROM crates
+            INNER JOIN releases ON crates.id = releases.crate_id
+            INNER JOIN release_build_status ON releases.id = release_build_status.rid
+            WHERE crates.name = $1 AND releases.version = $2"#,
+            name,
+            version
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+
+        assert_eq!(
+            crate_details(&mut *conn, name, version, None)
+                .await
+                .build_status,
+            status
+        );
+
+        status
+    }
 
     async fn crate_details(
         conn: &mut sqlx::PgConnection,
@@ -662,6 +819,7 @@ mod tests {
         .unwrap()
     }
 
+    #[fn_error_context::context("assert_last_successful_build_equals({package}, {version}, {expected_last_successful_build:?})")]
     async fn assert_last_successful_build_equals(
         db: &TestDatabase,
         package: &str,
@@ -671,10 +829,12 @@ mod tests {
         let mut conn = db.async_conn().await;
         let details = crate_details(&mut conn, package, version, None).await;
 
-        assert_eq!(
+        anyhow::ensure!(
+            details.last_successful_build.as_deref() == expected_last_successful_build,
+            "didn't expect {:?}",
             details.last_successful_build,
-            expected_last_successful_build.map(|s| s.to_string()),
         );
+
         Ok(())
     }
 
@@ -842,75 +1002,75 @@ mod tests {
                 vec![
                     Release {
                         version: semver::Version::parse("1.0.0")?,
-                        build_status: true,
-                        yanked: false,
-                        is_library: true,
-                        rustdoc_status: true,
+                        build_status: BuildStatus::Success,
+                        yanked: Some(false),
+                        is_library: Some(true),
+                        rustdoc_status: Some(true),
                         id: details.releases[0].id,
-                        target_name: "foo".to_owned(),
+                        target_name: Some("foo".to_owned()),
                     },
                     Release {
                         version: semver::Version::parse("0.12.0")?,
-                        build_status: true,
-                        yanked: false,
-                        is_library: true,
-                        rustdoc_status: true,
+                        build_status: BuildStatus::Success,
+                        yanked: Some(false),
+                        is_library: Some(true),
+                        rustdoc_status: Some(true),
                         id: details.releases[1].id,
-                        target_name: "foo".to_owned(),
+                        target_name: Some("foo".to_owned()),
                     },
                     Release {
                         version: semver::Version::parse("0.3.0")?,
-                        build_status: false,
-                        yanked: false,
-                        is_library: true,
-                        rustdoc_status: false,
+                        build_status: BuildStatus::Failure,
+                        yanked: Some(false),
+                        is_library: Some(true),
+                        rustdoc_status: Some(false),
                         id: details.releases[2].id,
-                        target_name: "foo".to_owned(),
+                        target_name: Some("foo".to_owned()),
                     },
                     Release {
                         version: semver::Version::parse("0.2.0")?,
-                        build_status: true,
-                        yanked: true,
-                        is_library: true,
-                        rustdoc_status: true,
+                        build_status: BuildStatus::Success,
+                        yanked: Some(true),
+                        is_library: Some(true),
+                        rustdoc_status: Some(true),
                         id: details.releases[3].id,
-                        target_name: "foo".to_owned(),
+                        target_name: Some("foo".to_owned()),
                     },
                     Release {
                         version: semver::Version::parse("0.2.0-alpha")?,
-                        build_status: true,
-                        yanked: false,
-                        is_library: true,
-                        rustdoc_status: true,
+                        build_status: BuildStatus::Success,
+                        yanked: Some(false),
+                        is_library: Some(true),
+                        rustdoc_status: Some(true),
                         id: details.releases[4].id,
-                        target_name: "foo".to_owned(),
+                        target_name: Some("foo".to_owned()),
                     },
                     Release {
                         version: semver::Version::parse("0.1.1")?,
-                        build_status: true,
-                        yanked: false,
-                        is_library: true,
-                        rustdoc_status: true,
+                        build_status: BuildStatus::Success,
+                        yanked: Some(false),
+                        is_library: Some(true),
+                        rustdoc_status: Some(true),
                         id: details.releases[5].id,
-                        target_name: "foo".to_owned(),
+                        target_name: Some("foo".to_owned()),
                     },
                     Release {
                         version: semver::Version::parse("0.1.0")?,
-                        build_status: true,
-                        yanked: false,
-                        is_library: true,
-                        rustdoc_status: true,
+                        build_status: BuildStatus::Success,
+                        yanked: Some(false),
+                        is_library: Some(true),
+                        rustdoc_status: Some(true),
                         id: details.releases[6].id,
-                        target_name: "foo".to_owned(),
+                        target_name: Some("foo".to_owned()),
                     },
                     Release {
                         version: semver::Version::parse("0.0.1")?,
-                        build_status: false,
-                        yanked: false,
-                        is_library: false,
-                        rustdoc_status: false,
+                        build_status: BuildStatus::Failure,
+                        yanked: Some(false),
+                        is_library: Some(false),
+                        rustdoc_status: Some(false),
                         id: details.releases[7].id,
-                        target_name: "foo".to_owned(),
+                        target_name: Some("foo".to_owned()),
                     },
                 ]
             );
@@ -1056,7 +1216,36 @@ mod tests {
     }
 
     #[test]
-    fn releases_dropdowns_is_correct() {
+    fn test_latest_version_in_progress() {
+        wrapper(|env| {
+            let db = env.db();
+
+            env.fake_release().name("foo").version("0.0.1").create()?;
+            env.fake_release()
+                .name("foo")
+                .version("0.0.2")
+                .builds(vec![
+                    FakeBuild::default().build_status(BuildStatus::InProgress)
+                ])
+                .create()?;
+
+            for version in &["0.0.1", "0.0.2"] {
+                let details = env.runtime().block_on(async move {
+                    let mut conn = db.async_conn().await;
+                    crate_details(&mut conn, "foo", version, None).await
+                });
+                assert_eq!(
+                    details.latest_release().unwrap().version,
+                    semver::Version::parse("0.0.1")?
+                );
+            }
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn releases_dropdowns_show_binary_warning() {
         wrapper(|env| {
             env.fake_release()
                 .name("binary")
@@ -1065,12 +1254,13 @@ mod tests {
                 .create()?;
 
             let page = kuchikiki::parse_html()
-                .one(env.frontend().get("/crate/binary/0.1.0").send()?.text()?);
-            let warning = page.select_first("a.pure-menu-link.warn").unwrap();
+                .one(env.frontend().get("/crate/binary/latest").send()?.text()?);
+            let link = page
+                .select_first("a.pure-menu-link[href='/crate/binary/0.1.0']")
+                .unwrap();
 
             assert_eq!(
-                warning
-                    .as_node()
+                link.as_node()
                     .as_element()
                     .unwrap()
                     .attributes
@@ -1078,6 +1268,39 @@ mod tests {
                     .get("title")
                     .unwrap(),
                 "binary-0.1.0 is not a library"
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn releases_dropdowns_show_in_progress() {
+        wrapper(|env| {
+            env.fake_release()
+                .name("foo")
+                .version("0.1.0")
+                .builds(vec![
+                    FakeBuild::default().build_status(BuildStatus::InProgress)
+                ])
+                .create()?;
+
+            let response = env.frontend().get("/crate/foo/latest").send()?;
+
+            let page = kuchikiki::parse_html().one(response.text()?);
+            let link = page
+                .select_first("a.pure-menu-link[href='/crate/foo/0.1.0']")
+                .unwrap();
+
+            assert_eq!(
+                link.as_node()
+                    .as_element()
+                    .unwrap()
+                    .attributes
+                    .borrow()
+                    .get("title")
+                    .unwrap(),
+                "foo-0.1.0 is currently being built"
             );
 
             Ok(())
@@ -1095,6 +1318,7 @@ mod tests {
                 .add_owner(CrateOwner {
                     login: "foobar".into(),
                     avatar: "https://example.org/foobar".into(),
+                    kind: OwnerKind::User,
                 })
                 .create()?;
 
@@ -1104,7 +1328,11 @@ mod tests {
             });
             assert_eq!(
                 details.owners,
-                vec![("foobar".into(), "https://example.org/foobar".into())]
+                vec![(
+                    "foobar".into(),
+                    "https://example.org/foobar".into(),
+                    OwnerKind::User
+                )]
             );
 
             // Adding a new owner, and changing details on an existing owner
@@ -1114,10 +1342,12 @@ mod tests {
                 .add_owner(CrateOwner {
                     login: "foobar".into(),
                     avatar: "https://example.org/foobarv2".into(),
+                    kind: OwnerKind::User,
                 })
                 .add_owner(CrateOwner {
                     login: "barfoo".into(),
                     avatar: "https://example.org/barfoo".into(),
+                    kind: OwnerKind::User,
                 })
                 .create()?;
 
@@ -1130,8 +1360,16 @@ mod tests {
             assert_eq!(
                 owners,
                 vec![
-                    ("barfoo".into(), "https://example.org/barfoo".into()),
-                    ("foobar".into(), "https://example.org/foobarv2".into())
+                    (
+                        "barfoo".into(),
+                        "https://example.org/barfoo".into(),
+                        OwnerKind::User
+                    ),
+                    (
+                        "foobar".into(),
+                        "https://example.org/foobarv2".into(),
+                        OwnerKind::User
+                    )
                 ]
             );
 
@@ -1142,6 +1380,7 @@ mod tests {
                 .add_owner(CrateOwner {
                     login: "barfoo".into(),
                     avatar: "https://example.org/barfoo".into(),
+                    kind: OwnerKind::User,
                 })
                 .create()?;
 
@@ -1151,7 +1390,11 @@ mod tests {
             });
             assert_eq!(
                 details.owners,
-                vec![("barfoo".into(), "https://example.org/barfoo".into())]
+                vec![(
+                    "barfoo".into(),
+                    "https://example.org/barfoo".into(),
+                    OwnerKind::User
+                )]
             );
 
             // Changing owner details on another of their crates applies the change to both
@@ -1161,6 +1404,7 @@ mod tests {
                 .add_owner(CrateOwner {
                     login: "barfoo".into(),
                     avatar: "https://example.org/barfoov2".into(),
+                    kind: OwnerKind::User,
                 })
                 .create()?;
 
@@ -1170,7 +1414,11 @@ mod tests {
             });
             assert_eq!(
                 details.owners,
-                vec![("barfoo".into(), "https://example.org/barfoov2".into())]
+                vec![(
+                    "barfoo".into(),
+                    "https://example.org/barfoov2".into(),
+                    OwnerKind::User
+                )]
             );
 
             Ok(())
@@ -1282,6 +1530,44 @@ mod tests {
     }
 
     #[test]
+    fn details_with_repository_and_stats_can_render_icon() {
+        wrapper(|env| {
+            env.fake_release()
+                .name("library")
+                .version("0.1.0")
+                .repo("https://github.com/org/repo")
+                .github_stats("org/repo", 10, 10, 10)
+                .create()?;
+
+            let page = kuchikiki::parse_html().one(
+                env.frontend()
+                    .get("/crate/library/0.1.0/")
+                    .send()?
+                    .error_for_status()?
+                    .text()?,
+            );
+
+            let link = page
+                .select_first("a.pure-menu-link[href='https://github.com/org/repo']")
+                .unwrap();
+
+            let icon_node = link.as_node().children().nth(1).unwrap();
+            assert_eq!(
+                icon_node
+                    .as_element()
+                    .unwrap()
+                    .attributes
+                    .borrow()
+                    .get("class")
+                    .unwrap(),
+                "fa fa-solid fa-code-branch "
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
     fn feature_flags_report_null() {
         wrapper(|env| {
             let id = env
@@ -1290,9 +1576,12 @@ mod tests {
                 .version("0.1.0")
                 .create()?;
 
-            env.db()
-                .conn()
-                .query("UPDATE releases SET features = NULL WHERE id = $1", &[&id])?;
+            env.runtime().block_on(async {
+                let mut conn = env.async_db().await.async_conn().await;
+                sqlx::query!("UPDATE releases SET features = NULL WHERE id = $1", id)
+                    .execute(&mut *conn)
+                    .await
+            })?;
 
             let page = kuchikiki::parse_html().one(
                 env.frontend()
@@ -1301,6 +1590,53 @@ mod tests {
                     .text()?,
             );
             assert!(page.select_first(r#"p[data-id="null-features"]"#).is_ok());
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_minimal_failed_release_doesnt_error_features() {
+        wrapper(|env| {
+            env.runtime().block_on(async {
+                let mut conn = env.async_db().await.async_conn().await;
+                fake_release_that_failed_before_build(&mut conn, "foo", "0.1.0", "some errors")
+                    .await
+            })?;
+
+            let text_content = env
+                .frontend()
+                .get("/crate/foo/0.1.0/features")
+                .send()?
+                .error_for_status()?
+                .text()?;
+
+            assert!(text_content.contains(
+                "Feature flags are not available for this release because \
+                 the build failed before we could retrieve them"
+            ));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_minimal_failed_release_doesnt_error() {
+        wrapper(|env| {
+            env.runtime().block_on(async {
+                let mut conn = env.async_db().await.async_conn().await;
+                fake_release_that_failed_before_build(&mut conn, "foo", "0.1.0", "some errors")
+                    .await
+            })?;
+
+            let text_content = env
+                .frontend()
+                .get("/crate/foo/0.1.0")
+                .send()?
+                .error_for_status()?
+                .text()?;
+
+            assert!(text_content.contains("docs.rs failed to build foo"));
+
             Ok(())
         });
     }
@@ -1330,7 +1666,7 @@ mod tests {
                 assert_eq!(
                     url.contains("/target-redirect/"),
                     should_contain_redirect,
-                    "ajax: {ajax:?}, should_contain_redirect: {should_contain_redirect:?}",
+                    "url: {url:?}, ajax: {ajax:?}, should_contain_redirect: {should_contain_redirect:?}",
                 );
                 if !should_contain_redirect {
                     assert_eq!(rel, "");
@@ -1341,20 +1677,12 @@ mod tests {
             platform_links
         }
 
-        fn run_check_links_redir(
-            env: &TestEnvironment,
-            url_start: &str,
-            url_end: &str,
-            extra: &str,
-            should_contain_redirect: bool,
-        ) {
-            let response = env
-                .frontend()
-                .get(&format!("{url_start}{url_end}"))
-                .send()
-                .unwrap();
+        fn run_check_links_redir(env: &TestEnvironment, url: &str, should_contain_redirect: bool) {
+            let response = env.frontend().get(url).send().unwrap();
             assert!(response.status().is_success());
-            let list1 = check_links(response.text().unwrap(), false, should_contain_redirect);
+            let text = response.text().unwrap();
+            let list1 = check_links(text.clone(), false, should_contain_redirect);
+
             // Same test with AJAX endpoint.
             let (start, extra_name) = if url_start.starts_with("/crate/") {
                 ("", "/crate")
@@ -1386,27 +1714,17 @@ mod tests {
                 .source_file("README.md", b"storage readme")
                 .create()?;
 
-            // FIXME: For some reason, there are target-redirects on non-AJAX lists on docs.rs
-            // crate pages other than the "default" one.
-            run_check_links_redir(env, "/crate/dummy/0.4.0", "/features", "", false);
-            run_check_links_redir(env, "/crate/dummy/0.4.0", "/builds", "", false);
-            run_check_links_redir(env, "/crate/dummy/0.4.0", "/source/", "", false);
-            run_check_links_redir(env, "/crate/dummy/0.4.0", "/source/README.md", "", false);
+            run_check_links_redir(env, "/crate/dummy/0.4.0/features", false);
+            run_check_links_redir(env, "/crate/dummy/0.4.0/builds", false);
+            run_check_links_redir(env, "/crate/dummy/0.4.0/source/", false);
+            run_check_links_redir(env, "/crate/dummy/0.4.0/source/README.md", false);
+            run_check_links_redir(env, "/crate/dummy/0.4.0", false);
 
-            run_check_links_redir(env, "/crate/dummy/0.4.0", "", "/", false);
-            run_check_links_redir(env, "/dummy/latest", "/dummy", "/", true);
+            run_check_links_redir(env, "/dummy/latest/dummy", true);
+            run_check_links_redir(env, "/dummy/0.4.0/x86_64-pc-windows-msvc/dummy", true);
             run_check_links_redir(
                 env,
-                "/dummy/0.4.0",
-                "/x86_64-pc-windows-msvc/dummy",
-                "/",
-                true,
-            );
-            run_check_links_redir(
-                env,
-                "/dummy/0.4.0",
-                "/x86_64-pc-windows-msvc/dummy/struct.A.html",
-                "/",
+                "/dummy/0.4.0/x86_64-pc-windows-msvc/dummy/struct.A.html",
                 true,
             );
 
@@ -1619,5 +1937,124 @@ mod tests {
             ));
             Ok(())
         });
+    }
+
+    #[test]
+    fn test_crate_name_with_other_uri_chars() {
+        wrapper(|env| {
+            env.fake_release().name("dummy").version("1.0.0").create()?;
+
+            assert_eq!(
+                env.frontend()
+                    .get_no_redirect("/crate/dummy%3E")
+                    .send()?
+                    .status(),
+                StatusCode::FOUND
+            );
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_build_status_no_builds() {
+        async_wrapper(|env| async move {
+            let release_id = env
+                .async_fake_release()
+                .await
+                .name("dummy")
+                .version("0.1.0")
+                .create_async()
+                .await?;
+
+            let mut conn = env.async_db().await.async_conn().await;
+            sqlx::query!("DELETE FROM builds")
+                .execute(&mut *conn)
+                .await?;
+
+            update_build_status(&mut conn, release_id).await?;
+
+            assert_eq!(
+                release_build_status(&mut conn, "dummy", "0.1.0").await,
+                BuildStatus::InProgress
+            );
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_build_status_successful() {
+        async_wrapper(|env| async move {
+            env.async_fake_release()
+                .await
+                .name("dummy")
+                .version("0.1.0")
+                .builds(vec![
+                    FakeBuild::default().build_status(BuildStatus::Success),
+                    FakeBuild::default().build_status(BuildStatus::Failure),
+                    FakeBuild::default().build_status(BuildStatus::InProgress),
+                ])
+                .create_async()
+                .await?;
+
+            let mut conn = env.async_db().await.async_conn().await;
+
+            assert_eq!(
+                release_build_status(&mut conn, "dummy", "0.1.0").await,
+                BuildStatus::Success
+            );
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_build_status_failed() {
+        async_wrapper(|env| async move {
+            env.async_fake_release()
+                .await
+                .name("dummy")
+                .version("0.1.0")
+                .builds(vec![
+                    FakeBuild::default().build_status(BuildStatus::Failure),
+                    FakeBuild::default().build_status(BuildStatus::InProgress),
+                ])
+                .create_async()
+                .await?;
+
+            let mut conn = env.async_db().await.async_conn().await;
+
+            assert_eq!(
+                release_build_status(&mut conn, "dummy", "0.1.0").await,
+                BuildStatus::Failure
+            );
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_build_status_in_progress() {
+        async_wrapper(|env| async move {
+            env.async_fake_release()
+                .await
+                .name("dummy")
+                .version("0.1.0")
+                .builds(vec![
+                    FakeBuild::default().build_status(BuildStatus::InProgress)
+                ])
+                .create_async()
+                .await?;
+
+            let mut conn = env.async_db().await.async_conn().await;
+
+            assert_eq!(
+                release_build_status(&mut conn, "dummy", "0.1.0").await,
+                BuildStatus::InProgress
+            );
+
+            Ok(())
+        })
     }
 }

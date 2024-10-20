@@ -3,7 +3,9 @@ use anyhow::{anyhow, Context};
 use chrono::{DateTime, Utc};
 use reqwest::header::{HeaderValue, ACCEPT, USER_AGENT};
 use semver::Version;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::fmt;
+use tracing::instrument;
 use url::Url;
 
 const APP_USER_AGENT: &str = concat!(
@@ -45,6 +47,26 @@ impl Default for ReleaseData {
 pub struct CrateOwner {
     pub(crate) avatar: String,
     pub(crate) login: String,
+    pub(crate) kind: OwnerKind,
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, sqlx::Type,
+)]
+#[sqlx(type_name = "owner_kind", rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+pub enum OwnerKind {
+    User,
+    Team,
+}
+
+impl fmt::Display for OwnerKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::User => f.write_str("user"),
+            Self::Team => f.write_str("team"),
+        }
+    }
 }
 
 impl RegistryApi {
@@ -67,6 +89,7 @@ impl RegistryApi {
         })
     }
 
+    #[instrument(skip(self))]
     pub async fn get_crate_data(&self, name: &str) -> Result<CrateData> {
         let owners = self
             .get_owners(name)
@@ -76,6 +99,7 @@ impl RegistryApi {
         Ok(CrateData { owners })
     }
 
+    #[instrument(skip(self))]
     pub(crate) async fn get_release_data(&self, name: &str, version: &str) -> Result<ReleaseData> {
         let (release_time, yanked, downloads) = self
             .get_release_time_yanked_downloads(name, version)
@@ -165,6 +189,8 @@ impl RegistryApi {
             avatar: Option<String>,
             #[serde(default)]
             login: Option<String>,
+            #[serde(default)]
+            kind: Option<OwnerKind>,
         }
 
         let response: Response = retry_async(
@@ -195,6 +221,7 @@ impl RegistryApi {
             .map(|data| CrateOwner {
                 avatar: data.avatar.unwrap_or_default(),
                 login: data.login.unwrap_or_default(),
+                kind: data.kind.unwrap_or(OwnerKind::User),
             })
             .collect();
 
