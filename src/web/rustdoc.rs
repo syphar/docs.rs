@@ -461,12 +461,14 @@ pub(crate) async fn rustdoc_html_server_handler(
         .into_response());
     }
 
+    let krate = CrateDetails::from_matched_release(&mut conn, matched_release).await?;
+
     let (target, inner_path) =
-        params.split_path_into_target_and_inner_path(&krate.metadata.doc_targets);
+        params.split_path_into_target_and_inner_path(krate.metadata.doc_targets.iter().flatten());
 
     // if visiting the full path to the default target, remove the target from the path
     // expects a req_path that looks like `[/:target]/.*`
-    if target == Some(&krate.metadata.default_target) {
+    if target == krate.metadata.default_target.as_deref() {
         return redirect(
             &params.name,
             &krate.version,
@@ -484,10 +486,10 @@ pub(crate) async fn rustdoc_html_server_handler(
 
     if storage_path.ends_with('/') {
         storage_path.push_str("index.html");
-        inner_path.req_path.push("index.html");
+        // inner_path.push_str("/index.html");
     }
 
-    trace!(?storage_path, ?req_path, "try fetching from storage");
+    trace!(?storage_path, ?inner_path, "try fetching from storage");
 
     // Attempt to load the file from the database
     let blob = match storage
@@ -509,7 +511,7 @@ pub(crate) async fn rustdoc_html_server_handler(
             }
             // If it fails, we try again with /index.html at the end
             storage_path.push_str("/index.html");
-            req_path.push("index.html");
+            // req_path.push("index.html");
 
             return if storage
                 .rustdoc_file_exists(
@@ -524,7 +526,7 @@ pub(crate) async fn rustdoc_html_server_handler(
                 redirect(
                     &params.name,
                     &krate.version,
-                    &req_path,
+                    params.path,
                     CachePolicy::ForeverInCdn,
                 )
             } else if req_path.first().map_or(false, |p| p.contains('-')) {
@@ -533,9 +535,7 @@ pub(crate) async fn rustdoc_html_server_handler(
                 Ok(axum_cached_redirect(
                     encode_url_path(&format!(
                         "/crate/{}/{}/target-redirect/{}",
-                        params.name,
-                        params.version,
-                        req_path.join("/")
+                        params.name, params.version, params.path,
                     )),
                     CachePolicy::ForeverInCdn,
                 )?
