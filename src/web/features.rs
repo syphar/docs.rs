@@ -3,12 +3,13 @@ use crate::{
     impl_axum_webpage,
     web::{
         cache::CachePolicy,
-        crate_details::CrateDetails,
         error::{AxumNope, AxumResult},
         extractors::{DbConnection, Path},
         filters,
         headers::CanonicalUrl,
-        match_version, MetaData, ReqVersion,
+        match_version,
+        page::templates::{RenderRegular, RenderSolid},
+        MetaData, ReqVersion,
     },
 };
 use anyhow::anyhow;
@@ -113,15 +114,6 @@ impl_axum_webpage! {
 }
 
 impl FeaturesPage {
-    pub(crate) fn krate(&self) -> Option<&CrateDetails> {
-        None
-    }
-    pub(crate) fn permalink_path(&self) -> &str {
-        ""
-    }
-    pub(crate) fn get_metadata(&self) -> Option<&MetaData> {
-        Some(&self.metadata)
-    }
     pub(crate) fn use_direct_platform_links(&self) -> bool {
         true
     }

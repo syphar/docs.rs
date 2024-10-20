@@ -1,45 +1,31 @@
 use crate::error::Result;
 use crate::web::rustdoc::RustdocPage;
-use crate::web::MetaData;
 use anyhow::Context;
 use rinja::Template;
-use std::{fmt, ops::Deref, sync::Arc};
+use std::sync::Arc;
 use tracing::trace;
 
-macro_rules! rustdoc_page {
-    ($name:ident, $path:literal $(, $meta:ident)?) => {
-        #[derive(Template)]
-        #[template(path = $path)]
-        pub struct $name<'a> {
-            inner: &'a RustdocPage,
-        }
-
-        impl<'a> $name<'a> {
-            pub fn new(inner: &'a RustdocPage) -> Self {
-                Self { inner }
-            }
-
-            $(
-                pub(crate) fn $meta(&self) -> Option<&MetaData> {
-                    Some(&self.inner.metadata)
-                }
-            )?
-        }
-
-        impl<'a> Deref for $name<'a> {
-            type Target = RustdocPage;
-
-            fn deref(&self) -> &Self::Target {
-                self.inner
-            }
-        }
-    };
+#[derive(Template)]
+#[template(path = "rustdoc/head.html")]
+pub struct Head<'a> {
+    rustdoc_css_file: Option<&'a str>,
 }
 
-rustdoc_page!(Head, "rustdoc/head.html");
-rustdoc_page!(Vendored, "rustdoc/vendored.html");
-rustdoc_page!(Body, "rustdoc/body.html");
-rustdoc_page!(Topbar, "rustdoc/topbar.html", get_metadata);
+impl<'a> Head<'a> {
+    pub fn new(inner: &'a RustdocPage) -> Self {
+        Self {
+            rustdoc_css_file: inner.metadata.rustdoc_css_file.as_deref(),
+        }
+    }
+}
+
+#[derive(Template)]
+#[template(path = "rustdoc/vendored.html")]
+pub struct Vendored;
+
+#[derive(Template)]
+#[template(path = "rustdoc/body.html")]
+pub struct Body;
 
 /// Holds all data relevant to templating
 #[derive(Debug)]
@@ -102,10 +88,9 @@ impl TemplateData {
 }
 
 pub mod filters {
-    use super::IconType;
     use chrono::{DateTime, Utc};
+    use rinja::filters::Safe;
     use std::borrow::Cow;
-    use std::fmt;
 
     // Copied from `tera`.
     pub fn escape_html(input: &str) -> rinja::Result<Cow<'_, str>> {
@@ -215,25 +200,12 @@ pub mod filters {
         Ok(unindented)
     }
 
-    pub fn fas(value: &str, fw: bool, spin: bool, extra: &str) -> rinja::Result<String> {
-        IconType::Strong.render(value, fw, spin, extra)
-    }
-
-    pub fn far(value: &str, fw: bool, spin: bool, extra: &str) -> rinja::Result<String> {
-        IconType::Regular.render(value, fw, spin, extra)
-    }
-
-    pub fn fab(value: &str, fw: bool, spin: bool, extra: &str) -> rinja::Result<String> {
-        IconType::Brand.render(value, fw, spin, extra)
-    }
-
-    pub fn highlight(code: impl std::fmt::Display, lang: &str) -> rinja::Result<String> {
+    pub fn highlight(code: impl std::fmt::Display, lang: &str) -> rinja::Result<Safe<String>> {
         let highlighted_code = crate::web::highlight::with_lang(Some(lang), &code.to_string());
-        Ok(format!("<pre><code>{}</code></pre>", highlighted_code))
-    }
-
-    pub fn slugify<T: AsRef<str>>(code: T) -> rinja::Result<String> {
-        Ok(slug::slugify(code.as_ref()))
+        Ok(Safe(format!(
+            "<pre><code>{}</code></pre>",
+            highlighted_code
+        )))
     }
 
     pub fn round(value: &f32, precision: u32) -> rinja::Result<String> {
@@ -245,90 +217,68 @@ pub mod filters {
         Ok(((multiplier * *value).round() / multiplier).to_string())
     }
 
-    pub fn date(value: &DateTime<Utc>, format: &str) -> rinja::Result<String> {
-        Ok(format!("{}", value.format(format)))
-    }
-
-    pub fn opt_date(value: &Option<DateTime<Utc>>, format: &str) -> rinja::Result<String> {
-        if let Some(value) = value {
-            date(value, format)
-        } else {
-            Ok(String::new())
-        }
-    }
-
-    pub fn unwrap<T: fmt::Display>(value: &Option<T>) -> rinja::Result<&T> {
-        Ok(value.as_ref().expect("`unwrap` filter failed"))
-    }
-
     pub fn split_first<'a>(value: &'a str, pat: &str) -> rinja::Result<Option<&'a str>> {
         Ok(value.split(pat).next())
     }
 
-    pub fn to_string<T: fmt::Display>(value: &T) -> rinja::Result<String> {
-        Ok(value.to_string())
-    }
-
-    pub fn json_encode<T: ?Sized + serde::Serialize>(value: &T) -> rinja::Result<String> {
-        Ok(serde_json::to_string(value).expect("`encode_json` failed"))
-    }
-
-    pub fn as_f32(value: &i32) -> rinja::Result<f32> {
-        Ok(*value as f32)
-    }
-
-    pub fn rest_menu_url(current_target: &str, inner_path: &str) -> rinja::Result<String> {
-        if current_target.is_empty() {
-            return Ok(String::new());
-        }
-        Ok(format!("/{current_target}/{inner_path}"))
+    pub fn json_encode<T: ?Sized + serde::Serialize>(value: &T) -> rinja::Result<Safe<String>> {
+        Ok(Safe(
+            serde_json::to_string(value).expect("`encode_json` failed"),
+        ))
     }
 }
 
-enum IconType {
-    Strong,
-    Regular,
-    Brand,
+pub trait RenderSolid {
+    fn render_solid(&self, fw: bool, spin: bool, extra: &str) -> rinja::filters::Safe<String>;
 }
 
-impl fmt::Display for IconType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let icon = match self {
-            Self::Strong => "solid",
-            Self::Regular => "regular",
-            Self::Brand => "brands",
-        };
-
-        f.write_str(icon)
+impl<T: font_awesome_as_a_crate::Solid> RenderSolid for T {
+    fn render_solid(&self, fw: bool, spin: bool, extra: &str) -> rinja::filters::Safe<String> {
+        render("fa-solid", self.icon_name(), fw, spin, extra)
     }
 }
 
-impl IconType {
-    fn render(self, icon_name: &str, fw: bool, spin: bool, extra: &str) -> rinja::Result<String> {
-        let type_ = match self {
-            IconType::Strong => font_awesome_as_a_crate::Type::Solid,
-            IconType::Regular => font_awesome_as_a_crate::Type::Regular,
-            IconType::Brand => font_awesome_as_a_crate::Type::Brands,
-        };
+pub trait RenderRegular {
+    fn render_regular(&self, fw: bool, spin: bool, extra: &str) -> rinja::filters::Safe<String>;
+}
 
-        let icon_file_string = font_awesome_as_a_crate::svg(type_, icon_name).unwrap_or("");
-
-        let mut classes = vec!["fa-svg"];
-        if fw {
-            classes.push("fa-svg-fw");
-        }
-        if spin {
-            classes.push("fa-svg-spin");
-        }
-        if !extra.is_empty() {
-            classes.push(extra);
-        }
-        let icon = format!(
-            "\
-<span class=\"{class}\" aria-hidden=\"true\">{icon_file_string}</span>",
-            class = classes.join(" "),
-        );
-
-        Ok(icon)
+impl<T: font_awesome_as_a_crate::Regular> RenderRegular for T {
+    fn render_regular(&self, fw: bool, spin: bool, extra: &str) -> rinja::filters::Safe<String> {
+        render("fa-regular", self.icon_name(), fw, spin, extra)
     }
+}
+
+pub trait RenderBrands {
+    fn render_brands(&self, fw: bool, spin: bool, extra: &str) -> rinja::filters::Safe<String>;
+}
+
+impl<T: font_awesome_as_a_crate::Brands> RenderBrands for T {
+    fn render_brands(&self, fw: bool, spin: bool, extra: &str) -> rinja::filters::Safe<String> {
+        render("fa-brands", self.icon_name(), fw, spin, extra)
+    }
+}
+
+fn render(
+    icon_kind: &str,
+    css_class: &str,
+    fw: bool,
+    spin: bool,
+    extra: &str,
+) -> rinja::filters::Safe<String> {
+    let mut classes = Vec::new();
+    if fw {
+        classes.push("fa-fw");
+    }
+    if spin {
+        classes.push("fa-spin");
+    }
+    if !extra.is_empty() {
+        classes.push(extra);
+    }
+    let icon = format!(
+        "<span class=\"fa {icon_kind} fa-{css_class} {classes}\" aria-hidden=\"true\"></span>",
+        classes = classes.join(" "),
+    );
+
+    rinja::filters::Safe(icon)
 }

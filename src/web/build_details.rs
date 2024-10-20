@@ -2,11 +2,12 @@ use crate::{
     db::types::BuildStatus,
     impl_axum_webpage,
     web::{
-        crate_details::CrateDetails,
         error::{AxumNope, AxumResult},
         extractors::{DbConnection, Path},
         file::File,
-        filters, MetaData,
+        filters,
+        page::templates::{RenderRegular, RenderSolid},
+        MetaData,
     },
     AsyncStorage, Config,
 };
@@ -45,15 +46,6 @@ impl_axum_webpage! { BuildDetailsPage }
 
 // Used for template rendering.
 impl BuildDetailsPage {
-    pub(crate) fn krate(&self) -> Option<&CrateDetails> {
-        None
-    }
-    pub(crate) fn permalink_path(&self) -> &str {
-        ""
-    }
-    pub(crate) fn get_metadata(&self) -> Option<&MetaData> {
-        Some(&self.metadata)
-    }
     pub(crate) fn use_direct_platform_links(&self) -> bool {
         true
     }

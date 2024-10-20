@@ -13,7 +13,6 @@ pub struct Config {
 
     // Database connection params
     pub(crate) database_url: String,
-    pub(crate) max_legacy_pool_size: u32,
     pub(crate) max_pool_size: u32,
     pub(crate) min_pool_idle: u32,
 
@@ -91,6 +90,11 @@ pub struct Config {
 
     pub(crate) cdn_backend: CdnKind,
 
+    /// The maximum age of a queued invalidation request before it is
+    /// considered too old and we fall back to a full purge of the
+    /// distributions.
+    pub(crate) cdn_max_queued_age: Duration,
+
     // CloudFront distribution ID for the web server.
     // Will be used for invalidation-requests.
     pub cloudfront_distribution_id_web: Option<String>,
@@ -153,8 +157,7 @@ impl Config {
             prefix: prefix.clone(),
 
             database_url: require_env("DOCSRS_DATABASE_URL")?,
-            max_legacy_pool_size: env("DOCSRS_MAX_LEGACY_POOL_SIZE", 45)?,
-            max_pool_size: env("DOCSRS_MAX_POOL_SIZE", 45)?,
+            max_pool_size: env("DOCSRS_MAX_POOL_SIZE", 90)?,
             min_pool_idle: env("DOCSRS_MIN_POOL_IDLE", 10)?,
 
             storage_backend: env("DOCSRS_STORAGE_BACKEND", StorageKind::Database)?,
@@ -203,6 +206,7 @@ impl Config {
             cache_invalidatable_responses: env("DOCSRS_CACHE_INVALIDATEABLE_RESPONSES", true)?,
 
             cdn_backend: env("DOCSRS_CDN_BACKEND", CdnKind::Dummy)?,
+            cdn_max_queued_age: Duration::from_secs(env("DOCSRS_CDN_MAX_QUEUED_AGE", 3600)?),
 
             cloudfront_distribution_id_web: maybe_env("CLOUDFRONT_DISTRIBUTION_ID_WEB")?,
             cloudfront_distribution_id_static: maybe_env("CLOUDFRONT_DISTRIBUTION_ID_STATIC")?,

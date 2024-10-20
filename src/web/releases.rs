@@ -2,19 +2,17 @@
 
 use crate::{
     build_queue::QueuedCrate,
-    cdn,
-    db::Pool,
-    impl_axum_webpage,
-    utils::{report_error, retry_async, spawn_blocking},
+    cdn, impl_axum_webpage,
+    utils::{report_error, retry_async},
     web::{
         axum_parse_uri_with_params, axum_redirect, encode_url_path,
         error::{AxumNope, AxumResult},
         extractors::{DbConnection, Path},
         match_version,
-        page::templates::filters,
-        MetaData, ReqVersion,
+        page::templates::{filters, RenderRegular, RenderSolid},
+        ReqVersion,
     },
-    BuildQueue, Config, InstanceMetrics,
+    AsyncBuildQueue, Config, InstanceMetrics,
 };
 use anyhow::{anyhow, bail, Context as _, Result};
 use axum::{
@@ -183,7 +181,7 @@ async fn get_search_results(
 
     let url = config
         .registry_api_host
-        .join(&format!("/api/v1/crates{query_params}"))?;
+        .join(&format!("api/v1/crates{query_params}"))?;
     debug!("fetching search results from {}", url);
 
     // extract the query from the query args.
@@ -312,12 +310,6 @@ impl_axum_webpage! {
     cache_policy = |_| CachePolicy::ShortInCdnAndBrowser,
 }
 
-impl HomePage {
-    pub(crate) fn get_metadata(&self) -> Option<&MetaData> {
-        None
-    }
-}
-
 pub(crate) async fn home_page(mut conn: DbConnection) -> AxumResult<impl IntoResponse> {
     let recent_releases =
         get_releases(&mut conn, 1, RELEASES_IN_HOME, Order::ReleaseTime, true).await?;
@@ -365,12 +357,6 @@ struct ViewReleases {
 }
 
 impl_axum_webpage! { ViewReleases }
-
-impl ViewReleases {
-    pub(crate) fn get_metadata(&self) -> Option<&MetaData> {
-        None
-    }
-}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum ReleaseType {
@@ -522,12 +508,6 @@ impl Default for Search {
             status: http::StatusCode::OK,
             csp_nonce: String::new(),
         }
-    }
-}
-
-impl Search {
-    pub(crate) fn get_metadata(&self) -> Option<&MetaData> {
-        None
     }
 }
 
@@ -739,12 +719,6 @@ struct ReleaseActivity {
     csp_nonce: String,
 }
 
-impl ReleaseActivity {
-    pub(crate) fn get_metadata(&self) -> Option<&MetaData> {
-        None
-    }
-}
-
 impl_axum_webpage! { ReleaseActivity }
 
 pub(crate) async fn activity_handler(mut conn: DbConnection) -> AxumResult<impl IntoResponse> {
@@ -808,52 +782,72 @@ pub(crate) async fn activity_handler(mut conn: DbConnection) -> AxumResult<impl 
 struct BuildQueuePage {
     description: &'static str,
     queue: Vec<QueuedCrate>,
-    active_deployments: Vec<String>,
+    active_cdn_deployments: Vec<String>,
+    in_progress_builds: Vec<(String, String)>,
     csp_nonce: String,
 }
 
 impl_axum_webpage! { BuildQueuePage }
 
-impl BuildQueuePage {
-    pub(crate) fn get_metadata(&self) -> Option<&MetaData> {
-        None
-    }
-}
-
 pub(crate) async fn build_queue_handler(
-    Extension(build_queue): Extension<Arc<BuildQueue>>,
-    Extension(pool): Extension<Pool>,
+    Extension(build_queue): Extension<Arc<AsyncBuildQueue>>,
+    mut conn: DbConnection,
 ) -> AxumResult<impl IntoResponse> {
-    let (queue, active_deployments) = spawn_blocking(move || {
-        let mut queue = build_queue.queued_crates()?;
-        for krate in queue.iter_mut() {
+    let mut active_cdn_deployments: Vec<_> = cdn::queued_or_active_crate_invalidations(&mut conn)
+        .await?
+        .into_iter()
+        .map(|i| i.krate)
+        .collect();
+
+    // deduplicate the list of crates while keeping their order
+    let mut set = HashSet::new();
+    active_cdn_deployments.retain(|k| set.insert(k.clone()));
+
+    // reverse the list, so the oldest comes first
+    active_cdn_deployments.reverse();
+
+    let in_progress_builds: Vec<(String, String)> = sqlx::query!(
+        r#"SELECT
+            crates.name,
+            releases.version
+         FROM builds
+         INNER JOIN releases ON releases.id = builds.rid
+         INNER JOIN crates ON releases.crate_id = crates.id
+         WHERE
+            builds.build_status = 'in_progress'
+         ORDER BY builds.id ASC"#
+    )
+    .fetch_all(&mut *conn)
+    .await?
+    .into_iter()
+    .map(|rec| (rec.name, rec.version))
+    .collect();
+
+    let queue: Vec<QueuedCrate> = build_queue
+        .queued_crates()
+        .await?
+        .into_iter()
+        .filter(|krate| {
+            !in_progress_builds.iter().any(|(name, version)| {
+                // use `.any` instead of `.contains` to avoid cloning name& version for the match
+                *name == krate.name && *version == krate.version
+            })
+        })
+        .map(|mut krate| {
             // The priority here is inverted: in the database if a crate has a higher priority it
             // will be built after everything else, which is counter-intuitive for people not
             // familiar with docs.rs's inner workings.
             krate.priority = -krate.priority;
-        }
 
-        let mut conn = pool.get()?;
-        let mut active_deployments: Vec<_> = cdn::queued_or_active_crate_invalidations(&mut *conn)?
-            .into_iter()
-            .map(|i| i.krate)
-            .collect();
-
-        // deduplicate the list of crates while keeping their order
-        let mut set = HashSet::new();
-        active_deployments.retain(|k| set.insert(k.clone()));
-
-        // reverse the list, so the oldest comes first
-        active_deployments.reverse();
-
-        Ok((queue, active_deployments))
-    })
-    .await?;
+            krate
+        })
+        .collect();
 
     Ok(BuildQueuePage {
         description: "crate documentation scheduled to build & deploy",
         queue,
-        active_deployments,
+        active_cdn_deployments,
+        in_progress_builds,
         csp_nonce: String::new(),
     })
 }
@@ -1002,7 +996,7 @@ mod tests {
     #[test]
     fn im_feeling_lucky_with_stars() {
         wrapper(|env| {
-            {
+            env.runtime().block_on(async {
                 // The normal test-setup will offset all primary sequences by 10k
                 // to prevent errors with foreign key relations.
                 // Random-crate-search relies on the sequence for the crates-table
@@ -1010,9 +1004,11 @@ mod tests {
                 // crate in the db breaks this test.
                 // That's why we reset the id-sequence to zero for this test.
 
-                let mut conn = env.db().conn();
-                conn.execute(r#"ALTER SEQUENCE crates_id_seq RESTART WITH 1"#, &[])?;
-            }
+                let mut conn = env.async_db().await.async_conn().await;
+                sqlx::query!(r#"ALTER SEQUENCE crates_id_seq RESTART WITH 1"#)
+                    .execute(&mut *conn)
+                    .await
+            })?;
 
             let web = env.frontend();
             env.fake_release()
@@ -1721,16 +1717,18 @@ mod tests {
 
             let web = env.frontend();
 
-            cdn::queue_crate_invalidation(&mut *env.db().conn(), &env.config(), "krate_2")?;
+            env.runtime().block_on(async move {
+                let mut conn = env.async_db().await.async_conn().await;
+                cdn::queue_crate_invalidation(&mut conn, &env.config(), "krate_2").await
+            })?;
 
-            let empty = kuchikiki::parse_html().one(web.get("/releases/queue").send()?.text()?);
-            assert!(empty
-                .select(".release > strong")
+            let content = kuchikiki::parse_html().one(web.get("/releases/queue").send()?.text()?);
+            assert!(content
+                .select(".release > div > strong")
                 .expect("missing heading")
                 .any(|el| el.text_contents().contains("active CDN deployments")));
 
-            let full = kuchikiki::parse_html().one(web.get("/releases/queue").send()?.text()?);
-            let items = full
+            let items = content
                 .select(".queue-list > li")
                 .expect("missing list items")
                 .collect::<Vec<_>>();
@@ -1747,7 +1745,6 @@ mod tests {
     #[test]
     fn test_releases_queue() {
         wrapper(|env| {
-            let queue = env.build_queue();
             let web = env.frontend();
 
             let empty = kuchikiki::parse_html().one(web.get("/releases/queue").send()?.text()?);
@@ -1761,6 +1758,7 @@ mod tests {
                 .expect("missing heading")
                 .any(|el| el.text_contents().contains("active CDN deployments")));
 
+            let queue = env.build_queue();
             queue.add_crate("foo", "1.0.0", 0, None)?;
             queue.add_crate("bar", "0.1.0", -10, None)?;
             queue.add_crate("baz", "0.0.1", 10, None)?;
@@ -1788,6 +1786,53 @@ mod tests {
                         .contains(&format!("priority: {priority}")));
                 }
             }
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_releases_queue_in_progress() {
+        wrapper(|env| {
+            let web = env.frontend();
+
+            // we have two queued releases, where the build for one is already in progress
+            let queue = env.build_queue();
+            queue.add_crate("foo", "1.0.0", 0, None)?;
+            queue.add_crate("bar", "0.1.0", 0, None)?;
+
+            env.fake_release()
+                .name("foo")
+                .version("1.0.0")
+                .builds(vec![FakeBuild::default()
+                    .build_status(BuildStatus::InProgress)
+                    .rustc_version("rustc (blabla 2022-01-01)")
+                    .docsrs_version("docs.rs 4.0.0")])
+                .create()?;
+
+            let full = kuchikiki::parse_html().one(web.get("/releases/queue").send()?.text()?);
+
+            let lists = full
+                .select(".queue-list")
+                .expect("missing queues")
+                .collect::<Vec<_>>();
+            assert_eq!(lists.len(), 2);
+
+            let in_progress_items: Vec<_> = lists[0]
+                .as_node()
+                .select("li > a")
+                .expect("missing in progress list items")
+                .map(|node| node.text_contents().trim().to_string())
+                .collect();
+            assert_eq!(in_progress_items, vec!["foo 1.0.0"]);
+
+            let queued_items: Vec<_> = lists[1]
+                .as_node()
+                .select("li > a")
+                .expect("missing queued list items")
+                .map(|node| node.text_contents().trim().to_string())
+                .collect();
+            assert_eq!(queued_items, vec!["bar 0.1.0"]);
 
             Ok(())
         });

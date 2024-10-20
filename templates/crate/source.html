@@ -6,14 +6,7 @@
 {%- endblock title -%}
 
 {%- block topbar -%}
-  {%- set metadata = metadata -%}
-  {%- set current_target = String::new() -%}
-  {%- set latest_version = "" -%}
-  {%- set latest_path = "" -%}
-  {%- set target = "" -%}
   {%- set inner_path = metadata.target_name_url() -%}
-  {%- set is_latest_version = true -%}
-  {%- set is_prerelease = false -%}
   {%- include "rustdoc/topbar.html" -%}
 {%- endblock topbar -%}
 
@@ -36,13 +29,13 @@
                         {# If we are displaying a file, we also add a button to hide the file sidebar #}
                         {% if has_file_content %}
                             <li class="pure-menu-item toggle-source">
-                                <button aria-label="Hide source sidebar" title="Hide source sidebar" aria-expanded="true"><span class="left">{{ "chevron-left"|fas(false, false, "")|safe }}</span><span class="right">{{ "chevron-right"|fas(false, false, "")|safe }}</span> <span class="text">Hide files</span></button>
+                                <button aria-label="Hide source sidebar" title="Hide source sidebar" aria-expanded="true"><span class="left">{{ crate::icons::IconChevronLeft.render_solid(false, false, "") }}</span><span class="right">{{ crate::icons::IconChevronRight.render_solid(false, false, "") }}</span> <span class="text">Hide files</span></button>
                             </li>
                         {% endif %}
                         {# If this isn't the root folder, show a 'back' button #}
                         {%- if show_parent_link -%}
                             <li class="pure-menu-item">
-                                <a href="../" class="pure-menu-link">{{ "folder-open"|far(false, false, "")|safe }} <span class="text">..</span></a>
+                                <a href="../" class="pure-menu-link">{{ crate::icons::IconFolderOpen.render_regular(false, false, "") }} <span class="text">..</span></a>
                             </li>
                         {%- endif -%}
 
@@ -55,23 +48,23 @@
                                 <a href="./{{ file.name }}{% if file.mime == "dir" %}/{% endif %}" class="pure-menu-link">
                                     {# Directories #}
                                     {%- if file.mime == "dir" -%}
-                                        {{ "folder-open"|far(false, false, "")|safe }}
+                                        {{ crate::icons::IconFolderOpen.render_regular(false, false, "") }}
 
                                     {# Rust files #}
                                     {%- elif file.mime == "text/rust" -%}
-                                        {{ "rust"|fab(false, false, "")|safe }}
+                                        {{ crate::icons::IconRust.render_brands(false, false, "") }}
 
                                     {# Cargo.lock #}
                                     {%- elif file.mime == "text/plain" && file.name == "Cargo.lock" -%}
-                                        {{ "lock"|fas(false, false, "")|safe }}
+                                        {{ crate::icons::IconLock.render_solid(false, false, "") }}
 
                                     {# Markdown files #}
                                     {% elif file.mime == "text/markdown" %}
-                                        {{ "markdown"|fab(false, false, "")|safe }}
+                                        {{ crate::icons::IconMarkdown.render_brands(false, false, "") }}
 
                                     {# .gitignore #}
                                     {% elif file.mime == "text/plain" && file.name == ".gitignore" %}
-                                        {{ "git-alt"|fab(false, false, "")|safe }}
+                                        {{ crate::icons::IconGitAlt.render_brands(false, false, "") }}
 
                                     {#
                                         More ideas
@@ -93,11 +86,11 @@
 
                                     {# Text files or files which mime starts with `text` #}
                                     {%- elif file.mime == "text/plain" || file.mime|split_first("/") == Some("text") -%}
-                                        {{ "file-alt"|far(false, false, "")|safe }}
+                                        {{ crate::icons::IconFileLines.render_regular(false, false, "") }}
 
                                         {# Binary files and any unrecognized types #}
                                     {% else -%}
-                                        {{ "file-archive"|far(false, false, "")|safe }}
+                                        {{ crate::icons::IconFile.render_regular(false, false, "") }}
                                     {%- endif -%}
 
                                     <span class="text">{{ file.name }}</span>
@@ -127,8 +120,15 @@
                 {% else %}
                     {% set file_name = "" %}
                 {% endif %}
-                <div id="source-code" class="pure-u-1 pure-u-sm-17-24 pure-u-md-19-24">
-                    {{- file_content|highlight(file_name)|safe -}}
+                <div id="source-code-container" class="pure-u-1 pure-u-sm-17-24 pure-u-md-19-24">
+                    <div data-nosnippet class="source-code"><pre id="line-numbers"><code>
+                        {%- for line in 1..=file_content.lines().count() -%}
+                            <a href="#{{line}}" id="{{line}}">{{line}}</a>
+                        {%~ endfor -%}
+                    </code></pre></div>
+                    <div id="source-code" class="source-code">
+                        {{- file_content|highlight(file_name) -}}
+                    </div>
                 </div>
             {%- endif -%}
         </div>
@@ -137,6 +137,6 @@
 
 {%- block javascript -%}
     {% if file_content.is_some() %}
-        <script nonce="{{ csp_nonce }}" type="text/javascript" src="/-/static/source.js?{{ crate::BUILD_VERSION|slugify }}"></script>
+        <script nonce="{{ csp_nonce }}" type="text/javascript" src="/-/static/source.js?{{ slug::slugify(crate::BUILD_VERSION) }}"></script>
     {% endif %}
 {%- endblock javascript -%}

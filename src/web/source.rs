@@ -4,8 +4,13 @@ use crate::{
     impl_axum_webpage,
     storage::PathNotFoundError,
     web::{
-        cache::CachePolicy, crate_details::CrateDetails, error::AxumNope, extractors::Path,
-        file::File as DbFile, filters, headers::CanonicalUrl, MetaData, ReqVersion,
+        cache::CachePolicy,
+        error::AxumNope,
+        extractors::Path,
+        file::File as DbFile,
+        headers::CanonicalUrl,
+        page::templates::{filters, RenderBrands, RenderRegular, RenderSolid},
+        MetaData, ReqVersion,
     },
     AsyncStorage,
 };
@@ -171,15 +176,6 @@ impl_axum_webpage! {
 
 // Used in templates.
 impl SourcePage {
-    pub(crate) fn get_metadata(&self) -> Option<&MetaData> {
-        Some(&self.metadata)
-    }
-    pub(crate) fn permalink_path(&self) -> &str {
-        ""
-    }
-    pub(crate) fn krate(&self) -> Option<&CrateDetails> {
-        None
-    }
     pub(crate) fn use_direct_platform_links(&self) -> bool {
         true
     }
@@ -496,12 +492,17 @@ mod tests {
             let web = env.frontend();
             assert_success(path, web)?;
 
-            env.db().conn().execute(
-                "UPDATE releases
+            env.runtime().block_on(async {
+                let mut conn = env.async_db().await.async_conn().await;
+                sqlx::query!(
+                    "UPDATE releases
                      SET files = NULL
                      WHERE id = $1",
-                &[&release_id],
-            )?;
+                    release_id,
+                )
+                .execute(&mut *conn)
+                .await
+            })?;
 
             assert!(web.get(path).send()?.status().is_success());
 

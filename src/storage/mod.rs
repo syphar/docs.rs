@@ -29,7 +29,7 @@ type FileRange = RangeInclusive<u64>;
 
 #[derive(Debug, thiserror::Error)]
 #[error("path not found")]
-pub struct PathNotFoundError;
+pub(crate) struct PathNotFoundError;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct Blob {
@@ -323,7 +323,7 @@ impl AsyncStorage {
     // }
 
     #[instrument]
-    pub async fn download_archive_index(
+    pub(super) async fn download_archive_index(
         &self,
         archive_path: &str,
         latest_build_id: i32,
@@ -431,7 +431,7 @@ impl AsyncStorage {
 
                         let mut zip = zip::ZipWriter::new(io::Cursor::new(Vec::new()));
                         for file_path in get_file_list(&root_dir)? {
-                            let mut file = fs::File::open(&root_dir.join(&file_path))?;
+                            let mut file = fs::File::open(root_dir.join(&file_path))?;
 
                             zip.start_file(file_path.to_str().unwrap(), options)?;
                             io::copy(&mut file, &mut zip)?;
@@ -842,11 +842,11 @@ fn detect_mime(file_path: impl AsRef<Path>) -> &'static str {
     }
 }
 
-pub fn rustdoc_archive_path(name: &str, version: &str) -> String {
+pub(crate) fn rustdoc_archive_path(name: &str, version: &str) -> String {
     format!("rustdoc/{name}/{version}.zip")
 }
 
-pub fn source_archive_path(name: &str, version: &str) -> String {
+pub(crate) fn source_archive_path(name: &str, version: &str) -> String {
     format!("sources/{name}/{version}.zip")
 }
 

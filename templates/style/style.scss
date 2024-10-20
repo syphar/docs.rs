@@ -1,5 +1,5 @@
 // FIXME: Use modules
-@import "vars", "utils", "navbar", "themes", "fa", "syntax";
+@import "vars", "utils", "navbar", "themes", "syntax";
 
 /* See FiraSans-LICENSE.txt for the Fira Sans license. */
 @font-face {
@@ -280,7 +280,7 @@ div.recent-releases-container {
         background-color: var(--background-color);
     }
 
-    .release {
+    .release, .build-in-progress {
         display: block;
         border-bottom: 1px solid var(--color-border);
         padding: 0.4em $search-result-right-left-padding;
@@ -297,11 +297,13 @@ div.recent-releases-container {
     }
 
     .release:hover,
-    a.release:focus {
+    a.release:focus,
+    .build-in-progress:hover {
         background-color: var(--color-background-code);
     }
 
-    li:last-of-type .release {
+    li:last-of-type .release,
+    li:last-of-type .build-in-progress {
         border-bottom: none;
     }
 
@@ -886,23 +888,40 @@ ul.pure-menu-list {
         }
     }
 
-    #source-code {
-        pre {
-            margin-top: 0;
-            margin-bottom: 0;
-            height: 100%;
-
-            code {
-                height: 100%;
-            }
-        }
-
-        &.expanded {
-            width: calc(100% - 46px);
-        }
-    }
-
     #source-warning {
         height: 100%;
     }
+}
+
+#source-code-container {
+    display: inline-flex;
+    overflow: scroll;
+}
+#line-numbers {
+    text-align: right;
+    letter-spacing: normal;
+}
+#line-numbers > code > a  {
+    padding: 0 8px;
+}
+// This class is used to the source code and the line number container in the
+// `crate/**/source/*` view
+.source-code {
+    pre {
+        margin-top: 0;
+        margin-bottom: 0;
+        height: 100%;
+
+        code {
+            height: 100%;
+        }
+    }
+
+    &.expanded {
+        width: calc(100% - 46px);
+    }
+}
+#source-code {
+    overflow: scroll;
+    width: 100%;
 }

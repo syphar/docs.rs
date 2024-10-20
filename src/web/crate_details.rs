@@ -1,7 +1,6 @@
 use super::{match_version, MetaData};
 use crate::registry_api::OwnerKind;
 use crate::utils::{get_correct_docsrs_style_file, report_error};
-use crate::web::rustdoc::RustdocHtmlParams;
 use crate::{
     db::types::BuildStatus,
     impl_axum_webpage,
@@ -11,7 +10,8 @@ use crate::{
         encode_url_path,
         error::{AxumNope, AxumResult},
         extractors::{DbConnection, Path},
-        page::templates::filters,
+        page::templates::{filters, RenderRegular, RenderSolid},
+        rustdoc::RustdocHtmlParams,
         MatchedRelease, ReqVersion,
     },
     AsyncStorage,
@@ -31,7 +31,6 @@ use serde_json::Value;
 use std::sync::Arc;
 
 // TODO: Add target name and versions
-
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct CrateDetails {
     pub(crate) name: String,
@@ -90,6 +89,7 @@ pub(crate) struct Release {
     /// * the rest is all builds are in-progress -> InProgress
     ///   -> if we have any builds, and the previous conditions don't match, we end
     ///      up here, but we still check.
+    ///
     /// calculated in a database view : `release_build_status`
     pub build_status: BuildStatus,
     pub yanked: Option<bool>,
@@ -374,8 +374,7 @@ pub(crate) async fn releases_for_crate(
          FROM releases
          INNER JOIN release_build_status ON releases.id = release_build_status.rid
          WHERE
-             releases.crate_id = $1 AND
-             release_build_status.build_status != 'in_progress'"#,
+             releases.crate_id = $1"#,
         crate_id,
     )
     .fetch(&mut *conn)
@@ -414,32 +413,39 @@ pub(crate) async fn releases_for_crate(
 #[template(path = "crate/details.html")]
 #[derive(Debug, Clone, PartialEq)]
 struct CrateDetailsPage {
-    details: CrateDetails,
+    version: Version,
+    name: String,
+    owners: Vec<(String, String, OwnerKind)>,
+    metadata: MetaData,
+    documented_items: Option<i32>,
+    total_items: Option<i32>,
+    total_items_needing_examples: Option<i32>,
+    items_with_examples: Option<i32>,
+    homepage_url: Option<String>,
+    documentation_url: Option<String>,
+    repository_url: Option<String>,
+    repository_metadata: Option<RepositoryMetadata>,
+    dependencies: Option<Value>,
+    releases: Vec<Release>,
+    readme: Option<String>,
+    build_status: BuildStatus,
+    rustdoc_status: Option<bool>,
+    is_library: Option<bool>,
+    last_successful_build: Option<String>,
+    rustdoc: Option<String>, // this is description_long in database
     csp_nonce: String,
+}
+
+impl CrateDetailsPage {
+    // Used by templates.
+    pub(crate) fn use_direct_platform_links(&self) -> bool {
+        true
+    }
 }
 
 impl_axum_webpage! {
     CrateDetailsPage,
     cpu_intensive_rendering = true,
-}
-
-// Used by templates.
-impl CrateDetailsPage {
-    pub(crate) fn krate(&self) -> Option<&CrateDetails> {
-        None
-    }
-
-    pub(crate) fn permalink_path(&self) -> &str {
-        ""
-    }
-
-    pub(crate) fn get_metadata(&self) -> Option<&MetaData> {
-        Some(&self.details.metadata)
-    }
-
-    pub(crate) fn use_direct_platform_links(&self) -> bool {
-        true
-    }
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -478,8 +484,51 @@ pub(crate) async fn crate_details_handler(
         Err(e) => warn!("error fetching readme: {:?}", &e),
     }
 
+    let CrateDetails {
+        version,
+        name,
+        owners,
+        metadata,
+        documented_items,
+        total_items,
+        total_items_needing_examples,
+        items_with_examples,
+        homepage_url,
+        documentation_url,
+        repository_url,
+        repository_metadata,
+        dependencies,
+        releases,
+        readme,
+        build_status,
+        rustdoc_status,
+        is_library,
+        last_successful_build,
+        rustdoc,
+        ..
+    } = details;
+
     let mut res = CrateDetailsPage {
-        details,
+        version,
+        name,
+        owners,
+        metadata,
+        documented_items,
+        total_items,
+        total_items_needing_examples,
+        items_with_examples,
+        homepage_url,
+        documentation_url,
+        repository_url,
+        repository_metadata,
+        dependencies,
+        releases,
+        readme,
+        build_status,
+        rustdoc_status,
+        is_library,
+        last_successful_build,
+        rustdoc,
         csp_nonce: String::new(),
     }
     .into_response();
@@ -1291,25 +1340,22 @@ mod tests {
                 .create()?;
 
             let response = env.frontend().get("/crate/foo/latest").send()?;
-            // FIXME: temporarily we don't show in-progress releases anywhere, which means we don't
-            // show releases without builds anywhere.
-            assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
-            // let page = kuchikiki::parse_html().one(response.text()?);
-            // let link = page
-            //     .select_first("a.pure-menu-link[href='/crate/foo/0.1.0']")
-            //     .unwrap();
+            let page = kuchikiki::parse_html().one(response.text()?);
+            let link = page
+                .select_first("a.pure-menu-link[href='/crate/foo/0.1.0']")
+                .unwrap();
 
-            // assert_eq!(
-            //     link.as_node()
-            //         .as_element()
-            //         .unwrap()
-            //         .attributes
-            //         .borrow()
-            //         .get("title")
-            //         .unwrap(),
-            //     "foo-0.1.0 is currently being built"
-            // );
+            assert_eq!(
+                link.as_node()
+                    .as_element()
+                    .unwrap()
+                    .attributes
+                    .borrow()
+                    .get("title")
+                    .unwrap(),
+                "foo-0.1.0 is currently being built"
+            );
 
             Ok(())
         });
@@ -1538,6 +1584,44 @@ mod tests {
     }
 
     #[test]
+    fn details_with_repository_and_stats_can_render_icon() {
+        wrapper(|env| {
+            env.fake_release()
+                .name("library")
+                .version("0.1.0")
+                .repo("https://github.com/org/repo")
+                .github_stats("org/repo", 10, 10, 10)
+                .create()?;
+
+            let page = kuchikiki::parse_html().one(
+                env.frontend()
+                    .get("/crate/library/0.1.0/")
+                    .send()?
+                    .error_for_status()?
+                    .text()?,
+            );
+
+            let link = page
+                .select_first("a.pure-menu-link[href='https://github.com/org/repo']")
+                .unwrap();
+
+            let icon_node = link.as_node().children().nth(1).unwrap();
+            assert_eq!(
+                icon_node
+                    .as_element()
+                    .unwrap()
+                    .attributes
+                    .borrow()
+                    .get("class")
+                    .unwrap(),
+                "fa fa-solid fa-code-branch "
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
     fn feature_flags_report_null() {
         wrapper(|env| {
             let id = env
@@ -1546,9 +1630,12 @@ mod tests {
                 .version("0.1.0")
                 .create()?;
 
-            env.db()
-                .conn()
-                .query("UPDATE releases SET features = NULL WHERE id = $1", &[&id])?;
+            env.runtime().block_on(async {
+                let mut conn = env.async_db().await.async_conn().await;
+                sqlx::query!("UPDATE releases SET features = NULL WHERE id = $1", id)
+                    .execute(&mut *conn)
+                    .await
+            })?;
 
             let page = kuchikiki::parse_html().one(
                 env.frontend()

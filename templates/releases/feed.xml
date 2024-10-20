@@ -11,12 +11,14 @@
     <id>urn:docs-rs:{{ crate::BUILD_VERSION }}</id>
     <updated>
     {%- if let Some(first_release) = recent_releases.get(0) -%}
-        {{ first_release.build_time|opt_date("%+") }}
+        {%- if let Some(build_time) = first_release.build_time -%}
+            {{ build_time.format("%+") }}
+        {%- endif -%}
     {%- endif -%}
     </updated>
 
     {%- for release in recent_releases -%}
-        {% set link = String::new() %}
+        {%- set link -%}
         {%- if release.rustdoc_status && release.target_name.is_some() -%}
             {%- set link = "/{}/{}/{}/"|format(release.name, release.version, release.target_name.as_ref().unwrap()) -%}
         {%- else -%}
@@ -28,7 +30,11 @@
 
             <link href="{{ link|safe }}" />
             <id>urn:docs-rs:{{ release.name }}:{{ release.version }}</id>
-            <updated>{{ release.build_time|opt_date("%+") }}</updated>
+            <updated>
+            {% if let Some(build_time) = release.build_time -%}
+                {{ build_time.format("%+") }}
+            {%- endif -%}
+            </updated>
 
             <summary>
                 {%- if let Some(description) = release.description -%}

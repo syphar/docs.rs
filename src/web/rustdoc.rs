@@ -14,6 +14,7 @@ use crate::{
         extractors::{DbConnection, Path},
         file::File,
         match_version,
+        page::templates::{filters, RenderRegular, RenderSolid},
         page::TemplateData,
         MetaData, ReqVersion,
     },
@@ -27,6 +28,7 @@ use axum::{
 };
 use lol_html::errors::RewritingError;
 use once_cell::sync::Lazy;
+use rinja::Template;
 use semver::Version;
 use serde::Deserialize;
 use std::{
@@ -257,6 +259,8 @@ pub(crate) async fn rustdoc_redirector_handler(
     }
 }
 
+#[derive(Template)]
+#[template(path = "rustdoc/topbar.html")]
 #[derive(Debug, Clone)]
 pub struct RustdocPage {
     pub latest_path: String,
@@ -311,16 +315,6 @@ impl RustdocPage {
             Html(html),
         )
             .into_response())
-    }
-
-    // Used for template rendering.
-    pub(crate) fn krate(&self) -> Option<&CrateDetails> {
-        Some(&self.krate)
-    }
-
-    // Used for template rendering.
-    pub(crate) fn permalink_path(&self) -> &str {
-        &self.permalink_path
     }
 
     pub(crate) fn use_direct_platform_links(&self) -> bool {
@@ -2047,17 +2041,21 @@ mod test {
     // regression test for https://github.com/rust-lang/docs.rs/pull/885#issuecomment-655147643
     fn test_no_panic_on_missing_kind() {
         wrapper(|env| {
-            let db = env.db();
             let id = env
                 .fake_release()
                 .name("strum")
                 .version("0.13.0")
                 .create()?;
-            // https://stackoverflow.com/questions/18209625/how-do-i-modify-fields-inside-the-new-postgresql-json-datatype
-            db.conn().query(
-                r#"UPDATE releases SET dependencies = dependencies::jsonb #- '{0,2}' WHERE id = $1"#,
-                &[&id],
-            )?;
+
+            env.runtime().block_on(async {
+                let mut conn = env.async_db().await.async_conn().await;
+                // https://stackoverflow.com/questions/18209625/how-do-i-modify-fields-inside-the-new-postgresql-json-datatype
+                sqlx::query!(
+                    r#"UPDATE releases SET dependencies = dependencies::jsonb #- '{0,2}' WHERE id = $1"#, id)
+                    .execute(&mut *conn)
+                    .await
+            })?;
+
             let web = env.frontend();
             assert_success("/strum/0.13.0/strum/", web)?;
             assert_success("/crate/strum/0.13.0/", web)?;

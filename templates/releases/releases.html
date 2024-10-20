@@ -16,8 +16,6 @@
 {%- endblock header -%}
 
 {%- block topbar -%}
-    {% set is_latest_version = true %}
-    {% set search_query = Some(String::new()) %}
     {%- include "header/topbar.html" -%}
 {%- endblock topbar -%}
 
@@ -52,7 +50,7 @@ centered
                                     {{ release.name }}-{{ release.version }}
                                     {% if !has_unyanked_releases %}
                                         <span class="yanked" title="all releases of {{ release.name }} have been yanked">
-                                            {{ "trash"|fas(false, false, "")|safe }}
+                                            {{ crate::icons::IconTrash.render_solid(false, false, "") }}
                                             Yanked
                                         </span>
                                     {% endif %}
@@ -66,11 +64,11 @@ centered
                                     <div class="pure-u-1 pure-u-sm-4-24 pure-u-md-3-24 date" {% if let Some(build_time) = release.build_time -%}
                                         title="Published {{ build_time|timeformat }}" {%- endif -%}>
                                         {{ release.stars }}
-                                        {{ "star"|fas(false, false, "")|safe }}
+                                        {{ crate::icons::IconStar.render_solid(false, false, "") }}
                                     </div>
                                 {%- elif let Some(build_time) = release.build_time -%}
                                     <div class="pure-u-1 pure-u-sm-4-24 pure-u-md-3-24 date"
-                                        title="{{ build_time|date("%FT%TZ") }}">
+                                        title="{{ build_time.format("%FT%TZ") }}">
                                         {{ build_time|timeformat }}
                                     </div>
                                 {%- else -%}
@@ -88,13 +86,13 @@ centered
                 {% block pagination %}
                     {%- if show_previous_page -%}
                         <a class="pure-button pure-button-normal" href="/releases/{{ release_type.as_str() }}/{{ page_number - 1 }}">
-                            {{ "arrow-left"|fas(false, false, "")|safe }} Previous Page
+                            {{ crate::icons::IconArrowLeft.render_solid(false, false, "") }} Previous Page
                         </a>
                     {%- endif -%}
 
                     {%- if show_next_page -%}
                         <a class="pure-button pure-button-normal" href="/releases/{{ release_type.as_str() }}/{{ page_number + 1 }}">
-                            Next Page {{ "arrow-right"|fas(false, false, "")|safe }}
+                            Next Page {{ crate::icons::IconArrowRight.render_solid(false, false, "") }}
                         </a>
                     {%- endif -%}
                 {% endblock pagination %}
@@ -104,5 +102,5 @@ centered
 {%- endblock body -%}
 
 {%- block javascript -%}
-    <script nonce="{{ csp_nonce }}" type="text/javascript" src="/-/static/keyboard.js?{{ crate::BUILD_VERSION|slugify }}"></script>
+    <script nonce="{{ csp_nonce }}" type="text/javascript" src="/-/static/keyboard.js?{{ build_slug }}"></script>
 {%- endblock javascript -%}

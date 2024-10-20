@@ -1,13 +1,15 @@
-use crate::cdn;
 use crate::db::{delete_crate, delete_version, update_latest_version_id, Pool};
 use crate::docbuilder::PackageKind;
 use crate::error::Result;
-use crate::storage::Storage;
+use crate::storage::AsyncStorage;
 use crate::utils::{get_config, get_crate_priority, report_error, retry, set_config, ConfigName};
 use crate::Context;
+use crate::{cdn, BuildPackageSummary};
 use crate::{Config, Index, InstanceMetrics, RustwideBuilder};
 use anyhow::Context as _;
 use fn_error_context::context;
+use futures_util::stream::TryStreamExt;
+use sqlx::Connection as _;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
@@ -24,36 +26,35 @@ pub(crate) struct QueuedCrate {
 }
 
 #[derive(Debug)]
-pub struct BuildQueue {
+pub struct AsyncBuildQueue {
     config: Arc<Config>,
-    storage: Arc<Storage>,
+    storage: Arc<AsyncStorage>,
     pub(crate) db: Pool,
     metrics: Arc<InstanceMetrics>,
-    runtime: Arc<Runtime>,
     max_attempts: i32,
 }
 
-impl BuildQueue {
+impl AsyncBuildQueue {
     pub fn new(
         db: Pool,
         metrics: Arc<InstanceMetrics>,
         config: Arc<Config>,
-        storage: Arc<Storage>,
-        runtime: Arc<Runtime>,
+        storage: Arc<AsyncStorage>,
     ) -> Self {
-        BuildQueue {
+        AsyncBuildQueue {
             max_attempts: config.build_attempts.into(),
             config,
             db,
             metrics,
             storage,
-            runtime,
         }
     }
 
-    pub fn last_seen_reference(&self) -> Result<Option<crates_index_diff::gix::ObjectId>> {
-        let mut conn = self.db.get()?;
-        if let Some(value) = get_config::<String>(&mut conn, ConfigName::LastSeenIndexReference)? {
+    pub async fn last_seen_reference(&self) -> Result<Option<crates_index_diff::gix::ObjectId>> {
+        let mut conn = self.db.get_async().await?;
+        if let Some(value) =
+            get_config::<String>(&mut conn, ConfigName::LastSeenIndexReference).await?
+        {
             return Ok(Some(crates_index_diff::gix::ObjectId::from_hex(
                 value.as_bytes(),
             )?));
@@ -61,233 +62,174 @@ impl BuildQueue {
         Ok(None)
     }
 
-    pub fn set_last_seen_reference(&self, oid: crates_index_diff::gix::ObjectId) -> Result<()> {
-        let mut conn = self.db.get()?;
+    pub async fn set_last_seen_reference(
+        &self,
+        oid: crates_index_diff::gix::ObjectId,
+    ) -> Result<()> {
+        let mut conn = self.db.get_async().await?;
         set_config(
             &mut conn,
             ConfigName::LastSeenIndexReference,
             oid.to_string(),
-        )?;
+        )
+        .await?;
         Ok(())
     }
 
     #[context("error trying to add {name}-{version} to build queue")]
-    pub fn add_crate(
+    pub async fn add_crate(
         &self,
         name: &str,
         version: &str,
         priority: i32,
         registry: Option<&str>,
     ) -> Result<()> {
-        self.db.get()?.execute(
+        let mut conn = self.db.get_async().await?;
+
+        sqlx::query!(
             "INSERT INTO queue (name, version, priority, registry)
-             VALUES ($1, $2, $3, $4)
-             ON CONFLICT (name, version) DO UPDATE
-                SET priority = EXCLUDED.priority,
-                    registry = EXCLUDED.registry,
-                    attempt = 0,
-                    last_attempt = NULL
-            ;",
-            &[&name, &version, &priority, &registry],
-        )?;
+                 VALUES ($1, $2, $3, $4)
+                 ON CONFLICT (name, version) DO UPDATE
+                    SET priority = EXCLUDED.priority,
+                        registry = EXCLUDED.registry,
+                        attempt = 0,
+                        last_attempt = NULL
+                ;",
+            name,
+            version,
+            priority,
+            registry,
+        )
+        .execute(&mut *conn)
+        .await?;
+
         Ok(())
     }
 
-    pub(crate) fn pending_count(&self) -> Result<usize> {
-        Ok(self.pending_count_by_priority()?.values().sum::<usize>())
+    pub(crate) async fn pending_count(&self) -> Result<usize> {
+        Ok(self
+            .pending_count_by_priority()
+            .await?
+            .values()
+            .sum::<usize>())
     }
 
-    pub(crate) fn prioritized_count(&self) -> Result<usize> {
+    pub(crate) async fn prioritized_count(&self) -> Result<usize> {
         Ok(self
-            .pending_count_by_priority()?
+            .pending_count_by_priority()
+            .await?
             .iter()
             .filter(|(&priority, _)| priority <= 0)
             .map(|(_, count)| count)
             .sum::<usize>())
     }
 
-    pub(crate) fn pending_count_by_priority(&self) -> Result<HashMap<i32, usize>> {
-        let res = self.db.get()?.query(
-            "SELECT
-                priority,
-                COUNT(*)
-            FROM queue
-            WHERE attempt < $1
-            GROUP BY priority",
-            &[&self.max_attempts],
-        )?;
-        Ok(res
-            .iter()
-            .map(|row| (row.get::<_, i32>(0), row.get::<_, i64>(1) as usize))
-            .collect())
+    pub(crate) async fn pending_count_by_priority(&self) -> Result<HashMap<i32, usize>> {
+        let mut conn = self.db.get_async().await?;
+
+        Ok(sqlx::query!(
+            r#"
+                SELECT
+                    priority,
+                    COUNT(*) as "count!"
+                FROM queue
+                WHERE attempt < $1
+                GROUP BY priority"#,
+            self.max_attempts,
+        )
+        .fetch(&mut *conn)
+        .map_ok(|row| (row.priority, row.count as usize))
+        .try_collect()
+        .await?)
     }
 
-    pub(crate) fn failed_count(&self) -> Result<usize> {
-        let res = self.db.get()?.query(
-            "SELECT COUNT(*) FROM queue WHERE attempt >= $1;",
-            &[&self.max_attempts],
-        )?;
-        Ok(res[0].get::<_, i64>(0) as usize)
+    pub(crate) async fn failed_count(&self) -> Result<usize> {
+        let mut conn = self.db.get_async().await?;
+
+        Ok(sqlx::query_scalar!(
+            r#"SELECT COUNT(*) as "count!" FROM queue WHERE attempt >= $1;"#,
+            self.max_attempts,
+        )
+        .fetch_one(&mut *conn)
+        .await? as usize)
     }
 
-    pub(crate) fn queued_crates(&self) -> Result<Vec<QueuedCrate>> {
-        let query = self.db.get()?.query(
+    pub(crate) async fn queued_crates(&self) -> Result<Vec<QueuedCrate>> {
+        let mut conn = self.db.get_async().await?;
+
+        Ok(sqlx::query_as!(
+            QueuedCrate,
             "SELECT id, name, version, priority, registry
+                 FROM queue
+                 WHERE attempt < $1
+                 ORDER BY priority ASC, attempt ASC, id ASC",
+            self.max_attempts
+        )
+        .fetch_all(&mut *conn)
+        .await?)
+    }
+
+    pub(crate) async fn has_build_queued(&self, name: &str, version: &str) -> Result<bool> {
+        let mut conn = self.db.get_async().await?;
+        Ok(sqlx::query_scalar!(
+            "SELECT id
              FROM queue
-             WHERE attempt < $1
-             ORDER BY priority ASC, attempt ASC, id ASC",
-            &[&self.max_attempts],
-        )?;
-
-        Ok(query
-            .into_iter()
-            .map(|row| QueuedCrate {
-                id: row.get("id"),
-                name: row.get("name"),
-                version: row.get("version"),
-                priority: row.get("priority"),
-                registry: row.get("registry"),
-            })
-            .collect())
-    }
-
-    pub fn has_build_queued(&self, name: &str, version: &str) -> Result<bool> {
-        Ok(self
-            .db
-            .get()?
-            .query_opt(
-                "SELECT id
-                 FROM queue
-                 WHERE
-                    attempt < $1 AND
-                    name = $2 AND
-                    version = $3
-                 ",
-                &[&self.max_attempts, &name, &version],
-            )?
-            .is_some())
-    }
-
-    fn process_next_crate(&self, f: impl FnOnce(&QueuedCrate) -> Result<()>) -> Result<()> {
-        let mut conn = self.db.get()?;
-        let mut transaction = conn.transaction()?;
-
-        // fetch the next available crate from the queue table.
-        // We are using `SELECT FOR UPDATE` inside a transaction so
-        // the QueuedCrate is locked until we are finished with it.
-        // `SKIP LOCKED` here will enable another build-server to just
-        // skip over taken (=locked) rows and start building the first
-        // available one.
-        let to_process = match transaction
-            .query_opt(
-                "SELECT id, name, version, priority, registry
-                 FROM queue
-                 WHERE
-                    attempt < $1 AND
-                    (last_attempt IS NULL OR last_attempt < NOW() - make_interval(secs => $2))
-                 ORDER BY priority ASC, attempt ASC, id ASC
-                 LIMIT 1
-                 FOR UPDATE SKIP LOCKED",
-                &[
-                    &self.max_attempts,
-                    &self.config.delay_between_build_attempts.as_secs_f64(),
-                ],
-            )?
-            .map(|row| QueuedCrate {
-                id: row.get("id"),
-                name: row.get("name"),
-                version: row.get("version"),
-                priority: row.get("priority"),
-                registry: row.get("registry"),
-            }) {
-            Some(krate) => krate,
-            None => return Ok(()),
-        };
-
-        let res = self.metrics.build_time.observe_closure_duration(|| {
-            f(&to_process).with_context(|| {
-                format!(
-                    "Failed to build package {}-{} from queue",
-                    to_process.name, to_process.version
-                )
-            })
-        });
-        self.metrics.total_builds.inc();
-        if let Err(err) =
-            cdn::queue_crate_invalidation(&mut transaction, &self.config, &to_process.name)
-        {
-            report_error(&err);
-        }
-
-        match res {
-            Ok(()) => {
-                transaction.execute("DELETE FROM queue WHERE id = $1;", &[&to_process.id])?;
-            }
-            Err(e) => {
-                // Increase attempt count
-                let attempt: i32 = transaction
-                    .query_one(
-                        "UPDATE queue
-                         SET
-                            attempt = attempt + 1,
-                            last_attempt = NOW()
-                         WHERE id = $1
-                         RETURNING attempt;",
-                        &[&to_process.id],
-                    )?
-                    .get(0);
-
-                if attempt >= self.max_attempts {
-                    self.metrics.failed_builds.inc();
-                }
-
-                report_error(&e);
-            }
-        }
-
-        transaction.commit()?;
-
-        Ok(())
+             WHERE
+                attempt < $1 AND
+                name = $2 AND
+                version = $3
+             ",
+            self.max_attempts,
+            name,
+            version,
+        )
+        .fetch_optional(&mut *conn)
+        .await?
+        .is_some())
     }
 }
 
 /// Locking functions.
-impl BuildQueue {
+impl AsyncBuildQueue {
     /// Checks for the lock and returns whether it currently exists.
-    pub fn is_locked(&self) -> Result<bool> {
-        let mut conn = self.db.get()?;
+    pub async fn is_locked(&self) -> Result<bool> {
+        let mut conn = self.db.get_async().await?;
 
-        Ok(get_config::<bool>(&mut conn, ConfigName::QueueLocked)?.unwrap_or(false))
+        Ok(get_config::<bool>(&mut conn, ConfigName::QueueLocked)
+            .await?
+            .unwrap_or(false))
     }
 
     /// lock the queue. Daemon will check this lock and stop operating if it exists.
-    pub fn lock(&self) -> Result<()> {
-        let mut conn = self.db.get()?;
-        set_config(&mut conn, ConfigName::QueueLocked, true)
+    pub async fn lock(&self) -> Result<()> {
+        let mut conn = self.db.get_async().await?;
+        set_config(&mut conn, ConfigName::QueueLocked, true).await
     }
 
     /// unlock the queue.
-    pub fn unlock(&self) -> Result<()> {
-        let mut conn = self.db.get()?;
-        set_config(&mut conn, ConfigName::QueueLocked, false)
+    pub async fn unlock(&self) -> Result<()> {
+        let mut conn = self.db.get_async().await?;
+        set_config(&mut conn, ConfigName::QueueLocked, false).await
     }
 }
 
 /// Index methods.
-impl BuildQueue {
+impl AsyncBuildQueue {
     /// Updates registry index repository and adds new crates into build queue.
     ///
     /// Returns the number of crates added
-    pub fn get_new_crates(&self, index: &Index) -> Result<usize> {
-        let mut conn = self.db.get()?;
+    pub async fn get_new_crates(&self, index: &Index) -> Result<usize> {
         let diff = index.diff()?;
 
         let last_seen_reference = self
-            .last_seen_reference()?
+            .last_seen_reference()
+            .await?
             .context("no last_seen_reference set in database")?;
         diff.set_last_seen_reference(last_seen_reference)?;
 
         let (changes, new_reference) = diff.peek_changes_ordered()?;
+
+        let mut conn = self.db.get_async().await?;
         let mut crates_added = 0;
 
         debug!("queueing changes from {last_seen_reference} to {new_reference}");
@@ -295,6 +237,7 @@ impl BuildQueue {
         for change in &changes {
             if let Some((ref krate, ..)) = change.crate_deleted() {
                 match delete_crate(&mut conn, &self.storage, &self.config, krate)
+                    .await
                     .with_context(|| format!("failed to delete crate {krate}"))
                 {
                     Ok(_) => info!(
@@ -303,7 +246,9 @@ impl BuildQueue {
                     ),
                     Err(err) => report_error(&err),
                 }
-                if let Err(err) = cdn::queue_crate_invalidation(&mut *conn, &self.config, krate) {
+                if let Err(err) =
+                    cdn::queue_crate_invalidation(&mut conn, &self.config, krate).await
+                {
                     report_error(&err);
                 }
                 continue;
@@ -317,6 +262,7 @@ impl BuildQueue {
                     &release.name,
                     &release.version,
                 )
+                .await
                 .with_context(|| {
                     format!(
                         "failed to delete version {}-{}",
@@ -330,7 +276,7 @@ impl BuildQueue {
                     Err(err) => report_error(&err),
                 }
                 if let Err(err) =
-                    cdn::queue_crate_invalidation(&mut *conn, &self.config, &release.name)
+                    cdn::queue_crate_invalidation(&mut conn, &self.config, &release.name).await
                 {
                     report_error(&err);
                 }
@@ -338,7 +284,7 @@ impl BuildQueue {
             }
 
             if let Some(release) = change.added() {
-                let priority = get_crate_priority(&mut conn, &release.name)?;
+                let priority = get_crate_priority(&mut conn, &release.name).await?;
 
                 match self
                     .add_crate(
@@ -347,6 +293,7 @@ impl BuildQueue {
                         priority,
                         index.repository_url(),
                     )
+                    .await
                     .with_context(|| {
                         format!(
                             "failed adding {}-{} into build queue",
@@ -370,17 +317,20 @@ impl BuildQueue {
             if let Some(release) = yanked.or(unyanked) {
                 // FIXME: delay yanks of crates that have not yet finished building
                 // https://github.com/rust-lang/docs.rs/issues/1934
-                if let Err(err) = self.set_yanked(
-                    &mut conn,
-                    release.name.as_str(),
-                    release.version.as_str(),
-                    yanked.is_some(),
-                ) {
+                if let Err(err) = self
+                    .set_yanked_inner(
+                        &mut conn,
+                        release.name.as_str(),
+                        release.version.as_str(),
+                        yanked.is_some(),
+                    )
+                    .await
+                {
                     report_error(&err);
                 }
 
                 if let Err(err) =
-                    cdn::queue_crate_invalidation(&mut *conn, &self.config, &release.name)
+                    cdn::queue_crate_invalidation(&mut conn, &self.config, &release.name).await
                 {
                     report_error(&err);
                 }
@@ -390,22 +340,28 @@ impl BuildQueue {
         // set the reference in the database
         // so this survives recreating the registry watcher
         // server.
-        self.set_last_seen_reference(new_reference)?;
+        self.set_last_seen_reference(new_reference).await?;
 
         Ok(crates_added)
     }
 
+    pub async fn set_yanked(&self, name: &str, version: &str, yanked: bool) -> Result<()> {
+        let mut conn = self.db.get_async().await?;
+        self.set_yanked_inner(&mut conn, name, version, yanked)
+            .await
+    }
+
     #[context("error trying to set {name}-{version} to yanked: {yanked}")]
-    pub fn set_yanked(
+    async fn set_yanked_inner(
         &self,
-        conn: &mut postgres::Client,
+        conn: &mut sqlx::PgConnection,
         name: &str,
         version: &str,
         yanked: bool,
     ) -> Result<()> {
         let activity = if yanked { "yanked" } else { "unyanked" };
 
-        let result = conn.query(
+        if let Some(crate_id) = sqlx::query_scalar!(
             "UPDATE releases
              SET yanked = $3
              FROM crates
@@ -414,41 +370,208 @@ impl BuildQueue {
                  AND version = $2
             RETURNING crates.id
             ",
-            &[&name, &version, &yanked],
-        )?;
-        if result.len() != 1 {
+            name,
+            version,
+            yanked,
+        )
+        .fetch_optional(&mut *conn)
+        .await?
+        {
+            debug!("{}-{} {}", name, version, activity);
+            update_latest_version_id(&mut *conn, crate_id).await?;
+        } else {
             match self
                 .has_build_queued(name, version)
+                .await
                 .context("error trying to fetch build queue")
             {
                 Ok(false) => {
-                    // the rustwide builder will fetch the current yank state from
-                    // crates.io, so and missed update here will be fixed after the
-                    // build is finished.
                     error!(
                         "tried to yank or unyank non-existing release: {} {}",
                         name, version
                     );
                 }
-                Ok(true) => {}
+                Ok(true) => {
+                    // the rustwide builder will fetch the current yank state from
+                    // crates.io, so and missed update here will be fixed after the
+                    // build is finished.
+                }
                 Err(err) => {
                     report_error(&err);
                 }
             }
-        } else {
-            debug!("{}-{} {}", name, version, activity);
         }
 
-        if let Some(row) = result.first() {
-            let crate_id: i32 = row.get(0);
+        Ok(())
+    }
+}
 
-            self.runtime.block_on(async {
-                let mut conn = self.db.get_async().await?;
+#[derive(Debug)]
+pub struct BuildQueue {
+    runtime: Arc<Runtime>,
+    inner: Arc<AsyncBuildQueue>,
+}
 
-                update_latest_version_id(&mut conn, crate_id).await
-            })?;
+/// sync versions of async methods
+impl BuildQueue {
+    pub fn add_crate(
+        &self,
+        name: &str,
+        version: &str,
+        priority: i32,
+        registry: Option<&str>,
+    ) -> Result<()> {
+        self.runtime
+            .block_on(self.inner.add_crate(name, version, priority, registry))
+    }
+
+    pub fn set_yanked(&self, name: &str, version: &str, yanked: bool) -> Result<()> {
+        self.runtime
+            .block_on(self.inner.set_yanked(name, version, yanked))
+    }
+    pub fn is_locked(&self) -> Result<bool> {
+        self.runtime.block_on(self.inner.is_locked())
+    }
+    pub fn lock(&self) -> Result<()> {
+        self.runtime.block_on(self.inner.lock())
+    }
+    pub fn unlock(&self) -> Result<()> {
+        self.runtime.block_on(self.inner.unlock())
+    }
+    pub fn last_seen_reference(&self) -> Result<Option<crates_index_diff::gix::ObjectId>> {
+        self.runtime.block_on(self.inner.last_seen_reference())
+    }
+    pub fn set_last_seen_reference(&self, oid: crates_index_diff::gix::ObjectId) -> Result<()> {
+        self.runtime
+            .block_on(self.inner.set_last_seen_reference(oid))
+    }
+    #[cfg(test)]
+    pub(crate) fn pending_count(&self) -> Result<usize> {
+        self.runtime.block_on(self.inner.pending_count())
+    }
+    #[cfg(test)]
+    pub(crate) fn prioritized_count(&self) -> Result<usize> {
+        self.runtime.block_on(self.inner.prioritized_count())
+    }
+    #[cfg(test)]
+    pub(crate) fn pending_count_by_priority(&self) -> Result<HashMap<i32, usize>> {
+        self.runtime
+            .block_on(self.inner.pending_count_by_priority())
+    }
+    #[cfg(test)]
+    pub(crate) fn failed_count(&self) -> Result<usize> {
+        self.runtime.block_on(self.inner.failed_count())
+    }
+    #[cfg(test)]
+    pub(crate) fn queued_crates(&self) -> Result<Vec<QueuedCrate>> {
+        self.runtime.block_on(self.inner.queued_crates())
+    }
+    #[cfg(test)]
+    pub(crate) fn has_build_queued(&self, name: &str, version: &str) -> Result<bool> {
+        self.runtime
+            .block_on(self.inner.has_build_queued(name, version))
+    }
+}
+
+impl BuildQueue {
+    pub fn new(runtime: Arc<Runtime>, inner: Arc<AsyncBuildQueue>) -> Self {
+        Self { runtime, inner }
+    }
+
+    fn process_next_crate(
+        &self,
+        f: impl FnOnce(&QueuedCrate) -> Result<BuildPackageSummary>,
+    ) -> Result<()> {
+        let mut conn = self.runtime.block_on(self.inner.db.get_async())?;
+        let mut transaction = self.runtime.block_on(conn.begin())?;
+
+        // fetch the next available crate from the queue table.
+        // We are using `SELECT FOR UPDATE` inside a transaction so
+        // the QueuedCrate is locked until we are finished with it.
+        // `SKIP LOCKED` here will enable another build-server to just
+        // skip over taken (=locked) rows and start building the first
+        // available one.
+        let to_process = match self.runtime.block_on(
+            sqlx::query_as!(
+                QueuedCrate,
+                "SELECT id, name, version, priority, registry
+                 FROM queue
+                 WHERE
+                    attempt < $1 AND
+                    (last_attempt IS NULL OR last_attempt < NOW() - make_interval(secs => $2))
+                 ORDER BY priority ASC, attempt ASC, id ASC
+                 LIMIT 1
+                 FOR UPDATE SKIP LOCKED",
+                self.inner.max_attempts,
+                self.inner.config.delay_between_build_attempts.as_secs_f64(),
+            )
+            .fetch_optional(&mut *transaction),
+        )? {
+            Some(krate) => krate,
+            None => return Ok(()),
+        };
+
+        let res = self
+            .inner
+            .metrics
+            .build_time
+            .observe_closure_duration(|| f(&to_process));
+
+        self.inner.metrics.total_builds.inc();
+        if let Err(err) = self.runtime.block_on(cdn::queue_crate_invalidation(
+            &mut transaction,
+            &self.inner.config,
+            &to_process.name,
+        )) {
+            report_error(&err);
         }
 
+        let mut increase_attempt_count = || -> Result<()> {
+            let attempt: i32 = self.runtime.block_on(
+                sqlx::query_scalar!(
+                    "UPDATE queue
+                         SET
+                            attempt = attempt + 1,
+                            last_attempt = NOW()
+                         WHERE id = $1
+                         RETURNING attempt;",
+                    to_process.id,
+                )
+                .fetch_one(&mut *transaction),
+            )?;
+
+            if attempt >= self.inner.max_attempts {
+                self.inner.metrics.failed_builds.inc();
+            }
+            Ok(())
+        };
+
+        match res {
+            Ok(BuildPackageSummary {
+                should_reattempt: false,
+                successful: _,
+            }) => {
+                self.runtime.block_on(
+                    sqlx::query!("DELETE FROM queue WHERE id = $1;", to_process.id)
+                        .execute(&mut *transaction),
+                )?;
+            }
+            Ok(BuildPackageSummary {
+                should_reattempt: true,
+                successful: _,
+            }) => {
+                increase_attempt_count()?;
+            }
+            Err(e) => {
+                increase_attempt_count()?;
+                report_error(&e.context(format!(
+                    "Failed to build package {}-{} from queue",
+                    to_process.name, to_process.version
+                )))
+            }
+        }
+
+        self.runtime.block_on(transaction.commit())?;
         Ok(())
     }
 
@@ -490,6 +613,7 @@ impl BuildQueue {
         builder: &mut RustwideBuilder,
     ) -> Result<bool> {
         let mut processed = false;
+
         self.process_next_crate(|krate| {
             processed = true;
 
@@ -521,8 +645,7 @@ impl BuildQueue {
                 return Err(err);
             }
 
-            builder.build_package(&krate.name, &krate.version, kind)?;
-            Ok(())
+            builder.build_package(&krate.name, &krate.version, kind)
         })?;
 
         Ok(processed)
@@ -532,18 +655,18 @@ impl BuildQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{DateTime, Utc};
+    use chrono::Utc;
     use std::time::Duration;
 
     #[test]
     fn test_add_duplicate_doesnt_fail_last_priority_wins() {
-        crate::test::wrapper(|env| {
-            let queue = env.build_queue();
+        crate::test::async_wrapper(|env| async move {
+            let queue = env.async_build_queue().await;
 
-            queue.add_crate("some_crate", "0.1.1", 0, None)?;
-            queue.add_crate("some_crate", "0.1.1", 9, None)?;
+            queue.add_crate("some_crate", "0.1.1", 0, None).await?;
+            queue.add_crate("some_crate", "0.1.1", 9, None).await?;
 
-            let queued_crates = queue.queued_crates()?;
+            let queued_crates = queue.queued_crates().await?;
             assert_eq!(queued_crates.len(), 1);
             assert_eq!(queued_crates[0].priority, 9);
 
@@ -553,55 +676,61 @@ mod tests {
 
     #[test]
     fn test_add_duplicate_resets_attempts_and_priority() {
-        crate::test::wrapper(|env| {
+        crate::test::async_wrapper(|env| async move {
             env.override_config(|config| {
                 config.build_attempts = 5;
             });
 
-            let queue = env.build_queue();
+            let queue = env.async_build_queue().await;
 
-            let mut conn = env.db().conn();
-            conn.execute(
+            let mut conn = env.async_db().await.async_conn().await;
+            sqlx::query!(
                 "
                 INSERT INTO queue (name, version, priority, attempt, last_attempt )
                 VALUES ('failed_crate', '0.1.1', 0, 99, NOW())",
-                &[],
-            )?;
+            )
+            .execute(&mut *conn)
+            .await?;
 
-            assert_eq!(queue.pending_count()?, 0);
+            assert_eq!(queue.pending_count().await?, 0);
 
-            queue.add_crate("failed_crate", "0.1.1", 9, None)?;
+            queue.add_crate("failed_crate", "0.1.1", 9, None).await?;
 
-            assert_eq!(queue.pending_count()?, 1);
+            assert_eq!(queue.pending_count().await?, 1);
 
-            let row = conn
-                .query_opt(
-                    "SELECT priority, attempt, last_attempt
+            let row = sqlx::query!(
+                "SELECT priority, attempt, last_attempt
                      FROM queue
                      WHERE name = $1 AND version = $2",
-                    &[&"failed_crate", &"0.1.1"],
-                )?
-                .unwrap();
-            assert_eq!(row.get::<_, i32>(0), 9);
-            assert_eq!(row.get::<_, i32>(1), 0);
-            assert!(row.get::<_, Option<DateTime<Utc>>>(2).is_none());
+                "failed_crate",
+                "0.1.1",
+            )
+            .fetch_one(&mut *conn)
+            .await?;
+
+            assert_eq!(row.priority, 9);
+            assert_eq!(row.attempt, 0);
+            assert!(row.last_attempt.is_none());
             Ok(())
         })
     }
 
     #[test]
     fn test_has_build_queued() {
-        crate::test::wrapper(|env| {
-            let queue = env.build_queue();
+        crate::test::async_wrapper(|env| async move {
+            let queue = env.async_build_queue().await;
 
-            queue.add_crate("dummy", "0.1.1", 0, None)?;
-            assert!(queue.has_build_queued("dummy", "0.1.1")?);
+            queue.add_crate("dummy", "0.1.1", 0, None).await?;
 
-            env.db()
-                .conn()
-                .execute("UPDATE queue SET attempt = 6", &[])?;
+            let mut conn = env.async_db().await.async_conn().await;
+            assert!(queue.has_build_queued("dummy", "0.1.1").await.unwrap());
 
-            assert!(!queue.has_build_queued("dummy", "0.1.1")?);
+            sqlx::query!("UPDATE queue SET attempt = 6")
+                .execute(&mut *conn)
+                .await
+                .unwrap();
+
+            assert!(!queue.has_build_queued("dummy", "0.1.1").await.unwrap());
 
             Ok(())
         })
@@ -614,6 +743,8 @@ mod tests {
                 config.build_attempts = 99;
                 config.delay_between_build_attempts = Duration::from_secs(1);
             });
+
+            let runtime = env.runtime();
 
             let queue = env.build_queue();
 
@@ -630,21 +761,23 @@ mod tests {
                 unreachable!();
             })?;
 
-            {
+            runtime.block_on(async {
                 // fake the build-attempt timestamp so it's older
-                let mut conn = env.db().conn();
-                conn.execute(
+                let mut conn = env.async_db().await.async_conn().await;
+                sqlx::query!(
                     "UPDATE queue SET last_attempt = $1",
-                    &[&(Utc::now() - chrono::Duration::try_seconds(60).unwrap())],
-                )?;
-            }
+                    Utc::now() - chrono::Duration::try_seconds(60).unwrap()
+                )
+                .execute(&mut *conn)
+                .await
+            })?;
 
             let mut handled = false;
             // now we can process it again
             queue.process_next_crate(|krate| {
                 assert_eq!(krate.name, "krate");
                 handled = true;
-                Ok(())
+                Ok(BuildPackageSummary::default())
             })?;
 
             assert!(handled);
@@ -680,7 +813,7 @@ mod tests {
             let assert_next = |name| -> Result<()> {
                 queue.process_next_crate(|krate| {
                     assert_eq!(name, krate.name);
-                    Ok(())
+                    Ok(BuildPackageSummary::default())
                 })?;
                 Ok(())
             };
@@ -720,7 +853,7 @@ mod tests {
             let mut called = false;
             queue.process_next_crate(|_| {
                 called = true;
-                Ok(())
+                Ok(BuildPackageSummary::default())
             })?;
             assert!(!called, "there were still items in the queue");
 
@@ -731,7 +864,15 @@ mod tests {
             assert_eq!(metrics.build_time.get_sample_count(), 9);
 
             // no invalidations were run since we don't have a distribution id configured
-            assert!(cdn::queued_or_active_crate_invalidations(&mut *env.db().conn())?.is_empty());
+            assert!(env
+                .runtime()
+                .block_on(async {
+                    cdn::queued_or_active_crate_invalidations(
+                        &mut *env.async_db().await.async_conn().await,
+                    )
+                    .await
+                })?
+                .is_empty());
 
             Ok(())
         })
@@ -750,15 +891,23 @@ mod tests {
             queue.add_crate("will_succeed", "1.0.0", -1, None)?;
             queue.add_crate("will_fail", "1.0.0", 0, None)?;
 
-            let mut conn = env.db().conn();
-            cdn::queued_or_active_crate_invalidations(&mut *conn)?.is_empty();
+            let fetch_invalidations = || {
+                env.runtime()
+                    .block_on(async {
+                        let mut conn = env.async_db().await.async_conn().await;
+                        cdn::queued_or_active_crate_invalidations(&mut conn).await
+                    })
+                    .unwrap()
+            };
+
+            assert!(fetch_invalidations().is_empty());
 
             queue.process_next_crate(|krate| {
                 assert_eq!("will_succeed", krate.name);
-                Ok(())
+                Ok(BuildPackageSummary::default())
             })?;
 
-            let queued_invalidations = cdn::queued_or_active_crate_invalidations(&mut *conn)?;
+            let queued_invalidations = fetch_invalidations();
             assert_eq!(queued_invalidations.len(), 3);
             assert!(queued_invalidations
                 .iter()
@@ -769,7 +918,7 @@ mod tests {
                 anyhow::bail!("simulate a failure");
             })?;
 
-            let queued_invalidations = cdn::queued_or_active_crate_invalidations(&mut *conn)?;
+            let queued_invalidations = fetch_invalidations();
             assert_eq!(queued_invalidations.len(), 6);
             assert!(queued_invalidations
                 .iter()
@@ -793,7 +942,7 @@ mod tests {
 
             queue.process_next_crate(|krate| {
                 assert_eq!("foo", krate.name);
-                Ok(())
+                Ok(BuildPackageSummary::default())
             })?;
             assert_eq!(queue.pending_count()?, 1);
 
@@ -816,7 +965,7 @@ mod tests {
 
             queue.process_next_crate(|krate| {
                 assert_eq!("bar", krate.name);
-                Ok(())
+                Ok(BuildPackageSummary::default())
             })?;
             assert_eq!(queue.prioritized_count()?, 1);
 
@@ -841,7 +990,7 @@ mod tests {
             );
 
             while queue.pending_count()? > 0 {
-                queue.process_next_crate(|_| Ok(()))?;
+                queue.process_next_crate(|_| Ok(BuildPackageSummary::default()))?;
             }
             assert!(queue.pending_count_by_priority()?.is_empty());
 
@@ -850,7 +999,44 @@ mod tests {
     }
 
     #[test]
-    fn test_failed_count() {
+    fn test_failed_count_for_reattempts() {
+        const MAX_ATTEMPTS: u16 = 3;
+        crate::test::wrapper(|env| {
+            env.override_config(|config| {
+                config.build_attempts = MAX_ATTEMPTS;
+                config.delay_between_build_attempts = Duration::ZERO;
+            });
+            let queue = env.build_queue();
+
+            assert_eq!(queue.failed_count()?, 0);
+            queue.add_crate("foo", "1.0.0", -100, None)?;
+            assert_eq!(queue.failed_count()?, 0);
+            queue.add_crate("bar", "1.0.0", 0, None)?;
+
+            for _ in 0..MAX_ATTEMPTS {
+                assert_eq!(queue.failed_count()?, 0);
+                queue.process_next_crate(|krate| {
+                    assert_eq!("foo", krate.name);
+                    Ok(BuildPackageSummary {
+                        should_reattempt: true,
+                        ..Default::default()
+                    })
+                })?;
+            }
+            assert_eq!(queue.failed_count()?, 1);
+
+            queue.process_next_crate(|krate| {
+                assert_eq!("bar", krate.name);
+                Ok(BuildPackageSummary::default())
+            })?;
+            assert_eq!(queue.failed_count()?, 1);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_failed_count_after_error() {
         const MAX_ATTEMPTS: u16 = 3;
         crate::test::wrapper(|env| {
             env.override_config(|config| {
@@ -875,7 +1061,7 @@ mod tests {
 
             queue.process_next_crate(|krate| {
                 assert_eq!("bar", krate.name);
-                Ok(())
+                Ok(BuildPackageSummary::default())
             })?;
             assert_eq!(queue.failed_count()?, 1);
 
@@ -939,8 +1125,12 @@ mod tests {
     #[test]
     fn test_broken_db_reference_breaks() {
         crate::test::wrapper(|env| {
-            let mut conn = env.db().conn();
-            set_config(&mut conn, ConfigName::LastSeenIndexReference, "invalid")?;
+            env.runtime().block_on(async {
+                let mut conn = env.async_db().await.async_conn().await;
+                set_config(&mut conn, ConfigName::LastSeenIndexReference, "invalid")
+                    .await
+                    .unwrap();
+            });
 
             let queue = env.build_queue();
             assert!(queue.last_seen_reference().is_err());
@@ -964,5 +1154,41 @@ mod tests {
 
             Ok(())
         });
+    }
+
+    #[test]
+    fn test_add_long_name() {
+        crate::test::wrapper(|env| {
+            let queue = env.build_queue();
+
+            let name: String = "krate".repeat(100);
+
+            queue.add_crate(&name, "0.0.1", 0, None)?;
+
+            queue.process_next_crate(|krate| {
+                assert_eq!(name, krate.name);
+                Ok(BuildPackageSummary::default())
+            })?;
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn test_add_long_version() {
+        crate::test::wrapper(|env| {
+            let queue = env.build_queue();
+
+            let version: String = "version".repeat(100);
+
+            queue.add_crate("krate", &version, 0, None)?;
+
+            queue.process_next_crate(|krate| {
+                assert_eq!(version, krate.version);
+                Ok(BuildPackageSummary::default())
+            })?;
+
+            Ok(())
+        })
     }
 }

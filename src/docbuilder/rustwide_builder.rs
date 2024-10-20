@@ -17,7 +17,6 @@ use crate::{db::blacklist::is_blacklisted, utils::MetadataPackage};
 use crate::{AsyncStorage, Config, Context, InstanceMetrics, RegistryApi, Storage};
 use anyhow::{anyhow, bail, Context as _, Error};
 use docsrs_metadata::{BuildTargets, Metadata, DEFAULT_TARGETS, HOST_TARGET};
-use postgres::Client;
 use regex::Regex;
 use rustwide::cmd::{Command, CommandError, SandboxBuilder, SandboxImage};
 use rustwide::logging::{self, LogStorage};
@@ -36,8 +35,10 @@ const COMPONENTS: &[&str] = &["llvm-tools-preview", "rustc-dev", "rustfmt"];
 const DUMMY_CRATE_NAME: &str = "empty-library";
 const DUMMY_CRATE_VERSION: &str = "1.0.0";
 
-fn get_configured_toolchain(conn: &mut Client) -> Result<Toolchain> {
-    let name: String = get_config(conn, ConfigName::Toolchain)?.unwrap_or_else(|| "nightly".into());
+async fn get_configured_toolchain(conn: &mut sqlx::PgConnection) -> Result<Toolchain> {
+    let name: String = get_config(conn, ConfigName::Toolchain)
+        .await?
+        .unwrap_or_else(|| "nightly".into());
 
     // If the toolchain is all hex, assume it references an artifact from
     // CI, for instance an `@bors try` build.
@@ -99,10 +100,14 @@ impl RustwideBuilder {
         let config = context.config()?;
         let pool = context.pool()?;
         let runtime = context.runtime()?;
+        let toolchain = runtime.block_on(async {
+            let mut conn = pool.get_async().await?;
+            get_configured_toolchain(&mut conn).await
+        })?;
 
         Ok(RustwideBuilder {
             workspace: build_workspace(context)?,
-            toolchain: get_configured_toolchain(&mut *pool.get()?)?,
+            toolchain,
             config,
             db: pool,
             runtime: runtime.clone(),
@@ -143,7 +148,10 @@ impl RustwideBuilder {
     }
 
     pub fn update_toolchain(&mut self) -> Result<bool> {
-        self.toolchain = get_configured_toolchain(&mut *self.db.get()?)?;
+        self.toolchain = self.runtime.block_on(async {
+            let mut conn = self.db.get_async().await?;
+            get_configured_toolchain(&mut conn).await
+        })?;
 
         // For CI builds, a lot of the normal update_toolchain things don't apply.
         // CI builds are only for one platform (https://forge.rust-lang.org/infra/docs/rustc-ci.html#try-builds)
@@ -265,7 +273,6 @@ impl RustwideBuilder {
 
         info!("building a dummy crate to get essential files");
 
-        let mut conn = self.db.get()?;
         let limits = self.get_limits(DUMMY_CRATE_NAME)?;
 
         // FIXME: for now, purge all build dirs before each build.
@@ -323,7 +330,10 @@ impl RustwideBuilder {
                     ))?;
                 }
 
-                set_config(&mut conn, ConfigName::RustcVersion, rustc_version)?;
+                self.runtime.block_on(async {
+                    let mut conn = self.db.get_async().await?;
+                    set_config(&mut conn, ConfigName::RustcVersion, rustc_version).await
+                })?;
                 Ok(())
             })?;
 
@@ -331,7 +341,7 @@ impl RustwideBuilder {
         Ok(())
     }
 
-    pub fn build_local_package(&mut self, path: &Path) -> Result<bool> {
+    pub fn build_local_package(&mut self, path: &Path) -> Result<BuildPackageSummary> {
         let metadata = CargoMetadata::load_from_rustwide(&self.workspace, &self.toolchain, path)
             .map_err(|err| {
                 err.context(format!("failed to load local package {}", path.display()))
@@ -340,13 +350,13 @@ impl RustwideBuilder {
         self.build_package(&package.name, &package.version, PackageKind::Local(path))
     }
 
-    #[instrument(name = "docbuilder.build_package", parent = None, skip(self))]
+    #[instrument(name = "docbuilder.build_package", parent = None, skip(self, name), fields(krate=name))]
     pub fn build_package(
         &mut self,
         name: &str,
         version: &str,
         kind: PackageKind<'_>,
-    ) -> Result<bool> {
+    ) -> Result<BuildPackageSummary> {
         let build_id = self.runtime.block_on(async {
             let mut conn = self.db.get_async().await?;
             let crate_id = initialize_crate(&mut conn, name).await?;
@@ -356,16 +366,23 @@ impl RustwideBuilder {
         })?;
 
         match self.build_package_inner(name, version, kind, build_id) {
-            Ok(successful) => Ok(successful),
+            Ok(successful) => Ok(BuildPackageSummary {
+                successful,
+                should_reattempt: false,
+            }),
             Err(err) => self.runtime.block_on(async {
                 // NOTE: this might hide some errors from us, while only surfacing them in the build
                 // result.
                 // At some point we might introduce a special error type which additionally reports
                 // to sentry.
                 let mut conn = self.db.get_async().await?;
+
                 update_build_with_error(&mut conn, build_id, Some(&format!("{:?}", err))).await?;
 
-                Ok(false)
+                Ok(BuildPackageSummary {
+                    successful: false,
+                    should_reattempt: true,
+                })
             }),
         }
     }
@@ -377,10 +394,15 @@ impl RustwideBuilder {
         kind: PackageKind<'_>,
         build_id: i32,
     ) -> Result<bool> {
-        let mut conn = self.db.get()?;
         info!("building package {} {}", name, version);
 
-        if is_blacklisted(&mut conn, name)? {
+        let is_blacklisted = self.runtime.block_on(async {
+            let mut conn = self.db.get_async().await?;
+
+            is_blacklisted(&mut conn, name).await
+        })?;
+
+        if is_blacklisted {
             info!("skipping build of {}, crate has been blacklisted", name);
             return Ok(false);
         }
@@ -485,14 +507,14 @@ impl RustwideBuilder {
                         Command::new(&self.workspace, self.toolchain.cargo())
                             .cd(build.host_source_dir())
                             .args(&["generate-lockfile"])
-                            .run()?;
+                            .run_capture()?;
                     }
                     {
                         let _span = info_span!("cargo fetch --locked").entered();
                         Command::new(&self.workspace, self.toolchain.cargo())
                             .cd(build.host_source_dir())
                             .args(&["fetch", "--locked"])
-                            .run()?;
+                            .run_capture()?;
                     }
                     res =
                         self.execute_build(default_target, true, build, &limits, &metadata, false)?;
@@ -734,7 +756,7 @@ impl RustwideBuilder {
                     }
                 }
             })
-            .log_output(false)
+            .log_output(true)
             .run()?;
 
         Ok(
@@ -964,11 +986,50 @@ pub(crate) struct BuildResult {
     pub(crate) successful: bool,
 }
 
+#[derive(Debug)]
+pub struct BuildPackageSummary {
+    pub successful: bool,
+    pub should_reattempt: bool,
+}
+
+#[cfg(test)]
+impl Default for BuildPackageSummary {
+    fn default() -> Self {
+        Self {
+            successful: true,
+            should_reattempt: false,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::{assert_redirect, assert_success, wrapper, TestEnvironment};
-    use serde_json::Value;
+    use crate::{
+        db::types::Feature,
+        test::{assert_redirect, assert_success, wrapper, TestEnvironment},
+    };
+
+    fn get_features(
+        env: &TestEnvironment,
+        name: &str,
+        version: &str,
+    ) -> Result<Option<Vec<Feature>>, sqlx::Error> {
+        env.runtime().block_on(async {
+            let mut conn = env.async_db().await.async_conn().await;
+            sqlx::query_scalar!(
+                r#"SELECT
+                        releases.features "features?: Vec<Feature>"
+                     FROM releases
+                     INNER JOIN crates ON crates.id = releases.crate_id
+                     WHERE crates.name = $1 AND releases.version = $2"#,
+                name,
+                version,
+            )
+            .fetch_one(&mut *conn)
+            .await
+        })
+    }
 
     fn remove_cache_files(env: &TestEnvironment, crate_: &str, version: &str) -> Result<()> {
         let paths = [
@@ -1017,12 +1078,16 @@ mod tests {
 
             let mut builder = RustwideBuilder::init(env).unwrap();
             builder.update_toolchain()?;
-            assert!(builder.build_package(crate_, version, PackageKind::CratesIo)?);
+            assert!(
+                builder
+                    .build_package(crate_, version, PackageKind::CratesIo)?
+                    .successful
+            );
 
             // check release record in the db (default and other targets)
-            let mut conn = env.db().conn();
-            let row = conn
-                .query_one(
+            let row = env.runtime().block_on(async {
+                let mut conn = env.async_db().await.async_conn().await;
+                sqlx::query!(
                     r#"SELECT
                         r.rustdoc_status,
                         r.default_target,
@@ -1041,20 +1106,24 @@ mod tests {
                     WHERE
                         c.name = $1 AND
                         r.version = $2"#,
-                    &[&crate_, &version],
+                    crate_,
+                    version,
                 )
-                .unwrap();
+                .fetch_one(&mut *conn)
+                .await
+            })?;
 
-            assert!(row.get::<_, bool>("rustdoc_status"));
-            assert_eq!(row.get::<_, String>("default_target"), default_target);
-            assert!(row.get::<_, Option<i32>>("total_items").is_some());
-            assert!(row.get::<_, bool>("archive_storage"));
-            assert!(!row.get::<_, String>("docsrs_version").is_empty());
-            assert!(!row.get::<_, String>("rustc_version").is_empty());
-            assert_eq!(row.get::<_, String>("build_status"), "success");
+            assert_eq!(row.rustdoc_status, Some(true));
+            assert_eq!(row.default_target, Some(default_target.into()));
+            assert!(row.total_items.is_some());
+            assert!(row.archive_storage);
+            assert!(!row.docsrs_version.unwrap().is_empty());
+            assert!(!row.rustc_version.unwrap().is_empty());
+            assert_eq!(row.build_status.unwrap(), "success");
 
             let mut targets: Vec<String> = row
-                .get::<_, Value>("doc_targets")
+                .doc_targets
+                .unwrap()
                 .as_array()
                 .unwrap()
                 .iter()
@@ -1135,10 +1204,7 @@ mod tests {
                     assert_success(&target_url, web)?;
 
                     assert!(storage
-                        .exists(&format!(
-                            "build-logs/{}/{target}.txt",
-                            row.get::<_, i32>("build_id")
-                        ))
+                        .exists(&format!("build-logs/{}/{target}.txt", row.build_id))
                         .unwrap());
                 }
             }
@@ -1163,12 +1229,16 @@ mod tests {
 
             let mut builder = RustwideBuilder::init(env).unwrap();
             builder.update_toolchain()?;
-            assert!(!builder.build_package(crate_, version, PackageKind::CratesIo)?);
+            assert!(
+                !builder
+                    .build_package(crate_, version, PackageKind::CratesIo)?
+                    .successful
+            );
 
             // check release record in the db (default and other targets)
-            let mut conn = env.db().conn();
-            let rows = conn
-                .query(
+            let row = env.runtime().block_on(async {
+                let mut conn = env.async_db().await.async_conn().await;
+                sqlx::query!(
                     "SELECT
                         r.rustdoc_status,
                         r.is_library
@@ -1179,13 +1249,15 @@ mod tests {
                     WHERE
                         c.name = $1 AND
                         r.version = $2",
-                    &[&crate_, &version],
+                    crate_,
+                    version
                 )
-                .unwrap();
-            let row = rows.first().unwrap();
+                .fetch_one(&mut *conn)
+                .await
+            })?;
 
-            assert!(!row.get::<_, bool>("rustdoc_status"));
-            assert!(!row.get::<_, bool>("is_library"));
+            assert_eq!(row.rustdoc_status, Some(false));
+            assert_eq!(row.is_library, Some(false));
 
             // doc archive exists
             let doc_archive = rustdoc_archive_path(crate_, version);
@@ -1211,7 +1283,11 @@ mod tests {
             let version = "1.0.26";
             let mut builder = RustwideBuilder::init(env).unwrap();
             builder.update_toolchain()?;
-            assert!(builder.build_package(crate_, version, PackageKind::CratesIo)?);
+            assert!(
+                builder
+                    .build_package(crate_, version, PackageKind::CratesIo)?
+                    .successful
+            );
 
             let storage = env.storage();
 
@@ -1238,7 +1314,11 @@ mod tests {
             if builder.toolchain.as_ci().is_some() {
                 return Ok(());
             }
-            assert!(builder.build_package(crate_, version, PackageKind::CratesIo)?);
+            assert!(
+                builder
+                    .build_package(crate_, version, PackageKind::CratesIo)?
+                    .successful
+            );
 
             let storage = env.storage();
 
@@ -1288,7 +1368,11 @@ mod tests {
             let version = "0.1.2";
             let mut builder = RustwideBuilder::init(env).unwrap();
             builder.update_toolchain()?;
-            assert!(builder.build_package(crate_, version, PackageKind::CratesIo)?);
+            assert!(
+                builder
+                    .build_package(crate_, version, PackageKind::CratesIo)?
+                    .successful
+            );
 
             Ok(())
         });
@@ -1311,7 +1395,11 @@ mod tests {
             let version = "0.2.0";
             let mut builder = RustwideBuilder::init(env).unwrap();
             builder.update_toolchain()?;
-            assert!(builder.build_package(crate_, version, PackageKind::CratesIo)?);
+            assert!(
+                builder
+                    .build_package(crate_, version, PackageKind::CratesIo)?
+                    .successful
+            );
 
             Ok(())
         });
@@ -1325,7 +1413,11 @@ mod tests {
             let version = "1.0.33";
             let mut builder = RustwideBuilder::init(env).unwrap();
             builder.update_toolchain()?;
-            assert!(builder.build_package(crate_, version, PackageKind::CratesIo)?);
+            assert!(
+                builder
+                    .build_package(crate_, version, PackageKind::CratesIo)?
+                    .successful
+            );
             Ok(())
         });
     }
@@ -1344,7 +1436,11 @@ mod tests {
             builder.update_toolchain()?;
 
             // `Result` is `Ok`, but the build-result is `false`
-            assert!(!builder.build_package(crate_, version, PackageKind::CratesIo)?);
+            assert!(
+                !builder
+                    .build_package(crate_, version, PackageKind::CratesIo)?
+                    .successful
+            );
 
             // source archice exists
             let source_archive = source_archive_path(crate_, version);
@@ -1370,7 +1466,10 @@ mod tests {
             builder.update_toolchain()?;
 
             // `Result` is `Ok`, but the build-result is `false`
-            assert!(!builder.build_package(crate_, version, PackageKind::CratesIo)?);
+            let summary = builder.build_package(crate_, version, PackageKind::CratesIo)?;
+
+            assert!(!summary.successful);
+            assert!(summary.should_reattempt);
 
             let row = env.runtime().block_on(async {
                 let mut conn = env.async_db().await.async_conn().await;
@@ -1409,20 +1508,16 @@ mod tests {
             let version = "1.0.152";
             let mut builder = RustwideBuilder::init(env).unwrap();
             builder.update_toolchain()?;
-            assert!(builder.build_package(crate_, version, PackageKind::CratesIo)?);
+            assert!(
+                builder
+                    .build_package(crate_, version, PackageKind::CratesIo)?
+                    .successful
+            );
 
-            let mut conn = env.db().conn();
-            let features: Vec<crate::db::types::Feature> = conn
-                .query_opt(
-                    "SELECT releases.features FROM releases
-                     INNER JOIN crates ON crates.id = releases.crate_id
-                     WHERE crates.name = $1 AND releases.version = $2",
-                    &[&crate_, &version],
-                )?
-                .context("missing release")?
-                .get(0);
-
-            assert!(features.iter().any(|f| f.name == "serde_derive"));
+            assert!(get_features(env, crate_, version)?
+                .unwrap()
+                .iter()
+                .any(|f| f.name == "serde_derive"));
 
             Ok(())
         });
@@ -1436,20 +1531,16 @@ mod tests {
             let version = "0.1.1";
             let mut builder = RustwideBuilder::init(env).unwrap();
             builder.update_toolchain()?;
-            assert!(builder.build_package(crate_, version, PackageKind::CratesIo)?);
+            assert!(
+                builder
+                    .build_package(crate_, version, PackageKind::CratesIo)?
+                    .successful
+            );
 
-            let mut conn = env.db().conn();
-            let features: Vec<crate::db::types::Feature> = conn
-                .query_opt(
-                    "SELECT releases.features FROM releases
-                     INNER JOIN crates ON crates.id = releases.crate_id
-                     WHERE crates.name = $1 AND releases.version = $2",
-                    &[&crate_, &version],
-                )?
-                .context("missing release")?
-                .get(0);
-
-            assert!(!features.iter().any(|f| f.name == "with_builtin_macros"));
+            assert!(!get_features(env, crate_, version)?
+                .unwrap()
+                .iter()
+                .any(|f| f.name == "with_builtin_macros"));
 
             Ok(())
         });
@@ -1461,7 +1552,11 @@ mod tests {
         wrapper(|env| {
             let mut builder = RustwideBuilder::init(env)?;
             builder.update_toolchain()?;
-            assert!(builder.build_local_package(Path::new("tests/crates/build-std"))?);
+            assert!(
+                builder
+                    .build_local_package(Path::new("tests/crates/build-std"))?
+                    .successful
+            );
             Ok(())
         })
     }
@@ -1473,7 +1568,11 @@ mod tests {
             let mut builder = RustwideBuilder::init(env)?;
             builder.update_toolchain()?;
             builder.reinitialize_workspace_if_interval_passed(env)?;
-            assert!(builder.build_local_package(Path::new("tests/crates/build-std"))?);
+            assert!(
+                builder
+                    .build_local_package(Path::new("tests/crates/build-std"))?
+                    .successful
+            );
             Ok(())
         })
     }
@@ -1489,10 +1588,18 @@ mod tests {
             });
             let mut builder = RustwideBuilder::init(env)?;
             builder.update_toolchain()?;
-            assert!(builder.build_local_package(Path::new("tests/crates/build-std"))?);
+            assert!(
+                builder
+                    .build_local_package(Path::new("tests/crates/build-std"))?
+                    .successful
+            );
             sleep(Duration::from_secs(1));
             builder.reinitialize_workspace_if_interval_passed(env)?;
-            assert!(builder.build_local_package(Path::new("tests/crates/build-std"))?);
+            assert!(
+                builder
+                    .build_local_package(Path::new("tests/crates/build-std"))?
+                    .successful
+            );
             Ok(())
         })
     }
@@ -1509,11 +1616,11 @@ mod tests {
             // new builder should detect the existing rustc version from the previous builder
             // (simulating running `update-toolchain` and `build crate` in separate invocations)
             let mut builder = RustwideBuilder::init(env)?;
-            assert!(builder.build_package(
-                DUMMY_CRATE_NAME,
-                DUMMY_CRATE_VERSION,
-                PackageKind::CratesIo
-            )?);
+            assert!(
+                builder
+                    .build_package(DUMMY_CRATE_NAME, DUMMY_CRATE_VERSION, PackageKind::CratesIo)?
+                    .successful
+            );
             assert_eq!(old_version, builder.rustc_version()?);
 
             Ok(())

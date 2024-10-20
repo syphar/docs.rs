@@ -7,14 +7,14 @@ use crate::{
     db::types::BuildStatus,
     docbuilder::Limits,
     impl_axum_webpage,
-    utils::spawn_blocking,
     web::{
-        crate_details::CrateDetails,
         error::AxumResult,
         extractors::{DbConnection, Path},
-        filters, match_version, MetaData, ReqVersion,
+        filters, match_version,
+        page::templates::{RenderRegular, RenderSolid},
+        MetaData, ReqVersion,
     },
-    BuildQueue, Config,
+    AsyncBuildQueue, Config,
 };
 use anyhow::{anyhow, Result};
 use axum::{
@@ -55,15 +55,6 @@ struct BuildsPage {
 impl_axum_webpage! { BuildsPage }
 
 impl BuildsPage {
-    pub(crate) fn krate(&self) -> Option<&CrateDetails> {
-        None
-    }
-    pub(crate) fn permalink_path(&self) -> &str {
-        ""
-    }
-    pub(crate) fn get_metadata(&self) -> Option<&MetaData> {
-        Some(&self.metadata)
-    }
     pub(crate) fn use_direct_platform_links(&self) -> bool {
         true
     }
@@ -117,7 +108,10 @@ pub(crate) async fn build_list_json_handler(
             get_builds(&mut conn, &name, &version)
                 .await?
                 .iter()
-                .map(|build| {
+                .filter_map(|build| {
+                    if build.build_status == BuildStatus::InProgress {
+                        return None;
+                    }
                     // for backwards compatibility in this API, we
                     // * convert the build status to a boolean
                     // * already filter out in-progress builds
@@ -125,13 +119,13 @@ pub(crate) async fn build_list_json_handler(
                     // even when we start showing in-progress builds in the UI,
                     // we might still not show them here for backwards
                     // compatibility.
-                    serde_json::json!({
+                    Some(serde_json::json!({
                         "id": build.id,
                         "rustc_version": build.rustc_version,
                         "docsrs_version": build.docsrs_version,
                         "build_status": build.build_status.is_success(),
                         "build_time": build.build_time,
-                    })
+                    }))
                 })
                 .collect::<Vec<_>>(),
         ),
@@ -140,7 +134,7 @@ pub(crate) async fn build_list_json_handler(
 }
 
 async fn crate_version_exists(
-    mut conn: DbConnection,
+    conn: &mut sqlx::PgConnection,
     name: &String,
     version: &Version,
 ) -> Result<bool, anyhow::Error> {
@@ -160,22 +154,19 @@ async fn crate_version_exists(
 }
 
 async fn build_trigger_check(
-    conn: DbConnection,
+    conn: &mut sqlx::PgConnection,
     name: &String,
     version: &Version,
-    build_queue: &Arc<BuildQueue>,
+    build_queue: &Arc<AsyncBuildQueue>,
 ) -> AxumResult<impl IntoResponse> {
-    if !crate_version_exists(conn, name, version).await? {
+    if !crate_version_exists(&mut *conn, name, version).await? {
         return Err(AxumNope::VersionNotFound);
     }
 
-    let crate_version_is_in_queue = spawn_blocking({
-        let name = name.clone();
-        let version_string = version.to_string();
-        let build_queue = build_queue.clone();
-        move || build_queue.has_build_queued(&name, &version_string)
-    })
-    .await?;
+    let crate_version_is_in_queue = build_queue
+        .has_build_queued(name, &version.to_string())
+        .await?;
+
     if crate_version_is_in_queue {
         return Err(AxumNope::BadRequest(anyhow!(
             "crate {name} {version} already queued for rebuild"
@@ -191,8 +182,8 @@ const TRIGGERED_REBUILD_PRIORITY: i32 = 5;
 
 pub(crate) async fn build_trigger_rebuild_handler(
     Path((name, version)): Path<(String, Version)>,
-    conn: DbConnection,
-    Extension(build_queue): Extension<Arc<BuildQueue>>,
+    mut conn: DbConnection,
+    Extension(build_queue): Extension<Arc<AsyncBuildQueue>>,
     Extension(config): Extension<Arc<Config>>,
     opt_auth_header: Option<TypedHeader<Authorization<Bearer>>>,
 ) -> JsonAxumResult<impl IntoResponse> {
@@ -214,24 +205,19 @@ pub(crate) async fn build_trigger_rebuild_handler(
         )));
     }
 
-    build_trigger_check(conn, &name, &version, &build_queue)
+    build_trigger_check(&mut conn, &name, &version, &build_queue)
         .await
         .map_err(JsonAxumNope)?;
 
-    spawn_blocking({
-        let name = name.clone();
-        let version_string = version.to_string();
-        move || {
-            build_queue.add_crate(
-                &name,
-                &version_string,
-                TRIGGERED_REBUILD_PRIORITY,
-                None, /* because crates.io is the only service that calls this endpoint */
-            )
-        }
-    })
-    .await
-    .map_err(|e| JsonAxumNope(e.into()))?;
+    build_queue
+        .add_crate(
+            &name,
+            &version.to_string(),
+            TRIGGERED_REBUILD_PRIORITY,
+            None, /* because crates.io is the only service that calls this endpoint */
+        )
+        .await
+        .map_err(|e| JsonAxumNope(e.into()))?;
 
     Ok((StatusCode::CREATED, Json(serde_json::json!({}))))
 }
@@ -255,8 +241,7 @@ async fn get_builds(
          INNER JOIN crates ON releases.crate_id = crates.id
          WHERE
             crates.name = $1 AND
-            releases.version = $2 AND
-            builds.build_status != 'in_progress'
+            releases.version = $2
          ORDER BY id DESC"#,
         name,
         version.to_string(),
@@ -269,10 +254,11 @@ async fn get_builds(
 mod tests {
     use super::BuildStatus;
     use crate::{
+        db::Overrides,
         test::{assert_cache_control, fake_release_that_failed_before_build, wrapper, FakeBuild},
         web::cache::CachePolicy,
     };
-    use chrono::{DateTime, Duration, Utc};
+    use chrono::{DateTime, Utc};
     use kuchikiki::traits::TendrilSink;
     use reqwest::StatusCode;
 
@@ -558,29 +544,25 @@ mod tests {
 
             let response = env.frontend().get("/crate/foo/0.1.0/builds").send()?;
 
-            // FIXME: temporarily we don't show in-progress releases anywhere, which means we don't
-            // show releases without builds anywhere.
-            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+            assert_cache_control(&response, CachePolicy::NoCaching, &env.config());
+            let page = kuchikiki::parse_html().one(response.text()?);
 
-            // assert_cache_control(&response, CachePolicy::NoCaching, &env.config());
-            // let page = kuchikiki::parse_html().one(response.text()?);
+            let rows: Vec<_> = page
+                .select("ul > li a.release")
+                .unwrap()
+                .map(|row| row.text_contents())
+                .collect();
 
-            // let rows: Vec<_> = page
-            //     .select("ul > li a.release")
-            //     .unwrap()
-            //     .map(|row| row.text_contents())
-            //     .collect();
+            assert!(rows.is_empty());
 
-            // assert!(rows.is_empty());
+            let warning = page
+                .select_first(".warning")
+                .expect("missing warning element")
+                .text_contents();
 
-            // let warning = page
-            //     .select_first(".warning")
-            //     .expect("missing warning element")
-            //     .text_contents();
-
-            // assert!(warning.contains("has not built"));
-            // assert!(warning.contains("queued"));
-            // assert!(warning.contains("open an issue"));
+            assert!(warning.contains("has not built"));
+            assert!(warning.contains("queued"));
+            assert!(warning.contains("open an issue"));
 
             Ok(())
         });
@@ -591,17 +573,15 @@ mod tests {
         wrapper(|env| {
             env.fake_release().name("foo").version("0.1.0").create()?;
 
-            env.db().conn().query(
-                "INSERT INTO sandbox_overrides
-                    (crate_name, max_memory_bytes, timeout_seconds, max_targets)
-                 VALUES ($1, $2, $3, $4)",
-                &[
-                    &"foo",
-                    &(6 * 1024 * 1024 * 1024i64),
-                    &(Duration::try_hours(2).unwrap().num_seconds() as i32),
-                    &1,
-                ],
-            )?;
+            env.runtime().block_on(async {
+                let mut conn = env.async_db().await.async_conn().await;
+                let limits = Overrides {
+                    memory: Some(6 * 1024 * 1024 * 1024),
+                    targets: Some(1),
+                    timeout: Some(std::time::Duration::from_secs(2 * 60 * 60)),
+                };
+                Overrides::save(&mut conn, "foo", limits).await
+            })?;
 
             let page = kuchikiki::parse_html().one(
                 env.frontend()
