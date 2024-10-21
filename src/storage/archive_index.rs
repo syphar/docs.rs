@@ -74,7 +74,16 @@ pub(crate) fn create<R: io::Read + io::Seek, P: AsRef<Path> + std::fmt::Debug>(
     Ok(())
 }
 
-fn find_in_sqlite_index(conn: &Connection, search_for: &str) -> Result<Option<FileInfo>> {
+#[instrument]
+pub(crate) fn find_in_file<P: AsRef<Path> + std::fmt::Debug>(
+    archive_index_path: P,
+    search_for: &str,
+) -> Result<Option<FileInfo>, rusqlite::Error> {
+    let conn = Connection::open_with_flags(
+        archive_index_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+
     let mut stmt = conn.prepare(
         "
         SELECT start, end, compression
@@ -98,19 +107,6 @@ fn find_in_sqlite_index(conn: &Connection, search_for: &str) -> Result<Option<Fi
         })
     })
     .optional()
-    .context("error fetching SQLite data")
-}
-
-#[instrument]
-pub(crate) fn find_in_file<P: AsRef<Path> + std::fmt::Debug>(
-    archive_index_path: P,
-    search_for: &str,
-) -> Result<Option<FileInfo>> {
-    let connection = Connection::open_with_flags(
-        archive_index_path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?;
-    find_in_sqlite_index(&connection, search_for)
 }
 
 #[cfg(test)]
