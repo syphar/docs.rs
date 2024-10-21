@@ -1,6 +1,6 @@
 use crate::error::Result;
 use crate::web::rustdoc::RustdocPage;
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use rinja::Template;
 use std::sync::Arc;
 use tracing::trace;
@@ -8,14 +8,18 @@ use tracing::trace;
 #[derive(Template)]
 #[template(path = "rustdoc/head.html")]
 pub struct Head<'a> {
-    rustdoc_css_file: Option<&'a str>,
+    rustdoc_css_file: &'a str,
 }
 
 impl<'a> Head<'a> {
-    pub fn new(inner: &'a RustdocPage) -> Self {
-        Self {
-            rustdoc_css_file: inner.metadata.rustdoc_css_file.as_deref(),
-        }
+    pub fn new(inner: &'a RustdocPage) -> Result<Self> {
+        Ok(Self {
+            rustdoc_css_file: inner
+                .metadata
+                .rustdoc_css_file
+                .as_deref()
+                .ok_or_else(|| anyhow!("rustdoc_css_file is missing"))?,
+        })
     }
 }
 
