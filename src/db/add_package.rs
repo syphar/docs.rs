@@ -162,7 +162,7 @@ pub async fn update_build_status(conn: &mut sqlx::PgConnection, release_id: i32)
          FROM (
              SELECT
                r.id,
-               MAX(b.build_time) as last_build_time,
+               MAX(b.build_finished) as last_build_time,
                SUM(CASE WHEN b.build_status = 'success' THEN 1 ELSE 0 END) as success_count,
                SUM(CASE WHEN b.build_status = 'failure' THEN 1 ELSE 0 END) as failure_count
              FROM
@@ -252,7 +252,7 @@ pub(crate) async fn finish_build(
              build_status = $3,
              build_server = $4,
              errors = $5,
-             build_time = NOW()
+             build_finished = NOW()
          WHERE
             id = $6
          RETURNING rid",
@@ -342,8 +342,8 @@ pub(crate) async fn initialize_build(
     let hostname = hostname::get()?;
 
     let build_id = sqlx::query_scalar!(
-        "INSERT INTO builds(rid, build_status, build_server)
-         VALUES ($1, $2, $3)
+        "INSERT INTO builds(rid, build_status, build_server, build_started)
+         VALUES ($1, $2, $3, NOW())
          RETURNING id",
         release_id,
         BuildStatus::InProgress as BuildStatus,
@@ -622,6 +622,7 @@ mod test {
                 r#"SELECT
                 rustc_version,
                 docsrs_version,
+                build_started,
                 build_status as "build_status: BuildStatus",
                 errors
                 FROM builds
@@ -633,6 +634,7 @@ mod test {
 
             assert!(row.rustc_version.is_none());
             assert!(row.docsrs_version.is_none());
+            assert!(row.build_started.is_some());
             assert_eq!(row.build_status, BuildStatus::Failure);
             assert_eq!(row.errors, Some("error message".into()));
 
