@@ -9,6 +9,7 @@ use self::s3::S3Backend;
 use crate::{db::Pool, error::Result, utils::spawn_blocking, Config, InstanceMetrics};
 use anyhow::{anyhow, ensure};
 use chrono::{DateTime, Utc};
+use dashmap::DashMap;
 use fn_error_context::context;
 use futures_util::stream::BoxStream;
 use path_slash::PathExt;
@@ -20,7 +21,7 @@ use std::{
     io::{self, BufReader},
     ops::RangeInclusive,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 use tokio::{io::AsyncWriteExt, runtime::Runtime, sync::RwLock};
 use tracing::{error, info_span, instrument, trace};
@@ -112,7 +113,7 @@ enum StorageBackend {
 pub struct AsyncStorage {
     backend: StorageBackend,
     config: Arc<Config>,
-    archive_index_locks: Mutex<HashMap<PathBuf, tokio::sync::RwLock<()>>>,
+    archive_index_locks: DashMap<PathBuf, tokio::sync::RwLock<()>>,
 }
 
 impl AsyncStorage {
@@ -123,7 +124,7 @@ impl AsyncStorage {
     ) -> Result<Self> {
         Ok(Self {
             config: config.clone(),
-            archive_index_locks: Mutex::new(HashMap::new()),
+            archive_index_locks: DashMap::new(),
             backend: match config.storage_backend {
                 StorageKind::Database => {
                     StorageBackend::Database(DatabaseBackend::new(pool, metrics))
@@ -306,21 +307,21 @@ impl AsyncStorage {
         Ok(blob)
     }
 
-    // async fn with_archive_index_lock<Fut, F>(&self, index_path: impl AsRef<Path>, f: F)
-    // where
-    //     Fut: Future<Output = Result<()>> + Send,
-    //     F: Fn() -> Fut + Send + 'static,
-    // {
-    //     let mut locks = self.archive_index_locks.lock().unwrap();
+    async fn with_archive_index_lock<Fut, F>(&self, index_path: impl AsRef<Path>, f: F)
+    where
+        Fut: Future<Output = Result<()>>,
+        F: Fn() -> Fut,
+    {
+        let mut locks = self.archive_index_locks;
 
-    //     if let Some(lock) = locks.get(index_path.as_ref()) {
-    //         f(&lock);
-    //     } else {
-    //         f(&locks
-    //             .entry(index_path.as_ref().to_path_buf())
-    //             .or_insert_with(|| RwLock::new(())));
-    //     }
-    // }
+        if let Some(lock) = locks.get(index_path.as_ref()) {
+            f(&lock);
+        } else {
+            f(&locks
+                .entry(index_path.as_ref().to_path_buf())
+                .or_insert_with(|| RwLock::new(())));
+        }
+    }
 
     #[instrument]
     pub(super) async fn download_archive_index(
