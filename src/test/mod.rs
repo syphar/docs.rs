@@ -12,6 +12,7 @@ use crate::{
     ServiceMetrics,
 };
 use anyhow::Context as _;
+use axum::body::Bytes;
 use axum::{async_trait, body::Body, http::Request, response::Response as AxumResponse, Router};
 use fn_error_context::context;
 use futures_util::{stream::TryStreamExt, FutureExt};
@@ -262,11 +263,32 @@ pub(crate) fn assert_redirect_cached(
 
 pub(crate) trait AxumResponseTestExt {
     async fn text(self) -> String;
+    async fn bytes(self) -> Bytes;
+    fn assert_cache_control(&self, cache_policy: cache::CachePolicy, config: &Config);
 }
 
 impl AxumResponseTestExt for axum::response::Response {
     async fn text(self) -> String {
-        String::from_utf8_lossy(&self.into_body().collect().await.unwrap().to_bytes()).to_string()
+        String::from_utf8_lossy(&self.bytes().await).to_string()
+    }
+    async fn bytes(self) -> Bytes {
+        self.into_body().collect().await.unwrap().to_bytes()
+    }
+    fn assert_cache_control(&self, cache_policy: cache::CachePolicy, config: &Config) {
+        assert!(config.cache_control_stale_while_revalidate.is_some());
+        let cache_control = self.headers().get("Cache-Control");
+
+        if let Some(expected_directives) = cache_policy.render(config) {
+            assert_eq!(
+                cache_control
+                    .expect("missing cache-control header")
+                    .to_str()
+                    .unwrap(),
+                expected_directives.to_str().unwrap(),
+            );
+        } else {
+            assert!(cache_control.is_none());
+        }
     }
 }
 
