@@ -1858,7 +1858,13 @@ mod tests {
             should_contain_redirect: bool,
         ) {
             let response = env.web_app().await.get(url).await.unwrap();
-            assert!(response.status().is_success());
+            let status = response.status();
+            assert!(
+                status.is_success(),
+                "no success, status: {}, url: {}",
+                status,
+                url
+            );
             let text = response.text().await;
             let list1 = check_links(text.clone(), false, should_contain_redirect);
 
