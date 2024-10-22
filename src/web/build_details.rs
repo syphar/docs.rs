@@ -206,10 +206,10 @@ mod tests {
                 .create_async()
                 .await?;
 
+            let web = env.web_app().await;
+
             let page = kuchikiki::parse_html().one(
-                env.web_app()
-                    .await
-                    .get("/crate/foo/0.1.0/builds")
+                web.get("/crate/foo/0.1.0/builds")
                     .await?
                     .error_for_status()?
                     .text()
@@ -220,7 +220,7 @@ mod tests {
             let attrs = node.attributes.borrow();
             let url = attrs.get("href").unwrap();
 
-            let page = kuchikiki::parse_html().one(env.frontend().get(url).send()?.text()?);
+            let page = kuchikiki::parse_html().one(web.get(url).await?.text().await);
             assert!(get_all_log_links(&page).is_empty());
 
             let log = page.select("pre").unwrap().next().unwrap().text_contents();
@@ -242,20 +242,16 @@ mod tests {
                 .create_async()
                 .await?;
 
-            let page = kuchikiki::parse_html().one(
-                env.web_app()
-                    .await
-                    .get("/crate/foo/0.1.0/builds")
-                    .await?
-                    .text()
-                    .await,
-            );
+            let web = env.web_app().await;
+
+            let page =
+                kuchikiki::parse_html().one(web.get("/crate/foo/0.1.0/builds").await?.text().await);
 
             let node = page.select("ul > li a.release").unwrap().next().unwrap();
             let attrs = node.attributes.borrow();
             let build_url = attrs.get("href").unwrap();
 
-            let page = kuchikiki::parse_html().one(env.frontend().get(build_url).send()?.text()?);
+            let page = kuchikiki::parse_html().one(web.get(build_url).await?.text().await);
 
             let log = page.select("pre").unwrap().next().unwrap().text_contents();
 
@@ -272,7 +268,7 @@ mod tests {
 
             // now get the log with the specific filename in the URL
             let log = kuchikiki::parse_html()
-                .one(env.frontend().get(&all_log_links[0].1).send()?.text()?)
+                .one(web.get(&all_log_links[0].1).await?.text().await)
                 .select("pre")
                 .unwrap()
                 .next()
@@ -301,20 +297,16 @@ mod tests {
                 .create_async()
                 .await?;
 
-            let page = kuchikiki::parse_html().one(
-                env.web_app()
-                    .await
-                    .get("/crate/foo/0.1.0/builds")
-                    .await?
-                    .text()
-                    .await,
-            );
+            let web = env.web_app().await;
+
+            let page =
+                kuchikiki::parse_html().one(web.get("/crate/foo/0.1.0/builds").await?.text().await);
 
             let node = page.select("ul > li a.release").unwrap().next().unwrap();
             let attrs = node.attributes.borrow();
             let build_url = attrs.get("href").unwrap();
 
-            let page = kuchikiki::parse_html().one(env.frontend().get(build_url).send()?.text()?);
+            let page = kuchikiki::parse_html().one(web.get(build_url).await?.text().await);
 
             let log = page.select("pre").unwrap().next().unwrap().text_contents();
 
@@ -340,7 +332,7 @@ mod tests {
                 (&all_log_links[1].1, "A build log"),
             ] {
                 let other_log = kuchikiki::parse_html()
-                    .one(env.frontend().get(url).send()?.text()?)
+                    .one(web.get(url).await?.text().await)
                     .select("pre")
                     .unwrap()
                     .next()
@@ -367,20 +359,16 @@ mod tests {
                 .create_async()
                 .await?;
 
-            let page = kuchikiki::parse_html().one(
-                env.web_app()
-                    .await
-                    .get("/crate/foo/0.1.0/builds")
-                    .await?
-                    .text()
-                    .await,
-            );
+            let web = env.web_app().await;
+
+            let page =
+                kuchikiki::parse_html().one(web.get("/crate/foo/0.1.0/builds").await?.text().await);
 
             let node = page.select("ul > li a.release").unwrap().next().unwrap();
             let attrs = node.attributes.borrow();
             let url = attrs.get("href").unwrap();
 
-            let page = kuchikiki::parse_html().one(env.frontend().get(url).send()?.text()?);
+            let page = kuchikiki::parse_html().one(web.get(url).await?.text().await);
 
             let log = page.select("pre").unwrap().next().unwrap().text_contents();
 
