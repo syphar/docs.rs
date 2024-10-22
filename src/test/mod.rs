@@ -265,6 +265,9 @@ pub(crate) trait AxumResponseTestExt {
     async fn text(self) -> String;
     async fn bytes(self) -> Bytes;
     fn assert_cache_control(&self, cache_policy: cache::CachePolicy, config: &Config);
+    fn error_for_status(self) -> Result<Self>
+    where
+        Self: Sized;
 }
 
 impl AxumResponseTestExt for axum::response::Response {
@@ -288,6 +291,18 @@ impl AxumResponseTestExt for axum::response::Response {
             );
         } else {
             assert!(cache_control.is_none());
+        }
+    }
+
+    fn error_for_status(self) -> Result<Self>
+    where
+        Self: Sized,
+    {
+        let status = self.status();
+        if status.is_client_error() || status.is_server_error() {
+            anyhow::bail!("got status code {}", status);
+        } else {
+            Ok(self)
         }
     }
 }
