@@ -809,8 +809,8 @@ pub(crate) async fn get_all_platforms(
 mod tests {
     use super::*;
     use crate::test::{
-        assert_cache_control, assert_redirect, assert_redirect_cached, async_wrapper,
-        fake_release_that_failed_before_build, wrapper, FakeBuild, TestDatabase, TestEnvironment,
+        async_wrapper, fake_release_that_failed_before_build, AxumResponseTestExt,
+        AxumRouterTestExt, FakeBuild, TestDatabase, TestEnvironment,
     };
     use crate::{db::update_build_status, registry_api::CrateOwner};
     use anyhow::Error;
@@ -1017,39 +1017,65 @@ mod tests {
 
     #[test]
     fn test_releases_should_be_sorted() {
-        wrapper(|env| {
-            let db = env.db();
+        async_wrapper(|env| async move {
+            let db = env.async_db().await;
 
             // Add new releases of 'foo' out-of-order since CrateDetails should sort them descending
-            env.fake_release().name("foo").version("0.1.0").create()?;
-            env.fake_release().name("foo").version("0.1.1").create()?;
-            env.fake_release()
+            env.async_fake_release()
+                .await
+                .name("foo")
+                .version("0.1.0")
+                .create_async()
+                .await?;
+            env.async_fake_release()
+                .await
+                .name("foo")
+                .version("0.1.1")
+                .create_async()
+                .await?;
+            env.async_fake_release()
+                .await
                 .name("foo")
                 .version("0.3.0")
                 .build_result_failed()
-                .create()?;
-            env.fake_release().name("foo").version("1.0.0").create()?;
-            env.fake_release().name("foo").version("0.12.0").create()?;
-            env.fake_release()
+                .create_async()
+                .await?;
+            env.async_fake_release()
+                .await
+                .name("foo")
+                .version("1.0.0")
+                .create_async()
+                .await?;
+            env.async_fake_release()
+                .await
+                .name("foo")
+                .version("0.12.0")
+                .create_async()
+                .await?;
+            env.async_fake_release()
+                .await
                 .name("foo")
                 .version("0.2.0")
                 .yanked(true)
-                .create()?;
-            env.fake_release()
+                .create_async()
+                .await?;
+            env.async_fake_release()
+                .await
                 .name("foo")
                 .version("0.2.0-alpha")
-                .create()?;
-            env.fake_release()
+                .create_async()
+                .await?;
+            env.async_fake_release()
+                .await
                 .name("foo")
                 .version("0.0.1")
                 .build_result_failed()
                 .binary(true)
-                .create()?;
+                .create_async()
+                .await?;
 
-            let details = env.runtime().block_on(async move {
-                let mut conn = db.async_conn().await;
-                crate_details(&mut conn, "foo", "0.2.0", None).await
-            });
+            let mut conn = db.async_conn().await;
+            let details = crate_details(&mut conn, "foo", "0.2.0", None).await;
 
             assert_eq!(
                 details.releases,
@@ -1135,19 +1161,27 @@ mod tests {
 
     #[test]
     fn test_canonical_url() {
-        wrapper(|env| {
-            env.fake_release().name("foo").version("0.0.1").create()?;
-            env.fake_release().name("foo").version("0.0.2").create()?;
+        async_wrapper(|env| async move {
+            env.async_fake_release()
+                .await
+                .name("foo")
+                .version("0.0.1")
+                .create_async()
+                .await?;
+            env.async_fake_release()
+                .await
+                .name("foo")
+                .version("0.0.2")
+                .create_async()
+                .await?;
 
-            let response = env.frontend().get("/crate/foo/0.0.1").send()?;
-            assert_cache_control(
-                &response,
-                CachePolicy::ForeverInCdnAndStaleInBrowser,
-                &env.config(),
-            );
+            let response = env.web_app().await.get("/crate/foo/0.0.1").await?;
+            response
+                .assert_cache_control(CachePolicy::ForeverInCdnAndStaleInBrowser, &env.config());
 
             assert!(response
-                .text()?
+                .text()
+                .await
                 .contains("rel=\"canonical\" href=\"https://docs.rs/crate/foo/latest"));
 
             Ok(())
@@ -1156,18 +1190,31 @@ mod tests {
 
     #[test]
     fn test_latest_version() {
-        wrapper(|env| {
-            let db = env.db();
+        async_wrapper(|env| async move {
+            let db = env.async_db().await;
 
-            env.fake_release().name("foo").version("0.0.1").create()?;
-            env.fake_release().name("foo").version("0.0.3").create()?;
-            env.fake_release().name("foo").version("0.0.2").create()?;
+            env.async_fake_release()
+                .await
+                .name("foo")
+                .version("0.0.1")
+                .create_async()
+                .await?;
+            env.async_fake_release()
+                .await
+                .name("foo")
+                .version("0.0.3")
+                .create_async()
+                .await?;
+            env.async_fake_release()
+                .await
+                .name("foo")
+                .version("0.0.2")
+                .create_async()
+                .await?;
 
+            let mut conn = db.async_conn().await;
             for version in &["0.0.1", "0.0.2", "0.0.3"] {
-                let details = env.runtime().block_on(async move {
-                    let mut conn = db.async_conn().await;
-                    crate_details(&mut conn, "foo", version, None).await
-                });
+                let details = crate_details(&mut conn, "foo", version, None).await;
                 assert_eq!(
                     details.latest_release().unwrap().version,
                     semver::Version::parse("0.0.3")?
@@ -1180,15 +1227,27 @@ mod tests {
 
     #[test]
     fn test_latest_version_ignores_prerelease() {
-        wrapper(|env| {
-            let db = env.db();
+        async_wrapper(|env| async move {
+            let db = env.async_db().await;
 
-            env.fake_release().name("foo").version("0.0.1").create()?;
-            env.fake_release()
+            env.async_fake_release()
+                .await
+                .name("foo")
+                .version("0.0.1")
+                .create_async()
+                .await?;
+            env.async_fake_release()
+                .await
                 .name("foo")
                 .version("0.0.3-pre.1")
-                .create()?;
-            env.fake_release().name("foo").version("0.0.2").create()?;
+                .create_async()
+                .await?;
+            env.async_fake_release()
+                .await
+                .name("foo")
+                .version("0.0.2")
+                .create_async()
+                .await?;
 
             for version in &["0.0.1", "0.0.2", "0.0.3-pre.1"] {
                 let details = env.runtime().block_on(async move {
@@ -1207,16 +1266,28 @@ mod tests {
 
     #[test]
     fn test_latest_version_ignores_yanked() {
-        wrapper(|env| {
-            let db = env.db();
+        async_wrapper(|env| async move {
+            let db = env.async_db().await;
 
-            env.fake_release().name("foo").version("0.0.1").create()?;
-            env.fake_release()
+            env.async_fake_release()
+                .await
+                .name("foo")
+                .version("0.0.1")
+                .create_async()
+                .await?;
+            env.async_fake_release()
+                .await
                 .name("foo")
                 .version("0.0.3")
                 .yanked(true)
-                .create()?;
-            env.fake_release().name("foo").version("0.0.2").create()?;
+                .create_async()
+                .await?;
+            env.async_fake_release()
+                .await
+                .name("foo")
+                .version("0.0.2")
+                .create_async()
+                .await?;
 
             for version in &["0.0.1", "0.0.2", "0.0.3"] {
                 let details = env.runtime().block_on(async move {
@@ -1235,24 +1306,30 @@ mod tests {
 
     #[test]
     fn test_latest_version_only_yanked() {
-        wrapper(|env| {
-            let db = env.db();
+        async_wrapper(|env| async move {
+            let db = env.async_db().await;
 
-            env.fake_release()
+            env.async_fake_release()
+                .await
                 .name("foo")
                 .version("0.0.1")
                 .yanked(true)
-                .create()?;
-            env.fake_release()
+                .create_async()
+                .await?;
+            env.async_fake_release()
+                .await
                 .name("foo")
                 .version("0.0.3")
                 .yanked(true)
-                .create()?;
-            env.fake_release()
+                .create_async()
+                .await?;
+            env.async_fake_release()
+                .await
                 .name("foo")
                 .version("0.0.2")
                 .yanked(true)
-                .create()?;
+                .create_async()
+                .await?;
 
             for version in &["0.0.1", "0.0.2", "0.0.3"] {
                 let details = env.runtime().block_on(async move {
@@ -1271,17 +1348,24 @@ mod tests {
 
     #[test]
     fn test_latest_version_in_progress() {
-        wrapper(|env| {
-            let db = env.db();
+        async_wrapper(|env| async move {
+            let db = env.async_db().await;
 
-            env.fake_release().name("foo").version("0.0.1").create()?;
-            env.fake_release()
+            env.async_fake_release()
+                .await
+                .name("foo")
+                .version("0.0.1")
+                .create_async()
+                .await?;
+            env.async_fake_release()
+                .await
                 .name("foo")
                 .version("0.0.2")
                 .builds(vec![
                     FakeBuild::default().build_status(BuildStatus::InProgress)
                 ])
-                .create()?;
+                .create_async()
+                .await?;
 
             for version in &["0.0.1", "0.0.2"] {
                 let details = env.runtime().block_on(async move {
@@ -1300,15 +1384,23 @@ mod tests {
 
     #[test]
     fn releases_dropdowns_show_binary_warning() {
-        wrapper(|env| {
-            env.fake_release()
+        async_wrapper(|env| async move {
+            env.async_fake_release()
+                .await
                 .name("binary")
                 .version("0.1.0")
                 .binary(true)
-                .create()?;
+                .create_async()
+                .await?;
 
-            let page = kuchikiki::parse_html()
-                .one(env.frontend().get("/crate/binary/latest").send()?.text()?);
+            let page = kuchikiki::parse_html().one(
+                env.web_app()
+                    .await
+                    .get("/crate/binary/latest")
+                    .await?
+                    .text()
+                    .await,
+            );
             let link = page
                 .select_first("a.pure-menu-link[href='/crate/binary/0.1.0']")
                 .unwrap();
@@ -1330,18 +1422,20 @@ mod tests {
 
     #[test]
     fn releases_dropdowns_show_in_progress() {
-        wrapper(|env| {
-            env.fake_release()
+        async_wrapper(|env| async move {
+            env.async_fake_release()
+                .await
                 .name("foo")
                 .version("0.1.0")
                 .builds(vec![
                     FakeBuild::default().build_status(BuildStatus::InProgress)
                 ])
-                .create()?;
+                .create_async()
+                .await?;
 
-            let response = env.frontend().get("/crate/foo/latest").send()?;
+            let response = env.web_app().await.get("/crate/foo/latest").await?;
 
-            let page = kuchikiki::parse_html().one(response.text()?);
+            let page = kuchikiki::parse_html().one(response.text().await);
             let link = page
                 .select_first("a.pure-menu-link[href='/crate/foo/0.1.0']")
                 .unwrap();
@@ -1363,10 +1457,11 @@ mod tests {
 
     #[test]
     fn test_updating_owners() {
-        wrapper(|env| {
-            let db = env.db();
+        async_wrapper(|env| async move {
+            let db = env.async_db().await;
 
-            env.fake_release()
+            env.async_fake_release()
+                .await
                 .name("foo")
                 .version("0.0.1")
                 .add_owner(CrateOwner {
@@ -1374,12 +1469,11 @@ mod tests {
                     avatar: "https://example.org/foobar".into(),
                     kind: OwnerKind::User,
                 })
-                .create()?;
+                .create_async()
+                .await?;
 
-            let details = env.runtime().block_on(async move {
-                let mut conn = db.async_conn().await;
-                crate_details(&mut conn, "foo", "0.0.1", None).await
-            });
+            let mut conn = db.async_conn().await;
+            let details = crate_details(&mut conn, "foo", "0.0.1", None).await;
             assert_eq!(
                 details.owners,
                 vec![(
@@ -1390,7 +1484,8 @@ mod tests {
             );
 
             // Adding a new owner, and changing details on an existing owner
-            env.fake_release()
+            env.async_fake_release()
+                .await
                 .name("foo")
                 .version("0.0.2")
                 .add_owner(CrateOwner {
@@ -1403,12 +1498,10 @@ mod tests {
                     avatar: "https://example.org/barfoo".into(),
                     kind: OwnerKind::User,
                 })
-                .create()?;
+                .create_async()
+                .await?;
 
-            let details = env.runtime().block_on(async move {
-                let mut conn = db.async_conn().await;
-                crate_details(&mut conn, "foo", "0.0.1", None).await
-            });
+            let details = crate_details(&mut conn, "foo", "0.0.1", None).await;
             let mut owners = details.owners;
             owners.sort();
             assert_eq!(
@@ -1428,7 +1521,8 @@ mod tests {
             );
 
             // Removing an existing owner
-            env.fake_release()
+            env.async_fake_release()
+                .await
                 .name("foo")
                 .version("0.0.3")
                 .add_owner(CrateOwner {
@@ -1436,12 +1530,11 @@ mod tests {
                     avatar: "https://example.org/barfoo".into(),
                     kind: OwnerKind::User,
                 })
-                .create()?;
+                .create_async()
+                .await?;
 
-            let details = env.runtime().block_on(async move {
-                let mut conn = db.async_conn().await;
-                crate_details(&mut conn, "foo", "0.0.1", None).await
-            });
+            let mut conn = db.async_conn().await;
+            let details = crate_details(&mut conn, "foo", "0.0.1", None).await;
             assert_eq!(
                 details.owners,
                 vec![(
@@ -1452,7 +1545,8 @@ mod tests {
             );
 
             // Changing owner details on another of their crates applies the change to both
-            env.fake_release()
+            env.async_fake_release()
+                .await
                 .name("bar")
                 .version("0.0.1")
                 .add_owner(CrateOwner {
@@ -1460,12 +1554,11 @@ mod tests {
                     avatar: "https://example.org/barfoov2".into(),
                     kind: OwnerKind::User,
                 })
-                .create()?;
+                .create_async()
+                .await?;
 
-            let details = env.runtime().block_on(async move {
-                let mut conn = db.async_conn().await;
-                crate_details(&mut conn, "foo", "0.0.1", None).await
-            });
+            let mut conn = db.async_conn().await;
+            let details = crate_details(&mut conn, "foo", "0.0.1", None).await;
             assert_eq!(
                 details.owners,
                 vec![(
@@ -1481,18 +1574,22 @@ mod tests {
 
     #[test]
     fn feature_flags_report_empty() {
-        wrapper(|env| {
-            env.fake_release()
+        async_wrapper(|env| async move {
+            env.async_fake_release()
+                .await
                 .name("library")
                 .version("0.1.0")
                 .features(HashMap::new())
-                .create()?;
+                .create_async()
+                .await?;
 
             let page = kuchikiki::parse_html().one(
-                env.frontend()
+                env.web_app()
+                    .await
                     .get("/crate/library/0.1.0/features")
-                    .send()?
-                    .text()?,
+                    .await?
+                    .text()
+                    .await,
             );
             assert!(page.select_first(r#"p[data-id="empty-features"]"#).is_ok());
             Ok(())
@@ -1501,22 +1598,26 @@ mod tests {
 
     #[test]
     fn feature_private_feature_flags_are_hidden() {
-        wrapper(|env| {
+        async_wrapper(|env| async move {
             let features = [("_private".into(), Vec::new())]
                 .iter()
                 .cloned()
                 .collect::<HashMap<String, Vec<String>>>();
-            env.fake_release()
+            env.async_fake_release()
+                .await
                 .name("library")
                 .version("0.1.0")
                 .features(features)
-                .create()?;
+                .create_async()
+                .await?;
 
             let page = kuchikiki::parse_html().one(
-                env.frontend()
+                env.web_app()
+                    .await
                     .get("/crate/library/0.1.0/features")
-                    .send()?
-                    .text()?,
+                    .await?
+                    .text()
+                    .await,
             );
             assert!(page.select_first(r#"p[data-id="empty-features"]"#).is_ok());
             Ok(())
@@ -1525,22 +1626,26 @@ mod tests {
 
     #[test]
     fn feature_flags_without_default() {
-        wrapper(|env| {
+        async_wrapper(|env| async move {
             let features = [("feature1".into(), Vec::new())]
                 .iter()
                 .cloned()
                 .collect::<HashMap<String, Vec<String>>>();
-            env.fake_release()
+            env.async_fake_release()
+                .await
                 .name("library")
                 .version("0.1.0")
                 .features(features)
-                .create()?;
+                .create_async()
+                .await?;
 
             let page = kuchikiki::parse_html().one(
-                env.frontend()
+                env.web_app()
+                    .await
                     .get("/crate/library/0.1.0/features")
-                    .send()?
-                    .text()?,
+                    .await?
+                    .text()
+                    .await,
             );
             assert!(page.select_first(r#"p[data-id="empty-features"]"#).is_err());
             let def_len = page
@@ -1553,7 +1658,7 @@ mod tests {
 
     #[test]
     fn feature_flags_with_nested_default() {
-        wrapper(|env| {
+        async_wrapper(|env| async move {
             let features = [
                 ("default".into(), vec!["feature1".into()]),
                 ("feature1".into(), vec!["feature2".into()]),
@@ -1562,17 +1667,21 @@ mod tests {
             .iter()
             .cloned()
             .collect::<HashMap<String, Vec<String>>>();
-            env.fake_release()
+            env.async_fake_release()
+                .await
                 .name("library")
                 .version("0.1.0")
                 .features(features)
-                .create()?;
+                .create_async()
+                .await?;
 
             let page = kuchikiki::parse_html().one(
-                env.frontend()
+                env.web_app()
+                    .await
                     .get("/crate/library/0.1.0/features")
-                    .send()?
-                    .text()?,
+                    .await?
+                    .text()
+                    .await,
             );
             assert!(page.select_first(r#"p[data-id="empty-features"]"#).is_err());
             let def_len = page
@@ -1585,20 +1694,24 @@ mod tests {
 
     #[test]
     fn details_with_repository_and_stats_can_render_icon() {
-        wrapper(|env| {
-            env.fake_release()
+        async_wrapper(|env| async move {
+            env.async_fake_release()
+                .await
                 .name("library")
                 .version("0.1.0")
                 .repo("https://github.com/org/repo")
                 .github_stats("org/repo", 10, 10, 10)
-                .create()?;
+                .create_async()
+                .await?;
 
             let page = kuchikiki::parse_html().one(
-                env.frontend()
+                env.web_app()
+                    .await
                     .get("/crate/library/0.1.0/")
-                    .send()?
+                    .await?
                     .error_for_status()?
-                    .text()?,
+                    .text()
+                    .await,
             );
 
             let link = page
@@ -1623,12 +1736,14 @@ mod tests {
 
     #[test]
     fn feature_flags_report_null() {
-        wrapper(|env| {
+        async_wrapper(|env| async move {
             let id = env
-                .fake_release()
+                .async_fake_release()
+                .await
                 .name("library")
                 .version("0.1.0")
-                .create()?;
+                .create_async()
+                .await?;
 
             env.runtime().block_on(async {
                 let mut conn = env.async_db().await.async_conn().await;
@@ -1638,10 +1753,12 @@ mod tests {
             })?;
 
             let page = kuchikiki::parse_html().one(
-                env.frontend()
+                env.web_app()
+                    .await
                     .get("/crate/library/0.1.0/features")
-                    .send()?
-                    .text()?,
+                    .await?
+                    .text()
+                    .await,
             );
             assert!(page.select_first(r#"p[data-id="null-features"]"#).is_ok());
             Ok(())
@@ -1650,7 +1767,7 @@ mod tests {
 
     #[test]
     fn test_minimal_failed_release_doesnt_error_features() {
-        wrapper(|env| {
+        async_wrapper(|env| async move {
             env.runtime().block_on(async {
                 let mut conn = env.async_db().await.async_conn().await;
                 fake_release_that_failed_before_build(&mut conn, "foo", "0.1.0", "some errors")
@@ -1658,11 +1775,13 @@ mod tests {
             })?;
 
             let text_content = env
-                .frontend()
+                .web_app()
+                .await
                 .get("/crate/foo/0.1.0/features")
-                .send()?
+                .await?
                 .error_for_status()?
-                .text()?;
+                .text()
+                .await;
 
             assert!(text_content.contains(
                 "Feature flags are not available for this release because \
@@ -1675,7 +1794,7 @@ mod tests {
 
     #[test]
     fn test_minimal_failed_release_doesnt_error() {
-        wrapper(|env| {
+        async_wrapper(|env| async move {
             env.runtime().block_on(async {
                 let mut conn = env.async_db().await.async_conn().await;
                 fake_release_that_failed_before_build(&mut conn, "foo", "0.1.0", "some errors")
@@ -1683,11 +1802,13 @@ mod tests {
             })?;
 
             let text_content = env
-                .frontend()
+                .web_app()
+                .await
                 .get("/crate/foo/0.1.0")
-                .send()?
+                .await?
                 .error_for_status()?
-                .text()?;
+                .text()
+                .await;
 
             assert!(text_content.contains("docs.rs failed to build foo"));
 
@@ -1731,10 +1852,14 @@ mod tests {
             platform_links
         }
 
-        fn run_check_links_redir(env: &TestEnvironment, url: &str, should_contain_redirect: bool) {
-            let response = env.frontend().get(url).send().unwrap();
+        async fn run_check_links_redir(
+            env: &TestEnvironment,
+            url: &str,
+            should_contain_redirect: bool,
+        ) {
+            let response = env.web_app().await.get(url).await.unwrap();
             assert!(response.status().is_success());
-            let text = response.text().unwrap();
+            let text = response.text().await;
             let list1 = check_links(text.clone(), false, should_contain_redirect);
 
             // Same test with AJAX endpoint.
@@ -1747,15 +1872,16 @@ mod tests {
                 .get("data-url")
                 .expect("data-url")
                 .to_string();
-            let response = env.frontend().get(&platform_menu_url).send().unwrap();
+            let response = env.web_app().await.get(&platform_menu_url).await.unwrap();
             assert!(response.status().is_success());
-            assert_cache_control(&response, CachePolicy::ForeverInCdn, &env.config());
-            let list2 = check_links(response.text().unwrap(), true, should_contain_redirect);
+            response.assert_cache_control(CachePolicy::ForeverInCdn, &env.config());
+            let list2 = check_links(response.text().await, true, should_contain_redirect);
             assert_eq!(list1, list2);
         }
 
-        wrapper(|env| {
-            env.fake_release()
+        async_wrapper(|env| async move {
+            env.async_fake_release()
+                .await
                 .name("dummy")
                 .version("0.4.0")
                 .rustdoc_file("dummy/index.html")
@@ -1764,18 +1890,19 @@ mod tests {
                 .default_target("x86_64-unknown-linux-gnu")
                 .add_target("x86_64-pc-windows-msvc")
                 .source_file("README.md", b"storage readme")
-                .create()?;
+                .create_async()
+                .await?;
 
-            run_check_links_redir(env, "/crate/dummy/0.4.0/features", false);
-            run_check_links_redir(env, "/crate/dummy/0.4.0/builds", false);
-            run_check_links_redir(env, "/crate/dummy/0.4.0/source/", false);
-            run_check_links_redir(env, "/crate/dummy/0.4.0/source/README.md", false);
-            run_check_links_redir(env, "/crate/dummy/0.4.0", false);
+            run_check_links_redir(&env, "/crate/dummy/0.4.0/features", false);
+            run_check_links_redir(&env, "/crate/dummy/0.4.0/builds", false);
+            run_check_links_redir(&env, "/crate/dummy/0.4.0/source/", false);
+            run_check_links_redir(&env, "/crate/dummy/0.4.0/source/README.md", false);
+            run_check_links_redir(&env, "/crate/dummy/0.4.0", false);
 
-            run_check_links_redir(env, "/dummy/latest/dummy", true);
-            run_check_links_redir(env, "/dummy/0.4.0/x86_64-pc-windows-msvc/dummy", true);
+            run_check_links_redir(&env, "/dummy/latest/dummy", true);
+            run_check_links_redir(&env, "/dummy/0.4.0/x86_64-pc-windows-msvc/dummy", true);
             run_check_links_redir(
-                env,
+                &env,
                 "/dummy/0.4.0/x86_64-pc-windows-msvc/dummy/struct.A.html",
                 true,
             );
@@ -1786,12 +1913,12 @@ mod tests {
 
     #[test]
     fn check_crate_name_in_redirect() {
-        fn check_links(env: &TestEnvironment, url: &str, links: Vec<String>) {
-            let response = env.frontend().get(url).send().unwrap();
+        async fn check_links(env: &TestEnvironment, url: &str, links: Vec<String>) {
+            let response = env.web_app().await.get(url).await.unwrap();
             assert!(response.status().is_success());
 
             let platform_links: Vec<String> = kuchikiki::parse_html()
-                .one(response.text().unwrap())
+                .one(response.text().await)
                 .select("li a")
                 .expect("invalid selector")
                 .map(|el| {
@@ -1804,24 +1931,28 @@ mod tests {
             assert_eq!(platform_links, links,);
         }
 
-        wrapper(|env| {
-            env.fake_release()
+        async_wrapper(|env| async move {
+            env.async_fake_release()
+                .await
                 .name("dummy-ba")
                 .version("0.4.0")
                 .rustdoc_file("dummy-ba/index.html")
                 .rustdoc_file("x86_64-unknown-linux-gnu/dummy-ba/index.html")
                 .add_target("x86_64-unknown-linux-gnu")
-                .create()?;
-            env.fake_release()
+                .create_async()
+                .await?;
+            env.async_fake_release()
+                .await
                 .name("dummy-ba")
                 .version("0.5.0")
                 .rustdoc_file("dummy-ba/index.html")
                 .rustdoc_file("x86_64-unknown-linux-gnu/dummy-ba/index.html")
                 .add_target("x86_64-unknown-linux-gnu")
-                .create()?;
+                .create_async()
+                .await?;
 
             check_links(
-                env,
+                &env,
                 "/crate/dummy-ba/latest/menus/releases/dummy_ba/index.html",
                 vec![
                     "/crate/dummy-ba/0.5.0/target-redirect/dummy_ba/index.html".to_string(),
@@ -1830,7 +1961,7 @@ mod tests {
             );
 
             check_links(
-                env,
+                &env,
                 "/crate/dummy-ba/latest/menus/releases/x86_64-unknown-linux-gnu/dummy_ba/index.html",
                 vec![
                     "/crate/dummy-ba/0.5.0/target-redirect/x86_64-unknown-linux-gnu/dummy_ba/index.html".to_string(),
@@ -1850,9 +1981,10 @@ mod tests {
         assert!(crate::DEFAULT_MAX_TARGETS > 2);
 
         fn check_count(nb_targets: usize, expected: usize) {
-            wrapper(|env| {
+            async_wrapper(|env| async move {
                 let mut rel = env
-                    .fake_release()
+                    .async_fake_release()
+                    .await
                     .name("dummy")
                     .version("0.4.0")
                     .rustdoc_file("dummy/index.html")
@@ -1862,13 +1994,13 @@ mod tests {
                 for nb in 0..nb_targets - 1 {
                     rel = rel.add_target(&format!("x86_64-pc-windows-msvc{nb}"));
                 }
-                rel.create()?;
+                rel.create_async().await?;
 
-                let response = env.frontend().get("/crate/dummy/0.4.0").send()?;
+                let response = env.web_app().await.get("/crate/dummy/0.4.0").await?;
                 assert!(response.status().is_success());
 
                 let nb_li = kuchikiki::parse_html()
-                    .one(response.text()?)
+                    .one(response.text().await)
                     .select(r#"#platforms li a"#)
                     .expect("invalid selector")
                     .count();
@@ -1886,44 +2018,40 @@ mod tests {
 
     #[test]
     fn latest_url() {
-        wrapper(|env| {
-            env.fake_release()
+        async_wrapper(|env| async move {
+            env.async_fake_release()
+                .await
                 .name("dummy")
                 .version("0.4.0")
                 .rustdoc_file("dummy/index.html")
                 .rustdoc_file("x86_64-pc-windows-msvc/dummy/index.html")
                 .default_target("x86_64-unknown-linux-gnu")
                 .add_target("x86_64-pc-windows-msvc")
-                .create()?;
-            let web = env.frontend();
+                .create_async()
+                .await?;
+            let web = env.web_app().await;
 
-            let resp = env.frontend().get("/crate/dummy/latest").send()?;
+            let resp = web.get("/crate/dummy/latest").await?;
             assert!(resp.status().is_success());
-            assert_cache_control(&resp, CachePolicy::ForeverInCdn, &env.config());
-            assert!(resp.url().as_str().ends_with("/crate/dummy/latest"));
-            let body = String::from_utf8(resp.bytes().unwrap().to_vec()).unwrap();
+            resp.assert_cache_control(CachePolicy::ForeverInCdn, &env.config());
+            let body = resp.text().await;
             assert!(body.contains("<a href=\"/crate/dummy/latest/features\""));
             assert!(body.contains("<a href=\"/crate/dummy/latest/builds\""));
             assert!(body.contains("<a href=\"/crate/dummy/latest/source/\""));
             assert!(body.contains("<a href=\"/crate/dummy/latest\""));
 
-            assert_redirect("/crate/dummy/latest/", "/crate/dummy/latest", web)?;
-            assert_redirect_cached(
+            web.assert_redirect("/crate/dummy/latest/", "/crate/dummy/latest")
+                .await?;
+            web.assert_redirect_cached(
                 "/crate/dummy",
                 "/crate/dummy/latest",
                 CachePolicy::ForeverInCdn,
-                web,
                 &env.config(),
-            )?;
+            )
+            .await?;
 
-            let resp_json = env
-                .frontend()
-                .get("/crate/aquarelle/latest/builds.json")
-                .send()?;
-            assert!(resp_json
-                .url()
-                .as_str()
-                .ends_with("/crate/aquarelle/latest/builds.json"));
+            web.assert_success("/crate/aquarelle/latest/builds.json")
+                .await?;
 
             Ok(())
         });
@@ -1931,60 +2059,70 @@ mod tests {
 
     #[test]
     fn readme() {
-        wrapper(|env| {
-            env.fake_release()
+        async_wrapper(|env| async move {
+            env.async_fake_release()
+                .await
                 .name("dummy")
                 .version("0.1.0")
                 .readme_only_database("database readme")
-                .create()?;
+                .create_async()
+                .await?;
 
-            env.fake_release()
+            env.async_fake_release()
+                .await
                 .name("dummy")
                 .version("0.2.0")
                 .readme_only_database("database readme")
                 .source_file("README.md", b"storage readme")
-                .create()?;
+                .create_async()
+                .await?;
 
-            env.fake_release()
+            env.async_fake_release()
+                .await
                 .name("dummy")
                 .version("0.3.0")
                 .source_file("README.md", b"storage readme")
-                .create()?;
+                .create_async()
+                .await?;
 
-            env.fake_release()
+            env.async_fake_release()
+                .await
                 .name("dummy")
                 .version("0.4.0")
                 .readme_only_database("database readme")
                 .source_file("MEREAD", b"storage meread")
                 .source_file("Cargo.toml", br#"package.readme = "MEREAD""#)
-                .create()?;
+                .create_async()
+                .await?;
 
-            env.fake_release()
+            env.async_fake_release()
+                .await
                 .name("dummy")
                 .version("0.5.0")
                 .readme_only_database("database readme")
                 .source_file("README.md", b"storage readme")
                 .no_cargo_toml()
-                .create()?;
+                .create_async()
+                .await?;
 
-            let check_readme = |path, content| {
-                let resp = env.frontend().get(path).send().unwrap();
-                let body = String::from_utf8(resp.bytes().unwrap().to_vec()).unwrap();
-                assert!(body.contains(content));
+            let check_readme = |path: String, content: String| {
+                let env = env.clone();
+                async move {
+                    let resp = env.web_app().await.get(&path).await.unwrap();
+                    let body = resp.text().await;
+                    assert!(body.contains(&content));
+                }
             };
 
-            check_readme("/crate/dummy/0.1.0", "database readme");
-            check_readme("/crate/dummy/0.2.0", "storage readme");
-            check_readme("/crate/dummy/0.3.0", "storage readme");
-            check_readme("/crate/dummy/0.4.0", "storage meread");
+            check_readme("/crate/dummy/0.1.0".into(), "database readme".into()).await;
+            check_readme("/crate/dummy/0.2.0".into(), "storage readme".into()).await;
+            check_readme("/crate/dummy/0.3.0".into(), "storage readme".into()).await;
+            check_readme("/crate/dummy/0.4.0".into(), "storage meread".into()).await;
 
-            let details = env.runtime().block_on(async move {
-                let mut conn = env.async_db().await.async_conn().await;
-                crate_details(&mut conn, "dummy", "0.5.0", None).await
-            });
+            let mut conn = env.async_db().await.async_conn().await;
+            let details = crate_details(&mut conn, "dummy", "0.5.0", None).await;
             assert!(matches!(
-                env.runtime()
-                    .block_on(details.fetch_readme(&env.runtime().block_on(env.async_storage()))),
+                details.fetch_readme(&*env.async_storage().await).await,
                 Ok(None)
             ));
             Ok(())
@@ -1993,13 +2131,19 @@ mod tests {
 
     #[test]
     fn test_crate_name_with_other_uri_chars() {
-        wrapper(|env| {
-            env.fake_release().name("dummy").version("1.0.0").create()?;
+        async_wrapper(|env| async move {
+            env.async_fake_release()
+                .await
+                .name("dummy")
+                .version("1.0.0")
+                .create_async()
+                .await?;
 
             assert_eq!(
-                env.frontend()
+                env.web_app()
+                    .await
                     .get_no_redirect("/crate/dummy%3E")
-                    .send()?
+                    .await?
                     .status(),
                 StatusCode::FOUND
             );
