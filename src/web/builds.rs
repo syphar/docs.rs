@@ -515,7 +515,7 @@ mod tests {
                         Request::builder()
                             .uri("/crate/regex/1.3.1/rebuild")
                             .method("POST")
-                            .header("Authorization", "someinvalidtoken")
+                            .header("Authorization", "Bearer someinvalidtoken")
                             .body(Body::empty())
                             .unwrap(),
                     )
@@ -531,8 +531,10 @@ mod tests {
                 );
             }
 
-            assert_eq!(env.build_queue().pending_count()?, 0);
-            assert!(!env.build_queue().has_build_queued("foo", "0.1.0")?);
+            let build_queue = env.async_build_queue().await;
+
+            assert_eq!(build_queue.pending_count().await?, 0);
+            assert!(!build_queue.has_build_queued("foo", "0.1.0").await?);
 
             {
                 let app = env.web_app().await;
@@ -541,7 +543,7 @@ mod tests {
                         Request::builder()
                             .uri("/crate/foo/0.1.0/rebuild")
                             .method("POST")
-                            .header("Authorization", correct_token)
+                            .header("Authorization", &format!("Bearer {}", correct_token))
                             .body(Body::empty())
                             .unwrap(),
                     )
@@ -551,8 +553,8 @@ mod tests {
                 assert_eq!(json, serde_json::json!({}));
             }
 
-            assert_eq!(env.build_queue().pending_count()?, 1);
-            assert!(env.build_queue().has_build_queued("foo", "0.1.0")?);
+            assert_eq!(build_queue.pending_count().await?, 1);
+            assert!(build_queue.has_build_queued("foo", "0.1.0").await?);
 
             {
                 let app = env.web_app().await;
@@ -561,7 +563,7 @@ mod tests {
                         Request::builder()
                             .uri("/crate/foo/0.1.0/rebuild")
                             .method("POST")
-                            .header("Authorization", correct_token)
+                            .header("Authorization", &format!("Bearer {}", correct_token))
                             .body(Body::empty())
                             .unwrap(),
                     )
@@ -577,8 +579,8 @@ mod tests {
                 );
             }
 
-            assert_eq!(env.build_queue().pending_count()?, 1);
-            assert!(env.build_queue().has_build_queued("foo", "0.1.0")?);
+            assert_eq!(build_queue.pending_count().await?, 1);
+            assert!(build_queue.has_build_queued("foo", "0.1.0").await?);
 
             Ok(())
         });
