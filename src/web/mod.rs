@@ -761,7 +761,11 @@ impl_axum_webpage! {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{docbuilder::DocCoverage, test::*};
+    use crate::docbuilder::DocCoverage;
+    use crate::test::{
+        async_wrapper, fake_release_that_failed_before_build, AxumResponseTestExt,
+        AxumRouterTestExt, FakeBuild, TestDatabase, TestEnvironment,
+    };
     use kuchikiki::traits::TendrilSink;
     use serde_json::json;
     use test_case::test_case;
@@ -801,24 +805,24 @@ mod test {
         version.parse().ok()
     }
 
-    fn clipboard_is_present_for_path(path: &str, web: &TestFrontend) -> bool {
-        let data = web.get(path).send().unwrap().text().unwrap();
+    async fn clipboard_is_present_for_path(path: &str, web: &axum::Router) -> bool {
+        let data = web.get(path).await.unwrap().text().await;
         let node = kuchikiki::parse_html().one(data);
         node.select("#clipboard").unwrap().count() == 1
     }
 
     #[test]
     fn test_index_returns_success() {
-        wrapper(|env| {
-            let web = env.frontend();
-            assert!(web.get("/").send()?.status().is_success());
+        async_wrapper(|env| async move {
+            let web = env.web_app().await;
+            assert!(web.get("/").await?.status().is_success());
             Ok(())
         });
     }
 
     #[test]
     fn test_doc_coverage_for_crate_pages() {
-        wrapper(|env| {
+        async_wrapper(|env| async move {
             env.fake_release()
                 .name("foo")
                 .version("0.0.1")
@@ -830,10 +834,9 @@ mod test {
                     items_with_examples: 1,
                 })
                 .create()?;
-            let web = env.frontend();
+            let web = env.web_app().await;
 
-            let foo_crate =
-                kuchikiki::parse_html().one(web.get("/crate/foo/0.0.1").send()?.text()?);
+            let foo_crate = kuchikiki::parse_html().one(web.get("/crate/foo/0.0.1").await?.text()?);
             for (idx, value) in ["60%", "6", "10", "2", "1"].iter().enumerate() {
                 assert!(
                     foo_crate
@@ -844,7 +847,7 @@ mod test {
                 );
             }
 
-            let foo_doc = kuchikiki::parse_html().one(web.get("/foo/0.0.1/foo").send()?.text()?);
+            let foo_doc = kuchikiki::parse_html().one(web.get("/foo/0.0.1/foo").await?.text()?);
             assert!(foo_doc
                 .select(".pure-menu-link b")
                 .unwrap()
@@ -856,14 +859,14 @@ mod test {
 
     #[test]
     fn test_show_clipboard_for_crate_pages() {
-        wrapper(|env| {
+        async_wrapper(|env| async move {
             env.fake_release()
                 .name("fake_crate")
                 .version("0.0.1")
                 .source_file("test.rs", &[])
                 .create()
                 .unwrap();
-            let web = env.frontend();
+            let web = env.web_app().await;
             assert!(clipboard_is_present_for_path(
                 "/crate/fake_crate/0.0.1",
                 web
@@ -882,13 +885,13 @@ mod test {
 
     #[test]
     fn test_hide_clipboard_for_non_crate_pages() {
-        wrapper(|env| {
+        async_wrapper(|env| async move {
             env.fake_release()
                 .name("fake_crate")
                 .version("0.0.1")
                 .create()
                 .unwrap();
-            let web = env.frontend();
+            let web = env.web_app().await;
             assert!(!clipboard_is_present_for_path("/about", web));
             assert!(!clipboard_is_present_for_path("/releases", web));
             assert!(!clipboard_is_present_for_path("/", web));
@@ -899,8 +902,8 @@ mod test {
 
     #[test]
     fn standard_library_redirects() {
-        wrapper(|env| {
-            let web = env.frontend();
+        async_wrapper(|env| async move {
+            let web = env.web_app().await;
             for krate in &["std", "alloc", "core", "proc_macro", "test"] {
                 let target = format!("https://doc.rust-lang.org/stable/{krate}/");
 
@@ -937,13 +940,13 @@ mod test {
 
     #[test]
     fn double_slash_does_redirect_to_latest_version() {
-        wrapper(|env| {
+        async_wrapper(|env| async move {
             env.fake_release()
                 .name("bat")
                 .version("0.2.0")
                 .create()
                 .unwrap();
-            let web = env.frontend();
+            let web = env.web_app().await;
             assert_redirect("/bat//", "/bat/latest/bat/", web)?;
             Ok(())
         })
@@ -951,14 +954,14 @@ mod test {
 
     #[test]
     fn binary_docs_redirect_to_crate() {
-        wrapper(|env| {
+        async_wrapper(|env| async move {
             env.fake_release()
                 .name("bat")
                 .version("0.2.0")
                 .binary(true)
                 .create()
                 .unwrap();
-            let web = env.frontend();
+            let web = env.web_app().await;
             assert_redirect("/bat/0.2.0", "/crate/bat/0.2.0", web)?;
             assert_redirect("/bat/0.2.0/i686-unknown-linux-gnu", "/crate/bat/0.2.0", web)?;
             /* TODO: this should work (https://github.com/rust-lang/docs.rs/issues/603)
@@ -971,7 +974,7 @@ mod test {
 
     #[test]
     fn can_view_source() {
-        wrapper(|env| {
+        async_wrapper(|env| async move {
             env.fake_release()
                 .name("regex")
                 .version("0.3.0")
@@ -979,7 +982,7 @@ mod test {
                 .create()
                 .unwrap();
 
-            let web = env.frontend();
+            let web = env.web_app().await;
             assert_success("/crate/regex/0.3.0/source/src/main.rs", web)?;
             assert_success("/crate/regex/0.3.0/source", web)?;
             assert_success("/crate/regex/0.3.0/source/src", web)?;
@@ -1018,10 +1021,10 @@ mod test {
 
     #[test]
     fn platform_dropdown_not_shown_with_no_targets() {
-        wrapper(|env| {
+        async_wrapper(|env| async move {
             env.runtime().block_on(release("0.1.0", env));
-            let web = env.frontend();
-            let text = web.get("/foo/0.1.0/foo").send()?.text()?;
+            let web = env.web_app().await;
+            let text = web.get("/foo/0.1.0/foo").await?.text()?;
             let platform = kuchikiki::parse_html()
                 .one(text)
                 .select(r#"ul > li > a[aria-label="Platform"]"#)
@@ -1035,7 +1038,7 @@ mod test {
                 .version("0.2.0")
                 .add_platform("x86_64-unknown-linux-musl")
                 .create()?;
-            let text = web.get("/foo/0.2.0/foo").send()?.text()?;
+            let text = web.get("/foo/0.2.0/foo").await?.text()?;
             let platform = kuchikiki::parse_html()
                 .one(text)
                 .select(r#"ul > li > a[aria-label="Platform"]"#)
@@ -1255,10 +1258,10 @@ mod test {
 
     #[test]
     fn test_tabindex_is_present_on_topbar_crate_search_input() {
-        wrapper(|env| {
-            env.runtime().block_on(release("0.1.0", env));
-            let web = env.frontend();
-            let text = web.get("/foo/0.1.0/foo").send()?.text()?;
+        async_wrapper(|env| async move {
+            release("0.1.0", &*env).await;
+            let web = env.web_app().await;
+            let text = web.get("/foo/0.1.0/foo").await?.text().await;
             let tabindex = kuchikiki::parse_html()
                 .one(text)
                 .select(r#"#nav-search[tabindex="-1"]"#)
