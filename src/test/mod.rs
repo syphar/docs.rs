@@ -22,6 +22,7 @@ use reqwest::{
     blocking::{Client, ClientBuilder, RequestBuilder, Response},
     Method,
 };
+use serde::de::DeserializeOwned;
 use sqlx::Connection as _;
 use std::thread::{self, JoinHandle};
 use std::{
@@ -264,6 +265,7 @@ pub(crate) fn assert_redirect_cached(
 pub(crate) trait AxumResponseTestExt {
     async fn text(self) -> String;
     async fn bytes(self) -> Bytes;
+    async fn json<T: DeserializeOwned>(self) -> Result<T>;
     fn assert_cache_control(&self, cache_policy: cache::CachePolicy, config: &Config);
     fn error_for_status(self) -> Result<Self>
     where
@@ -276,6 +278,10 @@ impl AxumResponseTestExt for axum::response::Response {
     }
     async fn bytes(self) -> Bytes {
         self.into_body().collect().await.unwrap().to_bytes()
+    }
+    async fn json<T: DeserializeOwned>(self) -> Result<T> {
+        let body = self.text().await;
+        Ok(serde_json::from_str(&body)?)
     }
     fn assert_cache_control(&self, cache_policy: cache::CachePolicy, config: &Config) {
         assert!(config.cache_control_stale_while_revalidate.is_some());
@@ -310,6 +316,7 @@ impl AxumResponseTestExt for axum::response::Response {
 pub(crate) trait AxumRouterTestExt {
     async fn assert_success(&self, path: &str) -> Result<()>;
     async fn get(&self, path: &str) -> Result<AxumResponse>;
+    async fn post(&self, path: &str) -> Result<AxumResponse>;
     async fn assert_redirect_common(
         &self,
         path: &str,
@@ -330,11 +337,24 @@ impl AxumRouterTestExt for axum::Router {
         assert!(status.is_success(), "failed to GET {path}: {status}");
         Ok(())
     }
-    /// simple `get` method
+
     async fn get(&self, path: &str) -> Result<AxumResponse> {
         Ok(self
             .clone()
             .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+            .await?)
+    }
+
+    async fn post(&self, path: &str) -> Result<AxumResponse> {
+        Ok(self
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(path)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await?)
     }
 
@@ -929,12 +949,6 @@ impl TestFrontend {
         let url = self.build_url(url);
         debug!("getting {url}");
         self.client.request(Method::GET, url)
-    }
-
-    pub(crate) fn post(&self, url: &str) -> RequestBuilder {
-        let url = self.build_url(url);
-        debug!("posting {url}");
-        self.client.request(Method::POST, url)
     }
 
     pub(crate) fn get_no_redirect(&self, url: &str) -> RequestBuilder {

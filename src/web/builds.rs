@@ -255,29 +255,32 @@ mod tests {
     use super::BuildStatus;
     use crate::{
         db::Overrides,
-        test::{assert_cache_control, fake_release_that_failed_before_build, wrapper, FakeBuild},
+        test::{
+            async_wrapper, fake_release_that_failed_before_build, AxumResponseTestExt,
+            AxumRouterTestExt, FakeBuild,
+        },
         web::cache::CachePolicy,
     };
+    use axum::{body::Body, http::Request};
     use chrono::{DateTime, Utc};
     use kuchikiki::traits::TendrilSink;
     use reqwest::StatusCode;
+    use tower::ServiceExt;
 
     #[test]
     fn build_list_empty_build() {
-        wrapper(|env| {
-            env.runtime().block_on(async {
-                let mut conn = env.async_db().await.async_conn().await;
-                fake_release_that_failed_before_build(&mut conn, "foo", "0.1.0", "some errors")
-                    .await
-            })?;
+        async_wrapper(|env| async move {
+            let mut conn = env.async_db().await.async_conn().await;
+            fake_release_that_failed_before_build(&mut conn, "foo", "0.1.0", "some errors").await?;
 
             let response = env
-                .frontend()
+                .web_app()
+                .await
                 .get("/crate/foo/0.1.0/builds")
-                .send()?
+                .await?
                 .error_for_status()?;
-            assert_cache_control(&response, CachePolicy::NoCaching, &env.config());
-            let page = kuchikiki::parse_html().one(response.text()?);
+            response.assert_cache_control(CachePolicy::NoCaching, &env.config());
+            let page = kuchikiki::parse_html().one(response.text().await);
 
             let rows: Vec<_> = page
                 .select("ul > li a.release")
@@ -294,8 +297,9 @@ mod tests {
 
     #[test]
     fn build_list() {
-        wrapper(|env| {
-            env.fake_release()
+        async_wrapper(|env| async move {
+            env.async_fake_release()
+                .await
                 .name("foo")
                 .version("0.1.0")
                 .builds(vec![
@@ -314,11 +318,12 @@ mod tests {
                         .rustc_version("rustc (blabla 2022-01-01)")
                         .docsrs_version("docs.rs 4.0.0"),
                 ])
-                .create()?;
+                .create_async()
+                .await?;
 
-            let response = env.frontend().get("/crate/foo/0.1.0/builds").send()?;
-            assert_cache_control(&response, CachePolicy::NoCaching, &env.config());
-            let page = kuchikiki::parse_html().one(response.text()?);
+            let response = env.web_app().await.get("/crate/foo/0.1.0/builds").await?;
+            response.assert_cache_control(CachePolicy::NoCaching, &env.config());
+            let page = kuchikiki::parse_html().one(response.text().await);
 
             let rows: Vec<_> = page
                 .select("ul > li a.release")
@@ -339,8 +344,9 @@ mod tests {
 
     #[test]
     fn build_list_json() {
-        wrapper(|env| {
-            env.fake_release()
+        async_wrapper(|env| async move {
+            env.async_fake_release()
+                .await
                 .name("foo")
                 .version("0.1.0")
                 .builds(vec![
@@ -359,11 +365,16 @@ mod tests {
                         .rustc_version("rustc (blabla 2022-01-01)")
                         .docsrs_version("docs.rs 4.0.0"),
                 ])
-                .create()?;
+                .create_async()
+                .await?;
 
-            let response = env.frontend().get("/crate/foo/0.1.0/builds.json").send()?;
-            assert_cache_control(&response, CachePolicy::NoStoreMustRevalidate, &env.config());
-            let value: serde_json::Value = serde_json::from_str(&response.text()?)?;
+            let response = env
+                .web_app()
+                .await
+                .get("/crate/foo/0.1.0/builds.json")
+                .await?;
+            response.assert_cache_control(CachePolicy::NoStoreMustRevalidate, &env.config());
+            let value: serde_json::Value = serde_json::from_str(&response.text().await)?;
 
             assert_eq!(value.as_array().unwrap().len(), 3);
 
@@ -427,20 +438,33 @@ mod tests {
 
     #[test]
     fn build_trigger_rebuild_missing_config() {
-        wrapper(|env| {
+        async_wrapper(|env| async move {
             env.override_config(|config| config.cratesio_token = None);
-            env.fake_release().name("foo").version("0.1.0").create()?;
+            env.async_fake_release()
+                .await
+                .name("foo")
+                .version("0.1.0")
+                .create_async()
+                .await?;
 
             {
-                let response = env.frontend().get("/crate/regex/1.3.1/rebuild").send()?;
+                let response = env
+                    .web_app()
+                    .await
+                    .get("/crate/regex/1.3.1/rebuild")
+                    .await?;
                 // Needs POST
                 assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
             }
 
             {
-                let response = env.frontend().post("/crate/regex/1.3.1/rebuild").send()?;
+                let response = env
+                    .web_app()
+                    .await
+                    .post("/crate/regex/1.3.1/rebuild")
+                    .await?;
                 assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-                let json: serde_json::Value = response.json()?;
+                let json: serde_json::Value = response.json().await?;
                 assert_eq!(
                     json,
                     serde_json::json!({
@@ -456,16 +480,25 @@ mod tests {
 
     #[test]
     fn build_trigger_rebuild_with_config() {
-        wrapper(|env| {
+        async_wrapper(|env| async move {
             let correct_token = "foo137";
             env.override_config(|config| config.cratesio_token = Some(correct_token.into()));
 
-            env.fake_release().name("foo").version("0.1.0").create()?;
+            env.async_fake_release()
+                .await
+                .name("foo")
+                .version("0.1.0")
+                .create_async()
+                .await?;
 
             {
-                let response = env.frontend().post("/crate/regex/1.3.1/rebuild").send()?;
+                let response = env
+                    .web_app()
+                    .await
+                    .post("/crate/regex/1.3.1/rebuild")
+                    .await?;
                 assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-                let json: serde_json::Value = response.json()?;
+                let json: serde_json::Value = response.json().await?;
                 assert_eq!(
                     json,
                     serde_json::json!({
@@ -476,13 +509,19 @@ mod tests {
             }
 
             {
-                let response = env
-                    .frontend()
-                    .post("/crate/regex/1.3.1/rebuild")
-                    .bearer_auth("someinvalidtoken")
-                    .send()?;
+                let app = env.web_app().await;
+                let response = app
+                    .oneshot(
+                        Request::builder()
+                            .uri("/crate/regex/1.3.1/rebuild")
+                            .method("POST")
+                            .header("Authorization", "someinvalidtoken")
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await?;
                 assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-                let json: serde_json::Value = response.json()?;
+                let json: serde_json::Value = response.json().await?;
                 assert_eq!(
                     json,
                     serde_json::json!({
@@ -496,13 +535,19 @@ mod tests {
             assert!(!env.build_queue().has_build_queued("foo", "0.1.0")?);
 
             {
-                let response = env
-                    .frontend()
-                    .post("/crate/foo/0.1.0/rebuild")
-                    .bearer_auth(correct_token)
-                    .send()?;
+                let app = env.web_app().await;
+                let response = app
+                    .oneshot(
+                        Request::builder()
+                            .uri("/crate/foo/0.1.0/rebuild")
+                            .method("POST")
+                            .header("Authorization", correct_token)
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await?;
                 assert_eq!(response.status(), StatusCode::CREATED);
-                let json: serde_json::Value = response.json()?;
+                let json: serde_json::Value = response.json().await?;
                 assert_eq!(json, serde_json::json!({}));
             }
 
@@ -510,13 +555,19 @@ mod tests {
             assert!(env.build_queue().has_build_queued("foo", "0.1.0")?);
 
             {
-                let response = env
-                    .frontend()
-                    .post("/crate/foo/0.1.0/rebuild")
-                    .bearer_auth(correct_token)
-                    .send()?;
+                let app = env.web_app().await;
+                let response = app
+                    .oneshot(
+                        Request::builder()
+                            .uri("/crate/foo/0.1.0/rebuild")
+                            .method("POST")
+                            .header("Authorization", correct_token)
+                            .body(Body::empty())
+                            .unwrap(),
+                    )
+                    .await?;
                 assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-                let json: serde_json::Value = response.json()?;
+                let json: serde_json::Value = response.json().await?;
                 assert_eq!(
                     json,
                     serde_json::json!({
@@ -535,17 +586,19 @@ mod tests {
 
     #[test]
     fn build_empty_list() {
-        wrapper(|env| {
-            env.fake_release()
+        async_wrapper(|env| async move {
+            env.async_fake_release()
+                .await
                 .name("foo")
                 .version("0.1.0")
                 .no_builds()
-                .create()?;
+                .create_async()
+                .await?;
 
-            let response = env.frontend().get("/crate/foo/0.1.0/builds").send()?;
+            let response = env.web_app().await.get("/crate/foo/0.1.0/builds").await?;
 
-            assert_cache_control(&response, CachePolicy::NoCaching, &env.config());
-            let page = kuchikiki::parse_html().one(response.text()?);
+            response.assert_cache_control(CachePolicy::NoCaching, &env.config());
+            let page = kuchikiki::parse_html().one(response.text().await);
 
             let rows: Vec<_> = page
                 .select("ul > li a.release")
@@ -570,24 +623,29 @@ mod tests {
 
     #[test]
     fn limits() {
-        wrapper(|env| {
-            env.fake_release().name("foo").version("0.1.0").create()?;
+        async_wrapper(|env| async move {
+            env.async_fake_release()
+                .await
+                .name("foo")
+                .version("0.1.0")
+                .create_async()
+                .await?;
 
-            env.runtime().block_on(async {
-                let mut conn = env.async_db().await.async_conn().await;
-                let limits = Overrides {
-                    memory: Some(6 * 1024 * 1024 * 1024),
-                    targets: Some(1),
-                    timeout: Some(std::time::Duration::from_secs(2 * 60 * 60)),
-                };
-                Overrides::save(&mut conn, "foo", limits).await
-            })?;
+            let mut conn = env.async_db().await.async_conn().await;
+            let limits = Overrides {
+                memory: Some(6 * 1024 * 1024 * 1024),
+                targets: Some(1),
+                timeout: Some(std::time::Duration::from_secs(2 * 60 * 60)),
+            };
+            Overrides::save(&mut conn, "foo", limits).await?;
 
             let page = kuchikiki::parse_html().one(
-                env.frontend()
+                env.web_app()
+                    .await
                     .get("/crate/foo/0.1.0/builds")
-                    .send()?
-                    .text()?,
+                    .await?
+                    .text()
+                    .await,
             );
 
             let header = page.select(".about h4").unwrap().next().unwrap();
@@ -613,45 +671,42 @@ mod tests {
 
     #[test]
     fn latest_200() {
-        wrapper(|env| {
-            env.fake_release()
+        async_wrapper(|env| async move {
+            env.async_fake_release()
+                .await
                 .name("aquarelle")
                 .version("0.1.0")
                 .builds(vec![FakeBuild::default()
                     .rustc_version("rustc (blabla 2019-01-01)")
                     .docsrs_version("docs.rs 1.0.0")])
-                .create()?;
+                .create_async()
+                .await?;
 
-            env.fake_release()
+            env.async_fake_release()
+                .await
                 .name("aquarelle")
                 .version("0.2.0")
                 .builds(vec![FakeBuild::default()
                     .rustc_version("rustc (blabla 2019-01-01)")
                     .docsrs_version("docs.rs 1.0.0")])
-                .create()?;
+                .create_async()
+                .await?;
 
             let resp = env
-                .frontend()
+                .web_app()
+                .await
                 .get("/crate/aquarelle/latest/builds")
-                .send()?;
-            assert!(resp
-                .url()
-                .as_str()
-                .ends_with("/crate/aquarelle/latest/builds"));
-            let body = String::from_utf8(resp.bytes().unwrap().to_vec()).unwrap();
+                .await?;
+            let body = resp.text().await;
             assert!(body.contains("<a href=\"/crate/aquarelle/latest/features\""));
             assert!(body.contains("<a href=\"/crate/aquarelle/latest/builds\""));
             assert!(body.contains("<a href=\"/crate/aquarelle/latest/source/\""));
             assert!(body.contains("<a href=\"/crate/aquarelle/latest\""));
 
-            let resp_json = env
-                .frontend()
-                .get("/crate/aquarelle/latest/builds.json")
-                .send()?;
-            assert!(resp_json
-                .url()
-                .as_str()
-                .ends_with("/crate/aquarelle/latest/builds.json"));
+            env.web_app()
+                .await
+                .assert_success("/crate/aquarelle/latest/builds.json")
+                .await?;
 
             Ok(())
         });
@@ -659,18 +714,18 @@ mod tests {
 
     #[test]
     fn crate_version_not_found() {
-        wrapper(|env| {
-            env.fake_release()
+        async_wrapper(|env| async move {
+            env.async_fake_release()
+                .await
                 .name("foo")
                 .version("0.1.0")
                 .builds(vec![FakeBuild::default()
                     .rustc_version("rustc (blabla 2019-01-01)")
                     .docsrs_version("docs.rs 1.0.0")])
-                .create()?;
+                .create_async()
+                .await?;
 
-            let resp = env.frontend().get("/crate/foo/0.2.0/builds").send()?;
-            dbg!(resp.url().as_str());
-            assert!(resp.url().as_str().ends_with("/crate/foo/0.2.0/builds"));
+            let resp = env.web_app().await.get("/crate/foo/0.2.0/builds").await?;
             assert_eq!(resp.status(), StatusCode::NOT_FOUND);
             Ok(())
         });
@@ -678,18 +733,18 @@ mod tests {
 
     #[test]
     fn invalid_semver() {
-        wrapper(|env| {
-            env.fake_release()
+        async_wrapper(|env| async move {
+            env.async_fake_release()
+                .await
                 .name("foo")
                 .version("0.1.0")
                 .builds(vec![FakeBuild::default()
                     .rustc_version("rustc (blabla 2019-01-01)")
                     .docsrs_version("docs.rs 1.0.0")])
-                .create()?;
+                .create_async()
+                .await?;
 
-            let resp = env.frontend().get("/crate/foo/0,1,0/builds").send()?;
-            dbg!(resp.url().as_str());
-            assert!(resp.url().as_str().ends_with("/crate/foo/0,1,0/builds"));
+            let resp = env.web_app().await.get("/crate/foo/0,1,0/builds").await?;
             assert_eq!(resp.status(), StatusCode::NOT_FOUND);
             Ok(())
         });
