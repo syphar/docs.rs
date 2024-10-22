@@ -323,6 +323,13 @@ pub(crate) trait AxumRouterTestExt {
         expected_target: &str,
     ) -> Result<AxumResponse>;
     async fn assert_redirect(&self, path: &str, expected_target: &str) -> Result<AxumResponse>;
+    async fn assert_redirect_cached(
+        &self,
+        path: &str,
+        expected_target: &str,
+        cache_policy: cache::CachePolicy,
+        config: &Config,
+    ) -> Result<AxumResponse>;
 }
 
 impl AxumRouterTestExt for axum::Router {
@@ -396,6 +403,25 @@ impl AxumRouterTestExt for axum::Router {
     #[context("expected redirect from {path} to {expected_target}")]
     async fn assert_redirect(&self, path: &str, expected_target: &str) -> Result<AxumResponse> {
         let redirect_response = self.assert_redirect_common(path, expected_target).await?;
+
+        let response = self.get(expected_target).await?;
+        let status = response.status();
+        if !status.is_success() {
+            anyhow::bail!("failed to GET {expected_target}: {status}");
+        }
+
+        Ok(redirect_response)
+    }
+
+    async fn assert_redirect_cached(
+        &self,
+        path: &str,
+        expected_target: &str,
+        cache_policy: cache::CachePolicy,
+        config: &Config,
+    ) -> Result<AxumResponse> {
+        let redirect_response = self.assert_redirect_common(path, expected_target).await?;
+        redirect_response.assert_cache_control(cache_policy, config);
 
         let response = self.get(expected_target).await?;
         let status = response.status();

@@ -1893,19 +1893,20 @@ mod tests {
                 .create_async()
                 .await?;
 
-            run_check_links_redir(&env, "/crate/dummy/0.4.0/features", false);
-            run_check_links_redir(&env, "/crate/dummy/0.4.0/builds", false);
-            run_check_links_redir(&env, "/crate/dummy/0.4.0/source/", false);
-            run_check_links_redir(&env, "/crate/dummy/0.4.0/source/README.md", false);
-            run_check_links_redir(&env, "/crate/dummy/0.4.0", false);
+            run_check_links_redir(&env, "/crate/dummy/0.4.0/features", false).await;
+            run_check_links_redir(&env, "/crate/dummy/0.4.0/builds", false).await;
+            run_check_links_redir(&env, "/crate/dummy/0.4.0/source/", false).await;
+            run_check_links_redir(&env, "/crate/dummy/0.4.0/source/README.md", false).await;
+            run_check_links_redir(&env, "/crate/dummy/0.4.0", false).await;
 
-            run_check_links_redir(&env, "/dummy/latest/dummy", true);
-            run_check_links_redir(&env, "/dummy/0.4.0/x86_64-pc-windows-msvc/dummy", true);
+            run_check_links_redir(&env, "/dummy/latest/dummy", true).await;
+            run_check_links_redir(&env, "/dummy/0.4.0/x86_64-pc-windows-msvc/dummy", true).await;
             run_check_links_redir(
                 &env,
                 "/dummy/0.4.0/x86_64-pc-windows-msvc/dummy/struct.A.html",
                 true,
-            );
+            )
+            .await;
 
             Ok(())
         });
@@ -1958,7 +1959,8 @@ mod tests {
                     "/crate/dummy-ba/0.5.0/target-redirect/dummy_ba/index.html".to_string(),
                     "/crate/dummy-ba/0.4.0/target-redirect/dummy_ba/index.html".to_string(),
                 ],
-            );
+            )
+            .await;
 
             check_links(
                 &env,
@@ -1967,7 +1969,7 @@ mod tests {
                     "/crate/dummy-ba/0.5.0/target-redirect/x86_64-unknown-linux-gnu/dummy_ba/index.html".to_string(),
                     "/crate/dummy-ba/0.4.0/target-redirect/x86_64-unknown-linux-gnu/dummy_ba/index.html".to_string(),
                 ],
-            );
+            ).await;
 
             Ok(())
         });
@@ -2140,11 +2142,7 @@ mod tests {
                 .await?;
 
             assert_eq!(
-                env.web_app()
-                    .await
-                    .get_no_redirect("/crate/dummy%3E")
-                    .await?
-                    .status(),
+                env.web_app().await.get("/crate/dummy%3E").await?.status(),
                 StatusCode::FOUND
             );
 
