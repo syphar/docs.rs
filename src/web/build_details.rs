@@ -217,10 +217,12 @@ mod tests {
             );
 
             let node = page.select("ul > li a.release").unwrap().next().unwrap();
-            let attrs = node.attributes.borrow();
-            let url = attrs.get("href").unwrap();
+            let url = {
+                let attrs = node.attributes.borrow();
+                attrs.get("href").unwrap().to_owned()
+            };
 
-            let page = kuchikiki::parse_html().one(web.get(url).await?.text().await);
+            let page = kuchikiki::parse_html().one(web.get(&url).await?.text().await);
             assert!(get_all_log_links(&page).is_empty());
 
             let log = page.select("pre").unwrap().next().unwrap().text_contents();
@@ -248,10 +250,12 @@ mod tests {
                 kuchikiki::parse_html().one(web.get("/crate/foo/0.1.0/builds").await?.text().await);
 
             let node = page.select("ul > li a.release").unwrap().next().unwrap();
-            let attrs = node.attributes.borrow();
-            let build_url = attrs.get("href").unwrap();
+            let build_url = {
+                let attrs = node.attributes.borrow();
+                attrs.get("href").unwrap().to_owned()
+            };
 
-            let page = kuchikiki::parse_html().one(web.get(build_url).await?.text().await);
+            let page = kuchikiki::parse_html().one(web.get(&build_url).await?.text().await);
 
             let log = page.select("pre").unwrap().next().unwrap().text_contents();
 
@@ -303,10 +307,12 @@ mod tests {
                 kuchikiki::parse_html().one(web.get("/crate/foo/0.1.0/builds").await?.text().await);
 
             let node = page.select("ul > li a.release").unwrap().next().unwrap();
-            let attrs = node.attributes.borrow();
-            let build_url = attrs.get("href").unwrap();
+            let build_url = {
+                let attrs = node.attributes.borrow();
+                attrs.get("href").unwrap().to_owned()
+            };
 
-            let page = kuchikiki::parse_html().one(web.get(build_url).await?.text().await);
+            let page = kuchikiki::parse_html().one(web.get(&build_url).await?.text().await);
 
             let log = page.select("pre").unwrap().next().unwrap().text_contents();
 
@@ -365,10 +371,12 @@ mod tests {
                 kuchikiki::parse_html().one(web.get("/crate/foo/0.1.0/builds").await?.text().await);
 
             let node = page.select("ul > li a.release").unwrap().next().unwrap();
-            let attrs = node.attributes.borrow();
-            let url = attrs.get("href").unwrap();
+            let url = {
+                let attrs = node.attributes.borrow();
+                attrs.get("href").unwrap().to_owned()
+            };
 
-            let page = kuchikiki::parse_html().one(web.get(url).await?.text().await);
+            let page = kuchikiki::parse_html().one(web.get(&url).await?.text().await);
 
             let log = page.select("pre").unwrap().next().unwrap().text_contents();
 

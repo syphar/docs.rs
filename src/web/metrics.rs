@@ -110,10 +110,7 @@ pub(crate) async fn request_recorder(
 
 #[cfg(test)]
 mod tests {
-    use crate::test::{
-        async_wrapper, fake_release_that_failed_before_build, AxumResponseTestExt,
-        AxumRouterTestExt, FakeBuild, TestDatabase, TestEnvironment,
-    };
+    use crate::test::{async_wrapper, AxumResponseTestExt, AxumRouterTestExt};
     use crate::Context;
     use std::collections::HashMap;
 

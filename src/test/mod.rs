@@ -323,6 +323,11 @@ pub(crate) trait AxumRouterTestExt {
         expected_target: &str,
     ) -> Result<AxumResponse>;
     async fn assert_redirect(&self, path: &str, expected_target: &str) -> Result<AxumResponse>;
+    async fn assert_redirect_unchecked(
+        &self,
+        path: &str,
+        expected_target: &str,
+    ) -> Result<AxumResponse>;
     async fn assert_redirect_cached(
         &self,
         path: &str,
@@ -411,6 +416,14 @@ impl AxumRouterTestExt for axum::Router {
         }
 
         Ok(redirect_response)
+    }
+
+    async fn assert_redirect_unchecked(
+        &self,
+        path: &str,
+        expected_target: &str,
+    ) -> Result<AxumResponse> {
+        self.assert_redirect_common(path, expected_target).await
     }
 
     async fn assert_redirect_cached(

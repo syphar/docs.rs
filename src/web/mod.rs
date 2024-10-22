@@ -763,8 +763,8 @@ mod test {
     use super::*;
     use crate::docbuilder::DocCoverage;
     use crate::test::{
-        async_wrapper, fake_release_that_failed_before_build, AxumResponseTestExt,
-        AxumRouterTestExt, FakeBuild, TestDatabase, TestEnvironment,
+        async_wrapper, AxumResponseTestExt, AxumRouterTestExt, FakeBuild, TestDatabase,
+        TestEnvironment,
     };
     use kuchikiki::traits::TendrilSink;
     use serde_json::json;
@@ -836,7 +836,8 @@ mod test {
                 .create()?;
             let web = env.web_app().await;
 
-            let foo_crate = kuchikiki::parse_html().one(web.get("/crate/foo/0.0.1").await?.text()?);
+            let foo_crate =
+                kuchikiki::parse_html().one(web.get("/crate/foo/0.0.1").await?.text().await);
             for (idx, value) in ["60%", "6", "10", "2", "1"].iter().enumerate() {
                 assert!(
                     foo_crate
@@ -847,7 +848,8 @@ mod test {
                 );
             }
 
-            let foo_doc = kuchikiki::parse_html().one(web.get("/foo/0.0.1/foo").await?.text()?);
+            let foo_doc =
+                kuchikiki::parse_html().one(web.get("/foo/0.0.1/foo").await?.text().await);
             assert!(foo_doc
                 .select(".pure-menu-link b")
                 .unwrap()
@@ -867,18 +869,9 @@ mod test {
                 .create()
                 .unwrap();
             let web = env.web_app().await;
-            assert!(clipboard_is_present_for_path(
-                "/crate/fake_crate/0.0.1",
-                web
-            ));
-            assert!(clipboard_is_present_for_path(
-                "/crate/fake_crate/0.0.1/source/",
-                web
-            ));
-            assert!(clipboard_is_present_for_path(
-                "/fake_crate/0.0.1/fake_crate",
-                web
-            ));
+            assert!(clipboard_is_present_for_path("/crate/fake_crate/0.0.1", &web).await);
+            assert!(clipboard_is_present_for_path("/crate/fake_crate/0.0.1/source/", &web).await);
+            assert!(clipboard_is_present_for_path("/fake_crate/0.0.1/fake_crate", &web).await);
             Ok(())
         });
     }
@@ -892,10 +885,10 @@ mod test {
                 .create()
                 .unwrap();
             let web = env.web_app().await;
-            assert!(!clipboard_is_present_for_path("/about", web));
-            assert!(!clipboard_is_present_for_path("/releases", web));
-            assert!(!clipboard_is_present_for_path("/", web));
-            assert!(!clipboard_is_present_for_path("/not/a/real/path", web));
+            assert!(!clipboard_is_present_for_path("/about", &web).await);
+            assert!(!clipboard_is_present_for_path("/releases", &web).await);
+            assert!(!clipboard_is_present_for_path("/", &web).await);
+            assert!(!clipboard_is_present_for_path("/not/a/real/path", &web).await);
             Ok(())
         });
     }
@@ -908,31 +901,31 @@ mod test {
                 let target = format!("https://doc.rust-lang.org/stable/{krate}/");
 
                 // with or without slash
-                assert_redirect(&format!("/{krate}"), &target, web)?;
-                assert_redirect(&format!("/{krate}/"), &target, web)?;
+                web.assert_redirect(&format!("/{krate}"), &target).await?;
+                web.assert_redirect(&format!("/{krate}/"), &target).await?;
             }
 
             let target = "https://doc.rust-lang.org/stable/proc_macro/";
             // with or without slash
-            assert_redirect("/proc-macro", target, web)?;
-            assert_redirect("/proc-macro/", target, web)?;
+            web.assert_redirect("/proc-macro", target).await?;
+            web.assert_redirect("/proc-macro/", target).await?;
 
             let target = "https://doc.rust-lang.org/nightly/nightly-rustc/";
             // with or without slash
-            assert_redirect("/rustc", target, web)?;
-            assert_redirect("/rustc/", target, web)?;
+            web.assert_redirect("/rustc", target).await?;
+            web.assert_redirect("/rustc/", target).await?;
 
             let target = "https://doc.rust-lang.org/nightly/nightly-rustc/rustdoc/";
             // with or without slash
-            assert_redirect("/rustdoc", target, web)?;
-            assert_redirect("/rustdoc/", target, web)?;
+            web.assert_redirect("/rustdoc", target).await?;
+            web.assert_redirect("/rustdoc/", target).await?;
 
             // queries are supported
-            assert_redirect(
+            web.assert_redirect(
                 "/std?search=foobar",
                 "https://doc.rust-lang.org/stable/std/?search=foobar",
-                web,
-            )?;
+            )
+            .await?;
 
             Ok(())
         })
@@ -947,7 +940,7 @@ mod test {
                 .create()
                 .unwrap();
             let web = env.web_app().await;
-            assert_redirect("/bat//", "/bat/latest/bat/", web)?;
+            web.assert_redirect("/bat//", "/bat/latest/bat/").await?;
             Ok(())
         })
     }
@@ -962,8 +955,10 @@ mod test {
                 .create()
                 .unwrap();
             let web = env.web_app().await;
-            assert_redirect("/bat/0.2.0", "/crate/bat/0.2.0", web)?;
-            assert_redirect("/bat/0.2.0/i686-unknown-linux-gnu", "/crate/bat/0.2.0", web)?;
+            web.assert_redirect("/bat/0.2.0", "/crate/bat/0.2.0")
+                .await?;
+            web.assert_redirect("/bat/0.2.0/i686-unknown-linux-gnu", "/crate/bat/0.2.0")
+                .await?;
             /* TODO: this should work (https://github.com/rust-lang/docs.rs/issues/603)
             assert_redirect("/bat/0.2.0/i686-unknown-linux-gnu/bat", "/crate/bat/0.2.0", web)?;
             assert_redirect("/bat/0.2.0/i686-unknown-linux-gnu/bat/", "/crate/bat/0.2.0/", web)?;
@@ -983,10 +978,12 @@ mod test {
                 .unwrap();
 
             let web = env.web_app().await;
-            assert_success("/crate/regex/0.3.0/source/src/main.rs", web)?;
-            assert_success("/crate/regex/0.3.0/source", web)?;
-            assert_success("/crate/regex/0.3.0/source/src", web)?;
-            assert_success("/regex/0.3.0/src/regex/main.rs.html", web)?;
+            web.assert_success("/crate/regex/0.3.0/source/src/main.rs")
+                .await?;
+            web.assert_success("/crate/regex/0.3.0/source").await?;
+            web.assert_success("/crate/regex/0.3.0/source/src").await?;
+            web.assert_success("/regex/0.3.0/src/regex/main.rs.html")
+                .await?;
             Ok(())
         })
     }
@@ -1022,9 +1019,9 @@ mod test {
     #[test]
     fn platform_dropdown_not_shown_with_no_targets() {
         async_wrapper(|env| async move {
-            env.runtime().block_on(release("0.1.0", env));
+            release("0.1.0", &env).await;
             let web = env.web_app().await;
-            let text = web.get("/foo/0.1.0/foo").await?.text()?;
+            let text = web.get("/foo/0.1.0/foo").await?.text().await;
             let platform = kuchikiki::parse_html()
                 .one(text)
                 .select(r#"ul > li > a[aria-label="Platform"]"#)
@@ -1038,7 +1035,7 @@ mod test {
                 .version("0.2.0")
                 .add_platform("x86_64-unknown-linux-musl")
                 .create()?;
-            let text = web.get("/foo/0.2.0/foo").await?.text()?;
+            let text = web.get("/foo/0.2.0/foo").await?.text().await;
             let platform = kuchikiki::parse_html()
                 .one(text)
                 .select(r#"ul > li > a[aria-label="Platform"]"#)
@@ -1259,7 +1256,7 @@ mod test {
     #[test]
     fn test_tabindex_is_present_on_topbar_crate_search_input() {
         async_wrapper(|env| async move {
-            release("0.1.0", &*env).await;
+            release("0.1.0", &env).await;
             let web = env.web_app().await;
             let text = web.get("/foo/0.1.0/foo").await?.text().await;
             let tabindex = kuchikiki::parse_html()

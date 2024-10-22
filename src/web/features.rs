@@ -232,11 +232,7 @@ fn get_sorted_features(raw_features: Vec<DbFeature>) -> (Vec<Feature>, HashSet<S
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::{
-        assert_cache_control, assert_redirect_cached, async_wrapper,
-        fake_release_that_failed_before_build, wrapper, AxumResponseTestExt, AxumRouterTestExt,
-        FakeBuild, TestDatabase, TestEnvironment,
-    };
+    use crate::test::{async_wrapper, AxumResponseTestExt, AxumRouterTestExt};
     use reqwest::StatusCode;
 
     #[test]
