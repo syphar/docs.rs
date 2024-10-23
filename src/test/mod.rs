@@ -90,18 +90,6 @@ where
     }
 }
 
-/// check a request if the cache control header matches NoCache
-pub(crate) fn assert_no_cache(res: &Response) {
-    assert_eq!(
-        res.headers()
-            .get("Cache-Control")
-            .expect("missing cache-control header")
-            .to_str()
-            .unwrap(),
-        cache::NO_CACHING.to_str().unwrap(),
-    );
-}
-
 /// check a request if the cache control header matches the given cache config.
 pub(crate) fn assert_cache_control(
     res: &Response,
@@ -145,17 +133,6 @@ pub(crate) fn assert_success_cached(
     Ok(())
 }
 
-/// Make sure that a URL returns a 404
-pub(crate) fn assert_not_found(path: &str, web: &TestFrontend) -> Result<()> {
-    let response = web.get(path).send()?;
-
-    // for now, 404s should always have `no-cache`
-    assert_no_cache(&response);
-
-    assert_eq!(response.status(), 404, "GET {path} should have been a 404");
-    Ok(())
-}
-
 fn assert_redirect_common(
     path: &str,
     expected_target: &str,
@@ -188,34 +165,6 @@ fn assert_redirect_common(
     }
 
     Ok(response)
-}
-
-/// Makes sure that a URL redirects to a specific page, but doesn't check that the target exists
-///
-/// Returns the redirect response
-#[context("expected redirect from {path} to {expected_target}")]
-pub(crate) fn assert_redirect_unchecked(
-    path: &str,
-    expected_target: &str,
-    web: &TestFrontend,
-) -> Result<Response> {
-    assert_redirect_common(path, expected_target, web)
-}
-
-/// Makes sure that a URL redirects to a specific page, but doesn't check that the target exists
-///
-/// Returns the redirect response
-#[context("expected redirect from {path} to {expected_target}")]
-pub(crate) fn assert_redirect_cached_unchecked(
-    path: &str,
-    expected_target: &str,
-    cache_policy: cache::CachePolicy,
-    web: &TestFrontend,
-    config: &Config,
-) -> Result<Response> {
-    let redirect_response = assert_redirect_common(path, expected_target, web)?;
-    assert_cache_control(&redirect_response, cache_policy, config);
-    Ok(redirect_response)
 }
 
 /// Make sure that a URL redirects to a specific page, and that the target exists and is not another redirect
@@ -314,6 +263,20 @@ impl AxumResponseTestExt for axum::response::Response {
 }
 
 pub(crate) trait AxumRouterTestExt {
+    async fn assert_redirect_cached_unchecked(
+        &self,
+        path: &str,
+        expected_target: &str,
+        cache_policy: cache::CachePolicy,
+        config: &Config,
+    ) -> Result<AxumResponse>;
+    async fn assert_not_found(&self, path: &str) -> Result<()>;
+    async fn assert_success_cached(
+        &self,
+        path: &str,
+        cache_policy: cache::CachePolicy,
+        config: &Config,
+    ) -> Result<()>;
     async fn assert_success(&self, path: &str) -> Result<()>;
     async fn get(&self, path: &str) -> Result<AxumResponse>;
     async fn post(&self, path: &str) -> Result<AxumResponse>;
@@ -347,6 +310,38 @@ impl AxumRouterTestExt for axum::Router {
 
         let status = response.status();
         assert!(status.is_success(), "failed to GET {path}: {status}");
+        Ok(())
+    }
+
+    async fn assert_not_found(&self, path: &str) -> Result<()> {
+        let response = self.get(path).await?;
+
+        // for now, 404s should always have `no-cache`
+        // assert_no_cache(&response);
+        assert_eq!(
+            response
+                .headers()
+                .get("Cache-Control")
+                .expect("missing cache-control header")
+                .to_str()
+                .unwrap(),
+            cache::NO_CACHING.to_str().unwrap(),
+        );
+
+        assert_eq!(response.status(), 404, "GET {path} should have been a 404");
+        Ok(())
+    }
+
+    async fn assert_success_cached(
+        &self,
+        path: &str,
+        cache_policy: cache::CachePolicy,
+        config: &Config,
+    ) -> Result<()> {
+        let response = self.get(path).await?;
+        let status = response.status();
+        assert!(status.is_success(), "failed to GET {path}: {status}");
+        response.assert_cache_control(cache_policy, config);
         Ok(())
     }
 
@@ -442,6 +437,18 @@ impl AxumRouterTestExt for axum::Router {
             anyhow::bail!("failed to GET {expected_target}: {status}");
         }
 
+        Ok(redirect_response)
+    }
+
+    async fn assert_redirect_cached_unchecked(
+        &self,
+        path: &str,
+        expected_target: &str,
+        cache_policy: cache::CachePolicy,
+        config: &Config,
+    ) -> Result<AxumResponse> {
+        let redirect_response = self.assert_redirect_common(path, expected_target).await?;
+        redirect_response.assert_cache_control(cache_policy, config);
         Ok(redirect_response)
     }
 }
@@ -702,15 +709,6 @@ impl TestEnvironment {
                     .expect("failed to initialize the db")
             })
             .await
-    }
-
-    pub(crate) fn override_frontend(&self, init: impl FnOnce(&mut TestFrontend)) -> &TestFrontend {
-        let mut frontend = TestFrontend::new(self);
-        init(&mut frontend);
-        if self.frontend.set(frontend).is_err() {
-            panic!("cannot call override_frontend after frontend is initialized");
-        }
-        self.frontend.get().unwrap()
     }
 
     pub(crate) fn frontend(&self) -> &TestFrontend {
