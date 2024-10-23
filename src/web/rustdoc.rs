@@ -2737,7 +2737,12 @@ mod test {
                 &env.config(),
             )
             .await?;
-            assert!(env.storage().get_public_access("rustdoc/dummy/0.1.0.zip")?);
+            assert!(
+                env.async_storage()
+                    .await
+                    .get_public_access("rustdoc/dummy/0.1.0.zip")
+                    .await?
+            );
             Ok(())
         });
     }
@@ -2754,10 +2759,12 @@ mod test {
                 .await?;
 
             let web = env.web_app().await;
+            let storage = env.async_storage().await;
 
             // disable public access to be sure that the handler will enable it
-            env.storage()
-                .set_public_access("rustdoc/dummy/0.1.0.zip", false)?;
+            storage
+                .set_public_access("rustdoc/dummy/0.1.0.zip", false)
+                .await?;
 
             web.assert_redirect_cached_unchecked(
                 "/crate/dummy/0.1.0/download",
@@ -2766,7 +2773,7 @@ mod test {
                 &env.config(),
             )
             .await?;
-            assert!(env.storage().get_public_access("rustdoc/dummy/0.1.0.zip")?);
+            assert!(storage.get_public_access("rustdoc/dummy/0.1.0.zip").await?);
             Ok(())
         });
     }
@@ -2799,7 +2806,12 @@ mod test {
                 &env.config(),
             )
             .await?;
-            assert!(env.storage().get_public_access("rustdoc/dummy/0.2.0.zip")?);
+            assert!(
+                env.async_storage()
+                    .await
+                    .get_public_access("rustdoc/dummy/0.2.0.zip")
+                    .await?
+            );
             Ok(())
         });
     }
@@ -2839,8 +2851,9 @@ mod test {
                 .create_async()
                 .await?;
 
-            env.storage().store_one("asset.js", *b"content")?;
-            env.storage().store_one(path, *b"more_content")?;
+            let storage = env.async_storage().await;
+            storage.store_one("asset.js", *b"content").await?;
+            storage.store_one(path, *b"more_content").await?;
 
             let web = env.web_app().await;
 
