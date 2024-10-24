@@ -908,7 +908,7 @@ mod tests {
     #[test]
     fn get_releases_by_stars() {
         async_wrapper(|env| async move {
-            let db = env.db();
+            let db = env.async_db().await;
 
             env.async_fake_release()
                 .await
@@ -1758,7 +1758,7 @@ mod tests {
             let empty_data = format!("data: [{}]", vec!["0"; 30].join(", "));
 
             // no data / only zeros without releases
-            let response = web.get("/releases/activity/").await?;
+            let response = web.get("/releases/activity").await?;
             assert!(response.status().is_success());
             let text = response.text().await;
             assert_eq!(text.matches(&empty_data).count(), 2);
@@ -1776,7 +1776,7 @@ mod tests {
                 .await?;
 
             // same when the release is on the current day, since we ignore today.
-            let response = web.get("/releases/activity/").await?;
+            let response = web.get("/releases/activity").await?;
             assert!(response.status().is_success());
             assert_eq!(response.text().await.matches(&empty_data).count(), 2);
 
@@ -1795,7 +1795,7 @@ mod tests {
                 .await?;
 
             // with releases yesterday we get the data we want
-            let response = web.get("/releases/activity/").await?;
+            let response = web.get("/releases/activity").await?;
             assert!(response.status().is_success());
             let text = response.text().await;
             // counts contain both releases
@@ -1838,10 +1838,8 @@ mod tests {
 
             let web = env.web_app().await;
 
-            env.runtime().block_on(async move {
-                let mut conn = env.async_db().await.async_conn().await;
-                cdn::queue_crate_invalidation(&mut conn, &env.config(), "krate_2").await
-            })?;
+            let mut conn = env.async_db().await.async_conn().await;
+            cdn::queue_crate_invalidation(&mut conn, &env.config(), "krate_2").await?;
 
             let content =
                 kuchikiki::parse_html().one(web.get("/releases/queue").await?.text().await);
@@ -1880,10 +1878,10 @@ mod tests {
                 .expect("missing heading")
                 .any(|el| el.text_contents().contains("active CDN deployments")));
 
-            let queue = env.build_queue();
-            queue.add_crate("foo", "1.0.0", 0, None)?;
-            queue.add_crate("bar", "0.1.0", -10, None)?;
-            queue.add_crate("baz", "0.0.1", 10, None)?;
+            let queue = env.async_build_queue().await;
+            queue.add_crate("foo", "1.0.0", 0, None).await?;
+            queue.add_crate("bar", "0.1.0", -10, None).await?;
+            queue.add_crate("baz", "0.0.1", 10, None).await?;
 
             let full = kuchikiki::parse_html().one(web.get("/releases/queue").await?.text().await);
             let items = full
@@ -1919,9 +1917,9 @@ mod tests {
             let web = env.web_app().await;
 
             // we have two queued releases, where the build for one is already in progress
-            let queue = env.build_queue();
-            queue.add_crate("foo", "1.0.0", 0, None)?;
-            queue.add_crate("bar", "0.1.0", 0, None)?;
+            let queue = env.async_build_queue().await;
+            queue.add_crate("foo", "1.0.0", 0, None).await?;
+            queue.add_crate("bar", "0.1.0", 0, None).await?;
 
             env.async_fake_release()
                 .await
@@ -1981,7 +1979,7 @@ mod tests {
             let mut seen = HashSet::new();
             seen.insert("".to_owned());
 
-            let resp = web.get("").await?;
+            let resp = web.get("/").await?;
             resp.assert_cache_control(CachePolicy::ShortInCdnAndBrowser, &env.config());
 
             assert!(resp.status().is_success());
