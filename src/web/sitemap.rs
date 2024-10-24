@@ -210,7 +210,8 @@ mod tests {
     fn sitemap_index() {
         async_wrapper(|env| async move {
             let app = env.web_app().await;
-            app.assert_success("/sitemap.xml").await
+            app.assert_success("/sitemap.xml").await?;
+            Ok(())
         })
     }
 
@@ -315,7 +316,8 @@ mod tests {
                 let path = format!("/about/{filename}");
                 web.assert_success(&path).await?;
             }
-            web.assert_success("/about").await
+            web.assert_success("/about").await?;
+            Ok(())
         })
     }
 

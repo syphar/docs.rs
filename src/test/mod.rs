@@ -86,6 +86,7 @@ pub(crate) trait AxumResponseTestExt {
     async fn text(self) -> String;
     async fn bytes(self) -> Bytes;
     async fn json<T: DeserializeOwned>(self) -> Result<T>;
+    fn redirect_target(&self) -> Option<&str>;
     fn assert_cache_control(&self, cache_policy: cache::CachePolicy, config: &Config);
     fn error_for_status(self) -> Result<Self>
     where
@@ -102,6 +103,9 @@ impl AxumResponseTestExt for axum::response::Response {
     async fn json<T: DeserializeOwned>(self) -> Result<T> {
         let body = self.text().await;
         Ok(serde_json::from_str(&body)?)
+    }
+    fn redirect_target(&self) -> Option<&str> {
+        self.headers().get("Location")?.to_str().ok()
     }
     fn assert_cache_control(&self, cache_policy: cache::CachePolicy, config: &Config) {
         assert!(config.cache_control_stale_while_revalidate.is_some());
@@ -148,7 +152,7 @@ pub(crate) trait AxumRouterTestExt {
         cache_policy: cache::CachePolicy,
         config: &Config,
     ) -> Result<()>;
-    async fn assert_success(&self, path: &str) -> Result<()>;
+    async fn assert_success(&self, path: &str) -> Result<AxumResponse>;
     async fn get(&self, path: &str) -> Result<AxumResponse>;
     async fn post(&self, path: &str) -> Result<AxumResponse>;
     async fn assert_redirect_common(
@@ -173,7 +177,7 @@ pub(crate) trait AxumRouterTestExt {
 
 impl AxumRouterTestExt for axum::Router {
     /// Make sure that a URL returns a status code between 200-299
-    async fn assert_success(&self, path: &str) -> Result<()> {
+    async fn assert_success(&self, path: &str) -> Result<AxumResponse> {
         let response = self
             .clone()
             .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
@@ -181,7 +185,7 @@ impl AxumRouterTestExt for axum::Router {
 
         let status = response.status();
         assert!(status.is_success(), "failed to GET {path}: {status}");
-        Ok(())
+        Ok(response)
     }
 
     async fn assert_not_found(&self, path: &str) -> Result<()> {

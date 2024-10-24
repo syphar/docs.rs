@@ -1824,7 +1824,8 @@ mod tests {
                 .build_result_failed()
                 .create_async()
                 .await?;
-            web.assert_success("/releases/feed").await
+            web.assert_success("/releases/feed").await?;
+            Ok(())
         })
     }
 

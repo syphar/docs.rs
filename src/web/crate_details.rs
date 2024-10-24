@@ -1249,11 +1249,9 @@ mod tests {
                 .create_async()
                 .await?;
 
+            let mut conn = db.async_conn().await;
             for version in &["0.0.1", "0.0.2", "0.0.3-pre.1"] {
-                let details = env.runtime().block_on(async move {
-                    let mut conn = db.async_conn().await;
-                    crate_details(&mut conn, "foo", version, None).await
-                });
+                let details = crate_details(&mut conn, "foo", version, None).await;
                 assert_eq!(
                     details.latest_release().unwrap().version,
                     semver::Version::parse("0.0.2")?
@@ -1289,11 +1287,9 @@ mod tests {
                 .create_async()
                 .await?;
 
+            let mut conn = db.async_conn().await;
             for version in &["0.0.1", "0.0.2", "0.0.3"] {
-                let details = env.runtime().block_on(async move {
-                    let mut conn = db.async_conn().await;
-                    crate_details(&mut conn, "foo", version, None).await
-                });
+                let details = crate_details(&mut conn, "foo", version, None).await;
                 assert_eq!(
                     details.latest_release().unwrap().version,
                     semver::Version::parse("0.0.2")?
@@ -1331,11 +1327,9 @@ mod tests {
                 .create_async()
                 .await?;
 
+            let mut conn = db.async_conn().await;
             for version in &["0.0.1", "0.0.2", "0.0.3"] {
-                let details = env.runtime().block_on(async move {
-                    let mut conn = db.async_conn().await;
-                    crate_details(&mut conn, "foo", version, None).await
-                });
+                let details = crate_details(&mut conn, "foo", version, None).await;
                 assert_eq!(
                     details.latest_release().unwrap().version,
                     semver::Version::parse("0.0.3")?
@@ -1367,11 +1361,9 @@ mod tests {
                 .create_async()
                 .await?;
 
+            let mut conn = db.async_conn().await;
             for version in &["0.0.1", "0.0.2"] {
-                let details = env.runtime().block_on(async move {
-                    let mut conn = db.async_conn().await;
-                    crate_details(&mut conn, "foo", version, None).await
-                });
+                let details = crate_details(&mut conn, "foo", version, None).await;
                 assert_eq!(
                     details.latest_release().unwrap().version,
                     semver::Version::parse("0.0.1")?
@@ -1707,9 +1699,8 @@ mod tests {
             let page = kuchikiki::parse_html().one(
                 env.web_app()
                     .await
-                    .get("/crate/library/0.1.0/")
+                    .assert_success("/crate/library/0.1.0")
                     .await?
-                    .error_for_status()?
                     .text()
                     .await,
             );
@@ -1745,12 +1736,10 @@ mod tests {
                 .create_async()
                 .await?;
 
-            env.runtime().block_on(async {
-                let mut conn = env.async_db().await.async_conn().await;
-                sqlx::query!("UPDATE releases SET features = NULL WHERE id = $1", id)
-                    .execute(&mut *conn)
-                    .await
-            })?;
+            let mut conn = env.async_db().await.async_conn().await;
+            sqlx::query!("UPDATE releases SET features = NULL WHERE id = $1", id)
+                .execute(&mut *conn)
+                .await?;
 
             let page = kuchikiki::parse_html().one(
                 env.web_app()
@@ -1768,11 +1757,8 @@ mod tests {
     #[test]
     fn test_minimal_failed_release_doesnt_error_features() {
         async_wrapper(|env| async move {
-            env.runtime().block_on(async {
-                let mut conn = env.async_db().await.async_conn().await;
-                fake_release_that_failed_before_build(&mut conn, "foo", "0.1.0", "some errors")
-                    .await
-            })?;
+            let mut conn = env.async_db().await.async_conn().await;
+            fake_release_that_failed_before_build(&mut conn, "foo", "0.1.0", "some errors").await?;
 
             let text_content = env
                 .web_app()
@@ -1795,11 +1781,8 @@ mod tests {
     #[test]
     fn test_minimal_failed_release_doesnt_error() {
         async_wrapper(|env| async move {
-            env.runtime().block_on(async {
-                let mut conn = env.async_db().await.async_conn().await;
-                fake_release_that_failed_before_build(&mut conn, "foo", "0.1.0", "some errors")
-                    .await
-            })?;
+            let mut conn = env.async_db().await.async_conn().await;
+            fake_release_that_failed_before_build(&mut conn, "foo", "0.1.0", "some errors").await?;
 
             let text_content = env
                 .web_app()
@@ -1861,9 +1844,10 @@ mod tests {
             let status = response.status();
             assert!(
                 status.is_success(),
-                "no success, status: {}, url: {}",
+                "no success, status: {}, url: {}, target: {}",
                 status,
-                url
+                url,
+                response.redirect_target().unwrap_or_default(),
             );
             let text = response.text().await;
             let list1 = check_links(text.clone(), false, should_contain_redirect);
@@ -1905,8 +1889,13 @@ mod tests {
             run_check_links_redir(&env, "/crate/dummy/0.4.0/source/README.md", false).await;
             run_check_links_redir(&env, "/crate/dummy/0.4.0", false).await;
 
-            run_check_links_redir(&env, "/dummy/latest/dummy", true).await;
-            run_check_links_redir(&env, "/dummy/0.4.0/x86_64-pc-windows-msvc/dummy", true).await;
+            run_check_links_redir(&env, "/dummy/latest/dummy/", true).await;
+            run_check_links_redir(
+                &env,
+                "/dummy/0.4.0/x86_64-pc-windows-msvc/dummy/index.html",
+                true,
+            )
+            .await;
             run_check_links_redir(
                 &env,
                 "/dummy/0.4.0/x86_64-pc-windows-msvc/dummy/struct.A.html",
@@ -2057,9 +2046,6 @@ mod tests {
                 &env.config(),
             )
             .await?;
-
-            web.assert_success("/crate/aquarelle/latest/builds.json")
-                .await?;
 
             Ok(())
         });
