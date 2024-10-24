@@ -401,7 +401,7 @@ impl TestEnvironment {
         fs::create_dir_all(config.registry_index_path.clone()).unwrap();
 
         // Use less connections for each test compared to production.
-        config.max_pool_size = 4;
+        config.max_pool_size = 8;
         config.min_pool_idle = 0;
 
         // Use the database for storage, as it's faster than S3.
