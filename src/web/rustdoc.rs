@@ -2720,6 +2720,9 @@ mod test {
     #[test]
     fn download_semver() {
         async_wrapper(|env| async move {
+            env.override_config(|config| {
+                config.s3_static_root_path = "https://static.docs.rs".into()
+            });
             env.async_fake_release()
                 .await
                 .name("dummy")
@@ -2750,6 +2753,9 @@ mod test {
     #[test]
     fn download_specific_version() {
         async_wrapper(|env| async move {
+            env.override_config(|config| {
+                config.s3_static_root_path = "https://static.docs.rs".into()
+            });
             env.async_fake_release()
                 .await
                 .name("dummy")
@@ -2781,6 +2787,9 @@ mod test {
     #[test]
     fn download_latest_version() {
         async_wrapper(|env| async move {
+            env.override_config(|config| {
+                config.s3_static_root_path = "https://static.docs.rs".into()
+            });
             env.async_fake_release()
                 .await
                 .name("dummy")
