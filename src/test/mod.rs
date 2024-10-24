@@ -6,6 +6,7 @@ use crate::db::{self, AsyncPoolClient, Pool};
 use crate::error::Result;
 use crate::repositories::RepositoryStatsUpdater;
 use crate::storage::{AsyncStorage, Storage, StorageKind};
+use crate::web::encode_url_path;
 use crate::web::{build_axum_app, cache, page::TemplateData};
 use crate::{
     AsyncBuildQueue, BuildQueue, Config, Context, Index, InstanceMetrics, RegistryApi,
@@ -178,10 +179,7 @@ pub(crate) trait AxumRouterTestExt {
 impl AxumRouterTestExt for axum::Router {
     /// Make sure that a URL returns a status code between 200-299
     async fn assert_success(&self, path: &str) -> Result<AxumResponse> {
-        let response = self
-            .clone()
-            .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
-            .await?;
+        let response = self.get(path).await?;
 
         let status = response.status();
         assert!(status.is_success(), "failed to GET {path}: {status}");
@@ -215,25 +213,37 @@ impl AxumRouterTestExt for axum::Router {
     ) -> Result<()> {
         let response = self.get(path).await?;
         let status = response.status();
-        assert!(status.is_success(), "failed to GET {path}: {status}");
+        assert!(
+            status.is_success(),
+            "failed to GET {path}: {status} (redirect: {})",
+            response.redirect_target().unwrap_or_default()
+        );
         response.assert_cache_control(cache_policy, config);
         Ok(())
     }
 
     async fn get(&self, path: &str) -> Result<AxumResponse> {
+        let encoded_path = encode_url_path(path);
+
         Ok(self
             .clone()
-            .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri(&encoded_path)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await?)
     }
 
     async fn post(&self, path: &str) -> Result<AxumResponse> {
+        let encoded_path = encode_url_path(path);
         Ok(self
             .clone()
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri(path)
+                    .uri(&encoded_path)
                     .body(Body::empty())
                     .unwrap(),
             )
