@@ -262,10 +262,15 @@ impl AsyncStorage {
         latest_build_id: Option<BuildId>,
         path: &str,
     ) -> Result<bool> {
-        Ok(self
+        match self
             .find_in_archive_index(archive_path, latest_build_id, path)
-            .await?
-            .is_some())
+            .await
+        {
+            Ok(Some(_)) => Ok(true),
+            Ok(None) => Ok(false),
+            Err(err) if err.downcast_ref::<PathNotFoundError>().is_some() => Ok(false),
+            Err(err) => Err(err),
+        }
     }
 
     #[instrument]
