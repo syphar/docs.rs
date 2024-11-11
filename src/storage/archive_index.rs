@@ -121,20 +121,6 @@ pub(crate) fn find_in_file<P: AsRef<Path> + std::fmt::Debug>(
     find_in_sqlite_index(&connection, search_for)
 }
 
-pub(crate) fn is_corrupt<P: AsRef<Path> + std::fmt::Debug>(
-    archive_index_path: P,
-) -> Result<bool, rusqlite::Error> {
-    match open_index(archive_index_path) {
-        Err(rusqlite::Error::SqliteFailure(sqlite_err, _))
-            if sqlite_err.code == rusqlite::ErrorCode::DatabaseCorrupt =>
-        {
-            Ok(true)
-        }
-        Err(err) => Err(err),
-        Ok(_) => Ok(false),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

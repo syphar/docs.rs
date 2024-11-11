@@ -4,8 +4,8 @@ mod database;
 mod s3;
 
 pub use self::compression::{compress, decompress, CompressionAlgorithm, CompressionAlgorithms};
-use self::database::DatabaseBackend;
 use self::s3::S3Backend;
+use self::{archive_index::FileInfo, database::DatabaseBackend};
 use crate::{
     db::{
         file::{detect_mime, FileEntry},
@@ -15,7 +15,7 @@ use crate::{
     utils::spawn_blocking,
     Config, InstanceMetrics,
 };
-use anyhow::{anyhow, Context as _};
+use anyhow::anyhow;
 use chrono::{DateTime, Utc};
 use fn_error_context::context;
 use futures_util::stream::BoxStream;
@@ -30,7 +30,7 @@ use std::{
     sync::Arc,
 };
 use tokio::{io::AsyncWriteExt, runtime::Runtime};
-use tracing::{error, info_span, instrument, trace};
+use tracing::{error, info_span, instrument, trace, warn};
 use walkdir::WalkDir;
 
 type FileRange = RangeInclusive<u64>;
@@ -88,11 +88,6 @@ pub fn get_file_list<P: AsRef<Path>>(path: P) -> Box<dyn Iterator<Item = Result<
     } else {
         Box::new(iter::empty())
     }
-}
-
-async fn index_is_corrupt<P: AsRef<Path>>(local_index_path: P) -> Result<bool> {
-    let local_index_path = local_index_path.as_ref().to_owned();
-    spawn_blocking(move || archive_index::is_corrupt(&local_index_path).map_err(Into::into)).await
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -261,25 +256,10 @@ impl AsyncStorage {
         latest_build_id: Option<BuildId>,
         path: &str,
     ) -> Result<bool> {
-        match self
-            .download_and_open_archive_index(archive_path, latest_build_id)
-            .await
-        {
-            Ok(index_filename) => Ok({
-                let path = path.to_owned();
-                spawn_blocking(move || {
-                    Ok(archive_index::find_in_file(index_filename, &path)?.is_some())
-                })
-                .await?
-            }),
-            Err(err) => {
-                if err.downcast_ref::<PathNotFoundError>().is_some() {
-                    Ok(false)
-                } else {
-                    Err(err)
-                }
-            }
-        }
+        Ok(self
+            .find_in_archive_index(archive_path, latest_build_id, path)
+            .await?
+            .is_some())
     }
 
     #[instrument]
@@ -347,23 +327,27 @@ impl AsyncStorage {
         file.write_all(&index_content).await?;
         tokio::fs::rename(temp_path, &local_index_path).await?;
 
-        if index_is_corrupt(&local_index_path).await? {
-            // TODO: we might actually queue a rebuild in this case.
-            error!(
-                ?local_index_path,
-                remote_index_path, "found corrupt archive index"
-            );
-        }
-
         Ok(())
     }
 
-    #[instrument]
-    pub(super) async fn download_and_open_archive_index(
+    async fn find_in_archive_index(
         &self,
         archive_path: &str,
         latest_build_id: Option<BuildId>,
-    ) -> Result<PathBuf> {
+        path: &str,
+    ) -> Result<Option<FileInfo>> {
+        async fn find_in_file(
+            index_filename: impl AsRef<Path> + std::fmt::Debug,
+            path: &str,
+        ) -> Result<Option<FileInfo>> {
+            let index_filename = index_filename.as_ref().to_owned();
+            let path = path.to_owned();
+            spawn_blocking(move || {
+                archive_index::find_in_file(index_filename, &path).map_err(Into::into)
+            })
+            .await
+        }
+
         // remote/folder/and/x.zip.index
         let remote_index_path = format!("{archive_path}.index");
         let local_index_path = self.config.local_archive_cache_path.join(format!(
@@ -371,12 +355,34 @@ impl AsyncStorage {
             latest_build_id.map(|id| id.0).unwrap_or(0)
         ));
 
-        if !local_index_path.exists() || index_is_corrupt(&local_index_path).await? {
+        if !local_index_path.exists() {
             self.download_archive_index(&local_index_path, &remote_index_path)
                 .await?;
         }
 
-        Ok(local_index_path)
+        match find_in_file(&local_index_path, path).await {
+            Ok(result) => Ok(result),
+            Err(err) => {
+                if let Some(sqlite_err) = err.downcast_ref::<rusqlite::Error>() {
+                    if let rusqlite::Error::SqliteFailure(internal_err, _) = sqlite_err {
+                        if internal_err.code == rusqlite::ErrorCode::DatabaseCorrupt {
+                            warn!(
+                                ?local_index_path,
+                                remote_index_path,
+                                "found corrupt local archive index, redownloading"
+                            );
+
+                            self.download_archive_index(&local_index_path, &remote_index_path)
+                                .await?;
+
+                            return find_in_file(&local_index_path, path).await;
+                        }
+                    }
+                }
+
+                Err(err)
+            }
+        }
     }
 
     #[instrument]
@@ -387,18 +393,10 @@ impl AsyncStorage {
         path: &str,
         max_size: usize,
     ) -> Result<Blob> {
-        let index_filename = self
-            .download_and_open_archive_index(archive_path, latest_build_id)
-            .await?;
-
-        let info = {
-            let path = path.to_owned();
-            spawn_blocking(move || {
-                archive_index::find_in_file(index_filename, &path).map_err(Into::into)
-            })
-            .await
-        }?
-        .ok_or(PathNotFoundError)?;
+        let info = self
+            .find_in_archive_index(archive_path, latest_build_id, path)
+            .await?
+            .ok_or(PathNotFoundError)?;
 
         let blob = self
             .get_range(
@@ -745,17 +743,6 @@ impl Storage {
     ) -> Result<Blob> {
         self.runtime
             .block_on(self.inner.get_range(path, max_size, range, compression))
-    }
-
-    pub(super) fn download_and_open_archive_index(
-        &self,
-        archive_path: &str,
-        latest_build_id: Option<BuildId>,
-    ) -> Result<PathBuf> {
-        self.runtime.block_on(
-            self.inner
-                .download_and_open_archive_index(archive_path, latest_build_id),
-        )
     }
 
     pub(crate) fn get_from_archive(
