@@ -15,7 +15,7 @@ use crate::{
     utils::spawn_blocking,
     Config, InstanceMetrics,
 };
-use anyhow::anyhow;
+use anyhow::{anyhow, Context as _};
 use chrono::{DateTime, Utc};
 use fn_error_context::context;
 use futures_util::stream::BoxStream;
@@ -88,6 +88,11 @@ pub fn get_file_list<P: AsRef<Path>>(path: P) -> Box<dyn Iterator<Item = Result<
     } else {
         Box::new(iter::empty())
     }
+}
+
+async fn index_is_corrupt<P: AsRef<Path>>(local_index_path: P) -> Result<bool> {
+    let local_index_path = local_index_path.as_ref().to_owned();
+    spawn_blocking(move || archive_index::is_corrupt(&local_index_path).map_err(Into::into)).await
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -257,7 +262,7 @@ impl AsyncStorage {
         path: &str,
     ) -> Result<bool> {
         match self
-            .download_archive_index(archive_path, latest_build_id)
+            .download_and_open_archive_index(archive_path, latest_build_id)
             .await
         {
             Ok(index_filename) => Ok({
@@ -312,8 +317,49 @@ impl AsyncStorage {
         Ok(blob)
     }
 
+    async fn download_archive_index<P: AsRef<Path>>(
+        &self,
+        local_index_path: P,
+        remote_index_path: &str,
+    ) -> Result<()> {
+        let local_index_path = local_index_path.as_ref();
+
+        if local_index_path.exists() {
+            tokio::fs::remove_file(&local_index_path).await?;
+        }
+
+        let index_content = self.get(&remote_index_path, usize::MAX).await?.content;
+
+        tokio::fs::create_dir_all(
+            local_index_path
+                .parent()
+                .ok_or_else(|| anyhow!("index path without parent"))?,
+        )
+        .await?;
+
+        // when we don't have a locally cached index and many parallel request
+        // we might download the same archive index multiple times here.
+        // So we're storing the content into a temporary file before renaming it
+        // into the final location.
+        let temp_path = tempfile::NamedTempFile::new_in(&self.config.local_archive_cache_path)?
+            .into_temp_path();
+        let mut file = tokio::fs::File::create(&temp_path).await?;
+        file.write_all(&index_content).await?;
+        tokio::fs::rename(temp_path, &local_index_path).await?;
+
+        if index_is_corrupt(&local_index_path).await? {
+            // TODO: we might actually queue a rebuild in this case.
+            error!(
+                ?local_index_path,
+                remote_index_path, "found corrupt archive index"
+            );
+        }
+
+        Ok(())
+    }
+
     #[instrument]
-    pub(super) async fn download_archive_index(
+    pub(super) async fn download_and_open_archive_index(
         &self,
         archive_path: &str,
         latest_build_id: Option<BuildId>,
@@ -325,25 +371,9 @@ impl AsyncStorage {
             latest_build_id.map(|id| id.0).unwrap_or(0)
         ));
 
-        if !local_index_path.exists() {
-            let index_content = self.get(&remote_index_path, usize::MAX).await?.content;
-
-            tokio::fs::create_dir_all(
-                local_index_path
-                    .parent()
-                    .ok_or_else(|| anyhow!("index path without parent"))?,
-            )
-            .await?;
-
-            // when we don't have a locally cached index and many parallel request
-            // we might download the same archive index multiple times here.
-            // So we're storing the content into a temporary file before renaming it
-            // into the final location.
-            let temp_path = tempfile::NamedTempFile::new_in(&self.config.local_archive_cache_path)?
-                .into_temp_path();
-            let mut file = tokio::fs::File::create(&temp_path).await?;
-            file.write_all(&index_content).await?;
-            tokio::fs::rename(temp_path, &local_index_path).await?;
+        if !local_index_path.exists() || index_is_corrupt(&local_index_path).await? {
+            self.download_archive_index(&local_index_path, &remote_index_path)
+                .await?;
         }
 
         Ok(local_index_path)
@@ -358,12 +388,15 @@ impl AsyncStorage {
         max_size: usize,
     ) -> Result<Blob> {
         let index_filename = self
-            .download_archive_index(archive_path, latest_build_id)
+            .download_and_open_archive_index(archive_path, latest_build_id)
             .await?;
 
         let info = {
             let path = path.to_owned();
-            spawn_blocking(move || archive_index::find_in_file(index_filename, &path)).await
+            spawn_blocking(move || {
+                archive_index::find_in_file(index_filename, &path).map_err(Into::into)
+            })
+            .await
         }?
         .ok_or(PathNotFoundError)?;
 
@@ -714,14 +747,14 @@ impl Storage {
             .block_on(self.inner.get_range(path, max_size, range, compression))
     }
 
-    pub(super) fn download_index(
+    pub(super) fn download_and_open_archive_index(
         &self,
         archive_path: &str,
         latest_build_id: Option<BuildId>,
     ) -> Result<PathBuf> {
         self.runtime.block_on(
             self.inner
-                .download_archive_index(archive_path, latest_build_id),
+                .download_and_open_archive_index(archive_path, latest_build_id),
         )
     }
 

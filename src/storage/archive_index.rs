@@ -1,6 +1,6 @@
 use crate::error::Result;
 use crate::storage::{compression::CompressionAlgorithm, FileRange};
-use anyhow::{bail, Context as _};
+use anyhow::bail;
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use std::{fs, io, path::Path};
 use tracing::instrument;
@@ -74,7 +74,10 @@ pub(crate) fn create<R: io::Read + io::Seek, P: AsRef<Path> + std::fmt::Debug>(
     Ok(())
 }
 
-fn find_in_sqlite_index(conn: &Connection, search_for: &str) -> Result<Option<FileInfo>> {
+fn find_in_sqlite_index(
+    conn: &Connection,
+    search_for: &str,
+) -> Result<Option<FileInfo>, rusqlite::Error> {
     let mut stmt = conn.prepare(
         "
         SELECT start, end, compression
@@ -98,19 +101,38 @@ fn find_in_sqlite_index(conn: &Connection, search_for: &str) -> Result<Option<Fi
         })
     })
     .optional()
-    .context("error fetching SQLite data")
+}
+
+fn open_index<P: AsRef<Path> + std::fmt::Debug>(
+    archive_index_path: P,
+) -> Result<Connection, rusqlite::Error> {
+    Connection::open_with_flags(
+        archive_index_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
 }
 
 #[instrument]
 pub(crate) fn find_in_file<P: AsRef<Path> + std::fmt::Debug>(
     archive_index_path: P,
     search_for: &str,
-) -> Result<Option<FileInfo>> {
-    let connection = Connection::open_with_flags(
-        archive_index_path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?;
+) -> Result<Option<FileInfo>, rusqlite::Error> {
+    let connection = open_index(archive_index_path)?;
     find_in_sqlite_index(&connection, search_for)
+}
+
+pub(crate) fn is_corrupt<P: AsRef<Path> + std::fmt::Debug>(
+    archive_index_path: P,
+) -> Result<bool, rusqlite::Error> {
+    match open_index(archive_index_path) {
+        Err(rusqlite::Error::SqliteFailure(sqlite_err, _))
+            if sqlite_err.code == rusqlite::ErrorCode::DatabaseCorrupt =>
+        {
+            Ok(true)
+        }
+        Err(err) => Err(err),
+        Ok(_) => Ok(false),
+    }
 }
 
 #[cfg(test)]
