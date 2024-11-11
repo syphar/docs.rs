@@ -17,6 +17,7 @@ use crate::{
 };
 use anyhow::anyhow;
 use chrono::{DateTime, Utc};
+use dashmap::DashMap;
 use fn_error_context::context;
 use futures_util::stream::BoxStream;
 use mime::Mime;
@@ -117,9 +118,13 @@ enum StorageBackend {
     S3(Box<S3Backend>),
 }
 
+pub type IndexLock = tokio::sync::RwLock<()>;
+pub type IndexLocks = DashMap<PathBuf, IndexLock>;
+
 pub struct AsyncStorage {
     backend: StorageBackend,
     config: Arc<Config>,
+    index_locks: IndexLocks,
 }
 
 impl AsyncStorage {
@@ -130,6 +135,7 @@ impl AsyncStorage {
     ) -> Result<Self> {
         Ok(Self {
             config: config.clone(),
+            index_locks: IndexLocks::new(),
             backend: match config.storage_backend {
                 StorageKind::Database => {
                     StorageBackend::Database(DatabaseBackend::new(pool, metrics))
@@ -305,6 +311,13 @@ impl AsyncStorage {
     ) -> Result<()> {
         let local_index_path = local_index_path.as_ref();
 
+        let index_lock = self
+            .index_locks
+            .entry(local_index_path.to_owned())
+            .or_insert_with(|| IndexLock::new(()));
+
+        let _guard = index_lock.write().await;
+
         if local_index_path.exists() {
             tokio::fs::remove_file(&local_index_path).await?;
         }
@@ -339,10 +352,19 @@ impl AsyncStorage {
         path: &str,
     ) -> Result<Option<FileInfo>> {
         async fn find_in_file(
-            index_filename: impl AsRef<Path> + std::fmt::Debug,
+            index_locks: &IndexLocks,
+            local_index_path: impl AsRef<Path> + std::fmt::Debug,
             path: &str,
         ) -> Result<Option<FileInfo>> {
-            let index_filename = index_filename.as_ref().to_owned();
+            let local_index_path = local_index_path.as_ref();
+
+            let index_lock = index_locks
+                .entry(local_index_path.to_owned())
+                .or_insert_with(|| IndexLock::new(()));
+
+            let _guard = index_lock.read().await;
+
+            let index_filename = local_index_path.to_owned();
             let path = path.to_owned();
             spawn_blocking(move || {
                 archive_index::find_in_file(index_filename, &path).map_err(Into::into)
@@ -362,7 +384,7 @@ impl AsyncStorage {
                 .await?;
         }
 
-        match find_in_file(&local_index_path, path).await {
+        match find_in_file(&self.index_locks, &local_index_path, path).await {
             Ok(result) => Ok(result),
             Err(err) => {
                 if let Some(rusqlite::Error::SqliteFailure(sqlite_err, _)) =
@@ -377,7 +399,7 @@ impl AsyncStorage {
                         self.download_archive_index(&local_index_path, &remote_index_path)
                             .await?;
 
-                        return find_in_file(&local_index_path, path).await;
+                        return find_in_file(&self.index_locks, &local_index_path, path).await;
                     }
                 }
 
