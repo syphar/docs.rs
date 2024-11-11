@@ -103,21 +103,15 @@ fn find_in_sqlite_index(
     .optional()
 }
 
-fn open_index<P: AsRef<Path> + std::fmt::Debug>(
-    archive_index_path: P,
-) -> Result<Connection, rusqlite::Error> {
-    Connection::open_with_flags(
-        archive_index_path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-}
-
 #[instrument]
 pub(crate) fn find_in_file<P: AsRef<Path> + std::fmt::Debug>(
     archive_index_path: P,
     search_for: &str,
 ) -> Result<Option<FileInfo>, rusqlite::Error> {
-    let connection = open_index(archive_index_path)?;
+    let connection = Connection::open_with_flags(
+        archive_index_path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
     find_in_sqlite_index(&connection, search_for)
 }
 

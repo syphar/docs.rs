@@ -297,7 +297,8 @@ impl AsyncStorage {
         Ok(blob)
     }
 
-    async fn download_archive_index<P: AsRef<Path>>(
+    #[instrument]
+    async fn download_archive_index<P: AsRef<Path> + std::fmt::Debug>(
         &self,
         local_index_path: P,
         remote_index_path: &str,
@@ -308,7 +309,7 @@ impl AsyncStorage {
             tokio::fs::remove_file(&local_index_path).await?;
         }
 
-        let index_content = self.get(&remote_index_path, usize::MAX).await?.content;
+        let index_content = self.get(remote_index_path, usize::MAX).await?.content;
 
         tokio::fs::create_dir_all(
             local_index_path
@@ -330,6 +331,7 @@ impl AsyncStorage {
         Ok(())
     }
 
+    #[instrument]
     async fn find_in_archive_index(
         &self,
         archive_path: &str,
@@ -363,20 +365,19 @@ impl AsyncStorage {
         match find_in_file(&local_index_path, path).await {
             Ok(result) => Ok(result),
             Err(err) => {
-                if let Some(sqlite_err) = err.downcast_ref::<rusqlite::Error>() {
-                    if let rusqlite::Error::SqliteFailure(internal_err, _) = sqlite_err {
-                        if internal_err.code == rusqlite::ErrorCode::DatabaseCorrupt {
-                            warn!(
-                                ?local_index_path,
-                                remote_index_path,
-                                "found corrupt local archive index, redownloading"
-                            );
+                if let Some(rusqlite::Error::SqliteFailure(sqlite_err, _)) =
+                    err.downcast_ref::<rusqlite::Error>()
+                {
+                    if sqlite_err.code == rusqlite::ErrorCode::DatabaseCorrupt {
+                        warn!(
+                            ?local_index_path,
+                            remote_index_path, "found corrupt local archive index, redownloading"
+                        );
 
-                            self.download_archive_index(&local_index_path, &remote_index_path)
-                                .await?;
+                        self.download_archive_index(&local_index_path, &remote_index_path)
+                            .await?;
 
-                            return find_in_file(&local_index_path, path).await;
-                        }
+                        return find_in_file(&local_index_path, path).await;
                     }
                 }
 
