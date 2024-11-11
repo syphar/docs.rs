@@ -316,13 +316,6 @@ impl AsyncStorage {
     ) -> Result<()> {
         let local_index_path = local_index_path.as_ref();
 
-        let index_lock = self
-            .index_locks
-            .entry(local_index_path.to_owned())
-            .or_insert_with(|| IndexLock::new(()));
-
-        let _guard = index_lock.write().await;
-
         if local_index_path.exists() {
             tokio::fs::remove_file(&local_index_path).await?;
         }
@@ -336,10 +329,13 @@ impl AsyncStorage {
         )
         .await?;
 
-        // when we don't have a locally cached index and many parallel request
-        // we might download the same archive index multiple times here.
-        // So we're storing the content into a temporary file before renaming it
-        // into the final location.
+        let index_lock = self
+            .index_locks
+            .entry(local_index_path.to_owned())
+            .or_insert_with(|| IndexLock::new(()));
+
+        let _guard = index_lock.write().await;
+
         let temp_path = tempfile::NamedTempFile::new_in(&self.config.local_archive_cache_path)?
             .into_temp_path();
         let mut file = tokio::fs::File::create(&temp_path).await?;
