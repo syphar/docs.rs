@@ -91,7 +91,7 @@ where
     let storage = ctx.async_storage().await?;
     let build_queue = ctx.async_build_queue().await?;
 
-    let mut conn = ctx.pool()?.get_async().await?;
+    let mut conn = ctx.async_pool().await?.get_async().await?;
 
     for difference in iter {
         println!("{difference}");
@@ -158,7 +158,7 @@ where
 mod tests {
     use super::diff::Difference;
     use super::*;
-    use crate::test::{async_wrapper, wrapper, TestEnvironment};
+    use crate::test::{async_wrapper, TestEnvironment};
     use sqlx::Row as _;
 
     async fn count(env: &TestEnvironment, sql: &str) -> Result<i64> {
