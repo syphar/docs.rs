@@ -245,12 +245,12 @@ mod tests {
                     .await?;
             }
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("some_random_crate")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("some_random_crate_that_failed")
                 .build_result_failed()
@@ -283,7 +283,7 @@ mod tests {
             let web = env.web_app().await;
 
             use chrono::{TimeZone, Utc};
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("some_random_crate")
                 .release_time(Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap())

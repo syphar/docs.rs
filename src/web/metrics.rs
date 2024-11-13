@@ -152,21 +152,21 @@ mod tests {
         ];
 
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("rcc")
                 .version("0.0.0")
                 .repo("https://github.com/jyn514/rcc")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("rcc")
                 .version("1.0.0")
                 .build_result_failed()
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("hexponent")
                 .version("0.2.0")

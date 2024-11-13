@@ -299,7 +299,7 @@ mod tests {
     #[test]
     fn build_list() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.1.0")
@@ -346,7 +346,7 @@ mod tests {
     #[test]
     fn build_list_json() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.1.0")
@@ -441,7 +441,7 @@ mod tests {
     fn build_trigger_rebuild_missing_config() {
         async_wrapper(|env| async move {
             env.override_config(|config| config.cratesio_token = None);
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.1.0")
@@ -485,7 +485,7 @@ mod tests {
             let correct_token = "foo137";
             env.override_config(|config| config.cratesio_token = Some(correct_token.into()));
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.1.0")
@@ -590,7 +590,7 @@ mod tests {
     #[test]
     fn build_empty_list() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.1.0")
@@ -627,7 +627,7 @@ mod tests {
     #[test]
     fn limits() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.1.0")
@@ -675,7 +675,7 @@ mod tests {
     #[test]
     fn latest_200() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("aquarelle")
                 .version("0.1.0")
@@ -685,7 +685,7 @@ mod tests {
                 .create()
                 .await?;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("aquarelle")
                 .version("0.2.0")
@@ -718,7 +718,7 @@ mod tests {
     #[test]
     fn crate_version_not_found() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.1.0")
@@ -737,7 +737,7 @@ mod tests {
     #[test]
     fn invalid_semver() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.1.0")

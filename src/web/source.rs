@@ -371,7 +371,7 @@ mod tests {
         async_wrapper(|env| async move {
             let filename = "序.pdf";
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .archive_storage(archive_storage)
                 .name("fake")
@@ -401,7 +401,7 @@ mod tests {
     #[test_case(false)]
     fn fetch_source_file_content(archive_storage: bool) {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .archive_storage(archive_storage)
                 .name("fake")
@@ -433,7 +433,7 @@ mod tests {
     #[test_case(false)]
     fn fetch_binary(archive_storage: bool) {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .archive_storage(archive_storage)
                 .name("fake")
@@ -469,7 +469,7 @@ mod tests {
     #[test_case(false)]
     fn cargo_ok_not_skipped(archive_storage: bool) {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .archive_storage(archive_storage)
                 .name("fake")
@@ -489,7 +489,7 @@ mod tests {
     fn empty_file_list_dont_break_the_view(archive_storage: bool) {
         async_wrapper(|env| async move {
             let release_id = env
-                .async_fake_release()
+                .fake_release()
                 .await
                 .archive_storage(archive_storage)
                 .name("fake")
@@ -521,7 +521,7 @@ mod tests {
     #[test]
     fn latest_contains_links_to_latest() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .archive_storage(true)
                 .name("fake")
@@ -550,7 +550,7 @@ mod tests {
     #[test_case(false)]
     fn directory_not_found(archive_storage: bool) {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .archive_storage(archive_storage)
                 .name("mbedtls")
@@ -568,7 +568,7 @@ mod tests {
     #[test_case(false)]
     fn semver_handled_latest(archive_storage: bool) {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .archive_storage(archive_storage)
                 .name("mbedtls")
@@ -593,7 +593,7 @@ mod tests {
     #[test_case(false)]
     fn semver_handled(archive_storage: bool) {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .archive_storage(archive_storage)
                 .name("mbedtls")
@@ -618,7 +618,7 @@ mod tests {
     #[test_case(false)]
     fn literal_krate_description(archive_storage: bool) {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .archive_storage(archive_storage)
                 .name("rustc-ap-syntax")
@@ -641,7 +641,7 @@ mod tests {
     #[test]
     fn cargo_special_filetypes_are_highlighted() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("fake")
                 .version("0.1.0")
@@ -673,7 +673,7 @@ mod tests {
     #[test]
     fn dotfiles_with_extension_are_highlighted() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("fake")
                 .version("0.1.0")
@@ -697,7 +697,7 @@ mod tests {
     #[test]
     fn json_is_served_as_rendered_html() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("fake")
                 .version("0.1.0")
@@ -733,7 +733,7 @@ mod tests {
     #[test]
     fn root_file_list() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("fake")
                 .version("0.1.0")
@@ -766,7 +766,7 @@ mod tests {
     #[test]
     fn child_file_list() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("fake")
                 .version("0.1.0")
@@ -800,7 +800,7 @@ mod tests {
                 config.max_file_size = 1;
                 config.max_file_size_html = 1;
             });
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("fake")
                 .version("0.1.0")

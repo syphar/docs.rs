@@ -915,21 +915,21 @@ mod tests {
             let db = env.async_db().await;
             let mut conn = db.async_conn().await;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.1.0")
                 .documentation_url(Some("https://foo.com".into()))
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.2.0")
                 .documentation_url(Some("https://docs.rs/foo/".into()))
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.3.0")
@@ -957,33 +957,33 @@ mod tests {
         async_wrapper(|env| async move {
             let db = env.async_db().await;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.1")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.2")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.3")
                 .build_result_failed()
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.4")
                 .yanked(true)
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.5")
@@ -1006,21 +1006,21 @@ mod tests {
         async_wrapper(|env| async move {
             let db = env.async_db().await;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.1")
                 .build_result_failed()
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.2")
                 .build_result_failed()
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.3")
@@ -1040,27 +1040,27 @@ mod tests {
         async_wrapper(|env| async move {
             let db = env.async_db().await;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.1")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.2")
                 .build_result_failed()
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.3")
                 .yanked(true)
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.4")
@@ -1081,51 +1081,51 @@ mod tests {
             let db = env.async_db().await;
 
             // Add new releases of 'foo' out-of-order since CrateDetails should sort them descending
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.1.0")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.1.1")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.3.0")
                 .build_result_failed()
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("1.0.0")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.12.0")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.2.0")
                 .yanked(true)
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.2.0-alpha")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.1")
@@ -1222,13 +1222,13 @@ mod tests {
     #[test]
     fn test_canonical_url() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.1")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.2")
@@ -1253,19 +1253,19 @@ mod tests {
         async_wrapper(|env| async move {
             let db = env.async_db().await;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.1")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.3")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.2")
@@ -1290,19 +1290,19 @@ mod tests {
         async_wrapper(|env| async move {
             let db = env.async_db().await;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.1")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.3-pre.1")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.2")
@@ -1327,20 +1327,20 @@ mod tests {
         async_wrapper(|env| async move {
             let db = env.async_db().await;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.1")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.3")
                 .yanked(true)
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.2")
@@ -1365,21 +1365,21 @@ mod tests {
         async_wrapper(|env| async move {
             let db = env.async_db().await;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.1")
                 .yanked(true)
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.3")
                 .yanked(true)
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.2")
@@ -1405,13 +1405,13 @@ mod tests {
         async_wrapper(|env| async move {
             let db = env.async_db().await;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.1")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.2")
@@ -1437,7 +1437,7 @@ mod tests {
     #[test]
     fn releases_dropdowns_show_binary_warning() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("binary")
                 .version("0.1.0")
@@ -1475,7 +1475,7 @@ mod tests {
     #[test]
     fn releases_dropdowns_show_in_progress() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.1.0")
@@ -1512,7 +1512,7 @@ mod tests {
         async_wrapper(|env| async move {
             let db = env.async_db().await;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.1")
@@ -1536,7 +1536,7 @@ mod tests {
             );
 
             // Adding a new owner, and changing details on an existing owner
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.2")
@@ -1573,7 +1573,7 @@ mod tests {
             );
 
             // Removing an existing owner
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.3")
@@ -1597,7 +1597,7 @@ mod tests {
             );
 
             // Changing owner details on another of their crates applies the change to both
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("bar")
                 .version("0.0.1")
@@ -1627,7 +1627,7 @@ mod tests {
     #[test]
     fn feature_flags_report_empty() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("library")
                 .version("0.1.0")
@@ -1655,7 +1655,7 @@ mod tests {
                 .iter()
                 .cloned()
                 .collect::<HashMap<String, Vec<String>>>();
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("library")
                 .version("0.1.0")
@@ -1683,7 +1683,7 @@ mod tests {
                 .iter()
                 .cloned()
                 .collect::<HashMap<String, Vec<String>>>();
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("library")
                 .version("0.1.0")
@@ -1719,7 +1719,7 @@ mod tests {
             .iter()
             .cloned()
             .collect::<HashMap<String, Vec<String>>>();
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("library")
                 .version("0.1.0")
@@ -1747,7 +1747,7 @@ mod tests {
     #[test]
     fn details_with_repository_and_stats_can_render_icon() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("library")
                 .version("0.1.0")
@@ -1789,7 +1789,7 @@ mod tests {
     fn feature_flags_report_null() {
         async_wrapper(|env| async move {
             let id = env
-                .async_fake_release()
+                .fake_release()
                 .await
                 .name("library")
                 .version("0.1.0")
@@ -1934,7 +1934,7 @@ mod tests {
         }
 
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.4.0")
@@ -1992,7 +1992,7 @@ mod tests {
         }
 
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy-ba")
                 .version("0.4.0")
@@ -2001,7 +2001,7 @@ mod tests {
                 .add_target("x86_64-unknown-linux-gnu")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy-ba")
                 .version("0.5.0")
@@ -2044,7 +2044,7 @@ mod tests {
         fn check_count(nb_targets: usize, expected: usize) {
             async_wrapper(|env| async move {
                 let mut rel = env
-                    .async_fake_release()
+                    .fake_release()
                     .await
                     .name("dummy")
                     .version("0.4.0")
@@ -2080,7 +2080,7 @@ mod tests {
     #[test]
     fn latest_url() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.4.0")
@@ -2118,7 +2118,7 @@ mod tests {
     #[test]
     fn readme() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.1.0")
@@ -2126,7 +2126,7 @@ mod tests {
                 .create()
                 .await?;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.2.0")
@@ -2135,7 +2135,7 @@ mod tests {
                 .create()
                 .await?;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.3.0")
@@ -2143,7 +2143,7 @@ mod tests {
                 .create()
                 .await?;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.4.0")
@@ -2153,7 +2153,7 @@ mod tests {
                 .create()
                 .await?;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.5.0")
@@ -2190,7 +2190,7 @@ mod tests {
     #[test]
     fn test_crate_name_with_other_uri_chars() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("1.0.0")
@@ -2210,7 +2210,7 @@ mod tests {
     fn test_build_status_no_builds() {
         async_wrapper(|env| async move {
             let release_id = env
-                .async_fake_release()
+                .fake_release()
                 .await
                 .name("dummy")
                 .version("0.1.0")
@@ -2236,7 +2236,7 @@ mod tests {
     #[test]
     fn test_build_status_successful() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.1.0")
@@ -2262,7 +2262,7 @@ mod tests {
     #[test]
     fn test_build_status_failed() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.1.0")
@@ -2287,7 +2287,7 @@ mod tests {
     #[test]
     fn test_build_status_in_progress() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.1.0")
@@ -2311,7 +2311,7 @@ mod tests {
     #[test]
     fn test_sizes_display() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.4.0")

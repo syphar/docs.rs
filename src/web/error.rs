@@ -284,7 +284,7 @@ mod tests {
     #[test]
     fn check_400_page_content_not_semver_version() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .create()
@@ -311,7 +311,7 @@ mod tests {
     #[test]
     fn check_404_page_content_nonexistent_version() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("1.0.0")
@@ -336,7 +336,7 @@ mod tests {
     #[test]
     fn check_404_page_content_any_version_all_yanked() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("1.0.0")

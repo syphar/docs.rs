@@ -777,7 +777,7 @@ mod test {
     use test_case::test_case;
 
     async fn release(version: &str, env: &TestEnvironment) -> ReleaseId {
-        env.async_fake_release()
+        env.fake_release()
             .await
             .name("foo")
             .version(version)
@@ -829,7 +829,7 @@ mod test {
     #[test]
     fn test_doc_coverage_for_crate_pages() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.0.1")
@@ -869,7 +869,7 @@ mod test {
     #[test]
     fn test_show_clipboard_for_crate_pages() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("fake_crate")
                 .version("0.0.1")
@@ -887,7 +887,7 @@ mod test {
     #[test]
     fn test_hide_clipboard_for_non_crate_pages() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("fake_crate")
                 .version("0.0.1")
@@ -962,7 +962,7 @@ mod test {
     #[test]
     fn double_slash_does_redirect_to_latest_version() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("bat")
                 .version("0.2.0")
@@ -977,7 +977,7 @@ mod test {
     #[test]
     fn binary_docs_redirect_to_crate() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("bat")
                 .version("0.2.0")
@@ -1000,7 +1000,7 @@ mod test {
     #[test]
     fn can_view_source() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("regex")
                 .version("0.3.0")
@@ -1061,7 +1061,7 @@ mod test {
             assert_eq!(platform, 0);
 
             // sanity check the test is doing something
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.2.0")
@@ -1114,7 +1114,7 @@ mod test {
             release("1.0.0", &env).await;
 
             // in progress release
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("1.1.0")

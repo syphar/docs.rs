@@ -200,7 +200,7 @@ mod tests {
     #[test]
     fn db_build_logs() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.1.0")
@@ -240,7 +240,7 @@ mod tests {
     #[test]
     fn s3_build_logs() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.1.0")
@@ -292,7 +292,7 @@ mod tests {
     #[test]
     fn s3_build_logs_multiple_targets() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.1.0")
@@ -359,7 +359,7 @@ mod tests {
     #[test]
     fn both_build_logs() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.1.0")
@@ -395,7 +395,7 @@ mod tests {
     #[test_case("nan")]
     fn non_existing_build(build_id: &str) {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.1.0")

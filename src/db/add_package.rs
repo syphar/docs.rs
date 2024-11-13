@@ -836,7 +836,7 @@ mod test {
             let mut conn = env.async_db().await.async_conn().await;
 
             let release_id = env
-                .async_fake_release()
+                .fake_release()
                 .await
                 .name("dummy")
                 .version("0.13.0")
@@ -879,7 +879,7 @@ mod test {
     #[test]
     fn keyword_conflict_when_rebuilding_release() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.13.0")
@@ -888,7 +888,7 @@ mod test {
                 .await?;
 
             // same version so we have the same release
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.13.0")
@@ -903,7 +903,7 @@ mod test {
     #[test]
     fn updated_keywords() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.13.0")
@@ -912,7 +912,7 @@ mod test {
                 .await?;
 
             let release_id = env
-                .async_fake_release()
+                .fake_release()
                 .await
                 .name("dummy")
                 .version("0.13.0")

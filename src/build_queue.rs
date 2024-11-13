@@ -752,7 +752,7 @@ mod tests {
                 config.rebuild_up_to_date = Some(NaiveDate::from_ymd_opt(2020, 1, 1).unwrap());
             });
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.1.0")
@@ -781,7 +781,7 @@ mod tests {
                 config.rebuild_up_to_date = Some(NaiveDate::from_ymd_opt(2024, 1, 1).unwrap());
             });
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.1.0")
@@ -829,7 +829,7 @@ mod tests {
 
             assert_eq!(build_queue.queued_crates().await?.len(), 0);
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.1.0")
@@ -863,7 +863,7 @@ mod tests {
                 .add_crate("foo2", "0.1.0", REBUILD_PRIORITY, None)
                 .await?;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.1.0")

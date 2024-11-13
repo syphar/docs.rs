@@ -838,21 +838,21 @@ mod tests {
         async_wrapper(|env| async move {
             let db = env.async_db().await;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("1.0.0")
                 .github_stats("ghost/foo", 10, 10, 10)
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("bar")
                 .version("1.0.0")
                 .github_stats("ghost/bar", 20, 20, 20)
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("bar")
                 .version("1.0.0")
@@ -860,7 +860,7 @@ mod tests {
                 .create()
                 .await?;
             // release without stars will not be shown
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("baz")
                 .version("1.0.0")
@@ -868,7 +868,7 @@ mod tests {
                 .await?;
 
             // release with only in-progress build (= in progress release) will not be shown
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("in_progress")
                 .version("0.1.0")
@@ -902,13 +902,13 @@ mod tests {
     fn search_im_feeling_lucky_with_query_redirect_to_crate_page() {
         async_wrapper(|env| async move {
             let web = env.web_app().await;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("some_random_crate")
                 .build_result_failed()
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("some_other_crate")
                 .create()
@@ -927,12 +927,12 @@ mod tests {
     fn search_im_feeling_lucky_with_query_redirect_to_docs() {
         async_wrapper(|env| async move {
             let web = env.web_app().await;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("some_random_crate")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("some_other_crate")
                 .create()
@@ -963,7 +963,7 @@ mod tests {
                 .await?;
 
             let web = env.web_app().await;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .github_stats("some/repo", 333, 22, 11)
                 .name("some_random_crate")
@@ -982,12 +982,12 @@ mod tests {
     fn search_coloncolon_path_redirects_to_crate_docs() {
         async_wrapper(|env| async move {
             let web = env.web_app().await;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("some_random_crate")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("some_other_crate")
                 .create()
@@ -1011,7 +1011,7 @@ mod tests {
     fn search_coloncolon_path_redirects_to_crate_docs_and_keeps_query() {
         async_wrapper(|env| async move {
             let web = env.web_app().await;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("some_random_crate")
                 .create()
@@ -1035,7 +1035,7 @@ mod tests {
             });
 
             let web = env.web_app().await;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("some_random_crate")
                 .create()
@@ -1097,7 +1097,7 @@ mod tests {
             });
 
             let web = env.web_app().await;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("some_random_crate")
                 .create()
@@ -1263,7 +1263,7 @@ mod tests {
             });
 
             let web = env.web_app().await;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("some_random_crate")
                 .create()
@@ -1316,7 +1316,7 @@ mod tests {
             });
 
             let web = env.web_app().await;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("some_random_crate")
                 .create()
@@ -1369,27 +1369,27 @@ mod tests {
             });
 
             let web = env.web_app().await;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("some_random_crate")
                 .version("2.0.0")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("some_random_crate")
                 .version("1.0.0")
                 .create()
                 .await?;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("and_another_one")
                 .version("0.0.1")
                 .create()
                 .await?;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("yet_another_crate")
                 .version("0.1.0")
@@ -1398,7 +1398,7 @@ mod tests {
                 .await?;
 
             // release with only in-progress build (= in progress release) will not be shown
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("in_progress")
                 .version("0.1.0")
@@ -1482,7 +1482,7 @@ mod tests {
     #[test]
     fn releases_by_stars() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("crate_that_succeeded_with_github")
                 .version("0.1.0")
@@ -1491,7 +1491,7 @@ mod tests {
                 .create()
                 .await?;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("crate_that_succeeded_with_github")
                 .version("0.2.0")
@@ -1500,7 +1500,7 @@ mod tests {
                 .create()
                 .await?;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("crate_that_succeeded_without_github")
                 .release_time(Utc.with_ymd_and_hms(2020, 5, 16, 4, 33, 50).unwrap())
@@ -1508,7 +1508,7 @@ mod tests {
                 .create()
                 .await?;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("crate_that_failed_with_github")
                 .version("0.1.0")
@@ -1535,7 +1535,7 @@ mod tests {
     #[test]
     fn failures_by_stars() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("crate_that_succeeded_with_github")
                 .version("0.1.0")
@@ -1544,7 +1544,7 @@ mod tests {
                 .create()
                 .await?;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("crate_that_succeeded_with_github")
                 .version("0.2.0")
@@ -1553,7 +1553,7 @@ mod tests {
                 .create()
                 .await?;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("crate_that_succeeded_without_github")
                 .release_time(Utc.with_ymd_and_hms(2020, 5, 16, 4, 33, 50).unwrap())
@@ -1561,7 +1561,7 @@ mod tests {
                 .create()
                 .await?;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("crate_that_failed_with_github")
                 .version("0.1.0")
@@ -1584,7 +1584,7 @@ mod tests {
     #[test]
     fn releases_failed_by_time() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("crate_that_succeeded_with_github")
                 .version("0.1.0")
@@ -1593,7 +1593,7 @@ mod tests {
                 .create()
                 .await?;
             // make sure that crates get at most one release shown, so they don't crowd the page
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("crate_that_succeeded_with_github")
                 .github_stats("some/repo", 33, 22, 11)
@@ -1601,7 +1601,7 @@ mod tests {
                 .version("0.2.0")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("crate_that_failed")
                 .version("0.1.0")
@@ -1623,7 +1623,7 @@ mod tests {
     #[test]
     fn releases_homepage_and_recent() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("crate_that_succeeded_with_github")
                 .version("0.1.0")
@@ -1631,7 +1631,7 @@ mod tests {
                 .release_time(Utc.with_ymd_and_hms(2020, 4, 16, 4, 33, 50).unwrap())
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("crate_that_succeeded_with_github")
                 .version("0.2.0-rc")
@@ -1640,7 +1640,7 @@ mod tests {
                 .build_result_failed()
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("crate_that_succeeded_with_github")
                 .github_stats("some/repo", 33, 22, 11)
@@ -1648,7 +1648,7 @@ mod tests {
                 .version("0.2.0")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("crate_that_failed")
                 .version("0.1.0")
@@ -1694,12 +1694,12 @@ mod tests {
             let text = response.text().await?;
             assert_eq!(text.matches(&empty_data).count(), 2);
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("some_random_crate")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("some_random_crate_that_failed")
                 .build_result_failed()
@@ -1711,13 +1711,13 @@ mod tests {
             assert!(response.status().is_success());
             assert_eq!(response.text().await?.matches(&empty_data).count(), 2);
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("some_random_crate_yesterday")
                 .release_time(Utc::now() - Duration::try_days(1).unwrap())
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("some_random_crate_that_failed_yesterday")
                 .build_result_failed()
@@ -1744,12 +1744,12 @@ mod tests {
             let web = env.web_app().await;
             web.assert_success("/releases/feed").await?;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("some_random_crate")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("some_random_crate_that_failed")
                 .build_result_failed()
@@ -1853,7 +1853,7 @@ mod tests {
             queue.add_crate("foo", "1.0.0", 0, None).await?;
             queue.add_crate("bar", "0.1.0", 0, None).await?;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("1.0.0")
@@ -1978,7 +1978,7 @@ mod tests {
     fn home_page_links() {
         async_wrapper(|env| async move {
             let web = env.web_app().await;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("some_random_crate")
                 .add_owner(CrateOwner {

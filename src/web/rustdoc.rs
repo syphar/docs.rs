@@ -911,7 +911,7 @@ mod test {
     // https://github.com/rust-lang/docs.rs/issues/2313
     fn help_html(archive_storage: bool) {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("krate")
                 .version("0.1.0")
@@ -936,7 +936,7 @@ mod test {
     fn settings_html(archive_storage: bool) {
         async_wrapper(|env| async move {
             // first release works, second fails
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("buggy")
                 .version("0.1.0")
@@ -950,7 +950,7 @@ mod test {
                 .rustdoc_file("directory_4/empty_file_no_ext")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("buggy")
                 .version("0.2.0")
@@ -1017,7 +1017,7 @@ mod test {
     #[test_case(false)]
     fn default_target_redirects_to_base(archive_storage: bool) {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.1.0")
@@ -1047,7 +1047,7 @@ mod test {
 
             // set an explicit target that requires cross-compile
             let target = "x86_64-pc-windows-msvc";
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.2.0")
@@ -1064,7 +1064,7 @@ mod test {
             // set an explicit target without cross-compile
             // also check that /:crate/:version/:platform/all.html doesn't panic
             let target = "x86_64-unknown-linux-gnu";
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.3.0")
@@ -1092,7 +1092,7 @@ mod test {
     #[test]
     fn latest_url() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.1.0")
@@ -1123,7 +1123,7 @@ mod test {
                 config.cache_control_stale_while_revalidate = Some(2592000);
             });
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.1.0")
@@ -1154,7 +1154,7 @@ mod test {
     #[test_case(false)]
     fn go_to_latest_version(archive_storage: bool) {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.1.0")
@@ -1164,7 +1164,7 @@ mod test {
                 .rustdoc_file("dummy/struct.will-be-deleted.html")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.2.0")
@@ -1216,7 +1216,7 @@ mod test {
     #[test_case(false)]
     fn go_to_latest_version_keeps_platform(archive_storage: bool) {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.1.0")
@@ -1225,7 +1225,7 @@ mod test {
                 .rustdoc_file("dummy/struct.Blah.html")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.2.0")
@@ -1277,7 +1277,7 @@ mod test {
     #[test_case(false)]
     fn redirect_latest_goes_to_crate_if_build_failed(archive_storage: bool) {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.1.0")
@@ -1285,7 +1285,7 @@ mod test {
                 .rustdoc_file("dummy/index.html")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.2.0")
@@ -1307,7 +1307,7 @@ mod test {
     #[test_case(false)]
     fn redirect_latest_does_not_go_to_yanked_versions(archive_storage: bool) {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.1.0")
@@ -1315,7 +1315,7 @@ mod test {
                 .rustdoc_file("dummy/index.html")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.2.0")
@@ -1323,7 +1323,7 @@ mod test {
                 .rustdoc_file("dummy/index.html")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.2.1")
@@ -1368,7 +1368,7 @@ mod test {
         async_wrapper(|env| async move {
             let web = env.web_app().await;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.1.0")
@@ -1380,7 +1380,7 @@ mod test {
 
             assert!(has_yanked_warning("/dummy/0.1.0/dummy/", &web).await?);
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.2.0")
@@ -1399,7 +1399,7 @@ mod test {
     #[test]
     fn badges_are_urlencoded() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("zstd")
                 .version("0.5.1+zstd.1.4.4")
@@ -1425,7 +1425,7 @@ mod test {
     #[test_case(false)]
     fn crate_name_percent_decoded_redirect(archive_storage: bool) {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("fake-crate")
                 .version("0.0.1")
@@ -1456,7 +1456,7 @@ mod test {
             ];
 
             for (name, version) in &rels {
-                env.async_fake_release()
+                env.fake_release()
                     .await
                     .name(name)
                     .version(version)
@@ -1513,7 +1513,7 @@ mod test {
     #[test_case(false)]
     fn specific_pages_do_not_handle_mismatched_separators(archive_storage: bool) {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy-dash")
                 .version("0.1.0")
@@ -1522,7 +1522,7 @@ mod test {
                 .create()
                 .await?;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy_mixed-separators")
                 .version("0.1.0")
@@ -1637,7 +1637,7 @@ mod test {
             let web = env.web_app().await;
 
             // no explicit default-target
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.1.0")
@@ -1697,7 +1697,7 @@ mod test {
             .await?;
 
             // set an explicit target that requires cross-compile
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.2.0")
@@ -1757,7 +1757,7 @@ mod test {
             .await?;
 
             // set an explicit target without cross-compile
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.3.0")
@@ -1817,7 +1817,7 @@ mod test {
             .await?;
 
             // multiple targets
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.4.0")
@@ -1971,7 +1971,7 @@ mod test {
     #[test]
     fn test_target_redirect_with_corrected_name() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo_ab")
                 .version("0.0.1")
@@ -2006,7 +2006,7 @@ mod test {
     #[test]
     fn test_redirect_to_latest_302() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("1.0.0")
@@ -2026,7 +2026,7 @@ mod test {
     #[test_case(false)]
     fn test_fully_yanked_crate_404s(archive_storage: bool) {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("1.0.0")
@@ -2058,7 +2058,7 @@ mod test {
     fn test_no_trailing_target_slash(archive_storage: bool) {
         // regression test for https://github.com/rust-lang/docs.rs/issues/856
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.1.0")
@@ -2071,7 +2071,7 @@ mod test {
                 "/dummy/0.1.0/dummy/",
             )
             .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.2.0")
@@ -2097,12 +2097,12 @@ mod test {
     fn test_redirect_crate_coloncolon_path() {
         async_wrapper(|env| async move {
             let web = env.web_app().await;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("some_random_crate")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("some_other_crate")
                 .create()
@@ -2138,7 +2138,7 @@ mod test {
     fn test_no_panic_on_missing_kind() {
         async_wrapper(|env| async move {
             let id = env
-                .async_fake_release()
+                .fake_release()
                 .await
                 .name("strum")
                 .version("0.13.0")
@@ -2163,7 +2163,7 @@ mod test {
     fn test_readme_rendered_as_html() {
         async_wrapper(|env| async move {
             let readme = "# Overview";
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("strum")
                 .version("0.18.0")
@@ -2192,13 +2192,13 @@ mod test {
     // regression test for https://github.com/rust-lang/docs.rs/pull/885#issuecomment-655149288
     fn test_build_status_is_accurate() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("hexponent")
                 .version("0.3.0")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("hexponent")
                 .version("0.2.0")
@@ -2234,7 +2234,7 @@ mod test {
     #[test_case(false)]
     fn test_no_trailing_rustdoc_slash(archive_storage: bool) {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("tokio")
                 .version("0.2.21")
@@ -2259,7 +2259,7 @@ mod test {
     #[test_case(false)]
     fn test_non_ascii(archive_storage: bool) {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("const_unit_poc")
                 .version("1.0.0")
@@ -2281,7 +2281,7 @@ mod test {
     #[test_case(false)]
     fn test_latest_version_keeps_query(archive_storage: bool) {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("tungstenite")
                 .version("0.10.0")
@@ -2289,7 +2289,7 @@ mod test {
                 .rustdoc_file("tungstenite/index.html")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("tungstenite")
                 .version("0.11.0")
@@ -2313,7 +2313,7 @@ mod test {
     #[test_case(false)]
     fn latest_version_works_when_source_deleted(archive_storage: bool) {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("pyo3")
                 .version("0.2.7")
@@ -2321,7 +2321,7 @@ mod test {
                 .source_file("src/objects/exc.rs", b"//! some docs")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("pyo3")
                 .version("0.13.2")
@@ -2358,7 +2358,7 @@ mod test {
     #[test_case(false)]
     fn test_version_link_goes_to_docs(archive_storage: bool) {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("hexponent")
                 .version("0.3.0")
@@ -2366,7 +2366,7 @@ mod test {
                 .rustdoc_file("hexponent/index.html")
                 .create()
                 .await?;
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("hexponent")
                 .version("0.3.1")
@@ -2431,7 +2431,7 @@ mod test {
     #[test]
     fn test_repository_link_in_topbar_dropdown() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("testing")
                 .repo("https://git.example.com")
@@ -2463,7 +2463,7 @@ mod test {
     #[test]
     fn test_repository_link_in_topbar_dropdown_github() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("testing")
                 .version("0.1.0")
@@ -2495,7 +2495,7 @@ mod test {
     #[test]
     fn test_owner_links_with_team() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("testing")
                 .version("0.1.0")
@@ -2553,7 +2553,7 @@ mod test {
     #[test]
     fn test_dependency_optional_suffix() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("testing")
                 .version("0.1.0")
@@ -2599,7 +2599,7 @@ mod test {
     #[test_case(false)]
     fn test_missing_target_redirects_to_search(archive_storage: bool) {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("winapi")
                 .version("0.3.9")
@@ -2626,7 +2626,7 @@ mod test {
     #[test_case(false)]
     fn test_redirect_source_not_rust(archive_storage: bool) {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("winapi")
                 .version("0.3.8")
@@ -2635,7 +2635,7 @@ mod test {
                 .create()
                 .await?;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("winapi")
                 .version("0.3.9")
@@ -2659,7 +2659,7 @@ mod test {
     #[test]
     fn noindex_nonlatest() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.1.0")
@@ -2704,7 +2704,7 @@ mod test {
     #[test]
     fn download_old_storage_version_404() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.1.0")
@@ -2727,7 +2727,7 @@ mod test {
             env.override_config(|config| {
                 config.s3_static_root_path = "https://static.docs.rs".into()
             });
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.1.0")
@@ -2760,7 +2760,7 @@ mod test {
             env.override_config(|config| {
                 config.s3_static_root_path = "https://static.docs.rs".into()
             });
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.1.0")
@@ -2794,7 +2794,7 @@ mod test {
             env.override_config(|config| {
                 config.s3_static_root_path = "https://static.docs.rs".into()
             });
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.1.0")
@@ -2802,7 +2802,7 @@ mod test {
                 .create()
                 .await?;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.2.0")
@@ -2833,7 +2833,7 @@ mod test {
     #[test_case("someting.css")]
     fn serve_release_specific_static_assets(name: &str) {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.1.0")
@@ -2856,7 +2856,7 @@ mod test {
     fn fallback_to_root_storage_for_some_js_assets(path: &str) {
         // test workaround for https://github.com/rust-lang/docs.rs/issues/1979
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("dummy")
                 .version("0.1.0")
@@ -2888,7 +2888,7 @@ mod test {
     #[test]
     fn redirect_with_encoded_chars_in_path() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("clap")
                 .version("2.24.0")
@@ -2911,7 +2911,7 @@ mod test {
     #[test]
     fn search_with_encoded_chars_in_path() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("clap")
                 .version("2.24.0")
@@ -2935,7 +2935,7 @@ mod test {
     #[test_case("/something/latest/some_path/", "/crate/something/latest")]
     fn rustdoc_page_from_failed_build_redirects_to_crate(path: &str, expected: &str) {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("something")
                 .version("1.2.3")

@@ -358,7 +358,7 @@ mod tests {
     #[test]
     fn semver_redirect() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.2.1")
@@ -381,7 +381,7 @@ mod tests {
     #[test]
     fn specific_version_correctly_cached() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.2.0")
@@ -400,7 +400,7 @@ mod tests {
     #[test]
     fn latest_200() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.1.0")
@@ -408,7 +408,7 @@ mod tests {
                 .create()
                 .await?;
 
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.2.0")
@@ -431,7 +431,7 @@ mod tests {
     #[test]
     fn crate_version_not_found() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.1.0")
@@ -449,7 +449,7 @@ mod tests {
     #[test]
     fn invalid_semver() {
         async_wrapper(|env| async move {
-            env.async_fake_release()
+            env.fake_release()
                 .await
                 .name("foo")
                 .version("0.1.0")

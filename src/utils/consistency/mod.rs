@@ -185,13 +185,15 @@ mod tests {
     fn test_delete_crate() {
         wrapper(|env| {
             let runtime = env.runtime();
-            runtime.block_on(
+            runtime.block_on(async {
                 env.fake_release()
+                    .await
                     .name("krate")
                     .version("0.1.1")
                     .version("0.1.2")
-                    .create(),
-            )?;
+                    .create()
+                    .await
+            })?;
 
             let diff = [Difference::CrateNotInIndex("krate".into())];
 
@@ -218,9 +220,20 @@ mod tests {
     #[test]
     fn test_delete_release() {
         wrapper(|env| {
-            let runtime = env.runtime();
-            runtime.block_on(env.fake_release().name("krate").version("0.1.1").create())?;
-            runtime.block_on(env.fake_release().name("krate").version("0.1.2").create())?;
+            env.runtime().block_on(async {
+                env.fake_release()
+                    .await
+                    .name("krate")
+                    .version("0.1.1")
+                    .create()
+                    .await?;
+                env.fake_release()
+                    .await
+                    .name("krate")
+                    .version("0.1.2")
+                    .create()
+                    .await
+            })?;
 
             let diff = [Difference::ReleaseNotInIndex(
                 "krate".into(),
@@ -247,11 +260,15 @@ mod tests {
     #[test]
     fn test_wrong_yank() {
         wrapper(|env| {
-            env.runtime().block_on(env.fake_release()
-                .name("krate")
-                .version("0.1.1")
-                .yanked(true)
-                .create())?;
+            env.runtime().block_on(async {
+                env.fake_release()
+                    .await
+                    .name("krate")
+                    .version("0.1.1")
+                    .yanked(true)
+                    .create()
+                    .await
+            })?;
 
             let diff = [Difference::ReleaseYank(
                 "krate".into(),
