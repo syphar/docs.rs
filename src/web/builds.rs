@@ -319,7 +319,7 @@ mod tests {
                         .rustc_version("rustc (blabla 2022-01-01)")
                         .docsrs_version("docs.rs 4.0.0"),
                 ])
-                .create_async()
+                .create()
                 .await?;
 
             let response = env.web_app().await.get("/crate/foo/0.1.0/builds").await?;
@@ -366,7 +366,7 @@ mod tests {
                         .rustc_version("rustc (blabla 2022-01-01)")
                         .docsrs_version("docs.rs 4.0.0"),
                 ])
-                .create_async()
+                .create()
                 .await?;
 
             let response = env
@@ -445,7 +445,7 @@ mod tests {
                 .await
                 .name("foo")
                 .version("0.1.0")
-                .create_async()
+                .create()
                 .await?;
 
             {
@@ -489,7 +489,7 @@ mod tests {
                 .await
                 .name("foo")
                 .version("0.1.0")
-                .create_async()
+                .create()
                 .await?;
 
             {
@@ -595,7 +595,7 @@ mod tests {
                 .name("foo")
                 .version("0.1.0")
                 .no_builds()
-                .create_async()
+                .create()
                 .await?;
 
             let response = env.web_app().await.get("/crate/foo/0.1.0/builds").await?;
@@ -631,7 +631,7 @@ mod tests {
                 .await
                 .name("foo")
                 .version("0.1.0")
-                .create_async()
+                .create()
                 .await?;
 
             let mut conn = env.async_db().await.async_conn().await;
@@ -682,7 +682,7 @@ mod tests {
                 .builds(vec![FakeBuild::default()
                     .rustc_version("rustc (blabla 2019-01-01)")
                     .docsrs_version("docs.rs 1.0.0")])
-                .create_async()
+                .create()
                 .await?;
 
             env.async_fake_release()
@@ -692,7 +692,7 @@ mod tests {
                 .builds(vec![FakeBuild::default()
                     .rustc_version("rustc (blabla 2019-01-01)")
                     .docsrs_version("docs.rs 1.0.0")])
-                .create_async()
+                .create()
                 .await?;
 
             let resp = env
@@ -725,7 +725,7 @@ mod tests {
                 .builds(vec![FakeBuild::default()
                     .rustc_version("rustc (blabla 2019-01-01)")
                     .docsrs_version("docs.rs 1.0.0")])
-                .create_async()
+                .create()
                 .await?;
 
             let resp = env.web_app().await.get("/crate/foo/0.2.0/builds").await?;
@@ -744,7 +744,7 @@ mod tests {
                 .builds(vec![FakeBuild::default()
                     .rustc_version("rustc (blabla 2019-01-01)")
                     .docsrs_version("docs.rs 1.0.0")])
-                .create_async()
+                .create()
                 .await?;
 
             let resp = env.web_app().await.get("/crate/foo/0,1,0/builds").await?;

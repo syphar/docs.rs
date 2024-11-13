@@ -917,7 +917,7 @@ mod test {
                 .version("0.1.0")
                 .archive_storage(archive_storage)
                 .rustdoc_file("help.html")
-                .create_async()
+                .create()
                 .await?;
             let web = env.web_app().await;
             web.assert_success_cached(
@@ -948,7 +948,7 @@ mod test {
                 .rustdoc_file("all.html")
                 .rustdoc_file("directory_3/.gitignore")
                 .rustdoc_file("directory_4/empty_file_no_ext")
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
@@ -956,7 +956,7 @@ mod test {
                 .version("0.2.0")
                 .archive_storage(archive_storage)
                 .build_result_failed()
-                .create_async()
+                .create()
                 .await?;
             let web = env.web_app().await;
             web.assert_success_cached("/", CachePolicy::ShortInCdnAndBrowser, &env.config())
@@ -1023,7 +1023,7 @@ mod test {
                 .version("0.1.0")
                 .archive_storage(archive_storage)
                 .rustdoc_file("dummy/index.html")
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;
@@ -1054,7 +1054,7 @@ mod test {
                 .archive_storage(archive_storage)
                 .rustdoc_file("dummy/index.html")
                 .default_target(target)
-                .create_async()
+                .create()
                 .await?;
             let base = "/dummy/0.2.0/dummy/";
             web.assert_success(base).await?;
@@ -1072,7 +1072,7 @@ mod test {
                 .rustdoc_file("dummy/index.html")
                 .rustdoc_file("all.html")
                 .default_target(target)
-                .create_async()
+                .create()
                 .await?;
             let base = "/dummy/0.3.0/dummy/";
             web.assert_success(base).await?;
@@ -1098,7 +1098,7 @@ mod test {
                 .version("0.1.0")
                 .archive_storage(true)
                 .rustdoc_file("dummy/index.html")
-                .create_async()
+                .create()
                 .await?;
 
             let resp = env
@@ -1129,7 +1129,7 @@ mod test {
                 .version("0.1.0")
                 .archive_storage(true)
                 .rustdoc_file("dummy/index.html")
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;
@@ -1162,7 +1162,7 @@ mod test {
                 .rustdoc_file("dummy/blah/index.html")
                 .rustdoc_file("dummy/blah/blah.html")
                 .rustdoc_file("dummy/struct.will-be-deleted.html")
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
@@ -1171,7 +1171,7 @@ mod test {
                 .archive_storage(archive_storage)
                 .rustdoc_file("dummy/blah/index.html")
                 .rustdoc_file("dummy/blah/blah.html")
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;
@@ -1223,7 +1223,7 @@ mod test {
                 .archive_storage(archive_storage)
                 .add_platform("x86_64-pc-windows-msvc")
                 .rustdoc_file("dummy/struct.Blah.html")
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
@@ -1231,7 +1231,7 @@ mod test {
                 .version("0.2.0")
                 .archive_storage(archive_storage)
                 .add_platform("x86_64-pc-windows-msvc")
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;
@@ -1283,7 +1283,7 @@ mod test {
                 .version("0.1.0")
                 .archive_storage(archive_storage)
                 .rustdoc_file("dummy/index.html")
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
@@ -1291,7 +1291,7 @@ mod test {
                 .version("0.2.0")
                 .archive_storage(archive_storage)
                 .build_result_failed()
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;
@@ -1313,7 +1313,7 @@ mod test {
                 .version("0.1.0")
                 .archive_storage(archive_storage)
                 .rustdoc_file("dummy/index.html")
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
@@ -1321,7 +1321,7 @@ mod test {
                 .version("0.2.0")
                 .archive_storage(archive_storage)
                 .rustdoc_file("dummy/index.html")
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
@@ -1330,7 +1330,7 @@ mod test {
                 .archive_storage(archive_storage)
                 .rustdoc_file("dummy/index.html")
                 .yanked(true)
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;
@@ -1375,7 +1375,7 @@ mod test {
                 .archive_storage(archive_storage)
                 .rustdoc_file("dummy/index.html")
                 .yanked(true)
-                .create_async()
+                .create()
                 .await?;
 
             assert!(has_yanked_warning("/dummy/0.1.0/dummy/", &web).await?);
@@ -1387,7 +1387,7 @@ mod test {
                 .archive_storage(archive_storage)
                 .rustdoc_file("dummy/index.html")
                 .yanked(true)
-                .create_async()
+                .create()
                 .await?;
 
             assert!(has_yanked_warning("/dummy/0.1.0/dummy/", &web).await?);
@@ -1403,7 +1403,7 @@ mod test {
                 .await
                 .name("zstd")
                 .version("0.5.1+zstd.1.4.4")
-                .create_async()
+                .create()
                 .await?;
 
             let frontend = env.web_app().await;
@@ -1431,7 +1431,7 @@ mod test {
                 .version("0.0.1")
                 .archive_storage(archive_storage)
                 .rustdoc_file("fake_crate/index.html")
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;
@@ -1462,7 +1462,7 @@ mod test {
                     .version(version)
                     .archive_storage(archive_storage)
                     .rustdoc_file(&(name.replace('-', "_") + "/index.html"))
-                    .create_async()
+                    .create()
                     .await?;
             }
 
@@ -1519,7 +1519,7 @@ mod test {
                 .version("0.1.0")
                 .archive_storage(archive_storage)
                 .rustdoc_file("dummy_dash/index.html")
-                .create_async()
+                .create()
                 .await?;
 
             env.async_fake_release()
@@ -1528,7 +1528,7 @@ mod test {
                 .version("0.1.0")
                 .archive_storage(archive_storage)
                 .rustdoc_file("dummy_mixed_separators/index.html")
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;
@@ -1645,7 +1645,7 @@ mod test {
                 .rustdoc_file("dummy/index.html")
                 .rustdoc_file("dummy/struct.Dummy.html")
                 .add_target("x86_64-unknown-linux-gnu")
-                .create_async()
+                .create()
                 .await?;
 
             assert_platform_links(
@@ -1705,7 +1705,7 @@ mod test {
                 .rustdoc_file("dummy/index.html")
                 .rustdoc_file("dummy/struct.Dummy.html")
                 .default_target("x86_64-pc-windows-msvc")
-                .create_async()
+                .create()
                 .await?;
 
             assert_platform_links(
@@ -1765,7 +1765,7 @@ mod test {
                 .rustdoc_file("dummy/index.html")
                 .rustdoc_file("dummy/struct.Dummy.html")
                 .default_target("x86_64-unknown-linux-gnu")
-                .create_async()
+                .create()
                 .await?;
 
             assert_platform_links(
@@ -1832,7 +1832,7 @@ mod test {
                 .rustdoc_file("x86_64-pc-windows-msvc/dummy/struct.WindowsOnly.html")
                 .default_target("x86_64-unknown-linux-gnu")
                 .add_target("x86_64-pc-windows-msvc")
-                .create_async()
+                .create()
                 .await?;
 
             assert_platform_links(
@@ -1976,7 +1976,7 @@ mod test {
                 .name("foo_ab")
                 .version("0.0.1")
                 .archive_storage(true)
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;
@@ -2010,7 +2010,7 @@ mod test {
                 .await
                 .name("dummy")
                 .version("1.0.0")
-                .create_async()
+                .create()
                 .await?;
             let web = env.web_app().await;
             let resp = web
@@ -2032,7 +2032,7 @@ mod test {
                 .version("1.0.0")
                 .archive_storage(archive_storage)
                 .yanked(true)
-                .create_async()
+                .create()
                 .await?;
 
             assert_eq!(
@@ -2063,7 +2063,7 @@ mod test {
                 .name("dummy")
                 .version("0.1.0")
                 .archive_storage(archive_storage)
-                .create_async()
+                .create()
                 .await?;
             let web = env.web_app().await;
             web.assert_redirect(
@@ -2077,7 +2077,7 @@ mod test {
                 .version("0.2.0")
                 .archive_storage(archive_storage)
                 .add_platform("x86_64-apple-darwin")
-                .create_async()
+                .create()
                 .await?;
             web.assert_redirect(
                 "/crate/dummy/0.2.0/target-redirect/x86_64-apple-darwin",
@@ -2100,12 +2100,12 @@ mod test {
             env.async_fake_release()
                 .await
                 .name("some_random_crate")
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
                 .name("some_other_crate")
-                .create_async()
+                .create()
                 .await?;
 
             web.assert_redirect(
@@ -2142,7 +2142,7 @@ mod test {
                 .await
                 .name("strum")
                 .version("0.13.0")
-                .create_async()
+                .create()
                 .await?;
 
             let mut conn = env.async_db().await.async_conn().await;
@@ -2168,7 +2168,7 @@ mod test {
                 .name("strum")
                 .version("0.18.0")
                 .readme(readme)
-                .create_async()
+                .create()
                 .await?;
             let page = kuchikiki::parse_html().one(
                 env.web_app()
@@ -2196,14 +2196,14 @@ mod test {
                 .await
                 .name("hexponent")
                 .version("0.3.0")
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
                 .name("hexponent")
                 .version("0.2.0")
                 .build_result_failed()
-                .create_async()
+                .create()
                 .await?;
             let web = env.web_app().await;
 
@@ -2240,7 +2240,7 @@ mod test {
                 .version("0.2.21")
                 .archive_storage(archive_storage)
                 .rustdoc_file("tokio/time/index.html")
-                .create_async()
+                .create()
                 .await?;
 
             env.web_app()
@@ -2265,7 +2265,7 @@ mod test {
                 .version("1.0.0")
                 .archive_storage(archive_storage)
                 .rustdoc_file("const_unit_poc/units/constant.Ω.html")
-                .create_async()
+                .create()
                 .await?;
             env.web_app()
                 .await
@@ -2287,7 +2287,7 @@ mod test {
                 .version("0.10.0")
                 .archive_storage(archive_storage)
                 .rustdoc_file("tungstenite/index.html")
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
@@ -2295,7 +2295,7 @@ mod test {
                 .version("0.11.0")
                 .archive_storage(archive_storage)
                 .rustdoc_file("tungstenite/index.html")
-                .create_async()
+                .create()
                 .await?;
             assert_eq!(
                 latest_version_redirect(
@@ -2319,13 +2319,13 @@ mod test {
                 .version("0.2.7")
                 .archive_storage(archive_storage)
                 .source_file("src/objects/exc.rs", b"//! some docs")
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
                 .name("pyo3")
                 .version("0.13.2")
-                .create_async()
+                .create()
                 .await?;
             let target_redirect = "/crate/pyo3/latest/target-redirect/x86_64-unknown-linux-gnu/src/pyo3/objects/exc.rs.html";
             let web = env.web_app().await;
@@ -2364,7 +2364,7 @@ mod test {
                 .version("0.3.0")
                 .archive_storage(archive_storage)
                 .rustdoc_file("hexponent/index.html")
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
@@ -2373,7 +2373,7 @@ mod test {
                 .archive_storage(archive_storage)
                 .rustdoc_file("hexponent/index.html")
                 .rustdoc_file("hexponent/something.html")
-                .create_async()
+                .create()
                 .await?;
 
             // test rustdoc pages stay on the documentation
@@ -2437,7 +2437,7 @@ mod test {
                 .repo("https://git.example.com")
                 .version("0.1.0")
                 .rustdoc_file("testing/index.html")
-                .create_async()
+                .create()
                 .await?;
 
             let dom = kuchikiki::parse_html().one(
@@ -2469,7 +2469,7 @@ mod test {
                 .version("0.1.0")
                 .rustdoc_file("testing/index.html")
                 .github_stats("https://git.example.com", 123, 321, 333)
-                .create_async()
+                .create()
                 .await?;
 
             let dom = kuchikiki::parse_html().one(
@@ -2509,7 +2509,7 @@ mod test {
                     kind: OwnerKind::Team,
                     avatar: "".into(),
                 })
-                .create_async()
+                .create()
                 .await?;
 
             let dom = kuchikiki::parse_html().one(
@@ -2562,7 +2562,7 @@ mod test {
                     Dependency::new("optional-dep".to_string(), "1.2.3".to_string())
                         .set_optional(true),
                 )
-                .create_async()
+                .create()
                 .await?;
 
             let dom = kuchikiki::parse_html().one(
@@ -2605,7 +2605,7 @@ mod test {
                 .version("0.3.9")
                 .archive_storage(archive_storage)
                 .rustdoc_file("winapi/macro.ENUM.html")
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;
@@ -2632,7 +2632,7 @@ mod test {
                 .version("0.3.8")
                 .archive_storage(archive_storage)
                 .source_file("src/docs.md", b"created by Peter Rabbit")
-                .create_async()
+                .create()
                 .await?;
 
             env.async_fake_release()
@@ -2640,7 +2640,7 @@ mod test {
                 .name("winapi")
                 .version("0.3.9")
                 .archive_storage(archive_storage)
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;
@@ -2664,7 +2664,7 @@ mod test {
                 .name("dummy")
                 .version("0.1.0")
                 .rustdoc_file("dummy/index.html")
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;
@@ -2709,7 +2709,7 @@ mod test {
                 .name("dummy")
                 .version("0.1.0")
                 .archive_storage(false)
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;
@@ -2732,7 +2732,7 @@ mod test {
                 .name("dummy")
                 .version("0.1.0")
                 .archive_storage(true)
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;
@@ -2765,7 +2765,7 @@ mod test {
                 .name("dummy")
                 .version("0.1.0")
                 .archive_storage(true)
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;
@@ -2799,7 +2799,7 @@ mod test {
                 .name("dummy")
                 .version("0.1.0")
                 .archive_storage(true)
-                .create_async()
+                .create()
                 .await?;
 
             env.async_fake_release()
@@ -2807,7 +2807,7 @@ mod test {
                 .name("dummy")
                 .version("0.2.0")
                 .archive_storage(true)
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;
@@ -2839,7 +2839,7 @@ mod test {
                 .version("0.1.0")
                 .archive_storage(true)
                 .rustdoc_file_with(name, b"content")
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;
@@ -2861,7 +2861,7 @@ mod test {
                 .name("dummy")
                 .version("0.1.0")
                 .archive_storage(true)
-                .create_async()
+                .create()
                 .await?;
 
             let storage = env.async_storage().await;
@@ -2893,7 +2893,7 @@ mod test {
                 .name("clap")
                 .version("2.24.0")
                 .archive_storage(true)
-                .create_async()
+                .create()
                 .await?;
             let web = env.web_app().await;
 
@@ -2916,7 +2916,7 @@ mod test {
                 .name("clap")
                 .version("2.24.0")
                 .archive_storage(true)
-                .create_async()
+                .create()
                 .await?;
             let web = env.web_app().await;
 
@@ -2941,7 +2941,7 @@ mod test {
                 .version("1.2.3")
                 .archive_storage(true)
                 .build_result_failed()
-                .create_async()
+                .create()
                 .await?;
             let web = env.web_app().await;
 

@@ -377,7 +377,7 @@ mod tests {
                 .name("fake")
                 .version("0.1.0")
                 .source_file(filename, b"some_random_content")
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;
@@ -407,7 +407,7 @@ mod tests {
                 .name("fake")
                 .version("0.1.0")
                 .source_file("some_filename.rs", b"some_random_content")
-                .create_async()
+                .create()
                 .await?;
             let web = env.web_app().await;
             web.assert_success_cached(
@@ -439,7 +439,7 @@ mod tests {
                 .name("fake")
                 .version("0.1.0")
                 .source_file("some_file.pdf", b"some_random_content")
-                .create_async()
+                .create()
                 .await?;
             let web = env.web_app().await;
             let response = web.get("/crate/fake/0.1.0/source/some_file.pdf").await?;
@@ -476,7 +476,7 @@ mod tests {
                 .version("0.1.0")
                 .source_file(".cargo-ok", b"ok")
                 .source_file("README.md", b"hello")
-                .create_async()
+                .create()
                 .await?;
             let web = env.web_app().await;
             web.assert_success("/crate/fake/0.1.0/source/").await?;
@@ -495,7 +495,7 @@ mod tests {
                 .name("fake")
                 .version("0.1.0")
                 .source_file("README.md", b"hello")
-                .create_async()
+                .create()
                 .await?;
 
             let path = "/crate/fake/0.1.0/source/README.md";
@@ -528,7 +528,7 @@ mod tests {
                 .version("0.1.0")
                 .source_file(".cargo-ok", b"ok")
                 .source_file("README.md", b"hello")
-                .create_async()
+                .create()
                 .await?;
             let resp = env
                 .web_app()
@@ -555,7 +555,7 @@ mod tests {
                 .archive_storage(archive_storage)
                 .name("mbedtls")
                 .version("0.2.0")
-                .create_async()
+                .create()
                 .await?;
             let web = env.web_app().await;
             web.assert_success("/crate/mbedtls/0.2.0/source/test/")
@@ -574,7 +574,7 @@ mod tests {
                 .name("mbedtls")
                 .version("0.2.0")
                 .source_file("README.md", b"hello")
-                .create_async()
+                .create()
                 .await?;
             let web = env.web_app().await;
             web.assert_success("/crate/mbedtls/0.2.0/source/").await?;
@@ -599,7 +599,7 @@ mod tests {
                 .name("mbedtls")
                 .version("0.2.0")
                 .source_file("README.md", b"hello")
-                .create_async()
+                .create()
                 .await?;
             let web = env.web_app().await;
             web.assert_success("/crate/mbedtls/0.2.0/source/").await?;
@@ -625,7 +625,7 @@ mod tests {
                 .version("178.0.0")
                 .description("some stuff with krate")
                 .source_file("fold.rs", b"fn foo() {}")
-                .create_async()
+                .create()
                 .await?;
             let web = env.web_app().await;
             web.assert_success_cached(
@@ -647,7 +647,7 @@ mod tests {
                 .version("0.1.0")
                 .source_file("Cargo.toml.orig", b"[package]")
                 .source_file("Cargo.lock", b"[dependencies]")
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;
@@ -678,7 +678,7 @@ mod tests {
                 .name("fake")
                 .version("0.1.0")
                 .source_file(".rustfmt.toml", b"[rustfmt]")
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;
@@ -703,7 +703,7 @@ mod tests {
                 .version("0.1.0")
                 .source_file("Cargo.toml", b"")
                 .source_file("config.json", b"{}")
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;
@@ -741,7 +741,7 @@ mod tests {
                 .source_file("folder1/some_filename.rs", b"some_random_content")
                 .source_file("folder2/another_filename.rs", b"some_random_content")
                 .source_file("root_filename.rs", b"some_random_content")
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;
@@ -774,7 +774,7 @@ mod tests {
                 .source_file("folder1/more_filenames.rs", b"some_random_content")
                 .source_file("folder2/another_filename.rs", b"some_random_content")
                 .source_file("root_filename.rs", b"some_random_content")
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;
@@ -805,7 +805,7 @@ mod tests {
                 .name("fake")
                 .version("0.1.0")
                 .source_file("large_file.rs", b"some_random_content")
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;

@@ -616,7 +616,6 @@ impl TestEnvironment {
         fakes::FakeRelease::new(
             self.async_db().await,
             self.async_storage().await,
-            self.runtime(),
         )
     }
 }

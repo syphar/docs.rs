@@ -61,7 +61,7 @@ mod tests {
                 .await
                 .name("foo")
                 .version("0.1.0")
-                .create_async()
+                .create()
                 .await?;
 
             let response = env
@@ -93,7 +93,7 @@ mod tests {
                 .await
                 .name("foo")
                 .version("0.1.0")
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;
@@ -115,7 +115,7 @@ mod tests {
                 .await
                 .name("foo")
                 .version("0.1.0")
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;
@@ -143,7 +143,7 @@ mod tests {
                 .name("foo")
                 .version("0.1.0")
                 .build_result_failed()
-                .create_async()
+                .create()
                 .await?;
 
             let response = env
@@ -185,7 +185,7 @@ mod tests {
                 .await
                 .name("foo")
                 .version("0.1.1")
-                .create_async()
+                .create()
                 .await?;
 
             let response = env

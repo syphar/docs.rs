@@ -184,11 +184,14 @@ mod tests {
     #[test]
     fn test_delete_crate() {
         wrapper(|env| {
-            env.fake_release()
-                .name("krate")
-                .version("0.1.1")
-                .version("0.1.2")
-                .create()?;
+            let runtime = env.runtime();
+            runtime.block_on(
+                env.fake_release()
+                    .name("krate")
+                    .version("0.1.1")
+                    .version("0.1.2")
+                    .create(),
+            )?;
 
             let diff = [Difference::CrateNotInIndex("krate".into())];
 
@@ -215,8 +218,9 @@ mod tests {
     #[test]
     fn test_delete_release() {
         wrapper(|env| {
-            env.fake_release().name("krate").version("0.1.1").create()?;
-            env.fake_release().name("krate").version("0.1.2").create()?;
+            let runtime = env.runtime();
+            runtime.block_on(env.fake_release().name("krate").version("0.1.1").create())?;
+            runtime.block_on(env.fake_release().name("krate").version("0.1.2").create())?;
 
             let diff = [Difference::ReleaseNotInIndex(
                 "krate".into(),
@@ -243,11 +247,11 @@ mod tests {
     #[test]
     fn test_wrong_yank() {
         wrapper(|env| {
-            env.fake_release()
+            env.runtime().block_on(env.fake_release()
                 .name("krate")
                 .version("0.1.1")
                 .yanked(true)
-                .create()?;
+                .create())?;
 
             let diff = [Difference::ReleaseYank(
                 "krate".into(),

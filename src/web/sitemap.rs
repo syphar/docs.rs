@@ -248,13 +248,13 @@ mod tests {
             env.async_fake_release()
                 .await
                 .name("some_random_crate")
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
                 .name("some_random_crate_that_failed")
                 .build_result_failed()
-                .create_async()
+                .create()
                 .await?;
 
             // these fake crates appear only in the `s` sitemap
@@ -287,7 +287,7 @@ mod tests {
                 .await
                 .name("some_random_crate")
                 .release_time(Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap())
-                .create_async()
+                .create()
                 .await?;
 
             let response = web.get("/-/sitemap/s/sitemap.xml").await?;

@@ -66,7 +66,7 @@ mod tests {
         async_wrapper(|env| async move {
             let now = Utc::now();
 
-            env.async_fake_release().await.create_async().await?;
+            env.async_fake_release().await.create().await?;
 
             let mut file = File::from_path(
                 &*env.async_storage().await,
@@ -114,7 +114,7 @@ mod tests {
                 .rustdoc_file_with("small.js", &[b'A'; MAX_SIZE / 2] as &[u8])
                 .rustdoc_file_with("exact.js", &[b'A'; MAX_SIZE] as &[u8])
                 .rustdoc_file_with("big.js", &[b'A'; MAX_SIZE * 2] as &[u8])
-                .create_async()
+                .create()
                 .await?;
 
             let file = |path| {

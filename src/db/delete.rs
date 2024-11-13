@@ -246,7 +246,7 @@ mod tests {
                 .await
                 .name("Some_Package")
                 .version("1.0.0")
-                .create_async()
+                .create()
                 .await?;
 
             let mut conn = env.async_db().await.async_conn().await;
@@ -269,7 +269,7 @@ mod tests {
                 .name("package-1")
                 .version("1.0.0")
                 .archive_storage(archive_storage)
-                .create_async()
+                .create()
                 .await?;
             let pkg1_v2_id = env
                 .async_fake_release()
@@ -277,14 +277,14 @@ mod tests {
                 .name("package-1")
                 .version("2.0.0")
                 .archive_storage(archive_storage)
-                .create_async()
+                .create()
                 .await?;
             let pkg2_id = env
                 .async_fake_release()
                 .await
                 .name("package-2")
                 .archive_storage(archive_storage)
-                .create_async()
+                .create()
                 .await?;
 
             assert!(crate_exists(&mut conn, "package-1").await?);
@@ -417,7 +417,7 @@ mod tests {
                     avatar: "https://example.org/malicious".into(),
                     kind: OwnerKind::User,
                 })
-                .create_async()
+                .create()
                 .await?;
             assert!(release_exists(&mut conn, v1).await?);
             assert!(
@@ -448,7 +448,7 @@ mod tests {
                     avatar: "https://example.org/peter".into(),
                     kind: OwnerKind::User,
                 })
-                .create_async()
+                .create()
                 .await?;
             assert!(release_exists(&mut conn, v2).await?);
             assert!(

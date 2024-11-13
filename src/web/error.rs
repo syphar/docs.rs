@@ -287,7 +287,7 @@ mod tests {
             env.async_fake_release()
                 .await
                 .name("dummy")
-                .create_async()
+                .create()
                 .await?;
 
             let response = env.web_app().await.get("/dummy/not-semver").await?;
@@ -315,7 +315,7 @@ mod tests {
                 .await
                 .name("dummy")
                 .version("1.0.0")
-                .create_async()
+                .create()
                 .await?;
             let page = kuchikiki::parse_html()
                 .one(env.web_app().await.get("/dummy/2.0").await?.text().await?);
@@ -341,7 +341,7 @@ mod tests {
                 .name("dummy")
                 .version("1.0.0")
                 .yanked(true)
-                .create_async()
+                .create()
                 .await?;
             let page = kuchikiki::parse_html()
                 .one(env.web_app().await.get("/dummy/*").await?.text().await?);

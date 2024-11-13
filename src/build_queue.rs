@@ -758,7 +758,7 @@ mod tests {
                 .version("0.1.0")
                 .builds(vec![FakeBuild::default()
                     .rustc_version("rustc 1.84.0-nightly (e7c0d2750 2020-10-15)")])
-                .create_async()
+                .create()
                 .await?;
 
             let build_queue = env.async_build_queue().await;
@@ -787,7 +787,7 @@ mod tests {
                 .version("0.1.0")
                 .builds(vec![FakeBuild::default()
                     .rustc_version("rustc 1.84.0-nightly (e7c0d2750 2020-10-15)")])
-                .create_async()
+                .create()
                 .await?;
 
             let build_queue = env.async_build_queue().await;
@@ -835,7 +835,7 @@ mod tests {
                 .version("0.1.0")
                 .builds(vec![FakeBuild::default()
                     .rustc_version("rustc 1.84.0-nightly (e7c0d2750 2020-10-15)")])
-                .create_async()
+                .create()
                 .await?;
 
             let build_queue = env.async_build_queue().await;
@@ -869,7 +869,7 @@ mod tests {
                 .version("0.1.0")
                 .builds(vec![FakeBuild::default()
                     .rustc_version("rustc 1.84.0-nightly (e7c0d2750 2020-10-15)")])
-                .create_async()
+                .create()
                 .await?;
 
             let build_queue = env.async_build_queue().await;

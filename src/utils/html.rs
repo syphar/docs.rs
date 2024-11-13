@@ -139,7 +139,7 @@ mod test {
                         </head>
                     </html>
                 "#)
-                .create_async().await?;
+                .create().await?;
 
             let web = env.web_app().await;
             let output = web.get("/testing/0.1.0/2016/").await?.text().await?;

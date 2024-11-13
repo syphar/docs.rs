@@ -781,7 +781,7 @@ mod test {
             .await
             .name("foo")
             .version(version)
-            .create_async()
+            .create()
             .await
             .unwrap()
     }
@@ -840,7 +840,7 @@ mod test {
                     total_items_needing_examples: 2,
                     items_with_examples: 1,
                 })
-                .create_async()
+                .create()
                 .await?;
             let web = env.web_app().await;
 
@@ -874,7 +874,7 @@ mod test {
                 .name("fake_crate")
                 .version("0.0.1")
                 .source_file("test.rs", &[])
-                .create_async()
+                .create()
                 .await?;
             let web = env.web_app().await;
             assert!(clipboard_is_present_for_path("/crate/fake_crate/0.0.1", &web).await);
@@ -891,7 +891,7 @@ mod test {
                 .await
                 .name("fake_crate")
                 .version("0.0.1")
-                .create_async()
+                .create()
                 .await?;
             let web = env.web_app().await;
             assert!(!clipboard_is_present_for_path("/about", &web).await);
@@ -966,7 +966,7 @@ mod test {
                 .await
                 .name("bat")
                 .version("0.2.0")
-                .create_async()
+                .create()
                 .await?;
             let web = env.web_app().await;
             web.assert_redirect("/bat//", "/bat/latest/bat/").await?;
@@ -982,7 +982,7 @@ mod test {
                 .name("bat")
                 .version("0.2.0")
                 .binary(true)
-                .create_async()
+                .create()
                 .await?;
             let web = env.web_app().await;
             web.assert_redirect("/bat/0.2.0", "/crate/bat/0.2.0")
@@ -1005,7 +1005,7 @@ mod test {
                 .name("regex")
                 .version("0.3.0")
                 .source_file("src/main.rs", br#"println!("definitely valid rust")"#)
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;
@@ -1066,7 +1066,7 @@ mod test {
                 .name("foo")
                 .version("0.2.0")
                 .add_platform("x86_64-unknown-linux-musl")
-                .create_async()
+                .create()
                 .await?;
             let text = web.assert_success("/foo/0.2.0/foo/").await?.text().await?;
             let platform = kuchikiki::parse_html()
@@ -1121,7 +1121,7 @@ mod test {
                 .builds(vec![
                     FakeBuild::default().build_status(BuildStatus::InProgress)
                 ])
-                .create_async()
+                .create()
                 .await?;
 
             // STAR gives me the prod release

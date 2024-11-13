@@ -207,7 +207,7 @@ mod tests {
                 .builds(vec![FakeBuild::default()
                     .no_s3_build_log()
                     .db_build_log("A build log")])
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;
@@ -245,7 +245,7 @@ mod tests {
                 .name("foo")
                 .version("0.1.0")
                 .builds(vec![FakeBuild::default().s3_build_log("A build log")])
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;
@@ -302,7 +302,7 @@ mod tests {
                         "other_target",
                         "other target build log",
                     )])
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;
@@ -366,7 +366,7 @@ mod tests {
                 .builds(vec![FakeBuild::default()
                     .s3_build_log("A build log")
                     .db_build_log("Another build log")])
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;
@@ -399,7 +399,7 @@ mod tests {
                 .await
                 .name("foo")
                 .version("0.1.0")
-                .create_async()
+                .create()
                 .await?;
 
             let res = env

@@ -920,21 +920,21 @@ mod tests {
                 .name("foo")
                 .version("0.1.0")
                 .documentation_url(Some("https://foo.com".into()))
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
                 .name("foo")
                 .version("0.2.0")
                 .documentation_url(Some("https://docs.rs/foo/".into()))
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
                 .name("foo")
                 .version("0.3.0")
                 .documentation_url(None)
-                .create_async()
+                .create()
                 .await?;
 
             let details_0_1 = crate_details(&mut conn, "foo", "0.1.0", None).await;
@@ -961,27 +961,27 @@ mod tests {
                 .await
                 .name("foo")
                 .version("0.0.1")
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
                 .name("foo")
                 .version("0.0.2")
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
                 .name("foo")
                 .version("0.0.3")
                 .build_result_failed()
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
                 .name("foo")
                 .version("0.0.4")
                 .yanked(true)
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
@@ -989,7 +989,7 @@ mod tests {
                 .version("0.0.5")
                 .build_result_failed()
                 .yanked(true)
-                .create_async()
+                .create()
                 .await?;
 
             assert_last_successful_build_equals(db, "foo", "0.0.1", None).await?;
@@ -1011,21 +1011,21 @@ mod tests {
                 .name("foo")
                 .version("0.0.1")
                 .build_result_failed()
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
                 .name("foo")
                 .version("0.0.2")
                 .build_result_failed()
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
                 .name("foo")
                 .version("0.0.3")
                 .yanked(true)
-                .create_async()
+                .create()
                 .await?;
 
             assert_last_successful_build_equals(db, "foo", "0.0.1", None).await?;
@@ -1044,27 +1044,27 @@ mod tests {
                 .await
                 .name("foo")
                 .version("0.0.1")
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
                 .name("foo")
                 .version("0.0.2")
                 .build_result_failed()
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
                 .name("foo")
                 .version("0.0.3")
                 .yanked(true)
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
                 .name("foo")
                 .version("0.0.4")
-                .create_async()
+                .create()
                 .await?;
 
             assert_last_successful_build_equals(db, "foo", "0.0.1", None).await?;
@@ -1085,45 +1085,45 @@ mod tests {
                 .await
                 .name("foo")
                 .version("0.1.0")
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
                 .name("foo")
                 .version("0.1.1")
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
                 .name("foo")
                 .version("0.3.0")
                 .build_result_failed()
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
                 .name("foo")
                 .version("1.0.0")
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
                 .name("foo")
                 .version("0.12.0")
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
                 .name("foo")
                 .version("0.2.0")
                 .yanked(true)
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
                 .name("foo")
                 .version("0.2.0-alpha")
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
@@ -1131,7 +1131,7 @@ mod tests {
                 .version("0.0.1")
                 .build_result_failed()
                 .binary(true)
-                .create_async()
+                .create()
                 .await?;
 
             let mut conn = db.async_conn().await;
@@ -1226,13 +1226,13 @@ mod tests {
                 .await
                 .name("foo")
                 .version("0.0.1")
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
                 .name("foo")
                 .version("0.0.2")
-                .create_async()
+                .create()
                 .await?;
 
             let response = env.web_app().await.get("/crate/foo/0.0.1").await?;
@@ -1257,19 +1257,19 @@ mod tests {
                 .await
                 .name("foo")
                 .version("0.0.1")
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
                 .name("foo")
                 .version("0.0.3")
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
                 .name("foo")
                 .version("0.0.2")
-                .create_async()
+                .create()
                 .await?;
 
             let mut conn = db.async_conn().await;
@@ -1294,19 +1294,19 @@ mod tests {
                 .await
                 .name("foo")
                 .version("0.0.1")
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
                 .name("foo")
                 .version("0.0.3-pre.1")
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
                 .name("foo")
                 .version("0.0.2")
-                .create_async()
+                .create()
                 .await?;
 
             let mut conn = db.async_conn().await;
@@ -1331,20 +1331,20 @@ mod tests {
                 .await
                 .name("foo")
                 .version("0.0.1")
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
                 .name("foo")
                 .version("0.0.3")
                 .yanked(true)
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
                 .name("foo")
                 .version("0.0.2")
-                .create_async()
+                .create()
                 .await?;
 
             let mut conn = db.async_conn().await;
@@ -1370,21 +1370,21 @@ mod tests {
                 .name("foo")
                 .version("0.0.1")
                 .yanked(true)
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
                 .name("foo")
                 .version("0.0.3")
                 .yanked(true)
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
                 .name("foo")
                 .version("0.0.2")
                 .yanked(true)
-                .create_async()
+                .create()
                 .await?;
 
             let mut conn = db.async_conn().await;
@@ -1409,7 +1409,7 @@ mod tests {
                 .await
                 .name("foo")
                 .version("0.0.1")
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
@@ -1418,7 +1418,7 @@ mod tests {
                 .builds(vec![
                     FakeBuild::default().build_status(BuildStatus::InProgress)
                 ])
-                .create_async()
+                .create()
                 .await?;
 
             let mut conn = db.async_conn().await;
@@ -1442,7 +1442,7 @@ mod tests {
                 .name("binary")
                 .version("0.1.0")
                 .binary(true)
-                .create_async()
+                .create()
                 .await?;
 
             let page = kuchikiki::parse_html().one(
@@ -1482,7 +1482,7 @@ mod tests {
                 .builds(vec![
                     FakeBuild::default().build_status(BuildStatus::InProgress)
                 ])
-                .create_async()
+                .create()
                 .await?;
 
             let response = env.web_app().await.get("/crate/foo/latest").await?;
@@ -1521,7 +1521,7 @@ mod tests {
                     avatar: "https://example.org/foobar".into(),
                     kind: OwnerKind::User,
                 })
-                .create_async()
+                .create()
                 .await?;
 
             let mut conn = db.async_conn().await;
@@ -1550,7 +1550,7 @@ mod tests {
                     avatar: "https://example.org/barfoo".into(),
                     kind: OwnerKind::User,
                 })
-                .create_async()
+                .create()
                 .await?;
 
             let details = crate_details(&mut conn, "foo", "0.0.1", None).await;
@@ -1582,7 +1582,7 @@ mod tests {
                     avatar: "https://example.org/barfoo".into(),
                     kind: OwnerKind::User,
                 })
-                .create_async()
+                .create()
                 .await?;
 
             let mut conn = db.async_conn().await;
@@ -1606,7 +1606,7 @@ mod tests {
                     avatar: "https://example.org/barfoov2".into(),
                     kind: OwnerKind::User,
                 })
-                .create_async()
+                .create()
                 .await?;
 
             let mut conn = db.async_conn().await;
@@ -1632,7 +1632,7 @@ mod tests {
                 .name("library")
                 .version("0.1.0")
                 .features(HashMap::new())
-                .create_async()
+                .create()
                 .await?;
 
             let page = kuchikiki::parse_html().one(
@@ -1660,7 +1660,7 @@ mod tests {
                 .name("library")
                 .version("0.1.0")
                 .features(features)
-                .create_async()
+                .create()
                 .await?;
 
             let page = kuchikiki::parse_html().one(
@@ -1688,7 +1688,7 @@ mod tests {
                 .name("library")
                 .version("0.1.0")
                 .features(features)
-                .create_async()
+                .create()
                 .await?;
 
             let page = kuchikiki::parse_html().one(
@@ -1724,7 +1724,7 @@ mod tests {
                 .name("library")
                 .version("0.1.0")
                 .features(features)
-                .create_async()
+                .create()
                 .await?;
 
             let page = kuchikiki::parse_html().one(
@@ -1753,7 +1753,7 @@ mod tests {
                 .version("0.1.0")
                 .repo("https://github.com/org/repo")
                 .github_stats("org/repo", 10, 10, 10)
-                .create_async()
+                .create()
                 .await?;
 
             let page = kuchikiki::parse_html().one(
@@ -1793,7 +1793,7 @@ mod tests {
                 .await
                 .name("library")
                 .version("0.1.0")
-                .create_async()
+                .create()
                 .await?;
 
             let mut conn = env.async_db().await.async_conn().await;
@@ -1944,7 +1944,7 @@ mod tests {
                 .default_target("x86_64-unknown-linux-gnu")
                 .add_target("x86_64-pc-windows-msvc")
                 .source_file("README.md", b"storage readme")
-                .create_async()
+                .create()
                 .await?;
 
             run_check_links_redir(&env, "/crate/dummy/0.4.0/features", false).await;
@@ -1999,7 +1999,7 @@ mod tests {
                 .rustdoc_file("dummy-ba/index.html")
                 .rustdoc_file("x86_64-unknown-linux-gnu/dummy-ba/index.html")
                 .add_target("x86_64-unknown-linux-gnu")
-                .create_async()
+                .create()
                 .await?;
             env.async_fake_release()
                 .await
@@ -2008,7 +2008,7 @@ mod tests {
                 .rustdoc_file("dummy-ba/index.html")
                 .rustdoc_file("x86_64-unknown-linux-gnu/dummy-ba/index.html")
                 .add_target("x86_64-unknown-linux-gnu")
-                .create_async()
+                .create()
                 .await?;
 
             check_links(
@@ -2055,7 +2055,7 @@ mod tests {
                 for nb in 0..nb_targets - 1 {
                     rel = rel.add_target(&format!("x86_64-pc-windows-msvc{nb}"));
                 }
-                rel.create_async().await?;
+                rel.create().await?;
 
                 let response = env.web_app().await.get("/crate/dummy/0.4.0").await?;
                 assert!(response.status().is_success());
@@ -2088,7 +2088,7 @@ mod tests {
                 .rustdoc_file("x86_64-pc-windows-msvc/dummy/index.html")
                 .default_target("x86_64-unknown-linux-gnu")
                 .add_target("x86_64-pc-windows-msvc")
-                .create_async()
+                .create()
                 .await?;
             let web = env.web_app().await;
 
@@ -2123,7 +2123,7 @@ mod tests {
                 .name("dummy")
                 .version("0.1.0")
                 .readme_only_database("database readme")
-                .create_async()
+                .create()
                 .await?;
 
             env.async_fake_release()
@@ -2132,7 +2132,7 @@ mod tests {
                 .version("0.2.0")
                 .readme_only_database("database readme")
                 .source_file("README.md", b"storage readme")
-                .create_async()
+                .create()
                 .await?;
 
             env.async_fake_release()
@@ -2140,7 +2140,7 @@ mod tests {
                 .name("dummy")
                 .version("0.3.0")
                 .source_file("README.md", b"storage readme")
-                .create_async()
+                .create()
                 .await?;
 
             env.async_fake_release()
@@ -2150,7 +2150,7 @@ mod tests {
                 .readme_only_database("database readme")
                 .source_file("MEREAD", b"storage meread")
                 .source_file("Cargo.toml", br#"package.readme = "MEREAD""#)
-                .create_async()
+                .create()
                 .await?;
 
             env.async_fake_release()
@@ -2160,7 +2160,7 @@ mod tests {
                 .readme_only_database("database readme")
                 .source_file("README.md", b"storage readme")
                 .no_cargo_toml()
-                .create_async()
+                .create()
                 .await?;
 
             let check_readme = |path: String, content: String| {
@@ -2194,7 +2194,7 @@ mod tests {
                 .await
                 .name("dummy")
                 .version("1.0.0")
-                .create_async()
+                .create()
                 .await?;
 
             assert_eq!(
@@ -2214,7 +2214,7 @@ mod tests {
                 .await
                 .name("dummy")
                 .version("0.1.0")
-                .create_async()
+                .create()
                 .await?;
 
             let mut conn = env.async_db().await.async_conn().await;
@@ -2245,7 +2245,7 @@ mod tests {
                     FakeBuild::default().build_status(BuildStatus::Failure),
                     FakeBuild::default().build_status(BuildStatus::InProgress),
                 ])
-                .create_async()
+                .create()
                 .await?;
 
             let mut conn = env.async_db().await.async_conn().await;
@@ -2270,7 +2270,7 @@ mod tests {
                     FakeBuild::default().build_status(BuildStatus::Failure),
                     FakeBuild::default().build_status(BuildStatus::InProgress),
                 ])
-                .create_async()
+                .create()
                 .await?;
 
             let mut conn = env.async_db().await.async_conn().await;
@@ -2294,7 +2294,7 @@ mod tests {
                 .builds(vec![
                     FakeBuild::default().build_status(BuildStatus::InProgress)
                 ])
-                .create_async()
+                .create()
                 .await?;
 
             let mut conn = env.async_db().await.async_conn().await;
@@ -2316,7 +2316,7 @@ mod tests {
                 .name("dummy")
                 .version("0.4.0")
                 .rustdoc_file("dummy/index.html")
-                .create_async()
+                .create()
                 .await?;
 
             let web = env.web_app().await;

@@ -68,14 +68,17 @@ mod tests {
     fn test_load() {
         wrapper(|env| {
             env.build_queue().add_crate("queued", "0.0.1", 0, None)?;
-            env.fake_release().name("krate").version("0.0.2").create()?;
-            env.fake_release()
-                .name("krate")
-                .version("0.0.3")
-                .yanked(true)
-                .create()?;
+            let runtime = env.runtime();
+            runtime.block_on(env.fake_release().name("krate").version("0.0.2").create())?;
+            runtime.block_on(
+                env.fake_release()
+                    .name("krate")
+                    .version("0.0.3")
+                    .yanked(true)
+                    .create(),
+            )?;
 
-            let result = env.runtime().block_on(async {
+            let result = runtime.block_on(async {
                 let mut conn = env.async_db().await.async_conn().await;
                 load(&mut conn, &env.config()).await
             })?;
