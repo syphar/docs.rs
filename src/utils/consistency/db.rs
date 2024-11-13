@@ -62,30 +62,31 @@ pub(super) async fn load(conn: &mut sqlx::PgConnection, config: &Config) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::wrapper;
+    use crate::test::async_wrapper;
 
     #[test]
     fn test_load() {
-        wrapper(|env| {
-            env.build_queue().add_crate("queued", "0.0.1", 0, None)?;
-            let result = env.runtime().block_on(async {
-                env.fake_release()
-                    .await
-                    .name("krate")
-                    .version("0.0.2")
-                    .create()
-                    .await?;
-                env.fake_release()
-                    .await
-                    .name("krate")
-                    .version("0.0.3")
-                    .yanked(true)
-                    .create()
-                    .await?;
+        async_wrapper(|env| async move {
+            env.async_build_queue()
+                .await
+                .add_crate("queued", "0.0.1", 0, None)
+                .await?;
+            env.fake_release()
+                .await
+                .name("krate")
+                .version("0.0.2")
+                .create()
+                .await?;
+            env.fake_release()
+                .await
+                .name("krate")
+                .version("0.0.3")
+                .yanked(true)
+                .create()
+                .await?;
 
-                let mut conn = env.async_db().await.async_conn().await;
-                load(&mut conn, &env.config()).await
-            })?;
+            let mut conn = env.async_db().await.async_conn().await;
+            let result = load(&mut conn, &env.config()).await?;
 
             assert_eq!(
                 result,
