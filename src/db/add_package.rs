@@ -255,6 +255,8 @@ pub(crate) async fn finish_build(
     rustc_version: &str,
     docsrs_version: &str,
     build_status: BuildStatus,
+    doc_targets: Option<Vec<String>>,
+    has_docs: Option<bool>,
     documentation_size: Option<u64>,
     errors: Option<&str>,
 ) -> Result<()> {
