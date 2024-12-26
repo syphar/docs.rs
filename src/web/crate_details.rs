@@ -719,8 +719,8 @@ pub(crate) async fn get_all_platforms_inner(
         .into_response());
     }
 
-    let doc_targets = MetaData::parse_doc_targets(krate.doc_targets);
-    let (target, inner_path) = params.split_path_into_target_and_inner_path(doc_targets.iter());
+    let (target, inner_path) =
+        params.split_path_into_target_and_inner_path(krate.metadata.doc_targets.iter().flatten());
 
     let inner_path = if inner_path.is_empty() {
         format!("{}/index.html", krate.target_name)
