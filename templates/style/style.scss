@@ -262,13 +262,17 @@ div.recent-releases-container {
         padding: 0;
     }
 
-    ol.queue-list li {
+    ol.queue-list li, ol.rebuild-queue-list li {
         list-style-type: decimal;
         margin-left: 20px;
 
         a {
             color: var(--color-url);
         }
+    }
+    
+    .about p {
+        margin-left: 20px;
     }
 
     strong {
@@ -473,6 +477,20 @@ div.package-page-container {
             font-size: 13px;
             display: block;
             width: 100%;
+        }
+
+        .documented-info .size .info {
+            display: none;
+            position: absolute;
+            top: 90%;
+            background: var(--color-background-code);
+            z-index: 1;
+            border: 1px solid var(--color-menu-border);
+        }
+
+        .documented-info .size:hover .info,
+        .documented-info .size:focus .info {
+            display: block;
         }
 
         li.pure-menu-heading:first-child {
@@ -715,7 +733,6 @@ div.docsrs-package-container {
             padding: 10px;
             border: 1px solid var(--color-doc-link-background);
             border-radius: 5px;
-            display: flex;
 
             .fas {
                 margin-top: 2px;

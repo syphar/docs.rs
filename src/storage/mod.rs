@@ -6,15 +6,23 @@ mod s3;
 pub use self::compression::{compress, decompress, CompressionAlgorithm, CompressionAlgorithms};
 use self::database::DatabaseBackend;
 use self::s3::S3Backend;
-use crate::{db::Pool, error::Result, utils::spawn_blocking, Config, InstanceMetrics};
-use anyhow::{anyhow, ensure};
+use crate::{
+    db::{
+        file::{detect_mime, FileEntry},
+        mimes, BuildId, Pool,
+    },
+    error::Result,
+    utils::spawn_blocking,
+    Config, InstanceMetrics,
+};
+use anyhow::anyhow;
 use chrono::{DateTime, Utc};
 use fn_error_context::context;
 use futures_util::stream::BoxStream;
+use mime::Mime;
 use path_slash::PathExt;
+use std::iter;
 use std::{
-    collections::{HashMap, HashSet},
-    ffi::OsStr,
     fmt, fs,
     io::{self, BufReader},
     ops::RangeInclusive,
@@ -23,6 +31,7 @@ use std::{
 };
 use tokio::{io::AsyncWriteExt, runtime::Runtime};
 use tracing::{error, info_span, instrument, trace};
+use walkdir::WalkDir;
 
 type FileRange = RangeInclusive<u64>;
 
@@ -33,7 +42,7 @@ pub(crate) struct PathNotFoundError;
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct Blob {
     pub(crate) path: String,
-    pub(crate) mime: String,
+    pub(crate) mime: Mime,
     pub(crate) date_updated: DateTime<Utc>,
     pub(crate) content: Vec<u8>,
     pub(crate) compression: Option<CompressionAlgorithm>,
@@ -45,40 +54,40 @@ impl Blob {
     }
 }
 
-fn get_file_list_from_dir<P: AsRef<Path>>(path: P, files: &mut Vec<PathBuf>) -> Result<()> {
-    let path = path.as_ref();
-
-    for file in path.read_dir()? {
-        let file = file?;
-
-        if file.file_type()?.is_file() {
-            files.push(file.path());
-        } else if file.file_type()?.is_dir() {
-            get_file_list_from_dir(file.path(), files)?;
-        }
-    }
-
-    Ok(())
-}
-
-#[instrument]
-pub fn get_file_list<P: AsRef<Path> + std::fmt::Debug>(path: P) -> Result<Vec<PathBuf>> {
-    let path = path.as_ref();
-    let mut files = Vec::new();
-
-    ensure!(path.exists(), "File not found");
-
+pub fn get_file_list<P: AsRef<Path>>(path: P) -> Box<dyn Iterator<Item = Result<PathBuf>>> {
+    let path = path.as_ref().to_path_buf();
     if path.is_file() {
-        files.push(PathBuf::from(path.file_name().unwrap()));
-    } else if path.is_dir() {
-        get_file_list_from_dir(path, &mut files)?;
-        for file_path in &mut files {
-            // We want the paths in this list to not be {path}/bar.txt but just bar.txt
-            *file_path = PathBuf::from(file_path.strip_prefix(path).unwrap());
-        }
-    }
+        let path = if let Some(parent) = path.parent() {
+            path.strip_prefix(parent).unwrap().to_path_buf()
+        } else {
+            path
+        };
 
-    Ok(files)
+        Box::new(iter::once(Ok(path)))
+    } else if path.is_dir() {
+        Box::new(
+            WalkDir::new(path.clone())
+                .into_iter()
+                .filter_map(move |result| {
+                    let direntry = match result {
+                        Ok(de) => de,
+                        Err(err) => return Some(Err(err.into())),
+                    };
+
+                    if !direntry.file_type().is_dir() {
+                        Some(Ok(direntry
+                            .path()
+                            .strip_prefix(&path)
+                            .unwrap()
+                            .to_path_buf()))
+                    } else {
+                        None
+                    }
+                }),
+        )
+    } else {
+        Box::new(iter::empty())
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -178,7 +187,7 @@ impl AsyncStorage {
         &self,
         name: &str,
         version: &str,
-        latest_build_id: i32,
+        latest_build_id: Option<BuildId>,
         path: &str,
         archive_storage: bool,
     ) -> Result<Blob> {
@@ -203,7 +212,7 @@ impl AsyncStorage {
         &self,
         name: &str,
         version: &str,
-        latest_build_id: i32,
+        latest_build_id: Option<BuildId>,
         path: &str,
         archive_storage: bool,
     ) -> Result<Blob> {
@@ -226,7 +235,7 @@ impl AsyncStorage {
         &self,
         name: &str,
         version: &str,
-        latest_build_id: i32,
+        latest_build_id: Option<BuildId>,
         path: &str,
         archive_storage: bool,
     ) -> Result<bool> {
@@ -244,7 +253,7 @@ impl AsyncStorage {
     pub(crate) async fn exists_in_archive(
         &self,
         archive_path: &str,
-        latest_build_id: i32,
+        latest_build_id: Option<BuildId>,
         path: &str,
     ) -> Result<bool> {
         match self
@@ -307,14 +316,14 @@ impl AsyncStorage {
     pub(super) async fn download_archive_index(
         &self,
         archive_path: &str,
-        latest_build_id: i32,
+        latest_build_id: Option<BuildId>,
     ) -> Result<PathBuf> {
         // remote/folder/and/x.zip.index
         let remote_index_path = format!("{archive_path}.index");
-        let local_index_path = self
-            .config
-            .local_archive_cache_path
-            .join(format!("{archive_path}.{latest_build_id}.index"));
+        let local_index_path = self.config.local_archive_cache_path.join(format!(
+            "{archive_path}.{}.index",
+            latest_build_id.map(|id| id.0).unwrap_or(0)
+        ));
 
         if !local_index_path.exists() {
             let index_content = self.get(&remote_index_path, usize::MAX).await?.content;
@@ -344,7 +353,7 @@ impl AsyncStorage {
     pub(crate) async fn get_from_archive(
         &self,
         archive_path: &str,
-        latest_build_id: i32,
+        latest_build_id: Option<BuildId>,
         path: &str,
         max_size: usize,
     ) -> Result<Blob> {
@@ -370,7 +379,7 @@ impl AsyncStorage {
 
         Ok(Blob {
             path: format!("{archive_path}/{path}"),
-            mime: detect_mime(path).into(),
+            mime: detect_mime(path),
             date_updated: blob.date_updated,
             content: blob.content,
             compression: None,
@@ -382,7 +391,7 @@ impl AsyncStorage {
         &self,
         archive_path: &str,
         root_dir: &Path,
-    ) -> Result<(HashMap<PathBuf, String>, CompressionAlgorithm)> {
+    ) -> Result<(Vec<FileEntry>, CompressionAlgorithm)> {
         let (zip_content, compressed_index_content, alg, remote_index_path, file_paths) =
             spawn_blocking({
                 let archive_path = archive_path.to_owned();
@@ -390,7 +399,7 @@ impl AsyncStorage {
                 let temp_dir = self.config.temp_dir.clone();
 
                 move || {
-                    let mut file_paths = HashMap::new();
+                    let mut file_paths = Vec::new();
 
                     // We are only using the `zip` library to create the archives and the matching
                     // index-file. The ZIP format allows more compression formats, and these can even be mixed
@@ -411,14 +420,13 @@ impl AsyncStorage {
                             .compression_method(zip::CompressionMethod::Bzip2);
 
                         let mut zip = zip::ZipWriter::new(io::Cursor::new(Vec::new()));
-                        for file_path in get_file_list(&root_dir)? {
-                            let mut file = fs::File::open(root_dir.join(&file_path))?;
+                        for file_path in get_file_list(&root_dir) {
+                            let file_path = file_path?;
 
+                            let mut file = fs::File::open(root_dir.join(&file_path))?;
                             zip.start_file(file_path.to_str().unwrap(), options)?;
                             io::copy(&mut file, &mut zip)?;
-
-                            let mime = detect_mime(&file_path);
-                            file_paths.insert(file_path, mime.to_string());
+                            file_paths.push(FileEntry{path: file_path, size: file.metadata()?.len()});
                         }
 
                         zip.finish()?.into_inner()
@@ -453,14 +461,14 @@ impl AsyncStorage {
         self.store_inner(vec![
             Blob {
                 path: archive_path.to_string(),
-                mime: "application/zip".to_owned(),
+                mime: mimes::APPLICATION_ZIP.clone(),
                 content: zip_content,
                 compression: None,
                 date_updated: Utc::now(),
             },
             Blob {
                 path: remote_index_path,
-                mime: "application/octet-stream".to_owned(),
+                mime: mime::APPLICATION_OCTET_STREAM,
                 content: compressed_index_content,
                 compression: Some(alg),
                 date_updated: Utc::now(),
@@ -468,61 +476,62 @@ impl AsyncStorage {
         ])
         .await?;
 
-        let file_alg = CompressionAlgorithm::Bzip2;
-        Ok((file_paths, file_alg))
+        Ok((file_paths, CompressionAlgorithm::Bzip2))
     }
 
-    // Store all files in `root_dir` into the backend under `prefix`.
-    //
-    // This returns (map<filename, mime type>, set<compression algorithms>).
+    /// Store all files in `root_dir` into the backend under `prefix`.
     #[instrument(skip(self))]
     pub(crate) async fn store_all(
         &self,
         prefix: &Path,
         root_dir: &Path,
-    ) -> Result<(HashMap<PathBuf, String>, HashSet<CompressionAlgorithm>)> {
-        let (blobs, file_paths_and_mimes, algs) = spawn_blocking({
+    ) -> Result<(Vec<FileEntry>, CompressionAlgorithm)> {
+        let alg = CompressionAlgorithm::default();
+
+        let (blobs, file_paths_and_mimes) = spawn_blocking({
             let prefix = prefix.to_owned();
             let root_dir = root_dir.to_owned();
             move || {
-                let mut file_paths_and_mimes = HashMap::new();
-                let mut algs = HashSet::with_capacity(1);
-                let blobs: Vec<_> = get_file_list(&root_dir)?
-                    .into_iter()
-                    .filter_map(|file_path| {
-                        // Some files have insufficient permissions
-                        // (like .lock file created by cargo in documentation directory).
-                        // Skip these files.
-                        fs::File::open(root_dir.join(&file_path))
-                            .ok()
-                            .map(|file| (file_path, file))
-                    })
-                    .map(|(file_path, file)| -> Result<_> {
-                        let alg = CompressionAlgorithm::default();
-                        let content = compress(file, alg)?;
-                        let bucket_path = prefix.join(&file_path).to_slash().unwrap().to_string();
+                let mut file_paths = Vec::new();
+                let mut blobs: Vec<Blob> = Vec::new();
+                for file_path in get_file_list(&root_dir) {
+                    let file_path = file_path?;
 
-                        let mime = detect_mime(&file_path);
-                        file_paths_and_mimes.insert(file_path, mime.to_string());
-                        algs.insert(alg);
+                    // Some files have insufficient permissions
+                    // (like .lock file created by cargo in documentation directory).
+                    // Skip these files.
+                    let Ok(file) = fs::File::open(root_dir.join(&file_path)) else {
+                        continue;
+                    };
 
-                        Ok(Blob {
-                            path: bucket_path,
-                            mime: mime.to_string(),
-                            content,
-                            compression: Some(alg),
-                            // this field is ignored by the backend
-                            date_updated: Utc::now(),
-                        })
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-                Ok((blobs, file_paths_and_mimes, algs))
+                    let file_size = file.metadata()?.len();
+
+                    let content = compress(file, alg)?;
+                    let bucket_path = prefix.join(&file_path).to_slash().unwrap().to_string();
+
+                    let file_info = FileEntry {
+                        path: file_path,
+                        size: file_size,
+                    };
+                    let mime = file_info.mime();
+                    file_paths.push(file_info);
+
+                    blobs.push(Blob {
+                        path: bucket_path,
+                        mime,
+                        content,
+                        compression: Some(alg),
+                        // this field is ignored by the backend
+                        date_updated: Utc::now(),
+                    });
+                }
+                Ok((blobs, file_paths))
             }
         })
         .await?;
 
         self.store_inner(blobs).await?;
-        Ok((file_paths_and_mimes, algs))
+        Ok((file_paths_and_mimes, alg))
     }
 
     #[cfg(test)]
@@ -631,7 +640,7 @@ impl Storage {
         &self,
         name: &str,
         version: &str,
-        latest_build_id: i32,
+        latest_build_id: Option<BuildId>,
         path: &str,
         archive_storage: bool,
     ) -> Result<Blob> {
@@ -648,7 +657,7 @@ impl Storage {
         &self,
         name: &str,
         version: &str,
-        latest_build_id: i32,
+        latest_build_id: Option<BuildId>,
         path: &str,
         archive_storage: bool,
     ) -> Result<Blob> {
@@ -665,7 +674,7 @@ impl Storage {
         &self,
         name: &str,
         version: &str,
-        latest_build_id: i32,
+        latest_build_id: Option<BuildId>,
         path: &str,
         archive_storage: bool,
     ) -> Result<bool> {
@@ -681,7 +690,7 @@ impl Storage {
     pub(crate) fn exists_in_archive(
         &self,
         archive_path: &str,
-        latest_build_id: i32,
+        latest_build_id: Option<BuildId>,
         path: &str,
     ) -> Result<bool> {
         self.runtime.block_on(
@@ -708,7 +717,7 @@ impl Storage {
     pub(super) fn download_index(
         &self,
         archive_path: &str,
-        latest_build_id: i32,
+        latest_build_id: Option<BuildId>,
     ) -> Result<PathBuf> {
         self.runtime.block_on(
             self.inner
@@ -719,7 +728,7 @@ impl Storage {
     pub(crate) fn get_from_archive(
         &self,
         archive_path: &str,
-        latest_build_id: i32,
+        latest_build_id: Option<BuildId>,
         path: &str,
         max_size: usize,
     ) -> Result<Blob> {
@@ -735,7 +744,7 @@ impl Storage {
         &self,
         archive_path: &str,
         root_dir: &Path,
-    ) -> Result<(HashMap<PathBuf, String>, CompressionAlgorithm)> {
+    ) -> Result<(Vec<FileEntry>, CompressionAlgorithm)> {
         self.runtime
             .block_on(self.inner.store_all_in_archive(archive_path, root_dir))
     }
@@ -744,7 +753,7 @@ impl Storage {
         &self,
         prefix: &Path,
         root_dir: &Path,
-    ) -> Result<(HashMap<PathBuf, String>, HashSet<CompressionAlgorithm>)> {
+    ) -> Result<(Vec<FileEntry>, CompressionAlgorithm)> {
         self.runtime
             .block_on(self.inner.store_all(prefix, root_dir))
     }
@@ -801,28 +810,6 @@ impl std::fmt::Debug for Storage {
     }
 }
 
-fn detect_mime(file_path: impl AsRef<Path>) -> &'static str {
-    let mime = mime_guess::from_path(file_path.as_ref())
-        .first_raw()
-        .unwrap_or("text/plain");
-    match mime {
-        "text/plain" | "text/troff" | "text/x-markdown" | "text/x-rust" | "text/x-toml" => {
-            match file_path.as_ref().extension().and_then(OsStr::to_str) {
-                Some("md") => "text/markdown",
-                Some("rs") => "text/rust",
-                Some("markdown") => "text/markdown",
-                Some("css") => "text/css",
-                Some("toml") => "text/toml",
-                Some("js") => "text/javascript",
-                Some("json") => "application/json",
-                _ => mime,
-            }
-        }
-        "image/svg" => "image/svg+xml",
-        _ => mime,
-    }
-}
-
 pub(crate) fn rustdoc_archive_path(name: &str, version: &str) -> String {
     format!("rustdoc/{name}/{version}.zip")
 }
@@ -837,14 +824,17 @@ mod test {
     use std::env;
 
     #[test]
-    fn test_get_file_list() {
+    fn test_get_file_list() -> Result<()> {
         crate::test::init_logger();
-        let files = get_file_list(env::current_dir().unwrap());
-        assert!(files.is_ok());
-        assert!(!files.unwrap().is_empty());
+        let dir = env::current_dir().unwrap();
 
-        let files = get_file_list(env::current_dir().unwrap().join("Cargo.toml")).unwrap();
+        let files: Vec<_> = get_file_list(&dir).collect::<Result<Vec<_>>>()?;
+        assert!(!files.is_empty());
+
+        let files: Vec<_> = get_file_list(dir.join("Cargo.toml")).collect::<Result<Vec<_>>>()?;
         assert_eq!(files[0], std::path::Path::new("Cargo.toml"));
+
+        Ok(())
     }
 
     #[test]
@@ -879,11 +869,16 @@ mod test {
 mod backend_tests {
     use super::*;
 
+    fn get_file_info(files: &[FileEntry], path: impl AsRef<Path>) -> Option<&FileEntry> {
+        let path = path.as_ref();
+        files.iter().find(|info| info.path == path)
+    }
+
     fn test_exists(storage: &Storage) -> Result<()> {
         assert!(!storage.exists("path/to/file.txt").unwrap());
         let blob = Blob {
             path: "path/to/file.txt".into(),
-            mime: "text/plain".into(),
+            mime: mime::TEXT_PLAIN,
             date_updated: Utc::now(),
             content: "Hello world!".into(),
             compression: None,
@@ -899,7 +894,7 @@ mod backend_tests {
 
         storage.store_blobs(vec![Blob {
             path: path.into(),
-            mime: "text/plain".into(),
+            mime: mime::TEXT_PLAIN,
             date_updated: Utc::now(),
             compression: None,
             content: b"test content\n".to_vec(),
@@ -926,7 +921,7 @@ mod backend_tests {
         let path: &str = "foo/bar.txt";
         let blob = Blob {
             path: path.into(),
-            mime: "text/plain".into(),
+            mime: mime::TEXT_PLAIN,
             date_updated: Utc::now(),
             compression: None,
             content: b"test content\n".to_vec(),
@@ -961,7 +956,7 @@ mod backend_tests {
     fn test_get_range(storage: &Storage) -> Result<()> {
         let blob = Blob {
             path: "foo/bar.txt".into(),
-            mime: "text/plain".into(),
+            mime: mime::TEXT_PLAIN,
             date_updated: Utc::now(),
             compression: None,
             content: b"test content\n".to_vec(),
@@ -1001,7 +996,7 @@ mod backend_tests {
                 .iter()
                 .map(|&filename| Blob {
                     path: filename.into(),
-                    mime: "text/plain".into(),
+                    mime: mime::TEXT_PLAIN,
                     date_updated: Utc::now(),
                     compression: None,
                     content: b"test content\n".to_vec(),
@@ -1042,14 +1037,14 @@ mod backend_tests {
 
         let small_blob = Blob {
             path: "small-blob.bin".into(),
-            mime: "text/plain".into(),
+            mime: mime::TEXT_PLAIN,
             date_updated: Utc::now(),
             content: vec![0; MAX_SIZE],
             compression: None,
         };
         let big_blob = Blob {
             path: "big-blob.bin".into(),
-            mime: "text/plain".into(),
+            mime: mime::TEXT_PLAIN,
             date_updated: Utc::now(),
             content: vec![0; MAX_SIZE * 2],
             compression: None,
@@ -1084,7 +1079,7 @@ mod backend_tests {
             .iter()
             .map(|&path| Blob {
                 path: path.into(),
-                mime: "text/plain".into(),
+                mime: mime::TEXT_PLAIN,
                 date_updated: Utc::now(),
                 compression: None,
                 content: b"Hello world!\n".to_vec(),
@@ -1107,7 +1102,7 @@ mod backend_tests {
     fn test_exists_without_remote_archive(storage: &Storage) -> Result<()> {
         // when remote and local index don't exist, any `exists_in_archive`  should
         // return `false`
-        assert!(!storage.exists_in_archive("some_archive_name", 0, "some_file_name")?);
+        assert!(!storage.exists_in_archive("some_archive_name", None, "some_file_name")?);
         Ok(())
     }
 
@@ -1138,15 +1133,14 @@ mod backend_tests {
         assert_eq!(compression_alg, CompressionAlgorithm::Bzip2);
         assert_eq!(stored_files.len(), files.len());
         for name in &files {
-            let name = Path::new(name);
-            assert!(stored_files.contains_key(name));
+            assert!(get_file_info(&stored_files, name).is_some());
         }
         assert_eq!(
-            stored_files.get(Path::new("Cargo.toml")).unwrap(),
+            get_file_info(&stored_files, "Cargo.toml").unwrap().mime(),
             "text/toml"
         );
         assert_eq!(
-            stored_files.get(Path::new("src/main.rs")).unwrap(),
+            get_file_info(&stored_files, "src/main.rs").unwrap().mime(),
             "text/rust"
         );
 
@@ -1157,18 +1151,18 @@ mod backend_tests {
 
         // the first exists-query will download and store the index
         assert!(!local_index_location.exists());
-        assert!(storage.exists_in_archive("folder/test.zip", 0, "Cargo.toml",)?);
+        assert!(storage.exists_in_archive("folder/test.zip", None, "Cargo.toml",)?);
 
         // the second one will use the local index
         assert!(local_index_location.exists());
-        assert!(storage.exists_in_archive("folder/test.zip", 0, "src/main.rs",)?);
+        assert!(storage.exists_in_archive("folder/test.zip", None, "src/main.rs",)?);
 
-        let file = storage.get_from_archive("folder/test.zip", 0, "Cargo.toml", usize::MAX)?;
+        let file = storage.get_from_archive("folder/test.zip", None, "Cargo.toml", usize::MAX)?;
         assert_eq!(file.content, b"data");
         assert_eq!(file.mime, "text/toml");
         assert_eq!(file.path, "folder/test.zip/Cargo.toml");
 
-        let file = storage.get_from_archive("folder/test.zip", 0, "src/main.rs", usize::MAX)?;
+        let file = storage.get_from_archive("folder/test.zip", None, "src/main.rs", usize::MAX)?;
         assert_eq!(file.content, b"data");
         assert_eq!(file.mime, "text/rust");
         assert_eq!(file.path, "folder/test.zip/src/main.rs");
@@ -1194,15 +1188,14 @@ mod backend_tests {
         let (stored_files, algs) = storage.store_all(Path::new("prefix"), dir.path())?;
         assert_eq!(stored_files.len(), files.len());
         for name in &files {
-            let name = Path::new(name);
-            assert!(stored_files.contains_key(name));
+            assert!(get_file_info(&stored_files, name).is_some());
         }
         assert_eq!(
-            stored_files.get(Path::new("Cargo.toml")).unwrap(),
+            get_file_info(&stored_files, "Cargo.toml").unwrap().mime(),
             "text/toml"
         );
         assert_eq!(
-            stored_files.get(Path::new("src/main.rs")).unwrap(),
+            get_file_info(&stored_files, "src/main.rs").unwrap().mime(),
             "text/rust"
         );
 
@@ -1216,9 +1209,7 @@ mod backend_tests {
         assert_eq!(file.mime, "text/rust");
         assert_eq!(file.path, "prefix/src/main.rs");
 
-        let mut expected_algs = HashSet::new();
-        expected_algs.insert(CompressionAlgorithm::default());
-        assert_eq!(algs, expected_algs);
+        assert_eq!(algs, CompressionAlgorithm::default());
 
         assert_eq!(2, metrics.uploaded_files_total.get());
 
@@ -1231,7 +1222,7 @@ mod backend_tests {
             .map(|i| {
                 let content = format!("const IDX: usize = {i};").as_bytes().to_vec();
                 Blob {
-                    mime: "text/rust".into(),
+                    mime: mimes::TEXT_RUST.clone(),
                     content,
                     path: format!("{i}.rs"),
                     date_updated: now,
@@ -1296,7 +1287,7 @@ mod backend_tests {
                     path: (*path).to_string(),
                     content: b"foo\n".to_vec(),
                     compression: None,
-                    mime: "text/plain".into(),
+                    mime: mime::TEXT_PLAIN,
                     date_updated: Utc::now(),
                 })
                 .collect(),

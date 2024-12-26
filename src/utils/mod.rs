@@ -21,7 +21,7 @@ pub mod daemon;
 mod html;
 mod queue;
 pub(crate) mod queue_builder;
-mod rustc_version;
+pub(crate) mod rustc_version;
 use anyhow::Result;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -31,16 +31,10 @@ pub(crate) mod sized_buffer;
 
 use std::{future::Future, thread, time::Duration};
 
-pub(crate) const APP_USER_AGENT: &str = concat!(
-    env!("CARGO_PKG_NAME"),
-    " ",
-    include_str!(concat!(env!("OUT_DIR"), "/git_version"))
-);
-
 pub(crate) fn report_error(err: &anyhow::Error) {
     // Debug-format for anyhow errors includes context & backtrace
     if std::env::var("SENTRY_DSN").is_ok() {
-        sentry_anyhow::capture_anyhow(err);
+        sentry::integrations::anyhow::capture_anyhow(err);
         error!(reported_to_sentry = true, "{err:?}");
     } else {
         error!("{err:?}");

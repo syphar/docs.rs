@@ -9,7 +9,7 @@ use anyhow::{anyhow, Context as _, Error, Result};
 use axum::async_trait;
 use clap::{Parser, Subcommand, ValueEnum};
 use docs_rs::cdn::CdnBackend;
-use docs_rs::db::{self, add_path_into_database, Overrides, Pool};
+use docs_rs::db::{self, add_path_into_database, CrateId, Overrides, Pool};
 use docs_rs::repositories::RepositoryStatsUpdater;
 use docs_rs::utils::{
     get_config, get_crate_pattern_and_priority, list_crate_priorities, queue_builder,
@@ -23,7 +23,10 @@ use docs_rs::{
 use futures_util::StreamExt;
 use humantime::Duration;
 use once_cell::sync::OnceCell;
-use sentry::TransactionContext;
+use sentry::{
+    integrations::panic as sentry_panic, integrations::tracing as sentry_tracing,
+    TransactionContext,
+};
 use tokio::runtime::{Builder, Runtime};
 use tracing_log::LogTracer;
 use tracing_subscriber::{filter::Directive, prelude::*, EnvFilter};
@@ -155,6 +158,8 @@ enum CommandLine {
         repository_stats_updater: Toggle,
         #[arg(long = "cdn-invalidator", default_value = "enabled", value_enum)]
         cdn_invalidator: Toggle,
+        #[arg(long = "queue-rebuilds", default_value = "enabled", value_enum)]
+        queue_rebuilds: Toggle,
     },
 
     StartBuildServer {
@@ -192,12 +197,16 @@ impl CommandLine {
                 metric_server_socket_addr,
                 repository_stats_updater,
                 cdn_invalidator,
+                queue_rebuilds,
             } => {
                 if repository_stats_updater == Toggle::Enabled {
                     docs_rs::utils::daemon::start_background_repository_stats_updater(&ctx)?;
                 }
                 if cdn_invalidator == Toggle::Enabled {
                     docs_rs::utils::daemon::start_background_cdn_invalidator(&ctx)?;
+                }
+                if queue_rebuilds == Toggle::Enabled {
+                    docs_rs::utils::daemon::start_background_queue_rebuild(&ctx)?;
                 }
 
                 start_background_metrics_webserver(Some(metric_server_socket_addr), &ctx)?;
@@ -600,9 +609,10 @@ impl DatabaseSubcommand {
                         let mut list_conn = pool.get_async().await?;
                         let mut update_conn = pool.get_async().await?;
 
-                        let mut result_stream =
-                            sqlx::query!("SELECT id, name FROM crates ORDER BY name")
-                                .fetch(&mut *list_conn);
+                        let mut result_stream = sqlx::query!(
+                            r#"SELECT id as "id: CrateId", name FROM crates ORDER BY name"#
+                        )
+                        .fetch(&mut *list_conn);
 
                         while let Some(row) = result_stream.next().await {
                             let row = row?;

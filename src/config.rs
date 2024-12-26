@@ -1,5 +1,6 @@
 use crate::{cdn::CdnKind, storage::StorageKind};
 use anyhow::{anyhow, bail, Context, Result};
+use chrono::NaiveDate;
 use std::{env::VarError, error::Error, path::PathBuf, str::FromStr, time::Duration};
 use tracing::trace;
 use url::Url;
@@ -10,6 +11,9 @@ pub struct Config {
     pub registry_index_path: PathBuf,
     pub registry_url: Option<String>,
     pub registry_api_host: Url,
+
+    /// How long to wait between registry checks
+    pub(crate) delay_between_registry_fetches: Duration,
 
     // Database connection params
     pub(crate) database_url: String,
@@ -113,6 +117,10 @@ pub struct Config {
     pub(crate) build_default_memory_limit: Option<usize>,
     pub(crate) include_default_targets: bool,
     pub(crate) disable_memory_limit: bool,
+
+    // automatic rebuild configuration
+    pub(crate) max_queued_rebuilds: Option<u16>,
+    pub(crate) rebuild_up_to_date: Option<NaiveDate>,
 }
 
 impl Config {
@@ -143,6 +151,10 @@ impl Config {
             build_attempts: env("DOCSRS_BUILD_ATTEMPTS", 5)?,
             delay_between_build_attempts: Duration::from_secs(env::<u64>(
                 "DOCSRS_DELAY_BETWEEN_BUILD_ATTEMPTS",
+                60,
+            )?),
+            delay_between_registry_fetches: Duration::from_secs(env::<u64>(
+                "DOCSRS_DELAY_BETWEEN_REGISTRY_FETCHES",
                 60,
             )?),
 
@@ -230,6 +242,8 @@ impl Config {
                 "DOCSRS_BUILD_WORKSPACE_REINITIALIZATION_INTERVAL",
                 86400,
             )?),
+            max_queued_rebuilds: maybe_env("DOCSRS_MAX_QUEUED_REBUILDS")?,
+            rebuild_up_to_date: maybe_env("DOCSRS_REBUILD_UP_TO_DATE")?,
         })
     }
 }

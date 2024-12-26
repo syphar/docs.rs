@@ -1,8 +1,11 @@
-use crate::db::file::add_path_into_database;
 use crate::db::{
     add_doc_coverage, add_package_into_database, add_path_into_remote_archive, finish_build,
     initialize_build, initialize_crate, initialize_release, types::BuildStatus,
     update_build_with_error, update_crate_data_in_database, Pool,
+};
+use crate::db::{
+    file::{add_path_into_database, file_list_to_json},
+    BuildId,
 };
 use crate::docbuilder::Limits;
 use crate::error::Result;
@@ -362,7 +365,7 @@ impl RustwideBuilder {
             let crate_id = initialize_crate(&mut conn, name).await?;
             let release_id = initialize_release(&mut conn, crate_id, version).await?;
             let build_id = initialize_build(&mut conn, release_id).await?;
-            Ok::<i32, Error>(build_id)
+            Ok::<BuildId, Error>(build_id)
         })?;
 
         match self.build_package_inner(name, version, kind, build_id) {
@@ -392,7 +395,7 @@ impl RustwideBuilder {
         name: &str,
         version: &str,
         kind: PackageKind<'_>,
-        build_id: i32,
+        build_id: BuildId,
     ) -> Result<bool> {
         info!("building package {} {}", name, version);
 
@@ -476,6 +479,7 @@ impl RustwideBuilder {
                     algs.insert(new_alg);
                     files_list
                 };
+                let source_size: u64 = files_list.iter().map(|info| info.size).sum();
                 let metadata = Metadata::from_crate_root(build.host_source_dir())?;
                 let BuildTargets {
                     default_target,
@@ -532,7 +536,7 @@ impl RustwideBuilder {
                 }
 
                 let mut target_build_logs = HashMap::new();
-                if has_docs {
+                let documentation_size = if has_docs {
                     debug!("adding documentation for the default target to the database");
                     self.copy_docs(
                         &build.host_target_dir(),
@@ -557,13 +561,21 @@ impl RustwideBuilder {
                         )?;
                         target_build_logs.insert(target, target_res.build_log);
                     }
-                    let (_, new_alg) = self.runtime.block_on(add_path_into_remote_archive(
-                        &self.async_storage,
-                        &rustdoc_archive_path(name, version),
-                        local_storage.path(),
-                        true,
-                    ))?;
+                    let (file_list, new_alg) =
+                        self.runtime.block_on(add_path_into_remote_archive(
+                            &self.async_storage,
+                            &rustdoc_archive_path(name, version),
+                            local_storage.path(),
+                            true,
+                        ))?;
+                    let documentation_size = file_list.iter().map(|info| info.size).sum::<u64>();
+                    self.metrics
+                        .documentation_size
+                        .observe(documentation_size as f64 / 1024.0 / 1024.0);
                     algs.insert(new_alg);
+                    Some(documentation_size)
+                } else {
+                    None
                 };
 
                 let has_examples = build.host_source_dir().join("examples").is_dir();
@@ -603,7 +615,7 @@ impl RustwideBuilder {
                     cargo_metadata,
                     &build.host_source_dir(),
                     &res.target,
-                    files_list,
+                    file_list_to_json(files_list),
                     successful_targets,
                     &release_data,
                     has_docs,
@@ -611,6 +623,7 @@ impl RustwideBuilder {
                     algs,
                     repository,
                     true,
+                    source_size,
                 ))?;
 
                 if let Some(doc_coverage) = res.doc_coverage {
@@ -632,6 +645,7 @@ impl RustwideBuilder {
                     &res.result.rustc_version,
                     &res.result.docsrs_version,
                     build_status,
+                    documentation_size,
                     None,
                 ))?;
 
@@ -1005,10 +1019,8 @@ impl Default for BuildPackageSummary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        db::types::Feature,
-        test::{assert_redirect, assert_success, wrapper, TestEnvironment},
-    };
+    use crate::db::types::Feature;
+    use crate::test::{wrapper, AxumRouterTestExt, TestEnvironment};
 
     fn get_features(
         env: &TestEnvironment,
@@ -1093,11 +1105,13 @@ mod tests {
                         r.default_target,
                         r.doc_targets,
                         r.archive_storage,
+                        r.source_size as "source_size!",
                         cov.total_items,
                         b.id as build_id,
                         b.build_status::TEXT as build_status,
                         b.docsrs_version,
-                        b.rustc_version
+                        b.rustc_version,
+                        b.documentation_size
                     FROM
                         crates as c
                         INNER JOIN releases AS r ON c.id = r.crate_id
@@ -1120,6 +1134,8 @@ mod tests {
             assert!(!row.docsrs_version.unwrap().is_empty());
             assert!(!row.rustc_version.unwrap().is_empty());
             assert_eq!(row.build_status.unwrap(), "success");
+            assert!(row.source_size > 0);
+            assert!(row.documentation_size.unwrap() > 0);
 
             let mut targets: Vec<String> = row
                 .doc_targets
@@ -1131,7 +1147,8 @@ mod tests {
                 .collect();
             targets.sort();
 
-            let web = env.frontend();
+            let runtime = env.runtime();
+            let web = runtime.block_on(env.web_app());
 
             // old rustdoc & source files are gone
             assert!(!storage.exists(&old_rustdoc_file)?);
@@ -1148,28 +1165,28 @@ mod tests {
             // default target was built and is accessible
             assert!(storage.exists_in_archive(
                 &doc_archive,
-                0,
+                None,
                 &format!("{crate_path}/index.html"),
             )?);
-            assert_success(&format!("/{crate_}/{version}/{crate_path}"), web)?;
+            runtime.block_on(web.assert_success(&format!("/{crate_}/{version}/{crate_path}/")))?;
 
             // source is also packaged
-            assert!(storage.exists_in_archive(&source_archive, 0, "src/lib.rs",)?);
-            assert_success(&format!("/crate/{crate_}/{version}/source/src/lib.rs"), web)?;
-
+            assert!(storage.exists_in_archive(&source_archive, None, "src/lib.rs",)?);
+            runtime.block_on(
+                web.assert_success(&format!("/crate/{crate_}/{version}/source/src/lib.rs")),
+            )?;
             assert!(!storage.exists_in_archive(
                 &doc_archive,
-                0,
+                None,
                 &format!("{default_target}/{crate_path}/index.html"),
             )?);
 
             let default_target_url =
                 format!("/{crate_}/{version}/{default_target}/{crate_path}/index.html");
-            assert_redirect(
+            runtime.block_on(web.assert_redirect(
                 &default_target_url,
                 &format!("/{crate_}/{version}/{crate_path}/index.html"),
-                web,
-            )?;
+            ))?;
 
             // Non-dist toolchains only have a single target, and of course
             // if include_default_targets is false we won't have this full list
@@ -1193,7 +1210,7 @@ mod tests {
                     }
                     let target_docs_present = storage.exists_in_archive(
                         &doc_archive,
-                        0,
+                        None,
                         &format!("{target}/{crate_path}/index.html"),
                     )?;
 
@@ -1201,7 +1218,7 @@ mod tests {
                         format!("/{crate_}/{version}/{target}/{crate_path}/index.html");
 
                     assert!(target_docs_present);
-                    assert_success(&target_url, web)?;
+                    runtime.block_on(web.assert_success(&target_url))?;
 
                     assert!(storage
                         .exists(&format!("build-logs/{}/{target}.txt", row.build_id))
@@ -1334,15 +1351,17 @@ mod tests {
             let crate_path = crate_.replace('-', "_");
             let target_docs_present = storage.exists_in_archive(
                 &doc_archive,
-                0,
+                None,
                 &format!("{target}/{crate_path}/index.html"),
             )?;
-
-            let web = env.frontend();
-            let target_url = format!("/{crate_}/{version}/{target}/{crate_path}/index.html");
-
             assert!(target_docs_present);
-            assert_success(&target_url, web)?;
+
+            env.runtime().block_on(async {
+                let web = env.web_app().await;
+                let target_url = format!("/{crate_}/{version}/{target}/{crate_path}/index.html");
+
+                web.assert_success(&target_url).await
+            })?;
 
             Ok(())
         });

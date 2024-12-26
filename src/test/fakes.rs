@@ -1,19 +1,22 @@
 use super::TestDatabase;
 
+use crate::db::file::{file_list_to_json, FileEntry};
 use crate::db::types::BuildStatus;
-use crate::db::{initialize_build, initialize_crate, initialize_release, update_build_status};
+use crate::db::{
+    initialize_build, initialize_crate, initialize_release, update_build_status, BuildId, ReleaseId,
+};
 use crate::docbuilder::DocCoverage;
 use crate::error::Result;
 use crate::registry_api::{CrateData, CrateOwner, ReleaseData};
 use crate::storage::{
-    rustdoc_archive_path, source_archive_path, AsyncStorage, CompressionAlgorithms,
+    rustdoc_archive_path, source_archive_path, AsyncStorage, CompressionAlgorithm,
 };
 use crate::utils::{Dependency, MetadataPackage, Target};
 use anyhow::{bail, Context};
 use base64::{engine::general_purpose::STANDARD as b64, Engine};
 use chrono::{DateTime, Utc};
-use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use std::iter;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 use tracing::debug;
@@ -26,7 +29,7 @@ pub(crate) async fn fake_release_that_failed_before_build(
     name: &str,
     version: &str,
     errors: &str,
-) -> Result<(i32, i32)> {
+) -> Result<(ReleaseId, BuildId)> {
     let crate_id = initialize_crate(&mut *conn, name).await?;
     let release_id = initialize_release(&mut *conn, crate_id, version).await?;
     let build_id = initialize_build(&mut *conn, release_id).await?;
@@ -37,7 +40,7 @@ pub(crate) async fn fake_release_that_failed_before_build(
              build_status = 'failure',
              errors = $2
          WHERE id = $1",
-        build_id,
+        build_id.0,
         errors,
     )
     .execute(&mut *conn)
@@ -320,13 +323,18 @@ impl<'a> FakeRelease<'a> {
         self
     }
 
-    pub(crate) fn create(self) -> Result<i32> {
+    pub(crate) fn documentation_url(mut self, documentation_url: Option<String>) -> Self {
+        self.package.documentation = documentation_url;
+        self
+    }
+
+    pub(crate) fn create(self) -> Result<ReleaseId> {
         let runtime = self.runtime.clone();
         runtime.block_on(self.create_async())
     }
 
     /// Returns the release_id
-    pub(crate) async fn create_async(self) -> Result<i32> {
+    pub(crate) async fn create_async(self) -> Result<ReleaseId> {
         use std::fs;
         use std::path::Path;
 
@@ -390,7 +398,7 @@ impl<'a> FakeRelease<'a> {
             archive_storage: bool,
             package: &MetadataPackage,
             storage: &AsyncStorage,
-        ) -> Result<(Value, CompressionAlgorithms)> {
+        ) -> Result<(Vec<FileEntry>, CompressionAlgorithm)> {
             debug!(
                 "adding directory {:?} from {}",
                 kind,
@@ -413,9 +421,7 @@ impl<'a> FakeRelease<'a> {
                     public,
                 )
                 .await?;
-                let mut hm = HashSet::new();
-                hm.insert(new_alg);
-                Ok((files_list, hm))
+                Ok((files_list, new_alg))
             } else {
                 let prefix = match kind {
                     FileKind::Rustdoc => "rustdoc",
@@ -459,7 +465,7 @@ impl<'a> FakeRelease<'a> {
             &storage,
         )
         .await?;
-        debug!("added source files {}", source_meta);
+        debug!(?source_meta, "added source files");
 
         // If the test didn't add custom builds, inject a default one
         let builds = self.builds.unwrap_or_else(|| vec![FakeBuild::default()]);
@@ -486,7 +492,7 @@ impl<'a> FakeRelease<'a> {
                 debug!("added platform files for {}", platform);
             }
 
-            let (rustdoc_meta, _) = upload_files(
+            let (files, _) = upload_files(
                 FileKind::Rustdoc,
                 rustdoc_path,
                 archive_storage,
@@ -494,7 +500,7 @@ impl<'a> FakeRelease<'a> {
                 &storage,
             )
             .await?;
-            debug!("uploaded rustdoc files: {}", rustdoc_meta);
+            debug!(?files, "uploaded rustdoc files");
         }
 
         let mut async_conn = db.async_conn().await;
@@ -520,14 +526,15 @@ impl<'a> FakeRelease<'a> {
             &package,
             crate_dir,
             default_target,
-            source_meta,
+            file_list_to_json(source_meta),
             self.doc_targets,
             &self.registry_release_data,
             self.has_docs,
             self.has_examples,
-            algs,
+            iter::once(algs),
             repository,
             archive_storage,
+            24,
         )
         .await?;
         crate::db::update_crate_data_in_database(
@@ -640,7 +647,7 @@ impl FakeBuild {
         &self,
         conn: &mut sqlx::PgConnection,
         storage: &AsyncStorage,
-        release_id: i32,
+        release_id: ReleaseId,
         default_target: &str,
     ) -> Result<()> {
         let build_id = crate::db::initialize_build(&mut *conn, release_id).await?;
@@ -651,6 +658,7 @@ impl FakeBuild {
             &self.rustc_version,
             &self.docsrs_version,
             self.build_status,
+            Some(42),
             None,
         )
         .await?;
@@ -658,7 +666,7 @@ impl FakeBuild {
         if let Some(db_build_log) = self.db_build_log.as_deref() {
             sqlx::query!(
                 "UPDATE builds SET output = $2 WHERE id = $1",
-                build_id,
+                build_id.0,
                 db_build_log
             )
             .execute(&mut *conn)

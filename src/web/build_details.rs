@@ -1,5 +1,5 @@
 use crate::{
-    db::types::BuildStatus,
+    db::{types::BuildStatus, BuildId},
     impl_axum_webpage,
     web::{
         error::{AxumNope, AxumResult},
@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct BuildDetails {
-    id: i32,
+    id: BuildId,
     rustc_version: Option<String>,
     docsrs_version: Option<String>,
     build_status: BuildStatus,
@@ -65,14 +65,18 @@ pub(crate) async fn build_details_handler(
     Extension(config): Extension<Arc<Config>>,
     Extension(storage): Extension<Arc<AsyncStorage>>,
 ) -> AxumResult<impl IntoResponse> {
-    let id: i32 = params.id.parse().map_err(|_| AxumNope::BuildNotFound)?;
+    let id = params
+        .id
+        .parse()
+        .map(BuildId)
+        .map_err(|_| AxumNope::BuildNotFound)?;
 
     let row = sqlx::query!(
         r#"SELECT
              builds.rustc_version,
              builds.docsrs_version,
              builds.build_status as "build_status: BuildStatus",
-             builds.build_time,
+             COALESCE(builds.build_finished, builds.build_started) as build_time,
              builds.output,
              builds.errors,
              releases.default_target
@@ -80,7 +84,7 @@ pub(crate) async fn build_details_handler(
          INNER JOIN releases ON releases.id = builds.rid
          INNER JOIN crates ON releases.crate_id = crates.id
          WHERE builds.id = $1 AND crates.name = $2 AND releases.version = $3"#,
-        id,
+        id.0,
         params.name,
         params.version.to_string(),
     )
@@ -89,37 +93,53 @@ pub(crate) async fn build_details_handler(
     .ok_or(AxumNope::BuildNotFound)?;
 
     let (output, all_log_filenames, current_filename) = if let Some(output) = row.output {
+        // legacy case, for old builds the build log was stored in the database.
         (output, Vec::new(), None)
     } else {
+        // for newer builds we have the build logs stored in S3.
+        // For a long time only for one target, then we started storing the logs for other targets
+        // toFor a long time only for one target, then we started storing the logs for other
+        // targets. In any case, all the logfiles are put into a folder we can just query.
         let prefix = format!("build-logs/{}/", id);
+        let all_log_filenames: Vec<_> = storage
+            .list_prefix(&prefix) // the result from S3 is ordered by key
+            .await
+            .map_ok(|path| {
+                path.strip_prefix(&prefix)
+                    .expect("since we query for the prefix, it has to be always there")
+                    .to_owned()
+            })
+            .try_collect()
+            .await?;
 
-        if let Some(current_filename) = params
-            .filename
-            .or(row.default_target.map(|target| format!("{}.txt", target)))
-        {
-            let path = format!("{prefix}{current_filename}");
-            let file = File::from_path(&storage, &path, &config).await?;
-            (
-                String::from_utf8(file.0.content).context("non utf8")?,
-                storage
-                    .list_prefix(&prefix) // the result from S3 is ordered by key
-                    .await
-                    .map_ok(|path| {
-                        path.strip_prefix(&prefix)
-                            .expect("since we query for the prefix, it has to be always there")
-                            .to_owned()
-                    })
-                    .try_collect()
-                    .await?,
-                Some(current_filename),
-            )
+        let current_filename = if let Some(filename) = params.filename {
+            // if we have a given filename in the URL, we use that one.
+            Some(filename)
+        } else if let Some(default_target) = row.default_target {
+            // without a filename in the URL, we try to show the build log
+            // for the default target, if we have one.
+            let wanted_filename = format!("{default_target}.txt");
+            if all_log_filenames.contains(&wanted_filename) {
+                Some(wanted_filename)
+            } else {
+                None
+            }
         } else {
             // this can only happen when `releases.default_target` is NULL,
             // which is the case for in-progress builds or builds which errored
             // before we could determine the target.
             // For the "error" case we show `row.errors`, which should contain what we need to see.
-            ("".into(), Vec::new(), None)
-        }
+            None
+        };
+
+        let file_content = if let Some(ref filename) = current_filename {
+            let file = File::from_path(&storage, &format!("{prefix}{filename}"), &config).await?;
+            String::from_utf8(file.0.content).context("non utf8")?
+        } else {
+            "".to_string()
+        };
+
+        (file_content, all_log_filenames, current_filename)
     };
 
     Ok(BuildDetailsPage {
@@ -142,7 +162,10 @@ pub(crate) async fn build_details_handler(
 
 #[cfg(test)]
 mod tests {
-    use crate::test::{fake_release_that_failed_before_build, wrapper, FakeBuild};
+    use crate::test::{
+        async_wrapper, fake_release_that_failed_before_build, AxumResponseTestExt,
+        AxumRouterTestExt, FakeBuild,
+    };
     use kuchikiki::traits::TendrilSink;
     use test_case::test_case;
 
@@ -161,24 +184,62 @@ mod tests {
 
     #[test]
     fn test_partial_build_result() {
-        wrapper(|env| {
-            let (_, build_id) = env.runtime().block_on(async {
-                let mut conn = env.async_db().await.async_conn().await;
-                fake_release_that_failed_before_build(
-                    &mut conn,
-                    "foo",
-                    "0.1.0",
-                    "some random error",
-                )
-                .await
-            })?;
+        async_wrapper(|env| async move {
+            let mut conn = env.async_db().await.async_conn().await;
+            let (_, build_id) = fake_release_that_failed_before_build(
+                &mut conn,
+                "foo",
+                "0.1.0",
+                "some random error",
+            )
+            .await?;
 
             let page = kuchikiki::parse_html().one(
-                env.frontend()
+                env.web_app()
+                    .await
                     .get(&format!("/crate/foo/0.1.0/builds/{build_id}"))
-                    .send()?
+                    .await?
                     .error_for_status()?
-                    .text()?,
+                    .text()
+                    .await?,
+            );
+
+            let info_text = page.select("pre").unwrap().next().unwrap().text_contents();
+
+            assert!(info_text.contains("# pre-build errors"), "{}", info_text);
+            assert!(info_text.contains("some random error"), "{}", info_text);
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_partial_build_result_plus_default_target_from_previous_build() {
+        async_wrapper(|env| async move {
+            let mut conn = env.async_db().await.async_conn().await;
+            let (release_id, build_id) = fake_release_that_failed_before_build(
+                &mut conn,
+                "foo",
+                "0.1.0",
+                "some random error",
+            )
+            .await?;
+
+            sqlx::query!(
+                "UPDATE releases SET default_target = 'x86_64-unknown-linux-gnu' WHERE id = $1",
+                release_id.0
+            )
+            .execute(&mut *conn)
+            .await?;
+
+            let page = kuchikiki::parse_html().one(
+                env.web_app()
+                    .await
+                    .get(&format!("/crate/foo/0.1.0/builds/{build_id}"))
+                    .await?
+                    .error_for_status()?
+                    .text()
+                    .await?,
             );
 
             let info_text = page.select("pre").unwrap().next().unwrap().text_contents();
@@ -192,28 +253,34 @@ mod tests {
 
     #[test]
     fn db_build_logs() {
-        wrapper(|env| {
-            env.fake_release()
+        async_wrapper(|env| async move {
+            env.async_fake_release()
+                .await
                 .name("foo")
                 .version("0.1.0")
                 .builds(vec![FakeBuild::default()
                     .no_s3_build_log()
                     .db_build_log("A build log")])
-                .create()?;
+                .create_async()
+                .await?;
+
+            let web = env.web_app().await;
 
             let page = kuchikiki::parse_html().one(
-                env.frontend()
-                    .get("/crate/foo/0.1.0/builds")
-                    .send()?
+                web.get("/crate/foo/0.1.0/builds")
+                    .await?
                     .error_for_status()?
-                    .text()?,
+                    .text()
+                    .await?,
             );
 
             let node = page.select("ul > li a.release").unwrap().next().unwrap();
-            let attrs = node.attributes.borrow();
-            let url = attrs.get("href").unwrap();
+            let url = {
+                let attrs = node.attributes.borrow();
+                attrs.get("href").unwrap().to_owned()
+            };
 
-            let page = kuchikiki::parse_html().one(env.frontend().get(url).send()?.text()?);
+            let page = kuchikiki::parse_html().one(web.get(&url).await?.text().await?);
             assert!(get_all_log_links(&page).is_empty());
 
             let log = page.select("pre").unwrap().next().unwrap().text_contents();
@@ -226,25 +293,27 @@ mod tests {
 
     #[test]
     fn s3_build_logs() {
-        wrapper(|env| {
-            env.fake_release()
+        async_wrapper(|env| async move {
+            env.async_fake_release()
+                .await
                 .name("foo")
                 .version("0.1.0")
                 .builds(vec![FakeBuild::default().s3_build_log("A build log")])
-                .create()?;
+                .create_async()
+                .await?;
 
-            let page = kuchikiki::parse_html().one(
-                env.frontend()
-                    .get("/crate/foo/0.1.0/builds")
-                    .send()?
-                    .text()?,
-            );
+            let web = env.web_app().await;
+
+            let page = kuchikiki::parse_html()
+                .one(web.get("/crate/foo/0.1.0/builds").await?.text().await?);
 
             let node = page.select("ul > li a.release").unwrap().next().unwrap();
-            let attrs = node.attributes.borrow();
-            let build_url = attrs.get("href").unwrap();
+            let build_url = {
+                let attrs = node.attributes.borrow();
+                attrs.get("href").unwrap().to_owned()
+            };
 
-            let page = kuchikiki::parse_html().one(env.frontend().get(build_url).send()?.text()?);
+            let page = kuchikiki::parse_html().one(web.get(&build_url).await?.text().await?);
 
             let log = page.select("pre").unwrap().next().unwrap().text_contents();
 
@@ -261,7 +330,7 @@ mod tests {
 
             // now get the log with the specific filename in the URL
             let log = kuchikiki::parse_html()
-                .one(env.frontend().get(&all_log_links[0].1).send()?.text()?)
+                .one(web.get(&all_log_links[0].1).await?.text().await?)
                 .select("pre")
                 .unwrap()
                 .next()
@@ -276,8 +345,9 @@ mod tests {
 
     #[test]
     fn s3_build_logs_multiple_targets() {
-        wrapper(|env| {
-            env.fake_release()
+        async_wrapper(|env| async move {
+            env.async_fake_release()
+                .await
                 .name("foo")
                 .version("0.1.0")
                 .builds(vec![FakeBuild::default()
@@ -286,20 +356,21 @@ mod tests {
                         "other_target",
                         "other target build log",
                     )])
-                .create()?;
+                .create_async()
+                .await?;
 
-            let page = kuchikiki::parse_html().one(
-                env.frontend()
-                    .get("/crate/foo/0.1.0/builds")
-                    .send()?
-                    .text()?,
-            );
+            let web = env.web_app().await;
+
+            let page = kuchikiki::parse_html()
+                .one(web.get("/crate/foo/0.1.0/builds").await?.text().await?);
 
             let node = page.select("ul > li a.release").unwrap().next().unwrap();
-            let attrs = node.attributes.borrow();
-            let build_url = attrs.get("href").unwrap();
+            let build_url = {
+                let attrs = node.attributes.borrow();
+                attrs.get("href").unwrap().to_owned()
+            };
 
-            let page = kuchikiki::parse_html().one(env.frontend().get(build_url).send()?.text()?);
+            let page = kuchikiki::parse_html().one(web.get(&build_url).await?.text().await?);
 
             let log = page.select("pre").unwrap().next().unwrap().text_contents();
 
@@ -325,7 +396,7 @@ mod tests {
                 (&all_log_links[1].1, "A build log"),
             ] {
                 let other_log = kuchikiki::parse_html()
-                    .one(env.frontend().get(url).send()?.text()?)
+                    .one(web.get(url).await?.text().await?)
                     .select("pre")
                     .unwrap()
                     .next()
@@ -341,27 +412,29 @@ mod tests {
 
     #[test]
     fn both_build_logs() {
-        wrapper(|env| {
-            env.fake_release()
+        async_wrapper(|env| async move {
+            env.async_fake_release()
+                .await
                 .name("foo")
                 .version("0.1.0")
                 .builds(vec![FakeBuild::default()
                     .s3_build_log("A build log")
                     .db_build_log("Another build log")])
-                .create()?;
+                .create_async()
+                .await?;
 
-            let page = kuchikiki::parse_html().one(
-                env.frontend()
-                    .get("/crate/foo/0.1.0/builds")
-                    .send()?
-                    .text()?,
-            );
+            let web = env.web_app().await;
+
+            let page = kuchikiki::parse_html()
+                .one(web.get("/crate/foo/0.1.0/builds").await?.text().await?);
 
             let node = page.select("ul > li a.release").unwrap().next().unwrap();
-            let attrs = node.attributes.borrow();
-            let url = attrs.get("href").unwrap();
+            let url = {
+                let attrs = node.attributes.borrow();
+                attrs.get("href").unwrap().to_owned()
+            };
 
-            let page = kuchikiki::parse_html().one(env.frontend().get(url).send()?.text()?);
+            let page = kuchikiki::parse_html().one(web.get(&url).await?.text().await?);
 
             let log = page.select("pre").unwrap().next().unwrap().text_contents();
 
@@ -375,15 +448,21 @@ mod tests {
     #[test_case("42")]
     #[test_case("nan")]
     fn non_existing_build(build_id: &str) {
-        wrapper(|env| {
-            env.fake_release().name("foo").version("0.1.0").create()?;
+        async_wrapper(|env| async move {
+            env.async_fake_release()
+                .await
+                .name("foo")
+                .version("0.1.0")
+                .create_async()
+                .await?;
 
             let res = env
-                .frontend()
+                .web_app()
+                .await
                 .get(&format!("/crate/foo/0.1.0/builds/{build_id}"))
-                .send()?;
+                .await?;
             assert_eq!(res.status(), 404);
-            assert!(res.text()?.contains("no such build"));
+            assert!(res.text().await?.contains("no such build"));
 
             Ok(())
         });

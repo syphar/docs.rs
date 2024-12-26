@@ -2,7 +2,12 @@
 mod macros;
 
 use self::macros::MetricFromOpts;
-use crate::{cdn, db::Pool, target::TargetAtom, AsyncBuildQueue, Config};
+use crate::{
+    cdn,
+    db::{CrateId, Pool, ReleaseId},
+    target::TargetAtom,
+    AsyncBuildQueue, Config,
+};
 use anyhow::Error;
 use dashmap::DashMap;
 use prometheus::proto::MetricFamily;
@@ -37,6 +42,18 @@ pub const CDN_INVALIDATION_HISTOGRAM_BUCKETS: &[f64; 11] = &[
     6000.0,  // 100
     12000.0, // 200
     24000.0, // 400
+];
+
+/// buckets for documentation size, in MiB
+/// Base for some estimates:
+/// * `itertools` docs is an 8.2 MB archive with 144 MB of docs
+/// * the biggest doc archive know of (`stm32ral`) is an 1.8 GiB archive,
+///   which would be an estimated 32 GiB of docs based on the compression
+///   ratio above.
+/// * we don't know the distribution of these doc sizes yet.
+pub const DOCUMENTATION_SIZE_BUCKETS: &[f64; 16] = &[
+    1.0, 2.0, 4.0, 8.0, 16.0, 32.0, 64.0, 128.0, 256.0, 512.0, 1024.0, 2048.0, 4096.0, 8192.0,
+    16384.0, 32768.0,
 ];
 
 /// the measured times of building crates will be put into these buckets
@@ -133,9 +150,9 @@ pub(crate) fn duration_to_seconds(d: Duration) -> f64 {
 
 #[derive(Debug, Default)]
 pub(crate) struct RecentlyAccessedReleases {
-    crates: DashMap<i32, Instant>,
-    versions: DashMap<i32, Instant>,
-    platforms: DashMap<(i32, TargetAtom), Instant>,
+    crates: DashMap<CrateId, Instant>,
+    versions: DashMap<ReleaseId, Instant>,
+    platforms: DashMap<(ReleaseId, TargetAtom), Instant>,
 }
 
 impl RecentlyAccessedReleases {
@@ -143,7 +160,7 @@ impl RecentlyAccessedReleases {
         Self::default()
     }
 
-    pub(crate) fn record(&self, krate: i32, version: i32, target: &str) {
+    pub(crate) fn record(&self, krate: CrateId, version: ReleaseId, target: &str) {
         if self.platforms.len() > 100_000 {
             // Avoid filling the maps _too_ much, we should never get anywhere near this limit
             return;

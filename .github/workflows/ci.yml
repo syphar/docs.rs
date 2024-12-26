@@ -10,7 +10,7 @@ on:
 
 env:
   RUST_BACKTRACE: 1
-  RUST_CACHE_KEY: rust-cache-20240327
+  RUST_CACHE_KEY: rust-cache-20241114
   DOCSRS_PREFIX: ignored/cratesfyi-prefix
   DOCSRS_DATABASE_URL: postgresql://cratesfyi:password@localhost:15432
   DOCSRS_LOG: docs_rs=debug,rustwide=info
@@ -180,8 +180,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: denoland/setup-deno@v2
       - name: install `just`
         run: sudo snap install --edge --classic just
-      - run: npm install -g eslint@8
       - run: just lint-js
