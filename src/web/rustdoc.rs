@@ -412,7 +412,7 @@ impl RustdocHtmlParams {
         })
     }
 
-    pub(crate) fn storage_path(&self) -> Cow<'_, str> {
+    pub(crate) fn storage_path(&'_ self) -> Cow<'_, str> {
         let storage_path = self.path();
 
         if self.path_is_folder() {
@@ -526,7 +526,9 @@ pub(crate) async fn rustdoc_html_server_handler(
         );
     }
 
-    let storage_path = params.storage_path();
+    // FIXME: not sure why I can't use the original Cow<'str> here,
+    // I'm getting "borrowed value does not live long enough"
+    let storage_path = params.storage_path().into_owned();
 
     trace!(?storage_path, ?inner_path, "try fetching from storage");
 
@@ -608,7 +610,7 @@ pub(crate) async fn rustdoc_html_server_handler(
                     krate = params.name,
                     version = krate.version.to_string(),
                     original_path = params.path(),
-                    storage_path = storage_path.as_ref(),
+                    storage_path,
                     "Couldn't find crate documentation root on storage.
                         Something is wrong with the build."
                 )
@@ -674,18 +676,20 @@ pub(crate) async fn rustdoc_html_server_handler(
         .render_in_threadpool({
             let metrics = metrics.clone();
             let current_target = current_target.to_owned();
+            let is_latest_url = params.version.is_latest();
+            let inner_path = inner_path.to_owned();
             move || {
                 let metadata = krate.metadata.clone();
                 Ok(RustdocPage {
                     latest_path,
                     permalink_path,
-                    inner_path: inner_path.to_owned(),
+                    inner_path,
                     is_latest_version,
-                    is_latest_url: params.version.is_latest(),
+                    is_latest_url,
                     is_prerelease,
                     metadata,
                     krate,
-                    current_target: current_target.to_owned(),
+                    current_target,
                 }
                 .into_response(
                     &blob.content,
