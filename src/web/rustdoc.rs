@@ -391,16 +391,49 @@ impl RustdocHtmlParams {
         self.path.as_deref().unwrap_or("")
     }
 
+    pub(crate) fn path_is_folder(&self) -> bool {
+        if let Some(ref path) = self.path {
+            path.ends_with('/')
+        } else {
+            true
+        }
+    }
+
+    pub(crate) fn file_extension(&self) -> Option<&str> {
+        self.path.as_deref().and_then(|path| {
+            path.rsplit_once('.').and_then(|(_, ext)| {
+                if ext.contains('/') {
+                    // to handle cases like `foo.html/bar` where I want `None`
+                    None
+                } else {
+                    Some(ext)
+                }
+            })
+        })
+    }
+
     pub(crate) fn storage_path(&self) -> Cow<'_, str> {
         let storage_path = self.path();
 
-        if storage_path.ends_with('/') {
+        if self.path_is_folder() {
             let mut storage_path = storage_path.to_owned();
+            if !storage_path.ends_with('/') {
+                // this can happen in the case of an empty path
+                storage_path.push('/');
+            }
             storage_path.push_str("index.html");
             storage_path.into()
         } else {
             storage_path.into()
         }
+    }
+
+    pub(crate) fn update<F>(mut self, f: F) -> Self
+    where
+        F: FnOnce(&mut Self),
+    {
+        f(&mut self);
+        self
     }
 }
 
@@ -516,20 +549,23 @@ pub(crate) async fn rustdoc_html_server_handler(
                 debug!("got error serving {}: {}", storage_path, err);
             }
 
-            {
-                // If it fails, we try again with /index.html at the end
-                let mut storage_path = storage_path.clone();
-                storage_path.push_str("/index.html");
-
-                let mut req_path = req_path.clone();
-                req_path.push("index.html");
+            if !params.path_is_folder() && params.file_extension().is_none() {
+                // for 404s we try again attaching `/index.html` if:
+                // * the path doesn't already ends with `/`, because then we already tried this path
+                // * the path doesn't contain a file extension. in this case, we won't ever find
+                //   a file with another `/index.html` attached.
+                let params = params.clone().update(|params| {
+                    let mut path = params.path().trim_end_matches('/').to_owned();
+                    path.push_str("/index.html");
+                    params.path = Some(path)
+                });
 
                 if storage
                     .rustdoc_file_exists(
                         &params.name,
                         &krate.version.to_string(),
                         krate.latest_build_id,
-                        &storage_path,
+                        &params.storage_path(),
                         krate.archive_storage,
                     )
                     .await?
@@ -537,7 +573,7 @@ pub(crate) async fn rustdoc_html_server_handler(
                     return redirect(
                         &params.name,
                         &krate.version,
-                        &req_path,
+                        params.path(),
                         CachePolicy::ForeverInCdn,
                     );
                 }
@@ -546,6 +582,8 @@ pub(crate) async fn rustdoc_html_server_handler(
             if target.is_some() {
                 // This is a target, not a module; it may not have been built.
                 // Redirect to the default target and show a search page instead of a hard 404.
+                // One example where we end up here is with intra-doc links when the
+                // link source is a target which doesn't exist in the target crate.
                 return Ok(axum_cached_redirect(
                     encode_url_path(&format!(
                         "/crate/{}/{}/target-redirect/{}",
@@ -569,7 +607,7 @@ pub(crate) async fn rustdoc_html_server_handler(
                 error!(
                     krate = params.name,
                     version = krate.version.to_string(),
-                    original_path = params.path().as_ref(),
+                    original_path = params.path(),
                     storage_path = storage_path.as_ref(),
                     "Couldn't find crate documentation root on storage.
                         Something is wrong with the build."
@@ -627,16 +665,15 @@ pub(crate) async fn rustdoc_html_server_handler(
         params.name, target_redirect, query_string
     );
 
-    metrics.recently_accessed_releases.record(
-        krate.crate_id,
-        krate.release_id,
-        target.unwrap_or(krate.metadata.default_target.as_deref().unwrap_or("")),
-    );
+    metrics
+        .recently_accessed_releases
+        .record(krate.crate_id, krate.release_id, current_target);
 
     // Build the page of documentation,
     templates
         .render_in_threadpool({
             let metrics = metrics.clone();
+            let current_target = current_target.to_owned();
             move || {
                 let metadata = krate.metadata.clone();
                 Ok(RustdocPage {
