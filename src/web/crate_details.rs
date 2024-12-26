@@ -598,7 +598,7 @@ pub(crate) async fn get_all_releases(
     )
     .fetch_optional(&mut *conn)
     .await?
-    .ok_or(AxumNope::CrateNotFound)?
+    .ok_or(AxumNope::VersionNotFound)?
     .map(MetaData::parse_doc_targets)
     .ok_or_else(|| anyhow!("empty doc targets for successful release"))?;
 
