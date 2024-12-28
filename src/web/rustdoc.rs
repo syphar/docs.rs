@@ -1,7 +1,6 @@
 //! rustdoc handler
 
 use crate::{
-    db::Pool,
     storage::rustdoc_archive_path,
     utils,
     web::{
@@ -360,6 +359,7 @@ impl RustdocHtmlParams {
                 inner: self,
                 target: None,
                 inner_path: "".into(),
+                doc_targets,
             };
         };
 
@@ -367,10 +367,7 @@ impl RustdocHtmlParams {
             let potential_target = dbg!(&path[..pos]);
             trace!(%potential_target, "potential target");
 
-            if doc_targets
-                .into_iter()
-                .any(|s| s.as_ref() == potential_target)
-            {
+            if doc_targets.iter().any(|s| s == potential_target) {
                 dbg!((
                     Some(potential_target),
                     path.get((pos + 1)..)
@@ -385,7 +382,7 @@ impl RustdocHtmlParams {
             }
         } else {
             // no slash in the path, can be target or inner path
-            if doc_targets.into_iter().any(|s| s.as_ref() == path) {
+            if doc_targets.iter().any(|s| s == path) {
                 dbg!((Some(path), ""))
             } else {
                 dbg!((None, path))
@@ -409,7 +406,7 @@ impl RustdocHtmlParams {
 
     pub(crate) fn path_is_folder(&self) -> bool {
         if let Some(ref path) = self.path {
-            path.ends_with('/')
+            path.is_empty() || path.ends_with('/')
         } else {
             true
         }
@@ -470,6 +467,12 @@ impl ParsedRustdocHtmlParams {
     }
     pub(crate) fn storage_path(&'_ self) -> Cow<'_, str> {
         self.inner.storage_path()
+    }
+    pub(crate) fn inner_path(&self) -> &str {
+        &self.inner_path
+    }
+    pub(crate) fn target(&self) -> Option<&str> {
+        self.target.as_deref()
     }
     pub(crate) fn path_is_folder(&self) -> bool {
         self.inner.path_is_folder()

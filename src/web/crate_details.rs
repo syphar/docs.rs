@@ -602,21 +602,21 @@ pub(crate) async fn get_all_releases(
     .map(MetaData::parse_doc_targets)
     .ok_or_else(|| anyhow!("empty doc targets for successful release"))?;
 
-    let (target, inner_path) = params.split_path_into_target_and_inner_path(doc_targets.iter());
+    let params = params.parse(doc_targets.iter());
 
-    let inner_path = if inner_path.is_empty() {
+    let inner_path = if params.inner_path().is_empty() {
         "index.html"
     } else {
-        inner_path
+        params.inner_path()
     };
 
-    let target = target.map(|t| format!("{t}/")).unwrap_or_default();
+    let target = params.target().map(|t| format!("{t}/")).unwrap_or_default();
 
     let res = ReleaseList {
         releases: matched_release.all_releases,
         target,
         inner_path: inner_path.to_owned(),
-        crate_name: params.name,
+        crate_name: params.name().to_owned(),
         csp_nonce: String::new(),
     };
     Ok(res.into_response())
@@ -719,18 +719,17 @@ pub(crate) async fn get_all_platforms_inner(
         .into_response());
     }
 
-    let (target, inner_path) =
-        params.split_path_into_target_and_inner_path(krate.metadata.doc_targets.iter().flatten());
+    let parms = params.parse(krate.metadata.doc_targets.iter().flatten());
 
-    let inner_path = if inner_path.is_empty() {
-        format!("{}/index.html", krate.target_name)
+    let inner_path = if params.inner_path().is_empty() {
+        format!("{}/index.html", krate.target_name.unwrap())
     } else {
-        inner_path.to_owned()
+        params.inner_path().to_owned()
         // format!("{}/{inner_path}", krate.name)
     };
 
     let current_target = if latest_release.build_status {
-        target.unwrap_or(&krate.default_target).to_owned()
+        params.target().unwrap_or(&krate.default_target).to_owned()
     } else {
         String::new()
     };
