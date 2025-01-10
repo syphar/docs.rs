@@ -719,7 +719,7 @@ pub(crate) async fn get_all_platforms_inner(
         .into_response());
     }
 
-    let parms = params.parse(krate.metadata.doc_targets.iter().flatten());
+    let parms = params.parse(krate.doc_targets.iter().flatten());
 
     let inner_path = if params.inner_path().is_empty() {
         format!("{}/index.html", krate.target_name.unwrap())
