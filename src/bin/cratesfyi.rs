@@ -6,7 +6,6 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context as _, Error, Result};
-use axum::async_trait;
 use clap::{Parser, Subcommand, ValueEnum};
 use docs_rs::cdn::CdnBackend;
 use docs_rs::db::{self, add_path_into_database, CrateId, Overrides, Pool};
@@ -542,13 +541,13 @@ enum DatabaseSubcommand {
         version: Option<i64>,
     },
 
-    /// temporary commant to update the `crates.latest_version_id` field
+    /// temporary command to update the `crates.latest_version_id` field
     UpdateLatestVersionId,
 
-    /// Updates Github/Gitlab stats for crates.
+    /// Updates GitHub/GitLab stats for crates.
     UpdateRepositoryFields,
 
-    /// Backfill GitHub/Gitlab stats for crates.
+    /// Backfill GitHub/GitLab stats for crates.
     BackfillRepositoryStats,
 
     /// Updates info for a crate from the registry's API
@@ -877,7 +876,6 @@ macro_rules! lazy {
     }
 }
 
-#[async_trait]
 impl Context for BinContext {
     lazy! {
         fn build_queue(self) -> BuildQueue = {

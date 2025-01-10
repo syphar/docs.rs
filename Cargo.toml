@@ -17,7 +17,7 @@ exclude = [
 ]
 
 [dependencies]
-sentry = { version = "0.35.0", features = ["panic", "tracing", "tower-http", "anyhow", "backtrace"] }
+sentry = { version = "0.36.0", features = ["panic", "tracing", "tower-http", "anyhow", "backtrace"] }
 log = "0.4"
 tracing = "0.1.37"
 tracing-subscriber = { version = "0.3.16", default-features = false, features = ["ansi", "fmt", "json", "env-filter", "tracing-log"] }
@@ -37,11 +37,11 @@ docsrs-metadata = { path = "crates/metadata" }
 anyhow = { version = "1.0.42", features = ["backtrace"]}
 backtrace = "0.3.61"
 thiserror = "2.0.3"
-comrak = { version = "0.31.0", default-features = false }
+comrak = { version = "0.33.0", default-features = false }
 syntect = { version = "5.0.0", default-features = false, features = ["parsing", "html", "dump-load", "regex-onig"] }
 toml = "0.8.0"
 prometheus = { version = "0.13.0", default-features = false }
-rustwide = { version = "0.18.0", features = ["unstable-toolchain-ci", "unstable"] }
+rustwide = { version = "0.19.0", features = ["unstable-toolchain-ci", "unstable"] }
 mime_guess = "2"
 zstd = "0.13.0"
 hostname = "0.4.0"
@@ -56,7 +56,7 @@ string_cache = "0.8.0"
 zip = {version = "2.2.0", default-features = false, features = ["bzip2"]}
 bzip2 = "0.5.0"
 getrandom = "0.2.1"
-itertools = { version = "0.13.0" }
+itertools = { version = "0.14.0" }
 rusqlite = { version = "0.32.1", features = ["bundled"] }
 hex = "0.4.3"
 derive_more = { version = "1.0.0", features = ["display"] }
@@ -78,11 +78,10 @@ serde_json = "1.0"
 serde_with = "3.4.0"
 
 # axum dependencies
-axum = { version = "0.7.3", features = ["macros"] }
-axum-extra = { version = "0.9.1", features = ["typed-header"] }
-hyper = { version = "1.1.0", default-features = false }
+async-trait = "0.1.83"
+axum = { version = "0.8.1", features = ["macros"] }
+axum-extra = { version = "0.10.0", features = ["typed-header"] }
 tower = "0.5.1"
-tower-service = "0.3.2"
 tower-http = { version = "0.6.0", features = ["fs", "trace", "timeout", "catch-panic"] }
 mime = "0.3.16"
 percent-encoding = "2.2.0"
@@ -127,7 +126,7 @@ debug = "line-tables-only"
 
 [build-dependencies]
 time = "0.3"
-gix = { version = "0.68.0", default-features = false }
+gix = { version = "0.69.1", default-features = false }
 string_cache_codegen = "0.5.1"
 walkdir = "2"
 anyhow = { version = "1.0.42", features = ["backtrace"] }

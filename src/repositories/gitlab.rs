@@ -1,5 +1,5 @@
 use crate::error::Result;
-use axum::async_trait;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use reqwest::{
     header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, USER_AGENT},
@@ -98,7 +98,7 @@ impl RepositoryForge for GitLab {
 
     async fn fetch_repository(&self, name: &RepositoryName) -> Result<Option<Repository>> {
         let project_path = format!("{}/{}", name.owner, name.repo);
-        // Fetch the latest information from the Gitlab API.
+        // Fetch the latest information from the GitLab API.
         let response: (GraphResponse<GraphProjectNode>, Option<usize>) = self
             .graphql(
                 GRAPHQL_SINGLE,
