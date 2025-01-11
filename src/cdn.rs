@@ -25,7 +25,7 @@ use uuid::Uuid;
 const MAX_CLOUDFRONT_WILDCARD_INVALIDATIONS: i32 = 13;
 
 #[derive(Debug, EnumString)]
-pub(crate) enum CdnKind {
+pub enum CdnKind {
     #[strum(ascii_case_insensitive)]
     Dummy,
 

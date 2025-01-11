@@ -1,0 +1,14 @@
+[package]
+name = "docs-rs-consistency-check"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+crates-index = { version = "3.0.0", default-features = false, features = ["git", "git-performance", "parallel"] }
+docs-rs = { path = "../../" }
+itertools = { version = "0.14.0" }
+rayon = { workspace = true }
+sqlx = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

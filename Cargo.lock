@@ -1672,7 +1672,6 @@ dependencies = [
  "clap",
  "comrak",
  "constant_time_eq",
- "crates-index",
  "crates-index-diff",
  "criterion",
  "dashmap",
@@ -1691,7 +1690,6 @@ dependencies = [
  "http-body-util",
  "humantime",
  "indoc",
- "itertools 0.14.0",
  "kuchikiki",
  "log",
  "lol_html",
@@ -1740,6 +1738,20 @@ dependencies = [
  "walkdir",
  "zip",
  "zstd",
+]
+
+[[package]]
+name = "docs-rs-consistency-check"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crates-index",
+ "docs-rs",
+ "itertools 0.14.0",
+ "rayon",
+ "sqlx",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

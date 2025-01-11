@@ -1,6 +1,6 @@
 use super::data::{Crate, Crates, Release, Releases};
-use crate::Config;
 use anyhow::Result;
+use docs_rs::Config;
 use itertools::Itertools;
 
 pub(super) async fn load(conn: &mut sqlx::PgConnection, config: &Config) -> Result<Crates> {
@@ -62,7 +62,7 @@ pub(super) async fn load(conn: &mut sqlx::PgConnection, config: &Config) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::async_wrapper;
+    use docs_rs::test::async_wrapper;
 
     #[test]
     fn test_load() {

@@ -18,7 +18,7 @@ pub use font_awesome_as_a_crate::icons;
 mod build_queue;
 pub mod cdn;
 mod config;
-mod context;
+pub mod context;
 pub mod db;
 mod docbuilder;
 mod error;
@@ -28,7 +28,7 @@ mod registry_api;
 pub mod repositories;
 pub mod storage;
 #[cfg(test)]
-mod test;
+pub mod test;
 pub mod utils;
 mod web;
 

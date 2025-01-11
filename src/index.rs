@@ -2,7 +2,7 @@ use crate::error::Result;
 use crate::utils::report_error;
 use anyhow::Context;
 use crates_index_diff::gix;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::AtomicBool;
 
@@ -56,18 +56,6 @@ impl Index {
         Ok(diff)
     }
 
-    pub(crate) fn crates(&self) -> Result<crates_index::GitIndex> {
-        tracing::debug!("Opening with `crates_index`");
-        // crates_index requires the repo url to match the existing origin or it tries to reinitialize the repo
-        let repo_url = self
-            .repository_url
-            .as_deref()
-            .unwrap_or("https://github.com/rust-lang/crates.io-index");
-        let mut index = crates_index::GitIndex::with_path(&self.path, repo_url)?;
-        index.update()?;
-        Ok(index)
-    }
-
     pub fn run_git_gc(&self) {
         let gc = Command::new("git")
             .arg("-C")
@@ -83,5 +71,9 @@ impl Index {
 
     pub fn repository_url(&self) -> Option<&str> {
         self.repository_url.as_deref()
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 }

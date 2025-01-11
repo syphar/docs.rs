@@ -15,7 +15,6 @@ pub(crate) use self::rustc_version::{get_correct_docsrs_style_file, parse_rustc_
 pub(crate) use self::cargo_metadata::{Dependency, Target};
 
 mod cargo_metadata;
-pub mod consistency;
 mod copy;
 pub mod daemon;
 mod html;
@@ -108,7 +107,7 @@ where
 /// })
 /// .await?
 /// ```
-pub(crate) async fn spawn_blocking<F, R>(f: F) -> Result<R>
+pub async fn spawn_blocking<F, R>(f: F) -> Result<R>
 where
     F: FnOnce() -> Result<R> + Send + 'static,
     R: Send + 'static,

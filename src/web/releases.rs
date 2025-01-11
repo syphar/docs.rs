@@ -22,7 +22,6 @@ use axum::{
 use base64::{engine::general_purpose::STANDARD as b64, Engine};
 use chrono::{DateTime, Utc};
 use futures_util::stream::TryStreamExt;
-use itertools::Itertools;
 use rinja::Template;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -744,7 +743,7 @@ pub(crate) async fn build_queue_handler(
     .collect();
 
     let mut rebuild_queue = Vec::new();
-    let mut queue = build_queue
+    let mut queue: Vec<_> = build_queue
         .queued_crates()
         .await?
         .into_iter()
@@ -754,7 +753,7 @@ pub(crate) async fn build_queue_handler(
                 *name == krate.name && *version == krate.version
             })
         })
-        .collect_vec();
+        .collect();
 
     queue.retain_mut(|krate| {
         if krate.priority >= REBUILD_PRIORITY {

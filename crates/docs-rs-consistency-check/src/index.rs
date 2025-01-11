@@ -1,11 +1,16 @@
 use super::data::{Crate, Crates, Release, Releases};
-use crate::Index;
 use anyhow::Result;
+use docs_rs::Index;
 use rayon::iter::ParallelIterator;
 
 pub(super) fn load(index: &Index) -> Result<Crates> {
+    let repo_url = index
+        .repository_url()
+        .unwrap_or("https://github.com/rust-lang/crates.io-index");
+
+    let mut index = crates_index::GitIndex::with_path(index.path(), repo_url)?;
+    index.update()?;
     let mut result: Crates = index
-        .crates()?
         .crates_parallel()
         .map(|krate| {
             krate.map(|krate| {
