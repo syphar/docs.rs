@@ -1,52 +1,25 @@
-use std::env;
-use std::fmt::Write;
-use std::path::PathBuf;
-
 use anyhow::{Context as _, Result};
-use clap::{Parser, Subcommand, ValueEnum};
-use docs_rs::context::BinContext;
-use docs_rs::db::{self, add_path_into_database, CrateId, Overrides};
-use docs_rs::utils::{
-    get_crate_pattern_and_priority, list_crate_priorities, remove_crate_priority,
-    set_crate_priority,
+use clap::{Parser, Subcommand};
+use docs_rs::{
+    context::BinContext,
+    db::{self, add_path_into_database, CrateId, Overrides},
+    utils::{
+        get_crate_pattern_and_priority, list_crate_priorities, remove_crate_priority,
+        set_crate_priority,
+    },
+    Context as _,
 };
-use docs_rs::Context;
 use futures_util::StreamExt;
 use humantime::Duration;
-use tracing_log::LogTracer;
+use std::{env, path::PathBuf};
 
-fn main() {
-    // set the global log::logger for backwards compatibility
-    // through rustwide.
-    rustwide::logging::init_with(LogTracer::new());
+fn main() -> Result<()> {
+    let _sentry_guard = docs_rs::logging::initialize_logging();
+    CommandLine::parse()
+        .handle_args()
+        .context("error running command")?;
 
-    let sentry_guard = docs_rs::logging::initialize_logging();
-
-    if let Err(err) = CommandLine::parse().handle_args() {
-        let mut msg = format!("Error: {err}");
-        for cause in err.chain() {
-            write!(msg, "\n\nCaused by:\n    {cause}").unwrap();
-        }
-        eprintln!("{msg}");
-
-        let backtrace = err.backtrace().to_string();
-        if !backtrace.is_empty() {
-            eprintln!("\nStack backtrace:\n{backtrace}");
-        }
-
-        // we need to drop the sentry guard here so all unsent
-        // errors are sent to sentry before
-        // process::exit kills everything.
-        drop(sentry_guard);
-        std::process::exit(1);
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-#[value(rename_all = "snake_case")]
-enum Toggle {
-    Enabled,
-    Disabled,
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Parser)]
@@ -57,12 +30,6 @@ enum Toggle {
 )]
 enum CommandLine {
     /// Starts the daemon
-    Daemon {
-        /// Enable or disable the registry watcher to automatically enqueue newly published crates
-        #[arg(long = "registry-watcher", default_value = "enabled", value_enum)]
-        registry_watcher: Toggle,
-    },
-
     /// Database operations
     Database {
         #[command(subcommand)]
@@ -81,9 +48,6 @@ impl CommandLine {
         let ctx = BinContext::new();
 
         match self {
-            Self::Daemon { registry_watcher } => {
-                docs_rs::utils::start_daemon(ctx, registry_watcher == Toggle::Enabled)?;
-            }
             Self::Database { subcommand } => subcommand.handle_args(ctx)?,
             Self::Queue { subcommand } => subcommand.handle_args(ctx)?,
         }
