@@ -139,6 +139,13 @@ name = "compression"
 harness = false
 
 [[bin]]
-name = "cratesfyi"
-test = false
-doc = false
+name = "docs_rs_webserver"
+
+[[bin]]
+name = "docs_rs_buildserver"
+
+[[bin]]
+name = "docs_rs_registry_watcher"
+
+[[bin]]
+name = "docs_rs_admin"
