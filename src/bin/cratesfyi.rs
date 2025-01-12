@@ -2,103 +2,28 @@ use std::env;
 use std::fmt::Write;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::str::FromStr;
-use std::sync::Arc;
 
-use anyhow::{anyhow, Context as _, Error, Result};
+use anyhow::{anyhow, Context as _, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use docs_rs::cdn::CdnBackend;
-use docs_rs::db::{self, add_path_into_database, CrateId, Overrides, Pool};
-use docs_rs::repositories::RepositoryStatsUpdater;
+use docs_rs::context::BinContext;
+use docs_rs::db::{self, add_path_into_database, CrateId, Overrides};
 use docs_rs::utils::{
     get_config, get_crate_pattern_and_priority, list_crate_priorities, queue_builder,
     remove_crate_priority, set_config, set_crate_priority, ConfigName,
 };
 use docs_rs::{
-    start_background_metrics_webserver, start_web_server, AsyncBuildQueue, AsyncStorage,
-    BuildQueue, Config, Context, Index, InstanceMetrics, PackageKind, RegistryApi, RustwideBuilder,
-    ServiceMetrics, Storage,
+    start_background_metrics_webserver, start_web_server, Context, PackageKind, RustwideBuilder,
 };
 use futures_util::StreamExt;
 use humantime::Duration;
-use once_cell::sync::OnceCell;
-use sentry::{
-    integrations::panic as sentry_panic, integrations::tracing as sentry_tracing,
-    TransactionContext,
-};
-use tokio::runtime::{Builder, Runtime};
 use tracing_log::LogTracer;
-use tracing_subscriber::{filter::Directive, prelude::*, EnvFilter};
 
 fn main() {
     // set the global log::logger for backwards compatibility
     // through rustwide.
     rustwide::logging::init_with(LogTracer::new());
 
-    let log_formatter = {
-        let log_format = env::var("DOCSRS_LOG_FORMAT").unwrap_or_default();
-
-        if log_format == "json" {
-            tracing_subscriber::fmt::layer().json().boxed()
-        } else {
-            tracing_subscriber::fmt::layer().boxed()
-        }
-    };
-
-    let tracing_registry = tracing_subscriber::registry().with(log_formatter).with(
-        EnvFilter::builder()
-            .with_default_directive(Directive::from_str("docs_rs=info").unwrap())
-            .with_env_var("DOCSRS_LOG")
-            .from_env_lossy(),
-    );
-
-    let _sentry_guard = if let Ok(sentry_dsn) = env::var("SENTRY_DSN") {
-        tracing::subscriber::set_global_default(tracing_registry.with(
-            sentry_tracing::layer().event_filter(|md| {
-                if md.fields().field("reported_to_sentry").is_some() {
-                    sentry_tracing::EventFilter::Ignore
-                } else {
-                    sentry_tracing::default_event_filter(md)
-                }
-            }),
-        ))
-        .unwrap();
-
-        let traces_sample_rate = env::var("SENTRY_TRACES_SAMPLE_RATE")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0.0);
-
-        let traces_sampler = move |ctx: &TransactionContext| -> f32 {
-            if let Some(sampled) = ctx.sampled() {
-                // if the transaction was already marked as "to be sampled" by
-                // the JS/frontend SDK, we want to sample it in the backend too.
-                return if sampled { 1.0 } else { 0.0 };
-            }
-
-            let op = ctx.operation();
-            if op == "docbuilder.build_package" {
-                // record all transactions for builds
-                1.
-            } else {
-                traces_sample_rate
-            }
-        };
-
-        Some(sentry::init((
-            sentry_dsn,
-            sentry::ClientOptions {
-                release: Some(docs_rs::BUILD_VERSION.into()),
-                attach_stacktrace: true,
-                traces_sampler: Some(Arc::new(traces_sampler)),
-                ..Default::default()
-            }
-            .add_integration(sentry_panic::PanicIntegration::default()),
-        )))
-    } else {
-        tracing::subscriber::set_global_default(tracing_registry).unwrap();
-        None
-    };
+    let sentry_guard = docs_rs::logging::initialize_logging();
 
     if let Err(err) = CommandLine::parse().handle_args() {
         let mut msg = format!("Error: {err}");
@@ -115,7 +40,7 @@ fn main() {
         // we need to drop the sentry guard here so all unsent
         // errors are sent to sentry before
         // process::exit kills everything.
-        drop(_sentry_guard);
+        drop(sentry_guard);
         std::process::exit(1);
     }
 }
@@ -829,143 +754,4 @@ enum DeleteSubcommand {
         #[arg(name = "VERSION")]
         version: String,
     },
-}
-
-struct BinContext {
-    build_queue: OnceCell<Arc<BuildQueue>>,
-    async_build_queue: tokio::sync::OnceCell<Arc<AsyncBuildQueue>>,
-    storage: OnceCell<Arc<Storage>>,
-    cdn: tokio::sync::OnceCell<Arc<CdnBackend>>,
-    config: OnceCell<Arc<Config>>,
-    pool: OnceCell<Pool>,
-    service_metrics: OnceCell<Arc<ServiceMetrics>>,
-    instance_metrics: OnceCell<Arc<InstanceMetrics>>,
-    index: OnceCell<Arc<Index>>,
-    registry_api: OnceCell<Arc<RegistryApi>>,
-    repository_stats_updater: OnceCell<Arc<RepositoryStatsUpdater>>,
-    runtime: OnceCell<Arc<Runtime>>,
-}
-
-impl BinContext {
-    fn new() -> Self {
-        Self {
-            build_queue: OnceCell::new(),
-            async_build_queue: tokio::sync::OnceCell::new(),
-            storage: OnceCell::new(),
-            cdn: tokio::sync::OnceCell::new(),
-            config: OnceCell::new(),
-            pool: OnceCell::new(),
-            service_metrics: OnceCell::new(),
-            instance_metrics: OnceCell::new(),
-            index: OnceCell::new(),
-            registry_api: OnceCell::new(),
-            repository_stats_updater: OnceCell::new(),
-            runtime: OnceCell::new(),
-        }
-    }
-}
-
-macro_rules! lazy {
-    ( $(fn $name:ident($self:ident) -> $type:ty = $init:expr);+ $(;)? ) => {
-        $(fn $name(&$self) -> Result<Arc<$type>> {
-            Ok($self
-                .$name
-                .get_or_try_init::<_, Error>(|| Ok(Arc::new($init)))?
-                .clone())
-        })*
-    }
-}
-
-impl Context for BinContext {
-    lazy! {
-        fn build_queue(self) -> BuildQueue = {
-            let runtime = self.runtime()?;
-            BuildQueue::new(
-                runtime.clone(),
-                runtime.block_on(self.async_build_queue())?
-            )
-        };
-        fn storage(self) -> Storage = {
-            let runtime = self.runtime()?;
-            Storage::new(
-                runtime.block_on(self.async_storage())?,
-                runtime
-           )
-        };
-        fn config(self) -> Config = Config::from_env()?;
-        fn service_metrics(self) -> ServiceMetrics = {
-            ServiceMetrics::new()?
-        };
-        fn instance_metrics(self) -> InstanceMetrics = InstanceMetrics::new()?;
-        fn runtime(self) -> Runtime = {
-            Builder::new_multi_thread()
-                .enable_all()
-                .build()?
-        };
-        fn index(self) -> Index = {
-            let config = self.config()?;
-            let path = config.registry_index_path.clone();
-            if let Some(registry_url) = config.registry_url.clone() {
-                Index::from_url(path, registry_url)
-            } else {
-                Index::new(path)
-            }?
-        };
-        fn registry_api(self) -> RegistryApi = {
-            let config = self.config()?;
-            RegistryApi::new(config.registry_api_host.clone(), config.crates_io_api_call_retries)?
-        };
-        fn repository_stats_updater(self) -> RepositoryStatsUpdater = {
-            let config = self.config()?;
-            let pool = self.pool()?;
-            RepositoryStatsUpdater::new(&config, pool)
-        };
-    }
-
-    async fn async_pool(&self) -> Result<Pool> {
-        self.pool()
-    }
-
-    fn pool(&self) -> Result<Pool> {
-        Ok(self
-            .pool
-            .get_or_try_init::<_, Error>(|| {
-                Ok(Pool::new(
-                    &*self.config()?,
-                    self.runtime()?,
-                    self.instance_metrics()?,
-                )?)
-            })?
-            .clone())
-    }
-
-    async fn async_storage(&self) -> Result<Arc<AsyncStorage>> {
-        Ok(Arc::new(
-            AsyncStorage::new(self.pool()?, self.instance_metrics()?, self.config()?).await?,
-        ))
-    }
-
-    async fn async_build_queue(&self) -> Result<Arc<AsyncBuildQueue>> {
-        Ok(self
-            .async_build_queue
-            .get_or_try_init(|| async {
-                Ok::<_, Error>(Arc::new(AsyncBuildQueue::new(
-                    self.pool()?,
-                    self.instance_metrics()?,
-                    self.config()?,
-                    self.async_storage().await?,
-                )))
-            })
-            .await?
-            .clone())
-    }
-
-    async fn cdn(&self) -> Result<Arc<CdnBackend>> {
-        let config = self.config()?;
-        Ok(self
-            .cdn
-            .get_or_init(|| async { Arc::new(CdnBackend::new(&config).await) })
-            .await
-            .clone())
-    }
 }
