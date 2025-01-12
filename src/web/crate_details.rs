@@ -728,12 +728,15 @@ pub(crate) async fn get_all_platforms_inner(
 
     let params = params.parse(doc_targets.iter());
 
-    let inner_path = if params.inner_path().is_empty() {
-        format!("{}/index.html", krate.target_name.unwrap())
-    } else {
-        params.inner_path().to_owned()
-        // format!("{}/{inner_path}", krate.name)
-    };
+    let inner_path = format!(
+        "{}/{}",
+        matched_release.target_name().unwrap(),
+        if params.inner_path().is_empty() {
+            "index.html"
+        } else {
+            params.inner_path()
+        }
+    );
 
     let latest_release = latest_release(&matched_release.all_releases)
         .expect("we couldn't end up here without releases");
