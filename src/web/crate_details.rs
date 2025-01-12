@@ -719,7 +719,14 @@ pub(crate) async fn get_all_platforms_inner(
         .into_response());
     }
 
-    let parms = params.parse(krate.doc_targets.iter().flatten());
+    let doc_targets: Vec<_> = krate
+        .doc_targets
+        .map(MetaData::parse_doc_targets)
+        .into_iter()
+        .flatten()
+        .collect();
+
+    let params = params.parse(doc_targets.iter());
 
     let inner_path = if params.inner_path().is_empty() {
         format!("{}/index.html", krate.target_name.unwrap())
@@ -728,17 +735,23 @@ pub(crate) async fn get_all_platforms_inner(
         // format!("{}/{inner_path}", krate.name)
     };
 
-    let current_target = if latest_release.build_status {
-        params.target().unwrap_or(&krate.default_target).to_owned()
+    let latest_release = latest_release(&matched_release.all_releases)
+        .expect("we couldn't end up here without releases");
+
+    let current_target = if latest_release.build_status.is_success() {
+        params
+            .target()
+            .unwrap_or(&krate.default_target.unwrap())
+            .to_owned()
     } else {
         String::new()
     };
 
     Ok(PlatformList {
         metadata: ShortMetadata {
-            name: params.name,
+            name: params.name().to_owned(),
             version: matched_release.version().clone(),
-            req_version: params.version.clone(),
+            req_version: params.version().clone(),
             doc_targets,
         },
         inner_path: inner_path.to_owned(),
