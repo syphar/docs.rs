@@ -440,14 +440,6 @@ impl RustdocHtmlParams {
             storage_path.into()
         }
     }
-
-    pub(crate) fn update<F>(mut self, f: F) -> Self
-    where
-        F: FnOnce(&mut Self),
-    {
-        f(&mut self);
-        self
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -483,6 +475,7 @@ impl ParsedRustdocHtmlParams {
     pub(crate) fn path(&self) -> &str {
         self.inner.path()
     }
+
     pub(crate) fn update<F>(self, f: F) -> Self
     where
         F: FnOnce(&mut RustdocHtmlParams),
@@ -581,8 +574,6 @@ pub(crate) async fn rustdoc_html_server_handler(
         );
     }
 
-    // FIXME: not sure why I can't use the original Cow<'str> here,
-    // I'm getting "borrowed value does not live long enough"
     let storage_path = params.storage_path().into_owned();
 
     trace!(
@@ -607,7 +598,7 @@ pub(crate) async fn rustdoc_html_server_handler(
             if !matches!(err.downcast_ref(), Some(AxumNope::ResourceNotFound))
                 && !matches!(err.downcast_ref(), Some(crate::storage::PathNotFoundError))
             {
-                debug!("got error serving {}: {}", storage_path, err);
+                error!("got error serving {}: {}", storage_path, err);
             }
 
             if !params.path_is_folder() && params.file_extension().is_none() {
