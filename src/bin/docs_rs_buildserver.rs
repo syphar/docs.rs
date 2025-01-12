@@ -30,7 +30,7 @@ enum CommandLine {
         #[command(subcommand)]
         subcommand: BuildSubcommand,
     },
-    StartBuildServer {
+    Start {
         #[arg(name = "SOCKET_ADDR", default_value = "0.0.0.0:3000")]
         metric_server_socket_addr: SocketAddr,
     },
@@ -42,7 +42,7 @@ impl CommandLine {
 
         match self {
             Self::Build { subcommand } => subcommand.handle_args(ctx)?,
-            Self::StartBuildServer {
+            Self::Start {
                 metric_server_socket_addr,
             } => {
                 start_background_metrics_webserver(Some(metric_server_socket_addr), &ctx)?;
