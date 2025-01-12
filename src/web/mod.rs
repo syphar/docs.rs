@@ -441,7 +441,7 @@ async fn apply_middleware<C: Context>(
     ))
 }
 
-pub(crate) async fn build_axum_app<C: Context>(
+pub async fn build_axum_app<C: Context>(
     context: &C,
     template_data: Arc<TemplateData>,
 ) -> Result<AxumRouter, Error> {
@@ -526,7 +526,7 @@ pub fn start_web_server<C: Context>(addr: Option<SocketAddr>, context: &C) -> Re
     Ok(())
 }
 
-async fn shutdown_signal() {
+pub async fn shutdown_signal() {
     let ctrl_c = async {
         tokio::signal::ctrl_c()
             .await

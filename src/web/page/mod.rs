@@ -1,7 +1,7 @@
 pub(crate) mod templates;
 pub(crate) mod web_page;
 
-pub(crate) use templates::TemplateData;
+pub use templates::TemplateData;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct GlobalAlert {

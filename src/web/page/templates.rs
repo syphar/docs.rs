@@ -29,7 +29,7 @@ pub struct Body;
 
 /// Holds all data relevant to templating
 #[derive(Debug)]
-pub(crate) struct TemplateData {
+pub struct TemplateData {
     /// rendering threadpool for CPU intensive rendering.
     /// When the app is shut down, the pool won't wait
     /// for pending tasks in this pool.
@@ -43,7 +43,7 @@ pub(crate) struct TemplateData {
 }
 
 impl TemplateData {
-    pub(crate) fn new(num_threads: usize) -> Result<Self> {
+    pub fn new(num_threads: usize) -> Result<Self> {
         trace!("Loading templates");
 
         let data = Self {

@@ -31,7 +31,7 @@ pub mod storage;
 #[cfg(test)]
 mod test;
 pub mod utils;
-mod web;
+pub mod web;
 
 #[allow(dead_code)]
 mod target {

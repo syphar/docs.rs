@@ -13,58 +13,58 @@ pub struct Config {
     pub registry_api_host: Url,
 
     /// How long to wait between registry checks
-    pub(crate) delay_between_registry_fetches: Duration,
+    pub delay_between_registry_fetches: Duration,
 
     // Database connection params
-    pub(crate) database_url: String,
-    pub(crate) max_pool_size: u32,
-    pub(crate) min_pool_idle: u32,
+    pub database_url: String,
+    pub max_pool_size: u32,
+    pub min_pool_idle: u32,
 
     // Storage params
-    pub(crate) storage_backend: StorageKind,
+    pub storage_backend: StorageKind,
 
     // AWS SDK configuration
-    pub(crate) aws_sdk_max_retries: u32,
+    pub aws_sdk_max_retries: u32,
 
     // S3 params
-    pub(crate) s3_bucket: String,
-    pub(crate) s3_region: String,
-    pub(crate) s3_endpoint: Option<String>,
+    pub s3_bucket: String,
+    pub s3_region: String,
+    pub s3_endpoint: Option<String>,
     #[cfg(test)]
-    pub(crate) s3_bucket_is_temporary: bool,
+    pub s3_bucket_is_temporary: bool,
 
     // CloudFront domain which we can access
     // public S3 files through
-    pub(crate) s3_static_root_path: String,
+    pub s3_static_root_path: String,
 
     // Github authentication
-    pub(crate) github_accesstoken: Option<String>,
-    pub(crate) github_updater_min_rate_limit: u32,
+    pub github_accesstoken: Option<String>,
+    pub github_updater_min_rate_limit: u32,
 
     // GitLab authentication
-    pub(crate) gitlab_accesstoken: Option<String>,
+    pub gitlab_accesstoken: Option<String>,
 
     // Access token for APIs for crates.io (careful: use
     // constant_time_eq for comparisons!)
-    pub(crate) cratesio_token: Option<String>,
+    pub cratesio_token: Option<String>,
 
     // amount of retries for external API calls, mostly crates.io
     pub crates_io_api_call_retries: u32,
 
     // request timeout in seconds
-    pub(crate) request_timeout: Option<Duration>,
-    pub(crate) report_request_timeouts: bool,
+    pub request_timeout: Option<Duration>,
+    pub report_request_timeouts: bool,
 
     // Max size of the files served by the docs.rs frontend
-    pub(crate) max_file_size: usize,
-    pub(crate) max_file_size_html: usize,
+    pub max_file_size: usize,
+    pub max_file_size_html: usize,
     // The most memory that can be used to parse an HTML file
-    pub(crate) max_parse_memory: usize,
+    pub max_parse_memory: usize,
     // Time between 'git gc --auto' calls in seconds
-    pub(crate) registry_gc_interval: u64,
+    pub registry_gc_interval: u64,
 
     /// amount of threads for CPU intensive rendering
-    pub(crate) render_threads: usize,
+    pub render_threads: usize,
 
     // random crate search generates a number of random IDs to
     // efficiently find a random crate with > 100 GH stars.
@@ -73,54 +73,54 @@ pub struct Config {
     // At the time of creating this setting, it is set to
     // `500` for a ratio of 7249 over 54k crates.
     // For unit-tests the number has to be higher.
-    pub(crate) random_crate_search_view_size: u32,
+    pub random_crate_search_view_size: u32,
 
     // where do we want to store the locally cached index files
     // for the remote archives?
-    pub(crate) local_archive_cache_path: PathBuf,
+    pub local_archive_cache_path: PathBuf,
 
     // Content Security Policy
-    pub(crate) csp_report_only: bool,
+    pub csp_report_only: bool,
 
     // Cache-Control header, for versioned URLs.
     // If both are absent, don't generate the header. If only one is present,
     // generate just that directive. Values are in seconds.
-    pub(crate) cache_control_stale_while_revalidate: Option<u32>,
+    pub cache_control_stale_while_revalidate: Option<u32>,
 
     // Activate full page caching.
     // When disabled, we still cache static assets.
     // This only affects pages that depend on invalidations to work.
-    pub(crate) cache_invalidatable_responses: bool,
+    pub cache_invalidatable_responses: bool,
 
-    pub(crate) cdn_backend: CdnKind,
+    pub cdn_backend: CdnKind,
 
     /// The maximum age of a queued invalidation request before it is
     /// considered too old and we fall back to a full purge of the
     /// distributions.
-    pub(crate) cdn_max_queued_age: Duration,
+    pub cdn_max_queued_age: Duration,
 
     // CloudFront distribution ID for the web server.
     // Will be used for invalidation-requests.
     pub cloudfront_distribution_id_web: Option<String>,
     /// same for the `static.docs.rs` distribution
     pub cloudfront_distribution_id_static: Option<String>,
-    pub(crate) build_workspace_reinitialization_interval: Duration,
+    pub build_workspace_reinitialization_interval: Duration,
 
     // Build params
-    pub(crate) build_attempts: u16,
-    pub(crate) delay_between_build_attempts: Duration,
-    pub(crate) rustwide_workspace: PathBuf,
-    pub(crate) temp_dir: PathBuf,
-    pub(crate) inside_docker: bool,
-    pub(crate) docker_image: Option<String>,
-    pub(crate) build_cpu_limit: Option<u32>,
-    pub(crate) build_default_memory_limit: Option<usize>,
-    pub(crate) include_default_targets: bool,
-    pub(crate) disable_memory_limit: bool,
+    pub build_attempts: u16,
+    pub delay_between_build_attempts: Duration,
+    pub rustwide_workspace: PathBuf,
+    pub temp_dir: PathBuf,
+    pub inside_docker: bool,
+    pub docker_image: Option<String>,
+    pub build_cpu_limit: Option<u32>,
+    pub build_default_memory_limit: Option<usize>,
+    pub include_default_targets: bool,
+    pub disable_memory_limit: bool,
 
     // automatic rebuild configuration
-    pub(crate) max_queued_rebuilds: Option<u16>,
-    pub(crate) rebuild_up_to_date: Option<NaiveDate>,
+    pub max_queued_rebuilds: Option<u16>,
+    pub rebuild_up_to_date: Option<NaiveDate>,
 }
 
 impl Config {
