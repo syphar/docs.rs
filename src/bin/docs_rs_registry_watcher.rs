@@ -16,6 +16,15 @@ use tracing_log::LogTracer;
 struct Args {
     #[arg(name = "SOCKET_ADDR", default_value = "0.0.0.0:3000")]
     metric_server_socket_addr: SocketAddr,
+
+    #[arg(long = "repository-stats-updater", default_value_t = false)]
+    repository_stats_updater: bool,
+
+    #[arg(long = "cdn-invalidator", default_value_t = true)]
+    cdn_invalidator: bool,
+
+    #[arg(long = "queue-rebuilds", default_value_t = true)]
+    queue_rebuilds: bool,
 }
 
 fn main() -> Result<()> {
