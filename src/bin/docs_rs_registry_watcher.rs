@@ -28,13 +28,13 @@ struct Args {
 }
 
 fn main() -> Result<()> {
+    let args = Args::parse();
+
     // set the global log::logger for backwards compatibility
     // through rustwide.
     rustwide::logging::init_with(LogTracer::new());
 
     let _sentry_guard = docs_rs::logging::initialize_logging();
-
-    let args = Args::parse();
 
     let context = BinContext::new();
 

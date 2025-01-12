@@ -16,10 +16,9 @@ struct Args {
     socket_addr: SocketAddr,
 }
 fn main() -> Result<()> {
-    let _sentry_guard = docs_rs::logging::initialize_logging();
-
     let args = Args::parse();
 
+    let _sentry_guard = docs_rs::logging::initialize_logging();
     let context = BinContext::new();
     start_web_server(Some(args.socket_addr), &context)?;
 
