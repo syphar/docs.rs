@@ -12,7 +12,7 @@ use futures_util::{stream::TryStreamExt, StreamExt};
 use sqlx::Connection as _;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::runtime::Runtime;
+use tokio::runtime::Handle;
 use tracing::{debug, error, info, instrument};
 
 /// The static priority for background rebuilds.
@@ -414,7 +414,7 @@ impl AsyncBuildQueue {
 
 #[derive(Debug)]
 pub struct BuildQueue {
-    runtime: Arc<Runtime>,
+    runtime: Handle,
     inner: Arc<AsyncBuildQueue>,
 }
 
@@ -475,7 +475,7 @@ impl BuildQueue {
 }
 
 impl BuildQueue {
-    pub fn new(runtime: Arc<Runtime>, inner: Arc<AsyncBuildQueue>) -> Self {
+    pub fn new(runtime: Handle, inner: Arc<AsyncBuildQueue>) -> Self {
         Self { runtime, inner }
     }
 

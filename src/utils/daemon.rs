@@ -13,7 +13,7 @@ use std::future::Future;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use tokio::{runtime::Runtime, task::spawn_blocking, time::Instant};
+use tokio::{runtime::Handle, task::spawn_blocking, time::Instant};
 use tracing::{debug, info};
 
 /// Run the registry watcher
@@ -221,7 +221,7 @@ pub fn start_daemon<C: Context + Send + Sync + 'static>(
         .map_err(|err| anyhow!("web server panicked: {:?}", err))?
 }
 
-pub(crate) fn async_cron<F, Fut>(runtime: &Runtime, name: &'static str, interval: Duration, exec: F)
+pub(crate) fn async_cron<F, Fut>(runtime: &Handle, name: &'static str, interval: Duration, exec: F)
 where
     Fut: Future<Output = Result<(), Error>> + Send,
     F: Fn() -> Fut + Send + 'static,

@@ -7,7 +7,7 @@ use crate::{
     ServiceMetrics, Storage,
 };
 use std::{future::Future, sync::Arc};
-use tokio::runtime::Runtime;
+use tokio::runtime::Handle;
 
 pub trait Context {
     fn config(&self) -> Result<Arc<Config>>;
@@ -23,5 +23,5 @@ pub trait Context {
     fn index(&self) -> Result<Arc<Index>>;
     fn registry_api(&self) -> Result<Arc<RegistryApi>>;
     fn repository_stats_updater(&self) -> Result<Arc<RepositoryStatsUpdater>>;
-    fn runtime(&self) -> Result<Arc<Runtime>>;
+    fn runtime(&self) -> Result<Handle>;
 }

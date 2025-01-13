@@ -21,7 +21,7 @@ use once_cell::sync::OnceCell;
 use serde::de::DeserializeOwned;
 use sqlx::Connection as _;
 use std::{fs, future::Future, panic, rc::Rc, str::FromStr, sync::Arc};
-use tokio::runtime::{Builder, Runtime};
+use tokio::runtime::{Builder, Handle, Runtime};
 use tower::ServiceExt;
 use tracing::error;
 
@@ -533,17 +533,17 @@ impl TestEnvironment {
             .clone()
     }
 
-    pub(crate) fn runtime(&self) -> Arc<Runtime> {
-        self.runtime
-            .get_or_init(|| {
-                Arc::new(
-                    Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .expect("failed to initialize runtime"),
-                )
-            })
-            .clone()
+    pub(crate) fn runtime(&self) -> Handle {
+        let runtime = self.runtime.get_or_init(|| {
+            Arc::new(
+                Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("failed to initialize runtime"),
+            )
+        });
+
+        runtime.handle().clone()
     }
 
     pub(crate) fn index(&self) -> Arc<Index> {
@@ -674,7 +674,7 @@ impl Context for TestEnvironment {
         Ok(self.repository_stats_updater())
     }
 
-    fn runtime(&self) -> Result<Arc<Runtime>> {
+    fn runtime(&self) -> Result<Handle> {
         Ok(self.runtime())
     }
 }
@@ -683,11 +683,11 @@ impl Context for TestEnvironment {
 pub(crate) struct TestDatabase {
     pool: Pool,
     schema: String,
-    runtime: Arc<Runtime>,
+    runtime: Handle,
 }
 
 impl TestDatabase {
-    fn new(config: &Config, runtime: Arc<Runtime>, metrics: Arc<InstanceMetrics>) -> Result<Self> {
+    fn new(config: &Config, runtime: Handle, metrics: Arc<InstanceMetrics>) -> Result<Self> {
         // A random schema name is generated and used for the current connection. This allows each
         // test to create a fresh instance of the database to run within.
         let schema = format!("docs_rs_test_schema_{}", rand::random::<u64>());
