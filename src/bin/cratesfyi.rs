@@ -935,11 +935,8 @@ impl Context for BinContext {
         Ok(self
             .pool
             .get_or_try_init::<_, Error>(|| {
-                Ok(Pool::new(
-                    &*self.config()?,
-                    self.runtime()?,
-                    self.instance_metrics()?,
-                )?)
+                let runtime = self.runtime()?;
+                Ok(runtime.block_on(Pool::new(&*self.config()?, self.instance_metrics()?))?)
             })?
             .clone())
     }
