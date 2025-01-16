@@ -7,7 +7,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tokio::runtime::Runtime;
+use tokio::runtime::Handle;
 use tracing::debug;
 
 const DEFAULT_SCHEMA: &str = "public";
@@ -15,36 +15,29 @@ const DEFAULT_SCHEMA: &str = "public";
 #[derive(Debug, Clone)]
 pub struct Pool {
     async_pool: sqlx::PgPool,
-    runtime: Arc<Runtime>,
     metrics: Arc<InstanceMetrics>,
     max_size: u32,
 }
 
 impl Pool {
-    pub fn new(
-        config: &Config,
-        runtime: Arc<Runtime>,
-        metrics: Arc<InstanceMetrics>,
-    ) -> Result<Pool, PoolError> {
+    pub async fn new(config: &Config, metrics: Arc<InstanceMetrics>) -> Result<Pool, PoolError> {
         debug!(
             "creating database pool (if this hangs, consider running `docker-compose up -d db s3`)"
         );
-        Self::new_inner(config, runtime, metrics, DEFAULT_SCHEMA)
+        Self::new_inner(config, metrics, DEFAULT_SCHEMA).await
     }
 
     #[cfg(test)]
-    pub(crate) fn new_with_schema(
+    pub(crate) async fn new_with_schema(
         config: &Config,
-        runtime: Arc<Runtime>,
         metrics: Arc<InstanceMetrics>,
         schema: &str,
     ) -> Result<Pool, PoolError> {
-        Self::new_inner(config, runtime, metrics, schema)
+        Self::new_inner(config, metrics, schema).await
     }
 
-    fn new_inner(
+    async fn new_inner(
         config: &Config,
-        runtime: Arc<Runtime>,
         metrics: Arc<InstanceMetrics>,
         schema: &str,
     ) -> Result<Pool, PoolError> {
@@ -52,7 +45,6 @@ impl Pool {
         let max_lifetime = Duration::from_secs(30 * 60);
         let idle_timeout = Duration::from_secs(10 * 60);
 
-        let _guard = runtime.enter();
         let async_pool = PgPoolOptions::new()
             .max_connections(config.max_pool_size)
             .min_connections(config.min_pool_idle)
@@ -85,7 +77,6 @@ impl Pool {
         Ok(Pool {
             async_pool,
             metrics,
-            runtime,
             max_size: config.max_pool_size,
         })
     }
@@ -94,7 +85,7 @@ impl Pool {
         match self.async_pool.acquire().await {
             Ok(conn) => Ok(AsyncPoolClient {
                 inner: Some(conn),
-                runtime: self.runtime.clone(),
+                runtime: Handle::current(),
             }),
             Err(err) => {
                 self.metrics.failed_db_connections.inc();
@@ -175,7 +166,7 @@ where
 #[derive(Debug)]
 pub struct AsyncPoolClient {
     inner: Option<sqlx::pool::PoolConnection<sqlx::postgres::Postgres>>,
-    runtime: Arc<Runtime>,
+    runtime: Handle,
 }
 
 impl Deref for AsyncPoolClient {

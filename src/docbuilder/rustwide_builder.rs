@@ -102,8 +102,8 @@ pub struct RustwideBuilder {
 impl RustwideBuilder {
     pub fn init<C: Context>(context: &C) -> Result<Self> {
         let config = context.config()?;
-        let pool = context.pool()?;
         let runtime = context.runtime()?;
+        let pool = runtime.block_on(context.async_pool())?;
         let toolchain = runtime.block_on(async {
             let mut conn = pool.get_async().await?;
             get_configured_toolchain(&mut conn).await
@@ -119,7 +119,7 @@ impl RustwideBuilder {
             async_storage: runtime.block_on(context.async_storage())?,
             metrics: context.instance_metrics()?,
             registry_api: context.registry_api()?,
-            repository_stats_updater: context.repository_stats_updater()?,
+            repository_stats_updater: runtime.block_on(context.repository_stats_updater())?,
             workspace_initialize_time: Instant::now(),
         })
     }
