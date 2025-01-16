@@ -507,9 +507,9 @@ pub fn start_web_server<C: Context>(addr: Option<SocketAddr>, context: &C) -> Re
     // so it can stay sync for now and doesn't fail when they would
     // be initialized while starting the server below.
     context.storage()?;
-    context.repository_stats_updater()?;
 
     context.runtime()?.block_on(async {
+        context.repository_stats_updater().await?;
         let app = build_axum_app(context, template_data)
             .await?
             .into_make_service();

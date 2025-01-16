@@ -74,8 +74,8 @@ pub fn start_background_repository_stats_updater<C: Context>(context: &C) -> Res
     // (gitlab doesn't require to have a token). The only time this can return an error is when
     // creating a pool or if config fails, which shouldn't happen here because this is run right at
     // startup.
-    let updater = context.repository_stats_updater()?;
     let runtime = context.runtime()?;
+    let updater = runtime.block_on(context.repository_stats_updater())?;
     async_cron(
         &runtime,
         "repository stats updater",
@@ -93,7 +93,7 @@ pub fn start_background_repository_stats_updater<C: Context>(context: &C) -> Res
 
 pub fn start_background_queue_rebuild<C: Context>(context: &C) -> Result<(), Error> {
     let runtime = context.runtime()?;
-    let pool = context.pool()?;
+    let pool = runtime.block_on(context.async_pool())?;
     let config = context.config()?;
     let build_queue = runtime.block_on(context.async_build_queue())?;
 
@@ -123,8 +123,8 @@ pub fn start_background_queue_rebuild<C: Context>(context: &C) -> Result<(), Err
 pub fn start_background_cdn_invalidator<C: Context>(context: &C) -> Result<(), Error> {
     let metrics = context.instance_metrics()?;
     let config = context.config()?;
-    let pool = context.pool()?;
     let runtime = context.runtime()?;
+    let pool = runtime.block_on(context.async_pool())?;
     let cdn = runtime.block_on(context.cdn())?;
 
     if config.cloudfront_distribution_id_web.is_none()

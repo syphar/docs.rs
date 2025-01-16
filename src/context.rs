@@ -16,12 +16,13 @@ pub trait Context {
     fn storage(&self) -> Result<Arc<Storage>>;
     fn async_storage(&self) -> impl Future<Output = Result<Arc<AsyncStorage>>> + Send;
     fn cdn(&self) -> impl Future<Output = Result<Arc<CdnBackend>>> + Send;
-    fn pool(&self) -> Result<Pool>;
     fn async_pool(&self) -> impl Future<Output = Result<Pool>> + Send;
     fn service_metrics(&self) -> Result<Arc<ServiceMetrics>>;
     fn instance_metrics(&self) -> Result<Arc<InstanceMetrics>>;
     fn index(&self) -> Result<Arc<Index>>;
     fn registry_api(&self) -> Result<Arc<RegistryApi>>;
-    fn repository_stats_updater(&self) -> Result<Arc<RepositoryStatsUpdater>>;
+    fn repository_stats_updater(
+        &self,
+    ) -> impl Future<Output = Result<Arc<RepositoryStatsUpdater>>> + Send;
     fn runtime(&self) -> Result<Arc<Runtime>>;
 }
