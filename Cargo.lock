@@ -1979,6 +1979,7 @@ dependencies = [
  "dashmap",
  "derive_more 2.0.1",
  "docsrs-metadata",
+ "flate2",
  "fn-error-context",
  "font-awesome-as-a-crate",
  "futures-util",
