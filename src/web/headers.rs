@@ -2,6 +2,7 @@ use super::encode_url_path;
 use anyhow::Result;
 use axum::http::uri::{PathAndQuery, Uri};
 use axum_extra::headers::{Header, HeaderName, HeaderValue};
+use itertools::Itertools;
 use serde::Serialize;
 use std::fmt;
 
