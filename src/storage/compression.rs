@@ -58,7 +58,7 @@ pub fn compress(content: impl Read, algorithm: CompressionAlgorithm) -> Result<V
             Ok(data)
         }
         CompressionAlgorithm::Gzip => {
-            let mut compressor = GzEncoder::new(content, flate2::Compression::new(6));
+            let mut compressor = GzEncoder::new(content, flate2::Compression::default());
             let mut data = vec![];
             compressor.read_to_end(&mut data)?;
             Ok(data)
