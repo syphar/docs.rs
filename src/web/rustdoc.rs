@@ -3,7 +3,9 @@
 use crate::{
     AsyncStorage, Config, InstanceMetrics, RUSTDOC_STATIC_STORAGE_PREFIX,
     db::Pool,
-    storage::{RustdocJsonFormatVersion, rustdoc_archive_path, rustdoc_json_path},
+    storage::{
+        CompressionAlgorithm, RustdocJsonFormatVersion, rustdoc_archive_path, rustdoc_json_path,
+    },
     utils,
     web::{
         MetaData, ReqVersion, axum_cached_redirect, axum_parse_uri_with_params,
@@ -871,25 +873,50 @@ pub(crate) async fn json_download_handler(
 
     // TODO: read accept-encoding header, if only gzip is supported, choose gzip,
     // otherwise zstd as standard.
+    // perhaps return " 415 Unsupported Media Type" in some cases?
+    // alternative: support `.zst` or `.gz` suffixes in the redirect URL
+    let wanted_compression = CompressionAlgorithm::Zstd;
 
     let storage_path = rustdoc_json_path(
         &krate.name,
         &krate.version.to_string(),
         &target,
         format_version,
-        Some(CompressionAlgoritm::Zstd),
+        Some(wanted_compression),
     );
 
+    let redirect = |storage_path: &str| {
+        super::axum_cached_redirect(
+            format!("{}/{}", config.s3_static_root_path, storage_path),
+            CachePolicy::ForeverInCdn,
+        )
+    };
+
     if !storage.exists(&storage_path).await? {
+        // we have old files on the bucket where we stored zstd compressed files,
+        // with content-encoding=zstd & just a `.json` file extension.
+        // As a fallback, we serve that.
+        if wanted_compression == CompressionAlgorithm::Zstd {
+            let storage_path = rustdoc_json_path(
+                &krate.name,
+                &krate.version.to_string(),
+                &target,
+                format_version,
+                None,
+            );
+
+            if storage.exists(&storage_path).await? {
+                // we have a file with the same name, but without compression.
+                // this is an old file, so we redirect to the new location.
+                return Ok(redirect(&storage_path)?);
+            }
+        }
+
+        // FIXME: provide better NotFound error, claiming what specific thing is not found
         return Err(AxumNope::ResourceNotFound);
     }
 
-    // since we didn't build rustdoc json for all releases yet,
-    // this redirect might redirect to a location that doesn't exist.
-    Ok(super::axum_cached_redirect(
-        format!("{}/{}", config.s3_static_root_path, storage_path),
-        CachePolicy::ForeverInCdn,
-    )?)
+    Ok(redirect(&storage_path)?)
 }
 
 #[instrument(skip_all)]
