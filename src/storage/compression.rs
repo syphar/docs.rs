@@ -1,6 +1,6 @@
 use anyhow::Error;
-use bzip2::Compression;
 use bzip2::read::{BzDecoder, BzEncoder};
+use flate2::read::{GzDecoder, GzEncoder};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
@@ -29,6 +29,7 @@ pub enum CompressionAlgorithm {
     #[default]
     Zstd = 0,
     Bzip2 = 1,
+    Gzip = 2,
 }
 
 impl std::convert::TryFrom<i32> for CompressionAlgorithm {
@@ -50,8 +51,14 @@ pub fn compress(content: impl Read, algorithm: CompressionAlgorithm) -> Result<V
     match algorithm {
         CompressionAlgorithm::Zstd => Ok(zstd::encode_all(content, 9)?),
         CompressionAlgorithm::Bzip2 => {
-            let mut compressor = BzEncoder::new(content, Compression::best());
+            let mut compressor = BzEncoder::new(content, bzip2::Compression::best());
 
+            let mut data = vec![];
+            compressor.read_to_end(&mut data)?;
+            Ok(data)
+        }
+        CompressionAlgorithm::Gzip => {
+            let mut compressor = GzEncoder::new(content, flate2::Compression::new(6));
             let mut data = vec![];
             compressor.read_to_end(&mut data)?;
             Ok(data)
@@ -71,6 +78,9 @@ pub fn decompress(
         CompressionAlgorithm::Zstd => zstd::stream::copy_decode(content, &mut buffer)?,
         CompressionAlgorithm::Bzip2 => {
             io::copy(&mut BzDecoder::new(content), &mut buffer)?;
+        }
+        CompressionAlgorithm::Gzip => {
+            io::copy(&mut GzDecoder::new(content), &mut buffer)?;
         }
     }
 
