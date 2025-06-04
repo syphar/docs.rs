@@ -1,5 +1,5 @@
 mod archive_index;
-mod compression;
+pub(crate) mod compression;
 mod database;
 mod s3;
 
@@ -542,7 +542,7 @@ impl AsyncStorage {
     pub(crate) async fn store_blobs(&self, blobs: Vec<Blob>) -> Result<()> {
         self.store_inner(blobs).await
     }
-    //
+
     // Store file into the backend at the given path (also used to detect mime type), returns the
     // chosen compression algorithm
     #[instrument(skip(self, content))]
@@ -918,11 +918,7 @@ pub(crate) fn rustdoc_json_path(
 
     if let Some(alg) = compression_algorithm {
         path.push('.');
-        path.push_str(match alg {
-            CompressionAlgorithm::Bzip2 => "bz2",
-            CompressionAlgorithm::Zstd => "zst",
-            CompressionAlgorithm::Gzip => "gz",
-        });
+        path.push_str(compression::file_extension_for(alg));
     }
 
     path
