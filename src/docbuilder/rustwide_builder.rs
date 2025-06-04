@@ -13,8 +13,8 @@ use crate::docbuilder::Limits;
 use crate::error::Result;
 use crate::repositories::RepositoryStatsUpdater;
 use crate::storage::{
-    RustdocJsonFormatVersion, get_file_list, rustdoc_archive_path, rustdoc_json_path,
-    source_archive_path,
+    CompressionAlgorithm, RustdocJsonFormatVersion, compress, get_file_list, rustdoc_archive_path,
+    rustdoc_json_path, source_archive_path,
 };
 use crate::utils::{
     CargoMetadata, ConfigName, copy_dir_all, get_config, parse_rustc_version, report_error,
@@ -909,12 +909,25 @@ impl RustwideBuilder {
                 .context("couldn't parse rustdoc json to find format version")?
         };
 
-        for format_version in [format_version, RustdocJsonFormatVersion::Latest] {
-            let _span = info_span!("store_json", %format_version).entered();
-            let path = rustdoc_json_path(name, version, target, format_version);
+        for alg in [CompressionAlgorithm::Gzip, CompressionAlgorithm::Zstd] {
+            let compressed_json: Vec<u8> = {
+                let _span =
+                    info_span!("compress_json", file_size = json_filename.metadata()?.len(), algorithm=%alg)
+                        .entered();
 
-            self.storage.store_path(&path, &json_filename)?;
-            self.storage.set_public_access(&path, true)?;
+                compress(BufReader::new(File::open(&json_filename)?), alg)?
+            };
+
+            for format_version in [format_version, RustdocJsonFormatVersion::Latest] {
+                let path = rustdoc_json_path(name, version, target, format_version, Some(alg));
+                let _span =
+                    info_span!("store_json", %format_version, algorithm=%alg, target_path=%path)
+                        .entered();
+
+                self.storage
+                    .store_one_uncompressed(&path, compressed_json.clone())?;
+                self.storage.set_public_access(&path, true)?;
+            }
         }
 
         Ok(())

@@ -542,6 +542,31 @@ impl AsyncStorage {
     pub(crate) async fn store_blobs(&self, blobs: Vec<Blob>) -> Result<()> {
         self.store_inner(blobs).await
     }
+    //
+    // Store file into the backend at the given path (also used to detect mime type), returns the
+    // chosen compression algorithm
+    #[instrument(skip(self, content))]
+    pub(crate) async fn store_one_uncompressed(
+        &self,
+        path: impl Into<String> + std::fmt::Debug,
+        content: impl Into<Vec<u8>>,
+    ) -> Result<()> {
+        let path = path.into();
+        let content = content.into();
+        let mime = detect_mime(&path).to_owned();
+
+        self.store_inner(vec![Blob {
+            path,
+            mime,
+            content,
+            compression: None,
+            // this field is ignored by the backend
+            date_updated: Utc::now(),
+        }])
+        .await?;
+
+        Ok(())
+    }
 
     // Store file into the backend at the given path (also used to detect mime type), returns the
     // chosen compression algorithm
@@ -551,21 +576,11 @@ impl AsyncStorage {
         path: impl Into<String> + std::fmt::Debug,
         content: impl Into<Vec<u8>>,
     ) -> Result<CompressionAlgorithm> {
-        let path = path.into();
         let content = content.into();
         let alg = CompressionAlgorithm::default();
         let content = compress(&*content, alg)?;
-        let mime = detect_mime(&path).to_owned();
 
-        self.store_inner(vec![Blob {
-            path,
-            mime,
-            content,
-            compression: Some(alg),
-            // this field is ignored by the backend
-            date_updated: Utc::now(),
-        }])
-        .await?;
+        self.store_one_uncompressed(path, content).await?;
 
         Ok(alg)
     }
@@ -794,6 +809,18 @@ impl Storage {
         self.runtime.block_on(self.inner.store_blobs(blobs))
     }
 
+    // Store file into the backend at the given path (also used to detect mime type).
+    // No compression is applied.
+    #[instrument(skip(self, content))]
+    pub(crate) fn store_one_uncompressed(
+        &self,
+        path: impl Into<String> + std::fmt::Debug,
+        content: impl Into<Vec<u8>>,
+    ) -> Result<()> {
+        self.runtime
+            .block_on(self.inner.store_one_uncompressed(path, content))
+    }
+
     // Store file into the backend at the given path (also used to detect mime type), returns the
     // chosen compression algorithm
     #[instrument(skip(self, content))]
@@ -857,7 +884,9 @@ pub(crate) fn rustdoc_archive_path(name: &str, version: &str) -> String {
     format!("rustdoc/{name}/{version}.zip")
 }
 
-#[derive(strum::Display, Debug, PartialEq, Eq, Clone, SerializeDisplay, DeserializeFromStr)]
+#[derive(
+    strum::Display, Debug, PartialEq, Eq, Clone, SerializeDisplay, DeserializeFromStr, Copy,
+)]
 #[strum(serialize_all = "snake_case")]
 pub(crate) enum RustdocJsonFormatVersion {
     #[strum(serialize = "{0}")]
@@ -881,10 +910,22 @@ pub(crate) fn rustdoc_json_path(
     version: &str,
     target: &str,
     format_version: RustdocJsonFormatVersion,
+    compression_algorithm: Option<CompressionAlgorithm>,
 ) -> String {
-    format!(
+    let mut path = format!(
         "rustdoc-json/{name}/{version}/{target}/{name}_{version}_{target}_{format_version}.json"
-    )
+    );
+
+    if let Some(alg) = compression_algorithm {
+        path.push('.');
+        path.push_str(match alg {
+            CompressionAlgorithm::Bzip2 => "bz2",
+            CompressionAlgorithm::Zstd => "zst",
+            CompressionAlgorithm::Gzip => "gz",
+        });
+    }
+
+    path
 }
 
 pub(crate) fn source_archive_path(name: &str, version: &str) -> String {
