@@ -47,6 +47,7 @@ pub(crate) fn detect_mime(file_path: impl AsRef<Path>) -> Mime {
                 Some("toml") => mimes::TEXT_TOML.clone(),
                 Some("js") => mime::TEXT_JAVASCRIPT,
                 Some("json") => mime::APPLICATION_JSON,
+                Some("zst") => mimes::APPLICATION_ZSTD.clone(),
                 _ => mime,
             }
         }

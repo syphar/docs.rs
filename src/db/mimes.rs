@@ -8,6 +8,7 @@ macro_rules! mime {
 }
 
 mime!(APPLICATION_ZIP, "application/zip");
+mime!(APPLICATION_ZSTD, "application/zstd");
 mime!(TEXT_MARKDOWN, "text/markdown");
 mime!(TEXT_RUST, "text/rust");
 mime!(TEXT_TOML, "text/toml");
