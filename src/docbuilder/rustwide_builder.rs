@@ -13,8 +13,8 @@ use crate::docbuilder::Limits;
 use crate::error::Result;
 use crate::repositories::RepositoryStatsUpdater;
 use crate::storage::{
-    CompressionAlgorithm, RustdocJsonFormatVersion, compress, get_file_list, rustdoc_archive_path,
-    rustdoc_json_path, source_archive_path,
+    CompressionAlgorithm, RustdocJsonFormatVersion, compress, compression, get_file_list,
+    rustdoc_archive_path, rustdoc_json_path, source_archive_path,
 };
 use crate::utils::{
     CargoMetadata, ConfigName, copy_dir_all, get_config, parse_rustc_version, report_error,
@@ -44,6 +44,9 @@ const USER_AGENT: &str = "docs.rs builder (https://github.com/rust-lang/docs.rs)
 const COMPONENTS: &[&str] = &["llvm-tools-preview", "rustc-dev", "rustfmt"];
 const DUMMY_CRATE_NAME: &str = "empty-library";
 const DUMMY_CRATE_VERSION: &str = "1.0.0";
+
+pub const RUSTDOC_JSON_COMPRESSION_ALGORITHMS: &[CompressionAlgorithm] =
+    &[CompressionAlgorithm::Zstd, CompressionAlgorithm::Gzip];
 
 /// read the format version from a rustdoc JSON file.
 fn read_format_version_from_rustdoc_json(
@@ -909,17 +912,17 @@ impl RustwideBuilder {
                 .context("couldn't parse rustdoc json to find format version")?
         };
 
-        for alg in [CompressionAlgorithm::Gzip, CompressionAlgorithm::Zstd] {
+        for alg in RUSTDOC_JSON_COMPRESSION_ALGORITHMS {
             let compressed_json: Vec<u8> = {
                 let _span =
                     info_span!("compress_json", file_size = json_filename.metadata()?.len(), algorithm=%alg)
                         .entered();
 
-                compress(BufReader::new(File::open(&json_filename)?), alg)?
+                compress(BufReader::new(File::open(&json_filename)?), *alg)?
             };
 
             for format_version in [format_version, RustdocJsonFormatVersion::Latest] {
-                let path = rustdoc_json_path(name, version, target, format_version, Some(alg));
+                let path = rustdoc_json_path(name, version, target, format_version, Some(*alg));
                 let _span =
                     info_span!("store_json", %format_version, algorithm=%alg, target_path=%path)
                         .entered();
@@ -1480,29 +1483,36 @@ mod tests {
 
                 // other targets too
                 for target in DEFAULT_TARGETS {
-                    // check if rustdoc json files exist for all targets
-                    let path = rustdoc_json_path(
-                        crate_,
-                        version,
-                        target,
-                        RustdocJsonFormatVersion::Latest,
-                    );
-                    assert!(storage.exists(&path)?);
-                    assert!(storage.get_public_access(&path)?);
+                    for alg in RUSTDOC_JSON_COMPRESSION_ALGORITHMS {
+                        // check if rustdoc json files exist for all targets
+                        let path = rustdoc_json_path(
+                            crate_,
+                            version,
+                            target,
+                            RustdocJsonFormatVersion::Latest,
+                            Some(*alg),
+                        );
+                        assert!(storage.exists(&path)?);
+                        assert!(storage.get_public_access(&path)?);
 
-                    let json_prefix = format!("rustdoc-json/{crate_}/{version}/{target}/");
-                    let mut json_files: Vec<_> = storage
-                        .list_prefix(&json_prefix)
-                        .filter_map(|res| res.ok())
-                        .map(|f| f.strip_prefix(&json_prefix).unwrap().to_owned())
-                        .collect();
-                    json_files.sort();
-                    assert!(json_files[0].starts_with(&format!("empty-library_1.0.0_{target}_")));
-                    assert!(json_files[0].ends_with(".json"));
-                    assert_eq!(
-                        json_files[1],
-                        format!("empty-library_1.0.0_{target}_latest.json")
-                    );
+                        let json_prefix = format!("rustdoc-json/{crate_}/{version}/{target}/");
+                        let mut json_files: Vec<_> = storage
+                            .list_prefix(&json_prefix)
+                            .filter_map(|res| res.ok())
+                            .map(|f| f.strip_prefix(&json_prefix).unwrap().to_owned())
+                            .collect();
+                        json_files.sort();
+                        assert!(
+                            json_files[0].starts_with(&format!("empty-library_1.0.0_{target}_"))
+                        );
+
+                        let ext = compression::file_extension_for(*alg);
+                        assert!(json_files[0].ends_with(&format!(".json.{ext}")));
+                        assert_eq!(
+                            json_files[1],
+                            format!("empty-library_1.0.0_{target}_latest.json.{ext}")
+                        );
+                    }
 
                     if target == &default_target {
                         continue;
