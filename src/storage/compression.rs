@@ -46,6 +46,14 @@ impl std::convert::TryFrom<i32> for CompressionAlgorithm {
     }
 }
 
+pub(crate) fn file_extension_for(algorithm: CompressionAlgorithm) -> &'static str {
+    match algorithm {
+        CompressionAlgorithm::Zstd => "zst",
+        CompressionAlgorithm::Bzip2 => "bz2",
+        CompressionAlgorithm::Gzip => "gz",
+    }
+}
+
 // public for benchmarking
 pub fn compress(content: impl Read, algorithm: CompressionAlgorithm) -> Result<Vec<u8>, Error> {
     match algorithm {
