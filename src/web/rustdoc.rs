@@ -869,11 +869,15 @@ pub(crate) async fn json_download_handler(
         .format_version
         .unwrap_or(RustdocJsonFormatVersion::Latest);
 
+    // TODO: read accept-encoding header, if only gzip is supported, choose gzip,
+    // otherwise zstd as standard.
+
     let storage_path = rustdoc_json_path(
         &krate.name,
         &krate.version.to_string(),
         &target,
         format_version,
+        Some(CompressionAlgoritm::Zstd),
     );
 
     if !storage.exists(&storage_path).await? {
