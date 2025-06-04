@@ -13,8 +13,8 @@ use crate::docbuilder::Limits;
 use crate::error::Result;
 use crate::repositories::RepositoryStatsUpdater;
 use crate::storage::{
-    CompressionAlgorithm, RustdocJsonFormatVersion, compress, compression, get_file_list,
-    rustdoc_archive_path, rustdoc_json_path, source_archive_path,
+    CompressionAlgorithm, RustdocJsonFormatVersion, compress, get_file_list, rustdoc_archive_path,
+    rustdoc_json_path, source_archive_path,
 };
 use crate::utils::{
     CargoMetadata, ConfigName, copy_dir_all, get_config, parse_rustc_version, report_error,
@@ -1295,7 +1295,7 @@ mod tests {
     use super::*;
     use crate::db::types::Feature;
     use crate::registry_api::ReleaseData;
-    use crate::storage::CompressionAlgorithm;
+    use crate::storage::{CompressionAlgorithm, compression};
     use crate::test::{AxumRouterTestExt, TestEnvironment, wrapper};
     use std::{io, iter};
     use test_case::test_case;
