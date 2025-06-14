@@ -576,9 +576,11 @@ impl AsyncStorage {
         path: impl Into<String> + std::fmt::Debug,
         content: impl Into<Vec<u8>>,
     ) -> Result<CompressionAlgorithm> {
+        let path = path.into();
         let content = content.into();
         let alg = CompressionAlgorithm::default();
         let content = compress(&*content, alg)?;
+        let mime = detect_mime(&path).to_owned();
 
         self.store_inner(vec![Blob {
             path,
