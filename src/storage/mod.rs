@@ -580,7 +580,15 @@ impl AsyncStorage {
         let alg = CompressionAlgorithm::default();
         let content = compress(&*content, alg)?;
 
-        self.store_one_uncompressed(path, content).await?;
+        self.store_inner(vec![Blob {
+            path,
+            mime,
+            content,
+            compression: Some(alg),
+            // this field is ignored by the backend
+            date_updated: Utc::now(),
+        }])
+        .await?;
 
         Ok(alg)
     }
