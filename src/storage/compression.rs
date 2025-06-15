@@ -97,10 +97,10 @@ pub fn decompress(
 
 #[cfg(test)]
 mod tests {
-    use crate::db::file::detect_mime;
-
     use super::*;
+    use crate::db::file::detect_mime;
     use strum::IntoEnumIterator;
+    use test_case::test_case;
 
     #[test]
     fn test_compression() {
@@ -154,22 +154,17 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_enum_display() {
-        assert_eq!(CompressionAlgorithm::Zstd.to_string(), "Zstd");
-        assert_eq!(CompressionAlgorithm::Bzip2.to_string(), "Bzip2");
+    #[test_case(CompressionAlgorithm::Zstd, "Zstd")]
+    #[test_case(CompressionAlgorithm::Bzip2, "Bzip2")]
+    #[test_case(CompressionAlgorithm::Gzip, "Gzip")]
+    fn test_enum_display(alg: CompressionAlgorithm, expected: &str) {
+        assert_eq!(alg.to_string(), expected);
     }
 
-    #[test]
-    fn test_file_extensions() {
-        for alg in CompressionAlgorithm::iter() {
-            let ext = file_extension_for(alg);
-            assert!(
-                !ext.is_empty(),
-                "File extension for {alg} should not be empty"
-            );
-
-            let mime = detect_mime(format!("file.{ext}"));
-        }
+    #[test_case(CompressionAlgorithm::Zstd, "zst")]
+    #[test_case(CompressionAlgorithm::Bzip2, "bz2")]
+    #[test_case(CompressionAlgorithm::Gzip, "gz")]
+    fn test_file_extensions(alg: CompressionAlgorithm, expected: &str) {
+        assert_eq!(file_extension_for(alg), expected);
     }
 }
