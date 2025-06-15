@@ -3117,50 +3117,58 @@ mod test {
         "latest/json",
         "0.2.0",
         "x86_64-unknown-linux-gnu",
-        RustdocJsonFormatVersion::Latest
+        RustdocJsonFormatVersion::Latest,
+        None
     )]
     #[test_case(
         "0.1/json",
         "0.1.0",
         "x86_64-unknown-linux-gnu",
-        RustdocJsonFormatVersion::Latest;
+        RustdocJsonFormatVersion::Latest,
+        None;
         "semver"
     )]
     #[test_case(
         "0.1.0/json",
         "0.1.0",
         "x86_64-unknown-linux-gnu",
-        RustdocJsonFormatVersion::Latest
+        RustdocJsonFormatVersion::Latest,
+        None
     )]
     #[test_case(
         "latest/json/latest",
         "0.2.0",
         "x86_64-unknown-linux-gnu",
-        RustdocJsonFormatVersion::Latest
+        RustdocJsonFormatVersion::Latest,
+        None
     )]
     #[test_case(
         "latest/json/42",
         "0.2.0",
         "x86_64-unknown-linux-gnu",
-        RustdocJsonFormatVersion::Version(42)
+        RustdocJsonFormatVersion::Version(42),
+        None
     )]
     #[test_case(
         "latest/i686-pc-windows-msvc/json",
         "0.2.0",
         "i686-pc-windows-msvc",
-        RustdocJsonFormatVersion::Latest
+        RustdocJsonFormatVersion::Latest,
+        None
     )]
     #[test_case(
         "latest/i686-pc-windows-msvc/json/42",
         "0.2.0",
         "i686-pc-windows-msvc",
-        RustdocJsonFormatVersion::Version(42)
+        RustdocJsonFormatVersion::Version(42),
+        None
     )]
     fn json_download(
         request_path_suffix: &str,
         redirect_version: &str,
         redirect_target: &str,
         redirect_format_version: RustdocJsonFormatVersion,
+        redirect_compression: Option<CompressionAlgorithm>,
     ) {
         async_wrapper(|env| async move {
             env.override_config(|config| {
@@ -3188,10 +3196,12 @@ mod test {
 
             let web = env.web_app().await;
 
+            let compression_ext = ReqCompression(redirect_compression.unwrap_or_default());
+
             web.assert_redirect_cached_unchecked(
                 &format!("/crate/dummy/{request_path_suffix}"),
                 &format!("https://static.docs.rs/rustdoc-json/dummy/{redirect_version}/{redirect_target}/\
-                    dummy_{redirect_version}_{redirect_target}_{redirect_format_version}.json"),
+                    dummy_{redirect_version}_{redirect_target}_{redirect_format_version}.json.{compression_ext}"),
                 CachePolicy::ForeverInCdn,
                 &env.config(),
             )
