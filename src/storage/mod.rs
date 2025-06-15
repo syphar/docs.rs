@@ -543,8 +543,8 @@ impl AsyncStorage {
         self.store_inner(blobs).await
     }
 
-    // Store file into the backend at the given path (also used to detect mime type), returns the
-    // chosen compression algorithm
+    // Store file into the backend at the given path, uncompressed.
+    // The path will also be used to determine the mime type.
     #[instrument(skip(self, content))]
     pub(crate) async fn store_one_uncompressed(
         &self,
@@ -819,8 +819,8 @@ impl Storage {
         self.runtime.block_on(self.inner.store_blobs(blobs))
     }
 
-    // Store file into the backend at the given path (also used to detect mime type).
-    // No compression is applied.
+    // Store file into the backend at the given path, uncompressed.
+    // The path will also be used to determine the mime type.
     #[instrument(skip(self, content))]
     pub(crate) fn store_one_uncompressed(
         &self,
