@@ -892,10 +892,12 @@ pub(crate) async fn json_download_handler(
         )
     };
 
-    if !storage.exists(&storage_path).await? {
+    if storage.exists(&storage_path).await? {
+        Ok(redirect(&storage_path)?)
+    } else {
         // we have old files on the bucket where we stored zstd compressed files,
         // with content-encoding=zstd & just a `.json` file extension.
-        // As a fallback, we serve that.
+        // As a fallback, we redirect to that, if zstd was requested (which is also the default).
         if wanted_compression == CompressionAlgorithm::Zstd {
             let storage_path = rustdoc_json_path(
                 &krate.name,
@@ -906,17 +908,14 @@ pub(crate) async fn json_download_handler(
             );
 
             if storage.exists(&storage_path).await? {
-                // we have a file with the same name, but without compression.
-                // this is an old file, so we redirect to the new location.
+                // we have an old file with a `.json` extension,
+                // redirect to that as fallback
                 return Ok(redirect(&storage_path)?);
             }
         }
 
-        // FIXME: provide better NotFound error, claiming what specific thing is not found
-        return Err(AxumNope::ResourceNotFound);
+        Err(AxumNope::ResourceNotFound)
     }
-
-    Ok(redirect(&storage_path)?)
 }
 
 #[instrument(skip_all)]

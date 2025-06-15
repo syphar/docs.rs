@@ -98,7 +98,6 @@ pub fn decompress(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::file::detect_mime;
     use strum::IntoEnumIterator;
     use test_case::test_case;
 
