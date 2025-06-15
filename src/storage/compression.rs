@@ -97,6 +97,8 @@ pub fn decompress(
 
 #[cfg(test)]
 mod tests {
+    use crate::db::file::detect_mime;
+
     use super::*;
     use strum::IntoEnumIterator;
 
@@ -156,5 +158,18 @@ mod tests {
     fn test_enum_display() {
         assert_eq!(CompressionAlgorithm::Zstd.to_string(), "Zstd");
         assert_eq!(CompressionAlgorithm::Bzip2.to_string(), "Bzip2");
+    }
+
+    #[test]
+    fn test_file_extensions() {
+        for alg in CompressionAlgorithm::iter() {
+            let ext = file_extension_for(alg);
+            assert!(
+                !ext.is_empty(),
+                "File extension for {alg} should not be empty"
+            );
+
+            let mime = detect_mime(format!("file.{ext}"));
+        }
     }
 }

@@ -104,3 +104,14 @@ pub(crate) fn file_list_to_json(files: impl IntoIterator<Item = FileEntry>) -> V
             .collect(),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use test_case::test_case;
+
+    #[test_case("zst", mimes::APPLICATION_ZSTD)]
+    fn test_detect_mime(ext: &str, expected: Mime) {
+        assert_eq!(detect_mime(format!("something.{ext}")), expected);
+    }
+}
