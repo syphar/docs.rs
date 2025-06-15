@@ -4,8 +4,7 @@ use crate::{
     AsyncStorage, Config, InstanceMetrics, RUSTDOC_STATIC_STORAGE_PREFIX,
     db::Pool,
     storage::{
-        CompressionAlgorithm, RustdocJsonFormatVersion,
-        compression::{compression_from_file_extension, file_extension_for},
+        CompressionAlgorithm, RustdocJsonFormatVersion, compression::ReqCompression,
         rustdoc_archive_path, rustdoc_json_path,
     },
     utils,
@@ -36,11 +35,8 @@ use lol_html::errors::RewritingError;
 use once_cell::sync::Lazy;
 use semver::Version;
 use serde::Deserialize;
-use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::{
     collections::{BTreeMap, HashMap},
-    fmt::Display,
-    str::FromStr,
     sync::Arc,
 };
 use tracing::{Instrument, debug, error, info_span, instrument, trace};
@@ -822,43 +818,6 @@ pub(crate) async fn badge_handler(
         [(http::header::LOCATION, url.to_string())],
         Extension(CachePolicy::ForeverInCdnAndBrowser),
     ))
-}
-
-/// a compression algorithm in a URL, represented throught the file extension
-#[derive(Debug, Default, Clone, PartialEq, Eq, SerializeDisplay, DeserializeFromStr)]
-pub(crate) struct ReqCompression(pub(crate) CompressionAlgorithm);
-
-impl Display for ReqCompression {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", file_extension_for(self.0))
-    }
-}
-
-impl FromStr for ReqCompression {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if let Some(alg) = compression_from_file_extension(s) {
-            Ok(Self(alg))
-        } else {
-            Err(anyhow!(
-                "unknown compression algorithm from extension: {}",
-                s
-            ))
-        }
-    }
-}
-
-impl PartialEq<CompressionAlgorithm> for ReqCompression {
-    fn eq(&self, other: &CompressionAlgorithm) -> bool {
-        self.0 == *other
-    }
-}
-
-impl PartialEq<ReqCompression> for CompressionAlgorithm {
-    fn eq(&self, other: &ReqCompression) -> bool {
-        other == self
-    }
 }
 
 #[derive(Clone, Deserialize, Debug)]

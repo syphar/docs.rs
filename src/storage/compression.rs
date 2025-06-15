@@ -1,10 +1,13 @@
-use anyhow::Error;
+use anyhow::{Error, anyhow};
 use bzip2::read::{BzDecoder, BzEncoder};
 use flate2::read::{GzDecoder, GzEncoder};
 use serde::{Deserialize, Serialize};
+use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::{
     collections::HashSet,
+    fmt::Display,
     io::{self, Read},
+    str::FromStr,
 };
 use strum::{Display, EnumIter, EnumString, FromRepr};
 
@@ -60,6 +63,43 @@ pub(crate) fn compression_from_file_extension(ext: &str) -> Option<CompressionAl
         "bz2" => Some(CompressionAlgorithm::Bzip2),
         "gz" => Some(CompressionAlgorithm::Gzip),
         _ => None,
+    }
+}
+
+/// a compression algorithm in a URL, represented throught the file extension
+#[derive(Debug, Default, Clone, PartialEq, Eq, SerializeDisplay, DeserializeFromStr)]
+pub(crate) struct ReqCompression(pub(crate) CompressionAlgorithm);
+
+impl Display for ReqCompression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", file_extension_for(self.0))
+    }
+}
+
+impl FromStr for ReqCompression {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Some(alg) = compression_from_file_extension(s) {
+            Ok(Self(alg))
+        } else {
+            Err(anyhow!(
+                "unknown compression algorithm from extension: {}",
+                s
+            ))
+        }
+    }
+}
+
+impl PartialEq<CompressionAlgorithm> for ReqCompression {
+    fn eq(&self, other: &CompressionAlgorithm) -> bool {
+        self.0 == *other
+    }
+}
+
+impl PartialEq<ReqCompression> for CompressionAlgorithm {
+    fn eq(&self, other: &ReqCompression) -> bool {
+        other == self
     }
 }
 
@@ -175,5 +215,14 @@ mod tests {
     fn test_file_extensions(alg: CompressionAlgorithm, expected: &str) {
         assert_eq!(file_extension_for(alg), expected);
         assert_eq!(compression_from_file_extension(expected), Some(alg));
+
+        assert_eq!(
+            serde_json::to_string(&ReqCompression(alg)).unwrap(),
+            format!("\"{}\"", expected)
+        );
+        assert_eq!(
+            serde_json::from_str::<ReqCompression>(&format!("\"{}\"", expected)).unwrap(),
+            alg,
+        );
     }
 }
