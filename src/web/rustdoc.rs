@@ -4,7 +4,9 @@ use crate::{
     AsyncStorage, Config, InstanceMetrics, RUSTDOC_STATIC_STORAGE_PREFIX,
     db::Pool,
     storage::{
-        CompressionAlgorithm, RustdocJsonFormatVersion, rustdoc_archive_path, rustdoc_json_path,
+        CompressionAlgorithm, RustdocJsonFormatVersion,
+        compression::{compression_from_file_extension, file_extension_for},
+        rustdoc_archive_path, rustdoc_json_path,
     },
     utils,
     web::{
@@ -34,8 +36,11 @@ use lol_html::errors::RewritingError;
 use once_cell::sync::Lazy;
 use semver::Version;
 use serde::Deserialize;
+use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::{
     collections::{BTreeMap, HashMap},
+    fmt::Display,
+    str::FromStr,
     sync::Arc,
 };
 use tracing::{Instrument, debug, error, info_span, instrument, trace};
@@ -819,12 +824,50 @@ pub(crate) async fn badge_handler(
     ))
 }
 
+/// a compression algorithm in a URL, represented throught the file extension
+#[derive(Debug, Default, Clone, PartialEq, Eq, SerializeDisplay, DeserializeFromStr)]
+pub(crate) struct ReqCompression(pub(crate) CompressionAlgorithm);
+
+impl Display for ReqCompression {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", file_extension_for(self.0))
+    }
+}
+
+impl FromStr for ReqCompression {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Some(alg) = compression_from_file_extension(s) {
+            Ok(Self(alg))
+        } else {
+            Err(anyhow!(
+                "unknown compression algorithm from extension: {}",
+                s
+            ))
+        }
+    }
+}
+
+impl PartialEq<CompressionAlgorithm> for ReqCompression {
+    fn eq(&self, other: &CompressionAlgorithm) -> bool {
+        self.0 == *other
+    }
+}
+
+impl PartialEq<ReqCompression> for CompressionAlgorithm {
+    fn eq(&self, other: &ReqCompression) -> bool {
+        other == self
+    }
+}
+
 #[derive(Clone, Deserialize, Debug)]
 pub(crate) struct JsonDownloadParams {
     pub(crate) name: String,
     pub(crate) version: ReqVersion,
     pub(crate) target: Option<String>,
     pub(crate) format_version: Option<RustdocJsonFormatVersion>,
+    pub(crate) compression: Option<ReqCompression>,
 }
 
 #[instrument(skip_all)]
@@ -871,18 +914,17 @@ pub(crate) async fn json_download_handler(
         .format_version
         .unwrap_or(RustdocJsonFormatVersion::Latest);
 
-    // TODO: read accept-encoding header, if only gzip is supported, choose gzip,
-    // otherwise zstd as standard.
-    // perhaps return " 415 Unsupported Media Type" in some cases?
-    // alternative: support `.zst` or `.gz` suffixes in the redirect URL
-    let wanted_compression = CompressionAlgorithm::Zstd;
+    // TODO: we could also additionally read the accept-encoding header here. But especially
+    // in combination with priorities it's complex to parse correctly. So for now only
+    // file extensions in the URL.
+    let wanted_compression = params.compression.unwrap_or_default();
 
     let storage_path = rustdoc_json_path(
         &krate.name,
         &krate.version.to_string(),
         &target,
         format_version,
-        Some(wanted_compression),
+        Some(wanted_compression.0),
     );
 
     let redirect = |storage_path: &str| {
@@ -898,7 +940,7 @@ pub(crate) async fn json_download_handler(
         // we have old files on the bucket where we stored zstd compressed files,
         // with content-encoding=zstd & just a `.json` file extension.
         // As a fallback, we redirect to that, if zstd was requested (which is also the default).
-        if wanted_compression == CompressionAlgorithm::Zstd {
+        if wanted_compression == CompressionAlgorithm::default() {
             let storage_path = rustdoc_json_path(
                 &krate.name,
                 &krate.version.to_string(),

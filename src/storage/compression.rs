@@ -54,6 +54,15 @@ pub(crate) fn file_extension_for(algorithm: CompressionAlgorithm) -> &'static st
     }
 }
 
+pub(crate) fn compression_from_file_extension(ext: &str) -> Option<CompressionAlgorithm> {
+    match ext {
+        "zst" => Some(CompressionAlgorithm::Zstd),
+        "bz2" => Some(CompressionAlgorithm::Bzip2),
+        "gz" => Some(CompressionAlgorithm::Gzip),
+        _ => None,
+    }
+}
+
 // public for benchmarking
 pub fn compress(content: impl Read, algorithm: CompressionAlgorithm) -> Result<Vec<u8>, Error> {
     match algorithm {
@@ -165,5 +174,6 @@ mod tests {
     #[test_case(CompressionAlgorithm::Gzip, "gz")]
     fn test_file_extensions(alg: CompressionAlgorithm, expected: &str) {
         assert_eq!(file_extension_for(alg), expected);
+        assert_eq!(compression_from_file_extension(expected), Some(alg));
     }
 }

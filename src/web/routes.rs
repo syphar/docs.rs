@@ -309,7 +309,15 @@ pub(super) fn build_axum_routes() -> AxumRouter {
             get_internal(super::rustdoc::download_handler),
         )
         .route_with_tsr(
+            "/crate/{name}/{version}/json.{compression}",
+            get_internal(super::rustdoc::json_download_handler),
+        )
+        .route_with_tsr(
             "/crate/{name}/{version}/json",
+            get_internal(super::rustdoc::json_download_handler),
+        )
+        .route_with_tsr(
+            "/crate/{name}/{version}/json/{format_version}.{compression}",
             get_internal(super::rustdoc::json_download_handler),
         )
         .route_with_tsr(
@@ -321,7 +329,15 @@ pub(super) fn build_axum_routes() -> AxumRouter {
             get_internal(super::rustdoc::target_redirect_handler),
         )
         .route_with_tsr(
+            "/crate/{name}/{version}/{target}/json.{compression}",
+            get_internal(super::rustdoc::json_download_handler),
+        )
+        .route_with_tsr(
             "/crate/{name}/{version}/{target}/json",
+            get_internal(super::rustdoc::json_download_handler),
+        )
+        .route_with_tsr(
+            "/crate/{name}/{version}/{target}/json/{format_version}.{compression}",
             get_internal(super::rustdoc::json_download_handler),
         )
         .route_with_tsr(
