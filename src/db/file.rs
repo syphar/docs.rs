@@ -110,8 +110,20 @@ mod tests {
     use super::*;
     use test_case::test_case;
 
-    #[test_case("zst", mimes::APPLICATION_ZSTD)]
-    fn test_detect_mime(ext: &str, expected: Mime) {
-        assert_eq!(detect_mime(format!("something.{ext}")), expected);
+    // some standard mime types that mime-guess handles
+    #[test_case("txt", &mime::TEXT_PLAIN)]
+    #[test_case("html", &mime::TEXT_HTML)]
+    // overrides of other mime types and defaults for
+    // types mime-guess doesn't know about
+    #[test_case("md", &mimes::TEXT_MARKDOWN)]
+    #[test_case("rs", &mimes::TEXT_RUST)]
+    #[test_case("markdown", &mimes::TEXT_MARKDOWN)]
+    #[test_case("css", &mime::TEXT_CSS)]
+    #[test_case("toml", &mimes::TEXT_TOML)]
+    #[test_case("js", &mime::TEXT_JAVASCRIPT)]
+    #[test_case("json", &mime::APPLICATION_JSON)]
+    #[test_case("zst", &mimes::APPLICATION_ZSTD)]
+    fn test_detect_mime(ext: &str, expected: &Mime) {
+        assert_eq!(&detect_mime(format!("something.{ext}")), expected);
     }
 }
