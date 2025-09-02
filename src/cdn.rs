@@ -642,7 +642,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::test::async_wrapper;
+    use crate::test::{TestEnvironment, async_wrapper};
 
     use aws_sdk_cloudfront::{Config, config::Credentials};
     use aws_smithy_runtime::client::http::test_util::{ReplayEvent, StaticReplayClient};
@@ -692,21 +692,20 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn create_cloudfront() {
-        async_wrapper(|env| async move {
-            env.override_config(|config| {
-                config.cdn_backend = CdnKind::CloudFront;
-            });
+    #[tokio::test]
+    async fn create_cloudfront() -> Result<()> {
+        let mut config = TestEnvironment::base_config();
+        config.cdn_backend = CdnKind::CloudFront;
 
-            assert!(matches!(*env.cdn(), CdnBackend::CloudFront { .. }));
-            assert!(matches!(
-                CdnBackend::new(&env.config()).await,
-                CdnBackend::CloudFront { .. }
-            ));
+        let env = TestEnvironment::with_config(config);
 
-            Ok(())
-        })
+        assert!(matches!(*env.cdn(), CdnBackend::CloudFront { .. }));
+        assert!(matches!(
+            CdnBackend::new(&env.config()).await,
+            CdnBackend::CloudFront { .. }
+        ));
+
+        Ok(())
     }
 
     #[test]
@@ -722,483 +721,470 @@ mod tests {
         })
     }
 
-    #[test]
-    fn invalidation_counts_are_zero_with_empty_queue() {
-        crate::test::async_wrapper(|env| async move {
-            env.override_config(|config| {
-                config.cloudfront_distribution_id_web = Some("distribution_id_web".into());
-                config.cloudfront_distribution_id_static = Some("distribution_id_static".into());
-            });
+    #[tokio::test]
+    async fn invalidation_counts_are_zero_with_empty_queue() -> Result<()> {
+        let mut config = TestEnvironment::base_config();
+        config.cloudfront_distribution_id_web = Some("distribution_id_web".into());
+        config.cloudfront_distribution_id_static = Some("distribution_id_static".into());
 
-            let config = env.config();
-            let mut conn = env.async_db().async_conn().await;
-            assert!(
-                queued_or_active_crate_invalidations(&mut conn)
-                    .await?
-                    .is_empty()
-            );
+        let env = TestEnvironment::with_config(config);
 
-            let counts =
-                queued_or_active_crate_invalidation_count_by_distribution(&mut conn, &config)
-                    .await?;
-            assert_eq!(counts.len(), 2);
-            assert_eq!(*counts.get("distribution_id_web").unwrap(), 0);
-            assert_eq!(*counts.get("distribution_id_static").unwrap(), 0);
-            Ok(())
-        })
+        let config = env.config();
+        let mut conn = env.async_db().async_conn().await;
+        assert!(
+            queued_or_active_crate_invalidations(&mut conn)
+                .await?
+                .is_empty()
+        );
+
+        let counts =
+            queued_or_active_crate_invalidation_count_by_distribution(&mut conn, &config).await?;
+        assert_eq!(counts.len(), 2);
+        assert_eq!(*counts.get("distribution_id_web").unwrap(), 0);
+        assert_eq!(*counts.get("distribution_id_static").unwrap(), 0);
+        Ok(())
     }
 
-    #[test]
-    fn escalate_to_full_invalidation() {
-        crate::test::async_wrapper(|env| async move {
-            env.override_config(|config| {
-                config.cloudfront_distribution_id_web = Some("distribution_id_web".into());
-                config.cloudfront_distribution_id_static = Some("distribution_id_static".into());
-                config.cdn_max_queued_age = Duration::from_secs(0);
-            });
+    #[tokio::test]
+    async fn escalate_to_full_invalidation() -> Result<()> {
+        let mut config = TestEnvironment::base_config();
+        config.cloudfront_distribution_id_web = Some("distribution_id_web".into());
+        config.cloudfront_distribution_id_static = Some("distribution_id_static".into());
+        config.cdn_max_queued_age = Duration::from_secs(0);
 
-            let cdn = env.cdn();
-            let config = env.config();
-            let mut conn = env.async_db().async_conn().await;
-            assert!(
-                queued_or_active_crate_invalidations(&mut conn)
-                    .await?
-                    .is_empty()
-            );
+        let env = TestEnvironment::with_config(config);
 
-            queue_crate_invalidation(&mut conn, &env.config(), "krate").await?;
+        let cdn = env.cdn();
+        let config = env.config();
+        let mut conn = env.async_db().async_conn().await;
+        assert!(
+            queued_or_active_crate_invalidations(&mut conn)
+                .await?
+                .is_empty()
+        );
 
-            // invalidation paths are queued.
-            assert_eq!(
-                queued_or_active_crate_invalidations(&mut conn)
-                    .await?
-                    .into_iter()
-                    .map(|i| (
-                        i.cdn_distribution_id,
-                        i.krate,
-                        i.path_pattern,
-                        i.cdn_reference
-                    ))
-                    .collect::<Vec<_>>(),
-                vec![
-                    (
-                        "distribution_id_web".into(),
-                        "krate".into(),
-                        "/krate*".into(),
-                        None
-                    ),
-                    (
-                        "distribution_id_web".into(),
-                        "krate".into(),
-                        "/crate/krate*".into(),
-                        None
-                    ),
-                    (
-                        "distribution_id_static".into(),
-                        "krate".into(),
-                        "/rustdoc/krate*".into(),
-                        None
-                    ),
-                ]
-            );
+        queue_crate_invalidation(&mut conn, &env.config(), "krate").await?;
 
-            let counts =
-                queued_or_active_crate_invalidation_count_by_distribution(&mut conn, &config)
-                    .await?;
-            assert_eq!(counts.len(), 2);
-            assert_eq!(*counts.get("distribution_id_web").unwrap(), 2);
-            assert_eq!(*counts.get("distribution_id_static").unwrap(), 1);
+        // invalidation paths are queued.
+        assert_eq!(
+            queued_or_active_crate_invalidations(&mut conn)
+                .await?
+                .into_iter()
+                .map(|i| (
+                    i.cdn_distribution_id,
+                    i.krate,
+                    i.path_pattern,
+                    i.cdn_reference
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    "distribution_id_web".into(),
+                    "krate".into(),
+                    "/krate*".into(),
+                    None
+                ),
+                (
+                    "distribution_id_web".into(),
+                    "krate".into(),
+                    "/crate/krate*".into(),
+                    None
+                ),
+                (
+                    "distribution_id_static".into(),
+                    "krate".into(),
+                    "/rustdoc/krate*".into(),
+                    None
+                ),
+            ]
+        );
 
-            // queueing the invalidation doesn't create it in the CDN
-            assert!(active_invalidations(&cdn, "distribution_id_web").is_empty());
-            assert!(active_invalidations(&cdn, "distribution_id_static").is_empty());
+        let counts =
+            queued_or_active_crate_invalidation_count_by_distribution(&mut conn, &config).await?;
+        assert_eq!(counts.len(), 2);
+        assert_eq!(*counts.get("distribution_id_web").unwrap(), 2);
+        assert_eq!(*counts.get("distribution_id_static").unwrap(), 1);
 
-            let cdn = env.cdn();
-            let config = env.config();
+        // queueing the invalidation doesn't create it in the CDN
+        assert!(active_invalidations(&cdn, "distribution_id_web").is_empty());
+        assert!(active_invalidations(&cdn, "distribution_id_static").is_empty());
 
-            // now handle the queued invalidations
-            handle_queued_invalidation_requests(
-                &config,
-                &cdn,
-                &env.instance_metrics(),
-                &mut conn,
-                "distribution_id_web",
-            )
-            .await?;
-            handle_queued_invalidation_requests(
-                &config,
-                &cdn,
-                &env.instance_metrics(),
-                &mut conn,
-                "distribution_id_static",
-            )
-            .await?;
+        let cdn = env.cdn();
+        let config = env.config();
 
-            // which creates them in the CDN
-            {
-                let ir_web = active_invalidations(&cdn, "distribution_id_web");
-                assert_eq!(ir_web.len(), 1);
-                assert_eq!(ir_web[0].path_patterns, vec!["/*"]);
+        // now handle the queued invalidations
+        handle_queued_invalidation_requests(
+            &config,
+            &cdn,
+            &env.instance_metrics(),
+            &mut conn,
+            "distribution_id_web",
+        )
+        .await?;
+        handle_queued_invalidation_requests(
+            &config,
+            &cdn,
+            &env.instance_metrics(),
+            &mut conn,
+            "distribution_id_static",
+        )
+        .await?;
 
-                let ir_static = active_invalidations(&cdn, "distribution_id_static");
-                assert_eq!(ir_web.len(), 1);
-                assert_eq!(ir_static[0].path_patterns, vec!["/*"]);
-            }
-
-            // the queued entries got a CDN reference attached
-            assert!(
-                queued_or_active_crate_invalidations(&mut conn)
-                    .await?
-                    .iter()
-                    .all(|i| i.cdn_reference.is_some() && i.created_in_cdn.is_some())
-            );
-
-            Ok(())
-        });
-    }
-
-    #[test]
-    fn invalidate_a_crate() {
-        crate::test::async_wrapper(|env| async move {
-            env.override_config(|config| {
-                config.cloudfront_distribution_id_web = Some("distribution_id_web".into());
-                config.cloudfront_distribution_id_static = Some("distribution_id_static".into());
-            });
-
-            let cdn = env.cdn();
-            let config = env.config();
-            let mut conn = env.async_db().async_conn().await;
-            assert!(
-                queued_or_active_crate_invalidations(&mut conn)
-                    .await?
-                    .is_empty()
-            );
-
-            queue_crate_invalidation(&mut conn, &env.config(), "krate").await?;
-
-            // invalidation paths are queued.
-            assert_eq!(
-                queued_or_active_crate_invalidations(&mut conn)
-                    .await?
-                    .into_iter()
-                    .map(|i| (
-                        i.cdn_distribution_id,
-                        i.krate,
-                        i.path_pattern,
-                        i.cdn_reference
-                    ))
-                    .collect::<Vec<_>>(),
-                vec![
-                    (
-                        "distribution_id_web".into(),
-                        "krate".into(),
-                        "/krate*".into(),
-                        None
-                    ),
-                    (
-                        "distribution_id_web".into(),
-                        "krate".into(),
-                        "/crate/krate*".into(),
-                        None
-                    ),
-                    (
-                        "distribution_id_static".into(),
-                        "krate".into(),
-                        "/rustdoc/krate*".into(),
-                        None
-                    ),
-                ]
-            );
-
-            let counts =
-                queued_or_active_crate_invalidation_count_by_distribution(&mut conn, &config)
-                    .await?;
-            assert_eq!(counts.len(), 2);
-            assert_eq!(*counts.get("distribution_id_web").unwrap(), 2);
-            assert_eq!(*counts.get("distribution_id_static").unwrap(), 1);
-
-            // queueing the invalidation doesn't create it in the CDN
-            assert!(active_invalidations(&cdn, "distribution_id_web").is_empty());
-            assert!(active_invalidations(&cdn, "distribution_id_static").is_empty());
-
-            let cdn = env.cdn();
-            let config = env.config();
-
-            // now handle the queued invalidations
-            handle_queued_invalidation_requests(
-                &config,
-                &cdn,
-                &env.instance_metrics(),
-                &mut conn,
-                "distribution_id_web",
-            )
-            .await?;
-            handle_queued_invalidation_requests(
-                &config,
-                &cdn,
-                &env.instance_metrics(),
-                &mut conn,
-                "distribution_id_static",
-            )
-            .await?;
-
-            // which creates them in the CDN
-            {
-                let ir_web = active_invalidations(&cdn, "distribution_id_web");
-                assert_eq!(ir_web.len(), 1);
-                assert_eq!(ir_web[0].path_patterns, vec!["/krate*", "/crate/krate*"]);
-
-                let ir_static = active_invalidations(&cdn, "distribution_id_static");
-                assert_eq!(ir_web.len(), 1);
-                assert_eq!(ir_static[0].path_patterns, vec!["/rustdoc/krate*"]);
-            }
-
-            // the queued entries got a CDN reference attached
-            assert!(
-                queued_or_active_crate_invalidations(&mut conn)
-                    .await?
-                    .iter()
-                    .all(|i| i.cdn_reference.is_some() && i.created_in_cdn.is_some())
-            );
-
-            // clear the active invalidations in the CDN to _fake_ them
-            // being completed on the CDN side.
-            cdn.clear_active_invalidations();
-
-            // now handle again
-            handle_queued_invalidation_requests(
-                &config,
-                &cdn,
-                &env.instance_metrics(),
-                &mut conn,
-                "distribution_id_web",
-            )
-            .await?;
-            handle_queued_invalidation_requests(
-                &config,
-                &cdn,
-                &env.instance_metrics(),
-                &mut conn,
-                "distribution_id_static",
-            )
-            .await?;
-
-            // which removes them from the queue table
-            assert!(
-                queued_or_active_crate_invalidations(&mut conn)
-                    .await?
-                    .is_empty()
-            );
-
-            Ok(())
-        });
-    }
-
-    #[test]
-    fn only_add_some_invalidations_when_too_many_are_active() {
-        crate::test::async_wrapper(|env| async move {
-            env.override_config(|config| {
-                config.cloudfront_distribution_id_web = Some("distribution_id_web".into());
-            });
-
-            let cdn = env.cdn();
-
-            // create an invalidation with 15 paths, so we're over the limit
-            let already_running_invalidation = cdn
-                .create_invalidation(
-                    "distribution_id_web",
-                    &(0..(MAX_CLOUDFRONT_WILDCARD_INVALIDATIONS - 1))
-                        .map(|_| "/something*")
-                        .collect::<Vec<_>>(),
-                )
-                .await?;
-
-            let mut conn = env.async_db().async_conn().await;
-            assert!(
-                queued_or_active_crate_invalidations(&mut conn)
-                    .await?
-                    .is_empty()
-            );
-
-            // insert some completed invalidations into the queue & the CDN, these will be ignored
-            for i in 0..10 {
-                insert_running_invalidation(
-                    &mut conn,
-                    "distribution_id_web",
-                    &format!("some_id_{i}"),
-                )
-                .await?;
-                cdn.insert_completed_invalidation(
-                    "distribution_id_web",
-                    &format!("some_id_{i}"),
-                    &["/*"],
-                );
-            }
-
-            // insert the CDN representation of the already running invalidation
-            insert_running_invalidation(
-                &mut conn,
-                "distribution_id_web",
-                &already_running_invalidation.invalidation_id,
-            )
-            .await?;
-
-            // queue an invalidation
-            queue_crate_invalidation(&mut conn, &env.config(), "krate").await?;
-
-            // handle the queued invalidations
-            handle_queued_invalidation_requests(
-                &env.config(),
-                &env.cdn(),
-                &env.instance_metrics(),
-                &mut conn,
-                "distribution_id_web",
-            )
-            .await?;
-
-            // only one path was added to the CDN
-            let q = queued_or_active_crate_invalidations(&mut conn).await?;
-            assert_eq!(
-                q.iter()
-                    .filter_map(|i| i.cdn_reference.as_ref())
-                    .filter(|&reference| reference != &already_running_invalidation.invalidation_id)
-                    .count(),
-                1
-            );
-
-            // old invalidation is still active, new one is added
-            let ir_web = active_invalidations(&cdn, "distribution_id_web");
-            assert_eq!(ir_web.len(), 2);
-            assert_eq!(ir_web[0].path_patterns.len(), 12);
-            assert_eq!(ir_web[1].path_patterns.len(), 1);
-
-            Ok(())
-        });
-    }
-
-    #[test]
-    fn dont_create_invalidations_when_too_many_are_active() {
-        crate::test::async_wrapper(|env| async move {
-            env.override_config(|config| {
-                config.cloudfront_distribution_id_web = Some("distribution_id_web".into());
-            });
-
-            let cdn = env.cdn();
-
-            // create an invalidation with 15 paths, so we're over the limit
-            let already_running_invalidation = cdn
-                .create_invalidation(
-                    "distribution_id_web",
-                    &(0..15).map(|_| "/something*").collect::<Vec<_>>(),
-                )
-                .await?;
-
-            let mut conn = env.async_db().async_conn().await;
-            assert!(
-                queued_or_active_crate_invalidations(&mut conn)
-                    .await?
-                    .is_empty()
-            );
-            insert_running_invalidation(
-                &mut conn,
-                "distribution_id_web",
-                &already_running_invalidation.invalidation_id,
-            )
-            .await?;
-
-            // queue an invalidation
-            queue_crate_invalidation(&mut conn, &env.config(), "krate").await?;
-
-            // handle the queued invalidations
-            handle_queued_invalidation_requests(
-                &env.config(),
-                &env.cdn(),
-                &env.instance_metrics(),
-                &mut conn,
-                "distribution_id_web",
-            )
-            .await?;
-
-            // nothing was added to the CDN
-            assert!(
-                queued_or_active_crate_invalidations(&mut conn)
-                    .await?
-                    .iter()
-                    .filter(|i| !matches!(
-                        &i.cdn_reference,
-                        Some(val) if val == &already_running_invalidation.invalidation_id
-                    ))
-                    .all(|i| i.cdn_reference.is_none())
-            );
-
-            // old invalidations are still active
+        // which creates them in the CDN
+        {
             let ir_web = active_invalidations(&cdn, "distribution_id_web");
             assert_eq!(ir_web.len(), 1);
-            assert_eq!(ir_web[0].path_patterns.len(), 15);
+            assert_eq!(ir_web[0].path_patterns, vec!["/*"]);
 
-            // clear the active invalidations in the CDN to _fake_ them
-            // being completed on the CDN side.
-            cdn.clear_active_invalidations();
+            let ir_static = active_invalidations(&cdn, "distribution_id_static");
+            assert_eq!(ir_web.len(), 1);
+            assert_eq!(ir_static[0].path_patterns, vec!["/*"]);
+        }
 
-            // now handle again
-            handle_queued_invalidation_requests(
-                &env.config(),
-                &env.cdn(),
-                &env.instance_metrics(),
-                &mut conn,
-                "distribution_id_web",
-            )
-            .await?;
+        // the queued entries got a CDN reference attached
+        assert!(
+            queued_or_active_crate_invalidations(&mut conn)
+                .await?
+                .iter()
+                .all(|i| i.cdn_reference.is_some() && i.created_in_cdn.is_some())
+        );
 
-            // which adds the CDN reference
-            assert!(
-                queued_or_active_crate_invalidations(&mut conn)
-                    .await?
-                    .iter()
-                    .all(|i| i.cdn_reference.is_some())
-            );
+        Ok(())
+    }
 
-            // and creates them in the CDN too
+    #[tokio::test]
+    async fn invalidate_a_crate() -> Result<()> {
+        let mut config = TestEnvironment::base_config();
+        config.cloudfront_distribution_id_web = Some("distribution_id_web".into());
+        config.cloudfront_distribution_id_static = Some("distribution_id_static".into());
+
+        let env = TestEnvironment::with_config(config);
+
+        let cdn = env.cdn();
+        let config = env.config();
+        let mut conn = env.async_db().async_conn().await;
+        assert!(
+            queued_or_active_crate_invalidations(&mut conn)
+                .await?
+                .is_empty()
+        );
+
+        queue_crate_invalidation(&mut conn, &env.config(), "krate").await?;
+
+        // invalidation paths are queued.
+        assert_eq!(
+            queued_or_active_crate_invalidations(&mut conn)
+                .await?
+                .into_iter()
+                .map(|i| (
+                    i.cdn_distribution_id,
+                    i.krate,
+                    i.path_pattern,
+                    i.cdn_reference
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    "distribution_id_web".into(),
+                    "krate".into(),
+                    "/krate*".into(),
+                    None
+                ),
+                (
+                    "distribution_id_web".into(),
+                    "krate".into(),
+                    "/crate/krate*".into(),
+                    None
+                ),
+                (
+                    "distribution_id_static".into(),
+                    "krate".into(),
+                    "/rustdoc/krate*".into(),
+                    None
+                ),
+            ]
+        );
+
+        let counts =
+            queued_or_active_crate_invalidation_count_by_distribution(&mut conn, &config).await?;
+        assert_eq!(counts.len(), 2);
+        assert_eq!(*counts.get("distribution_id_web").unwrap(), 2);
+        assert_eq!(*counts.get("distribution_id_static").unwrap(), 1);
+
+        // queueing the invalidation doesn't create it in the CDN
+        assert!(active_invalidations(&cdn, "distribution_id_web").is_empty());
+        assert!(active_invalidations(&cdn, "distribution_id_static").is_empty());
+
+        let cdn = env.cdn();
+        let config = env.config();
+
+        // now handle the queued invalidations
+        handle_queued_invalidation_requests(
+            &config,
+            &cdn,
+            &env.instance_metrics(),
+            &mut conn,
+            "distribution_id_web",
+        )
+        .await?;
+        handle_queued_invalidation_requests(
+            &config,
+            &cdn,
+            &env.instance_metrics(),
+            &mut conn,
+            "distribution_id_static",
+        )
+        .await?;
+
+        // which creates them in the CDN
+        {
             let ir_web = active_invalidations(&cdn, "distribution_id_web");
             assert_eq!(ir_web.len(), 1);
             assert_eq!(ir_web[0].path_patterns, vec!["/krate*", "/crate/krate*"]);
 
-            Ok(())
-        });
+            let ir_static = active_invalidations(&cdn, "distribution_id_static");
+            assert_eq!(ir_web.len(), 1);
+            assert_eq!(ir_static[0].path_patterns, vec!["/rustdoc/krate*"]);
+        }
+
+        // the queued entries got a CDN reference attached
+        assert!(
+            queued_or_active_crate_invalidations(&mut conn)
+                .await?
+                .iter()
+                .all(|i| i.cdn_reference.is_some() && i.created_in_cdn.is_some())
+        );
+
+        // clear the active invalidations in the CDN to _fake_ them
+        // being completed on the CDN side.
+        cdn.clear_active_invalidations();
+
+        // now handle again
+        handle_queued_invalidation_requests(
+            &config,
+            &cdn,
+            &env.instance_metrics(),
+            &mut conn,
+            "distribution_id_web",
+        )
+        .await?;
+        handle_queued_invalidation_requests(
+            &config,
+            &cdn,
+            &env.instance_metrics(),
+            &mut conn,
+            "distribution_id_static",
+        )
+        .await?;
+
+        // which removes them from the queue table
+        assert!(
+            queued_or_active_crate_invalidations(&mut conn)
+                .await?
+                .is_empty()
+        );
+
+        Ok(())
     }
 
-    #[test]
-    fn dont_create_invalidations_without_paths() {
-        crate::test::async_wrapper(|env| async move {
-            env.override_config(|config| {
-                config.cloudfront_distribution_id_web = Some("distribution_id_web".into());
-            });
+    #[tokio::test]
+    async fn only_add_some_invalidations_when_too_many_are_active() -> Result<()> {
+        let mut config = TestEnvironment::base_config();
+        config.cloudfront_distribution_id_web = Some("distribution_id_web".into());
 
-            let cdn = env.cdn();
+        let env = TestEnvironment::with_config(config);
 
-            let mut conn = env.async_db().async_conn().await;
-            // no invalidation is queued
-            assert!(
-                queued_or_active_crate_invalidations(&mut conn)
-                    .await?
-                    .is_empty()
-            );
+        let cdn = env.cdn();
 
-            // run the handler
-            handle_queued_invalidation_requests(
-                &env.config(),
-                &env.cdn(),
-                &env.instance_metrics(),
-                &mut conn,
+        // create an invalidation with 15 paths, so we're over the limit
+        let already_running_invalidation = cdn
+            .create_invalidation(
                 "distribution_id_web",
+                &(0..(MAX_CLOUDFRONT_WILDCARD_INVALIDATIONS - 1))
+                    .map(|_| "/something*")
+                    .collect::<Vec<_>>(),
             )
             .await?;
 
-            // no invalidation was created
-            assert!(active_invalidations(&cdn, "distribution_id_web").is_empty());
+        let mut conn = env.async_db().async_conn().await;
+        assert!(
+            queued_or_active_crate_invalidations(&mut conn)
+                .await?
+                .is_empty()
+        );
 
-            Ok(())
-        });
+        // insert some completed invalidations into the queue & the CDN, these will be ignored
+        for i in 0..10 {
+            insert_running_invalidation(&mut conn, "distribution_id_web", &format!("some_id_{i}"))
+                .await?;
+            cdn.insert_completed_invalidation(
+                "distribution_id_web",
+                &format!("some_id_{i}"),
+                &["/*"],
+            );
+        }
+
+        // insert the CDN representation of the already running invalidation
+        insert_running_invalidation(
+            &mut conn,
+            "distribution_id_web",
+            &already_running_invalidation.invalidation_id,
+        )
+        .await?;
+
+        // queue an invalidation
+        queue_crate_invalidation(&mut conn, &env.config(), "krate").await?;
+
+        // handle the queued invalidations
+        handle_queued_invalidation_requests(
+            &env.config(),
+            &env.cdn(),
+            &env.instance_metrics(),
+            &mut conn,
+            "distribution_id_web",
+        )
+        .await?;
+
+        // only one path was added to the CDN
+        let q = queued_or_active_crate_invalidations(&mut conn).await?;
+        assert_eq!(
+            q.iter()
+                .filter_map(|i| i.cdn_reference.as_ref())
+                .filter(|&reference| reference != &already_running_invalidation.invalidation_id)
+                .count(),
+            1
+        );
+
+        // old invalidation is still active, new one is added
+        let ir_web = active_invalidations(&cdn, "distribution_id_web");
+        assert_eq!(ir_web.len(), 2);
+        assert_eq!(ir_web[0].path_patterns.len(), 12);
+        assert_eq!(ir_web[1].path_patterns.len(), 1);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn dont_create_invalidations_when_too_many_are_active() -> Result<()> {
+        let mut config = TestEnvironment::base_config();
+        config.cloudfront_distribution_id_web = Some("distribution_id_web".into());
+
+        let env = TestEnvironment::with_config(config);
+
+        let cdn = env.cdn();
+
+        // create an invalidation with 15 paths, so we're over the limit
+        let already_running_invalidation = cdn
+            .create_invalidation(
+                "distribution_id_web",
+                &(0..15).map(|_| "/something*").collect::<Vec<_>>(),
+            )
+            .await?;
+
+        let mut conn = env.async_db().async_conn().await;
+        assert!(
+            queued_or_active_crate_invalidations(&mut conn)
+                .await?
+                .is_empty()
+        );
+        insert_running_invalidation(
+            &mut conn,
+            "distribution_id_web",
+            &already_running_invalidation.invalidation_id,
+        )
+        .await?;
+
+        // queue an invalidation
+        queue_crate_invalidation(&mut conn, &env.config(), "krate").await?;
+
+        // handle the queued invalidations
+        handle_queued_invalidation_requests(
+            &env.config(),
+            &env.cdn(),
+            &env.instance_metrics(),
+            &mut conn,
+            "distribution_id_web",
+        )
+        .await?;
+
+        // nothing was added to the CDN
+        assert!(
+            queued_or_active_crate_invalidations(&mut conn)
+                .await?
+                .iter()
+                .filter(|i| !matches!(
+                    &i.cdn_reference,
+                    Some(val) if val == &already_running_invalidation.invalidation_id
+                ))
+                .all(|i| i.cdn_reference.is_none())
+        );
+
+        // old invalidations are still active
+        let ir_web = active_invalidations(&cdn, "distribution_id_web");
+        assert_eq!(ir_web.len(), 1);
+        assert_eq!(ir_web[0].path_patterns.len(), 15);
+
+        // clear the active invalidations in the CDN to _fake_ them
+        // being completed on the CDN side.
+        cdn.clear_active_invalidations();
+
+        // now handle again
+        handle_queued_invalidation_requests(
+            &env.config(),
+            &env.cdn(),
+            &env.instance_metrics(),
+            &mut conn,
+            "distribution_id_web",
+        )
+        .await?;
+
+        // which adds the CDN reference
+        assert!(
+            queued_or_active_crate_invalidations(&mut conn)
+                .await?
+                .iter()
+                .all(|i| i.cdn_reference.is_some())
+        );
+
+        // and creates them in the CDN too
+        let ir_web = active_invalidations(&cdn, "distribution_id_web");
+        assert_eq!(ir_web.len(), 1);
+        assert_eq!(ir_web[0].path_patterns, vec!["/krate*", "/crate/krate*"]);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn dont_create_invalidations_without_paths() -> Result<()> {
+        let mut config = TestEnvironment::base_config();
+        config.cloudfront_distribution_id_web = Some("distribution_id_web".into());
+
+        let env = TestEnvironment::with_config(config);
+
+        let cdn = env.cdn();
+
+        let mut conn = env.async_db().async_conn().await;
+        // no invalidation is queued
+        assert!(
+            queued_or_active_crate_invalidations(&mut conn)
+                .await?
+                .is_empty()
+        );
+
+        // run the handler
+        handle_queued_invalidation_requests(
+            &env.config(),
+            &env.cdn(),
+            &env.instance_metrics(),
+            &mut conn,
+            "distribution_id_web",
+        )
+        .await?;
+
+        // no invalidation was created
+        assert!(active_invalidations(&cdn, "distribution_id_web").is_empty());
+
+        Ok(())
     }
 
     async fn get_mock_config(http_client: StaticReplayClient) -> aws_sdk_cloudfront::Config {

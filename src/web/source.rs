@@ -350,9 +350,10 @@ pub(crate) async fn source_browser_handler(
 #[cfg(test)]
 mod tests {
     use crate::{
-        test::{AxumResponseTestExt, AxumRouterTestExt, async_wrapper},
+        test::{AxumResponseTestExt, AxumRouterTestExt, TestEnvironment, async_wrapper},
         web::{cache::CachePolicy, encode_url_path},
     };
+    use anyhow::Result;
     use kuchikiki::traits::TendrilSink;
     use reqwest::StatusCode;
     use test_case::test_case;
@@ -799,31 +800,30 @@ mod tests {
         });
     }
 
-    #[test]
-    fn large_file_test() {
-        async_wrapper(|env| async move {
-            env.override_config(|config| {
-                config.max_file_size = 1;
-                config.max_file_size_html = 1;
-            });
-            env.fake_release()
-                .await
-                .name("fake")
-                .version("0.1.0")
-                .source_file("large_file.rs", b"some_random_content")
-                .create()
-                .await?;
+    #[tokio::test]
+    async fn large_file_test() -> Result<()> {
+        let mut config = TestEnvironment::base_config();
+        config.max_file_size = 1;
+        config.max_file_size_html = 1;
 
-            let web = env.web_app().await;
-            let response = web.get("/crate/fake/0.1.0/source/large_file.rs").await?;
-            assert_eq!(response.status(), StatusCode::OK);
-            assert!(
-                response
-                    .text()
-                    .await?
-                    .contains("This file is too large to display")
-            );
-            Ok(())
-        });
+        let env = TestEnvironment::with_config(config);
+        env.fake_release()
+            .await
+            .name("fake")
+            .version("0.1.0")
+            .source_file("large_file.rs", b"some_random_content")
+            .create()
+            .await?;
+
+        let web = env.web_app().await;
+        let response = web.get("/crate/fake/0.1.0/source/large_file.rs").await?;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            response
+                .text()
+                .await?
+                .contains("This file is too large to display")
+        );
+        Ok(())
     }
 }
