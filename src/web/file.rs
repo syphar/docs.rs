@@ -88,8 +88,10 @@ impl IntoResponse for StreamingFile {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
-    use crate::test::async_wrapper;
+    use crate::test::{TestEnvironment, async_wrapper};
     use chrono::Utc;
     use http::header::CACHE_CONTROL;
 
@@ -125,63 +127,62 @@ mod tests {
         });
     }
 
-    #[test]
-    fn test_max_size() {
+    #[tokio::test]
+    async fn test_max_size() -> Result<()> {
         const MAX_SIZE: usize = 1024;
         const MAX_HTML_SIZE: usize = 128;
 
-        async_wrapper(|env| async move {
-            env.override_config(|config| {
-                config.max_file_size = MAX_SIZE;
-                config.max_file_size_html = MAX_HTML_SIZE;
-            });
+        let mut config = TestEnvironment::base_config();
+        config.max_file_size = MAX_SIZE;
+        config.max_file_size_html = MAX_HTML_SIZE;
 
-            env.fake_release()
+        let env = Arc::new(TestEnvironment::with_config(config));
+
+        env.fake_release()
+            .await
+            .name("dummy")
+            .version("0.1.0")
+            .rustdoc_file_with("small.html", &[b'A'; MAX_HTML_SIZE / 2] as &[u8])
+            .rustdoc_file_with("exact.html", &[b'A'; MAX_HTML_SIZE] as &[u8])
+            .rustdoc_file_with("big.html", &[b'A'; MAX_HTML_SIZE * 2] as &[u8])
+            .rustdoc_file_with("small.js", &[b'A'; MAX_SIZE / 2] as &[u8])
+            .rustdoc_file_with("exact.js", &[b'A'; MAX_SIZE] as &[u8])
+            .rustdoc_file_with("big.js", &[b'A'; MAX_SIZE * 2] as &[u8])
+            .create()
+            .await?;
+
+        let file = |path| {
+            let env = env.clone();
+            async move {
+                File::from_path(
+                    &env.async_storage(),
+                    &format!("rustdoc/dummy/0.1.0/{path}"),
+                    &env.config(),
+                )
                 .await
-                .name("dummy")
-                .version("0.1.0")
-                .rustdoc_file_with("small.html", &[b'A'; MAX_HTML_SIZE / 2] as &[u8])
-                .rustdoc_file_with("exact.html", &[b'A'; MAX_HTML_SIZE] as &[u8])
-                .rustdoc_file_with("big.html", &[b'A'; MAX_HTML_SIZE * 2] as &[u8])
-                .rustdoc_file_with("small.js", &[b'A'; MAX_SIZE / 2] as &[u8])
-                .rustdoc_file_with("exact.js", &[b'A'; MAX_SIZE] as &[u8])
-                .rustdoc_file_with("big.js", &[b'A'; MAX_SIZE * 2] as &[u8])
-                .create()
-                .await?;
+            }
+        };
+        let assert_len = |len, path| async move {
+            assert_eq!(len, file(path).await.unwrap().0.content.len());
+        };
+        let assert_too_big = |path| async move {
+            file(path)
+                .await
+                .unwrap_err()
+                .downcast_ref::<std::io::Error>()
+                .and_then(|io| io.get_ref())
+                .and_then(|err| err.downcast_ref::<crate::error::SizeLimitReached>())
+                .is_some()
+        };
 
-            let file = |path| {
-                let env = env.clone();
-                async move {
-                    File::from_path(
-                        &env.async_storage(),
-                        &format!("rustdoc/dummy/0.1.0/{path}"),
-                        &env.config(),
-                    )
-                    .await
-                }
-            };
-            let assert_len = |len, path| async move {
-                assert_eq!(len, file(path).await.unwrap().0.content.len());
-            };
-            let assert_too_big = |path| async move {
-                file(path)
-                    .await
-                    .unwrap_err()
-                    .downcast_ref::<std::io::Error>()
-                    .and_then(|io| io.get_ref())
-                    .and_then(|err| err.downcast_ref::<crate::error::SizeLimitReached>())
-                    .is_some()
-            };
+        assert_len(MAX_HTML_SIZE / 2, "small.html").await;
+        assert_len(MAX_HTML_SIZE, "exact.html").await;
+        assert_len(MAX_SIZE / 2, "small.js").await;
+        assert_len(MAX_SIZE, "exact.js").await;
 
-            assert_len(MAX_HTML_SIZE / 2, "small.html").await;
-            assert_len(MAX_HTML_SIZE, "exact.html").await;
-            assert_len(MAX_SIZE / 2, "small.js").await;
-            assert_len(MAX_SIZE, "exact.js").await;
+        assert_too_big("big.html").await;
+        assert_too_big("big.js").await;
 
-            assert_too_big("big.html").await;
-            assert_too_big("big.js").await;
-
-            Ok(())
-        })
+        Ok(())
     }
 }

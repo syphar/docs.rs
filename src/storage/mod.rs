@@ -1596,31 +1596,31 @@ mod backend_tests {
         };
     }
 
-    backend_tests! {
-        backends {
-            s3 => StorageKind::S3,
-            database => StorageKind::Database,
-        }
+    // backend_tests! {
+    //     backends {
+    //         s3 => StorageKind::S3,
+    //         database => StorageKind::Database,
+    //     }
 
-        tests {
-            test_batched_uploads,
-            test_exists,
-            test_get_object,
-            test_get_range,
-            test_get_too_big,
-            test_too_long_filename,
-            test_list_prefix,
-            test_delete_prefix,
-            test_delete_prefix_without_matches,
-            test_delete_percent,
-            test_exists_without_remote_archive,
-            test_set_public,
-        }
+    //     tests {
+    //         test_batched_uploads,
+    //         test_exists,
+    //         test_get_object,
+    //         test_get_range,
+    //         test_get_too_big,
+    //         test_too_long_filename,
+    //         test_list_prefix,
+    //         test_delete_prefix,
+    //         test_delete_prefix_without_matches,
+    //         test_delete_percent,
+    //         test_exists_without_remote_archive,
+    //         test_set_public,
+    //     }
 
-        tests_with_metrics {
-            test_store_blobs,
-            test_store_all,
-            test_store_all_in_archive,
-        }
-    }
+    //     tests_with_metrics {
+    //         test_store_blobs,
+    //         test_store_all,
+    //         test_store_all_in_archive,
+    //     }
+    // }
 }

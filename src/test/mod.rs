@@ -26,7 +26,7 @@ use tracing::error;
 
 #[track_caller]
 pub(crate) fn wrapper(f: impl FnOnce(&TestEnvironment) -> Result<()>) {
-    let env = TestEnvironment::new();
+    let env = TestEnvironment::full();
     f(&env).expect("test failed");
 }
 
@@ -35,7 +35,7 @@ where
     F: FnOnce(Rc<TestEnvironment>) -> Fut,
     Fut: Future<Output = Result<()>>,
 {
-    let env = Rc::new(TestEnvironment::new());
+    let env = Rc::new(TestEnvironment::full());
 
     env.runtime().block_on(f(env.clone())).expect("test failed");
 }
@@ -330,11 +330,11 @@ pub(crate) fn init_logger() {
 }
 
 impl TestEnvironment {
-    fn new() -> Self {
+    fn full() -> Self {
         Self::with_config(Self::base_config())
     }
 
-    fn with_config(config: Config) -> Self {
+    pub(crate) fn with_config(config: Config) -> Self {
         init_logger();
 
         let config = Arc::new(config);
@@ -440,16 +440,6 @@ impl TestEnvironment {
         config.include_default_targets = true;
 
         config
-    }
-
-    pub(crate) fn override_config(&self, f: impl FnOnce(&mut Config)) {
-        let mut config = Self::base_config();
-        f(&mut config);
-
-        // FIXME: fix
-        // if self.context.config.set(Arc::new(config)).is_err() {
-        //     panic!("can't call override_config after the configuration is accessed!");
-        // }
     }
 
     pub(crate) fn async_build_queue(&self) -> Arc<AsyncBuildQueue> {

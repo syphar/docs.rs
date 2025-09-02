@@ -1536,37 +1536,35 @@ mod tests {
 
     #[test]
     #[ignore]
-    fn test_collect_metrics() {
-        wrapper(|env| {
-            let metrics_dir = tempfile::tempdir()?.keep();
+    fn test_collect_metrics() -> Result<()> {
+        let mut config = TestEnvironment::base_config();
+        let metrics_dir = tempfile::tempdir()?.keep();
+        config.compiler_metrics_collection_path = Some(metrics_dir.clone());
+        config.include_default_targets = false;
 
-            env.override_config(|cfg| {
-                cfg.compiler_metrics_collection_path = Some(metrics_dir.clone());
-                cfg.include_default_targets = false;
-            });
+        let env = TestEnvironment::with_config(config);
 
-            let crate_ = DUMMY_CRATE_NAME;
-            let version = DUMMY_CRATE_VERSION;
+        let crate_ = DUMMY_CRATE_NAME;
+        let version = DUMMY_CRATE_VERSION;
 
-            let mut builder = RustwideBuilder::init(&env.context).unwrap();
-            builder.update_toolchain()?;
-            assert!(
-                builder
-                    .build_package(crate_, version, PackageKind::CratesIo, true)?
-                    .successful
-            );
+        let mut builder = RustwideBuilder::init(&env.context).unwrap();
+        builder.update_toolchain()?;
+        assert!(
+            builder
+                .build_package(crate_, version, PackageKind::CratesIo, true)?
+                .successful
+        );
 
-            let metric_files: Vec<_> = fs::read_dir(&metrics_dir)?
-                .filter_map(|di| di.ok())
-                .map(|di| di.path())
-                .collect();
+        let metric_files: Vec<_> = fs::read_dir(&metrics_dir)?
+            .filter_map(|di| di.ok())
+            .map(|di| di.path())
+            .collect();
 
-            assert_eq!(metric_files.len(), 1);
+        assert_eq!(metric_files.len(), 1);
 
-            let _: serde_json::Value = serde_json::from_slice(&fs::read(&metric_files[0])?)?;
+        let _: serde_json::Value = serde_json::from_slice(&fs::read(&metric_files[0])?)?;
 
-            Ok(())
-        })
+        Ok(())
     }
 
     #[test]
@@ -1793,59 +1791,61 @@ mod tests {
 
     #[test]
     #[ignore]
-    fn test_locked_fails_unlocked_needs_new_deps() {
-        wrapper(|env| {
-            env.override_config(|cfg| cfg.include_default_targets = false);
+    fn test_locked_fails_unlocked_needs_new_deps() -> Result<()> {
+        let mut config = TestEnvironment::base_config();
+        config.include_default_targets = false;
 
-            // if the corrected dependency of the crate was already downloaded we need to remove it
-            remove_cache_files(env, "rand_core", "0.5.1")?;
+        let env = TestEnvironment::with_config(config);
 
-            // Specific setup required:
-            //  * crate has a binary so that it is published with a lockfile
-            //  * crate has a library so that it is documented by docs.rs
-            //  * crate has an optional dependency
-            //  * metadata enables the optional dependency for docs.rs
-            //  * `cargo doc` fails with the version of the dependency in the lockfile
-            //  * there is a newer version of the dependency available that correctly builds
-            let crate_ = "docs_rs_test_incorrect_lockfile";
-            let version = "0.1.2";
-            let mut builder = RustwideBuilder::init(&env.context).unwrap();
-            builder.update_toolchain()?;
-            assert!(
-                builder
-                    .build_package(crate_, version, PackageKind::CratesIo, false)?
-                    .successful
-            );
+        // if the corrected dependency of the crate was already downloaded we need to remove it
+        remove_cache_files(&env, "rand_core", "0.5.1")?;
 
-            Ok(())
-        });
+        // Specific setup required:
+        //  * crate has a binary so that it is published with a lockfile
+        //  * crate has a library so that it is documented by docs.rs
+        //  * crate has an optional dependency
+        //  * metadata enables the optional dependency for docs.rs
+        //  * `cargo doc` fails with the version of the dependency in the lockfile
+        //  * there is a newer version of the dependency available that correctly builds
+        let crate_ = "docs_rs_test_incorrect_lockfile";
+        let version = "0.1.2";
+        let mut builder = RustwideBuilder::init(&env.context).unwrap();
+        builder.update_toolchain()?;
+        assert!(
+            builder
+                .build_package(crate_, version, PackageKind::CratesIo, false)?
+                .successful
+        );
+
+        Ok(())
     }
 
     #[test]
     #[ignore]
-    fn test_locked_fails_unlocked_needs_new_unknown_deps() {
-        wrapper(|env| {
-            env.override_config(|cfg| cfg.include_default_targets = false);
+    fn test_locked_fails_unlocked_needs_new_unknown_deps() -> Result<()> {
+        let mut config = TestEnvironment::base_config();
+        config.include_default_targets = false;
 
-            // if the corrected dependency of the crate was already downloaded we need to remove it
-            remove_cache_files(env, "value-bag-sval2", "1.4.1")?;
+        let env = TestEnvironment::with_config(config);
 
-            // Similar to above, this crate fails to build with the published
-            // lockfile, but generating a new working lockfile requires
-            // introducing a completely new dependency (not just version) which
-            // would not have had its details pulled down from the sparse-index.
-            let crate_ = "docs_rs_test_incorrect_lockfile";
-            let version = "0.2.0";
-            let mut builder = RustwideBuilder::init(&env.context).unwrap();
-            builder.update_toolchain()?;
-            assert!(
-                builder
-                    .build_package(crate_, version, PackageKind::CratesIo, false)?
-                    .successful
-            );
+        // if the corrected dependency of the crate was already downloaded we need to remove it
+        remove_cache_files(&env, "value-bag-sval2", "1.4.1")?;
 
-            Ok(())
-        });
+        // Similar to above, this crate fails to build with the published
+        // lockfile, but generating a new working lockfile requires
+        // introducing a completely new dependency (not just version) which
+        // would not have had its details pulled down from the sparse-index.
+        let crate_ = "docs_rs_test_incorrect_lockfile";
+        let version = "0.2.0";
+        let mut builder = RustwideBuilder::init(&env.context).unwrap();
+        builder.update_toolchain()?;
+        assert!(
+            builder
+                .build_package(crate_, version, PackageKind::CratesIo, false)?
+                .successful
+        );
+
+        Ok(())
     }
 
     #[test]
@@ -2025,29 +2025,28 @@ mod tests {
 
     #[test]
     #[ignore]
-    fn test_workspace_reinitialize_after_interval() {
+    fn test_workspace_reinitialize_after_interval() -> Result<()> {
         use std::thread::sleep;
         use std::time::Duration;
-        wrapper(|env: &TestEnvironment| {
-            env.override_config(|cfg: &mut Config| {
-                cfg.build_workspace_reinitialization_interval = Duration::from_secs(1)
-            });
-            let mut builder = RustwideBuilder::init(&env.context)?;
-            builder.update_toolchain()?;
-            assert!(
-                builder
-                    .build_local_package(Path::new("tests/crates/build-std"))?
-                    .successful
-            );
-            sleep(Duration::from_secs(1));
-            builder.reinitialize_workspace_if_interval_passed(&env.context)?;
-            assert!(
-                builder
-                    .build_local_package(Path::new("tests/crates/build-std"))?
-                    .successful
-            );
-            Ok(())
-        })
+        let mut config = TestEnvironment::base_config();
+        config.build_workspace_reinitialization_interval = Duration::from_secs(1);
+
+        let env = TestEnvironment::with_config(config);
+        let mut builder = RustwideBuilder::init(&env.context)?;
+        builder.update_toolchain()?;
+        assert!(
+            builder
+                .build_local_package(Path::new("tests/crates/build-std"))?
+                .successful
+        );
+        sleep(Duration::from_secs(1));
+        builder.reinitialize_workspace_if_interval_passed(&env.context)?;
+        assert!(
+            builder
+                .build_local_package(Path::new("tests/crates/build-std"))?
+                .successful
+        );
+        Ok(())
     }
 
     #[test]
