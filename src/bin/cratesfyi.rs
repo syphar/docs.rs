@@ -205,13 +205,9 @@ impl CommandLine {
 
                 start_background_metrics_webserver(Some(metric_server_socket_addr), &ctx)?;
 
-                ctx.runtime.block_on(async {
-                    docs_rs::utils::watch_registry(
-                        ctx.async_build_queue.clone(),
-                        ctx.config.clone(),
-                        ctx.index.clone(),
-                    )
-                    .await
+                ctx.runtime.block_on(async move {
+                    docs_rs::utils::watch_registry(ctx.async_build_queue, ctx.config, ctx.index)
+                        .await
                 })?;
             }
             Self::StartBuildServer {
@@ -219,10 +215,8 @@ impl CommandLine {
             } => {
                 start_background_metrics_webserver(Some(metric_server_socket_addr), &ctx)?;
 
-                let build_queue = ctx.build_queue.clone();
-                let config = ctx.config.clone();
                 let rustwide_builder = RustwideBuilder::init(&ctx)?;
-                queue_builder(&ctx, rustwide_builder, build_queue, config)?;
+                queue_builder(&ctx, rustwide_builder, &ctx.build_queue, &ctx.config)?;
             }
             Self::StartWebServer { socket_addr } => {
                 // Blocks indefinitely
@@ -284,13 +278,13 @@ enum QueueSubcommand {
 
 impl QueueSubcommand {
     fn handle_args(self, ctx: Context) -> Result<()> {
-        let build_queue = ctx.build_queue.clone();
+        // let build_queue = ctx.build_queue.clone();
         match self {
             Self::Add {
                 crate_name,
                 crate_version,
                 build_priority,
-            } => build_queue.add_crate(
+            } => ctx.build_queue.add_crate(
                 &crate_name,
                 &crate_version,
                 build_priority,
@@ -298,7 +292,7 @@ impl QueueSubcommand {
             )?,
 
             Self::GetLastSeenReference => {
-                if let Some(reference) = build_queue.last_seen_reference()? {
+                if let Some(reference) = ctx.build_queue.last_seen_reference()? {
                     println!("Last seen reference: {reference}");
                 } else {
                     println!("No last seen reference available");
@@ -316,7 +310,7 @@ impl QueueSubcommand {
                     (_, _) => unreachable!(),
                 };
 
-                build_queue.set_last_seen_reference(reference)?;
+                ctx.build_queue.set_last_seen_reference(reference)?;
                 println!("Set last seen reference: {reference}");
             }
 
@@ -438,7 +432,6 @@ enum BuildSubcommand {
 
 impl BuildSubcommand {
     fn handle_args(self, ctx: Context) -> Result<()> {
-        let build_queue = ctx.build_queue.clone();
         let rustwide_builder = || -> Result<RustwideBuilder> { RustwideBuilder::init(&ctx) };
 
         match self {
@@ -520,8 +513,8 @@ impl BuildSubcommand {
                 })?;
             }
 
-            Self::Lock => build_queue.lock().context("Failed to lock")?,
-            Self::Unlock => build_queue.unlock().context("Failed to unlock")?,
+            Self::Lock => ctx.build_queue.lock().context("Failed to lock")?,
+            Self::Unlock => ctx.build_queue.unlock().context("Failed to unlock")?,
         }
 
         Ok(())
@@ -654,14 +647,8 @@ impl DatabaseSubcommand {
                 .runtime
                 .block_on(async move {
                     let mut conn = ctx.pool.get_async().await?;
-                    db::delete_version(
-                        &mut conn,
-                        &ctx.async_storage,
-                        &ctx.config,
-                        &name,
-                        &version,
-                    )
-                    .await
+                    db::delete_version(&mut conn, &ctx.async_storage, &ctx.config, &name, &version)
+                        .await
                 })
                 .context("failed to delete the version")?,
             Self::Delete {

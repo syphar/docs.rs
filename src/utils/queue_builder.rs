@@ -2,7 +2,6 @@ use crate::Context;
 use crate::{BuildQueue, Config, docbuilder::RustwideBuilder, utils::report_error};
 use anyhow::{Context as _, Error};
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::Arc;
 use std::time::Duration;
 use std::{fs, io, path::Path, thread};
 use tracing::{debug, error, warn};
@@ -10,8 +9,8 @@ use tracing::{debug, error, warn};
 pub fn queue_builder(
     context: &Context,
     mut builder: RustwideBuilder,
-    build_queue: Arc<BuildQueue>,
-    config: Arc<Config>,
+    build_queue: &BuildQueue,
+    config: &Config,
 ) -> Result<(), Error> {
     loop {
         if let Err(e) = remove_tempdirs(&config.temp_dir) {

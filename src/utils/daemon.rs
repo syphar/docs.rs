@@ -195,14 +195,20 @@ pub fn start_daemon(context: Context, enable_registry_watcher: bool) -> Result<(
     }
 
     // build new crates every minute
-    let build_queue = context.build_queue.clone();
-    let config = context.config.clone();
     let rustwide_builder = RustwideBuilder::init(&context)?;
     thread::Builder::new()
         .name("build queue reader".to_string())
         .spawn({
             let context = context.clone();
-            move || queue_builder(&context, rustwide_builder, build_queue, config).unwrap()
+            move || {
+                queue_builder(
+                    &context,
+                    rustwide_builder,
+                    &context.build_queue,
+                    &context.config,
+                )
+                .unwrap()
+            }
         })
         .unwrap();
 
