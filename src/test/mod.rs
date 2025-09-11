@@ -21,7 +21,7 @@ use once_cell::sync::OnceCell;
 use serde::de::DeserializeOwned;
 use sqlx::Connection as _;
 use std::{fs, future::Future, panic, rc::Rc, str::FromStr, sync::Arc};
-use tokio::runtime::{Builder, Runtime};
+use tokio::runtime::{Builder, Handle, Runtime};
 use tower::ServiceExt;
 use tracing::error;
 
@@ -535,17 +535,17 @@ impl TestEnvironment {
             .clone()
     }
 
-    pub(crate) fn runtime(&self) -> Arc<Runtime> {
-        self.runtime
-            .get_or_init(|| {
-                Arc::new(
-                    Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .expect("failed to initialize runtime"),
-                )
-            })
-            .clone()
+    pub(crate) fn runtime(&self) -> Handle {
+        let runtime = self.runtime.get_or_init(|| {
+            Arc::new(
+                Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("failed to initialize runtime"),
+            )
+        });
+
+        runtime.handle().clone()
     }
 
     pub(crate) fn index(&self) -> Arc<Index> {
@@ -592,12 +592,9 @@ impl TestEnvironment {
         self.db
             .get_or_init(|| async {
                 let config = self.config();
-                let runtime = self.runtime();
                 let instance_metrics = self.instance_metrics();
-                self.runtime()
-                    .spawn_blocking(move || TestDatabase::new(&config, runtime, instance_metrics))
+                TestDatabase::new(&config, instance_metrics)
                     .await
-                    .unwrap()
                     .expect("failed to initialize the db")
             })
             .await
@@ -668,7 +665,7 @@ impl Context for TestEnvironment {
         Ok(self.repository_stats_updater())
     }
 
-    fn runtime(&self) -> Result<Arc<Runtime>> {
+    fn runtime(&self) -> Result<Handle> {
         Ok(self.runtime())
     }
 }
@@ -677,66 +674,59 @@ impl Context for TestEnvironment {
 pub(crate) struct TestDatabase {
     pool: Pool,
     schema: String,
-    runtime: Arc<Runtime>,
+    runtime: Handle,
 }
 
 impl TestDatabase {
-    fn new(config: &Config, runtime: Arc<Runtime>, metrics: Arc<InstanceMetrics>) -> Result<Self> {
+    async fn new(config: &Config, metrics: Arc<InstanceMetrics>) -> Result<Self> {
         // A random schema name is generated and used for the current connection. This allows each
         // test to create a fresh instance of the database to run within.
         let schema = format!("docs_rs_test_schema_{}", rand::random::<u64>());
 
-        let pool = Pool::new_with_schema(config, runtime.clone(), metrics, &schema)?;
+        let pool = Pool::new_with_schema(config, metrics, &schema).await?;
 
-        runtime.block_on({
-            let schema = schema.clone();
-            async move {
-                let mut conn = sqlx::PgConnection::connect(&config.database_url).await?;
-                sqlx::query(&format!("CREATE SCHEMA {schema}"))
-                    .execute(&mut conn)
-                    .await
-                    .context("error creating schema")?;
-                sqlx::query(&format!("SET search_path TO {schema}, public"))
-                    .execute(&mut conn)
-                    .await
-                    .context("error setting search path")?;
-                db::migrate(&mut conn, None)
-                    .await
-                    .context("error running migrations")?;
+        let mut conn = sqlx::PgConnection::connect(&config.database_url).await?;
+        sqlx::query(&format!("CREATE SCHEMA {schema}"))
+            .execute(&mut conn)
+            .await
+            .context("error creating schema")?;
+        sqlx::query(&format!("SET search_path TO {schema}, public"))
+            .execute(&mut conn)
+            .await
+            .context("error setting search path")?;
+        db::migrate(&mut conn, None)
+            .await
+            .context("error running migrations")?;
 
-                // Move all sequence start positions 10000 apart to avoid overlapping primary keys
-                let sequence_names: Vec<_> = sqlx::query!(
-                    "SELECT relname
+        // Move all sequence start positions 10000 apart to avoid overlapping primary keys
+        let sequence_names: Vec<_> = sqlx::query!(
+            "SELECT relname
                      FROM pg_class
                      INNER JOIN pg_namespace ON
                          pg_class.relnamespace = pg_namespace.oid
                      WHERE pg_class.relkind = 'S'
                          AND pg_namespace.nspname = $1
                     ",
-                    schema,
-                )
-                .fetch(&mut conn)
-                .map_ok(|row| row.relname)
-                .try_collect()
-                .await?;
+            schema,
+        )
+        .fetch(&mut conn)
+        .map_ok(|row| row.relname)
+        .try_collect()
+        .await?;
 
-                for (i, sequence) in sequence_names.into_iter().enumerate() {
-                    let offset = (i + 1) * 10000;
-                    sqlx::query(&format!(
-                        r#"ALTER SEQUENCE "{sequence}" RESTART WITH {offset};"#
-                    ))
-                    .execute(&mut conn)
-                    .await?;
-                }
-
-                Ok::<(), anyhow::Error>(())
-            }
-        })?;
+        for (i, sequence) in sequence_names.into_iter().enumerate() {
+            let offset = (i + 1) * 10000;
+            sqlx::query(&format!(
+                r#"ALTER SEQUENCE "{sequence}" RESTART WITH {offset};"#
+            ))
+            .execute(&mut conn)
+            .await?;
+        }
 
         Ok(TestDatabase {
             pool,
             schema,
-            runtime,
+            runtime: Handle::current(),
         })
     }
 

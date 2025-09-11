@@ -25,7 +25,7 @@ use sentry::{
     TransactionContext, integrations::panic as sentry_panic,
     integrations::tracing as sentry_tracing,
 };
-use tokio::runtime::{Builder, Runtime};
+use tokio::runtime::{Builder, Handle, Runtime};
 use tracing_log::LogTracer;
 use tracing_subscriber::{EnvFilter, filter::Directive, prelude::*};
 
@@ -890,20 +890,13 @@ impl Context for BinContext {
         fn storage(self) -> Storage = {
             let runtime = self.runtime()?;
             Storage::new(
-                runtime.block_on(self.async_storage())?,
-                runtime
-           )
+                runtime.block_on(self.async_storage())?, runtime)
         };
         fn config(self) -> Config = Config::from_env()?;
         fn service_metrics(self) -> ServiceMetrics = {
             ServiceMetrics::new()?
         };
         fn instance_metrics(self) -> InstanceMetrics = InstanceMetrics::new()?;
-        fn runtime(self) -> Runtime = {
-            Builder::new_multi_thread()
-                .enable_all()
-                .build()?
-        };
         fn index(self) -> Index = {
             let config = self.config()?;
             let path = config.registry_index_path.clone();
@@ -928,15 +921,23 @@ impl Context for BinContext {
         self.pool()
     }
 
+    fn runtime(&self) -> Result<Handle> {
+        let runtime = self
+            .runtime
+            .get_or_try_init::<_, Error>(|| {
+                Ok(Arc::new(Builder::new_multi_thread().enable_all().build()?))
+            })?
+            .clone();
+
+        Ok(runtime.handle().clone())
+    }
+
     fn pool(&self) -> Result<Pool> {
         Ok(self
             .pool
             .get_or_try_init::<_, Error>(|| {
-                Ok(Pool::new(
-                    &*self.config()?,
-                    self.runtime()?,
-                    self.instance_metrics()?,
-                )?)
+                let runtime = self.runtime()?;
+                Ok(runtime.block_on(Pool::new(&*self.config()?, self.instance_metrics()?))?)
             })?
             .clone())
     }

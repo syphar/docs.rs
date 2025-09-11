@@ -33,7 +33,8 @@ use std::{
 };
 use std::{iter, str::FromStr};
 use tokio::{
-    io::{AsyncRead, AsyncReadExt as _, AsyncWriteExt},
+    io::{AsyncRead, AsyncReadExt as _, AsyncWriteExt as _},
+    runtime::Handle,
     runtime::Runtime,
 };
 use tracing::{error, info_span, instrument, trace};
@@ -784,12 +785,12 @@ impl std::fmt::Debug for AsyncStorage {
 /// Sync wrapper around `AsyncStorage` for parts of the codebase that are not async.
 pub struct Storage {
     inner: Arc<AsyncStorage>,
-    runtime: Arc<Runtime>,
+    runtime: Handle,
 }
 
 #[allow(dead_code)]
 impl Storage {
-    pub fn new(inner: Arc<AsyncStorage>, runtime: Arc<Runtime>) -> Self {
+    pub fn new(inner: Arc<AsyncStorage>, runtime: Handle) -> Self {
         Self { inner, runtime }
     }
 

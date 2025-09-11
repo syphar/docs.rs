@@ -19,6 +19,7 @@ use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use std::iter;
 use std::sync::Arc;
+use tokio::runtime::Handle;
 use tracing::debug;
 
 /// Create a fake release in the database that failed before the build.
@@ -55,6 +56,7 @@ pub(crate) async fn fake_release_that_failed_before_build(
 pub(crate) struct FakeRelease<'a> {
     db: &'a TestDatabase,
     storage: Arc<AsyncStorage>,
+    runtime: Handle,
     package: MetadataPackage,
     builds: Option<Vec<FakeBuild>>,
     /// name, content
@@ -88,7 +90,7 @@ const DEFAULT_CONTENT: &[u8] =
     b"<html><head></head><body>default content for test/fakes</body></html>";
 
 impl<'a> FakeRelease<'a> {
-    pub(super) fn new(db: &'a TestDatabase, storage: Arc<AsyncStorage>) -> Self {
+    pub(super) fn new(db: &'a TestDatabase, storage: Arc<AsyncStorage>, runtime: Handle) -> Self {
         FakeRelease {
             db,
             storage,
