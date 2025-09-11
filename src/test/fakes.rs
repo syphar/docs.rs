@@ -94,6 +94,7 @@ impl<'a> FakeRelease<'a> {
         FakeRelease {
             db,
             storage,
+            runtime,
             package: MetadataPackage {
                 id: "fake-package-id".into(),
                 name: "fake-package".into(),

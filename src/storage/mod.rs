@@ -35,7 +35,6 @@ use std::{iter, str::FromStr};
 use tokio::{
     io::{AsyncRead, AsyncReadExt as _, AsyncWriteExt as _},
     runtime::Handle,
-    runtime::Runtime,
 };
 use tracing::{error, info_span, instrument, trace};
 use walkdir::WalkDir;
