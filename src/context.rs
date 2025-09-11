@@ -26,18 +26,15 @@ pub struct Context {
 }
 
 impl Context {
-    pub fn from_config(config: Config) -> Result<Self> {
+    pub async fn from_config(config: Config, runtime: Arc<runtime::Runtime>) -> Result<Self> {
         let config = Arc::new(config);
-        let runtime = Arc::new(runtime::Builder::new_multi_thread().enable_all().build()?);
 
         let instance_metrics = Arc::new(InstanceMetrics::new()?);
 
         let pool = Pool::new(&config, runtime.clone(), instance_metrics.clone())?;
-        let async_storage = Arc::new(runtime.block_on(AsyncStorage::new(
-            pool.clone(),
-            instance_metrics.clone(),
-            config.clone(),
-        ))?);
+        let async_storage = Arc::new(
+            AsyncStorage::new(pool.clone(), instance_metrics.clone(), config.clone()).await?,
+        );
 
         let async_build_queue = Arc::new(AsyncBuildQueue::new(
             pool.clone(),
@@ -46,11 +43,7 @@ impl Context {
             async_storage.clone(),
         ));
 
-        let build_queue = Arc::new(BuildQueue::new(runtime.clone(), async_build_queue.clone()));
-
-        let storage = Arc::new(Storage::new(async_storage.clone(), runtime.clone()));
-
-        let cdn = Arc::new(runtime.block_on(CdnBackend::new(&config)));
+        let cdn = Arc::new(CdnBackend::new(&config).await);
 
         let index = Arc::new({
             let path = config.registry_index_path.clone();
@@ -60,6 +53,9 @@ impl Context {
                 Index::new(path)
             }?
         });
+
+        let storage = Arc::new(Storage::new(async_storage.clone(), runtime.clone()));
+        let build_queue = Arc::new(BuildQueue::new(runtime.clone(), async_build_queue.clone()));
 
         Ok(Self {
             async_build_queue,
@@ -76,8 +72,8 @@ impl Context {
                 config.crates_io_api_call_retries,
             )?),
             repository_stats_updater: Arc::new(RepositoryStatsUpdater::new(&config, pool)),
-            runtime,
             config,
+            runtime,
         })
     }
 }

@@ -34,7 +34,7 @@ use std::{
 use std::{iter, str::FromStr};
 use tokio::{
     io::{AsyncRead, AsyncReadExt as _, AsyncWriteExt},
-    runtime::Runtime,
+    runtime::{self, Runtime},
 };
 use tracing::{error, info_span, instrument, trace};
 use walkdir::WalkDir;
@@ -977,7 +977,14 @@ impl Storage {
     // still holds a reference to the storage).
     #[cfg(test)]
     pub(crate) fn cleanup_after_test(&self) -> Result<()> {
-        self.runtime.block_on(self.inner.cleanup_after_test())
+        Ok(())
+        // if let Ok(handle) = runtime::Handle::try_current() {
+        //     // sometimes we are in a surrounding tokio::test runtime, and the Drop
+        //     // impl needs to be executed in there.
+        //     handle.block_on(self.inner.cleanup_after_test())
+        // } else {
+        //     self.runtime.block_on(self.inner.cleanup_after_test())
+        // }
     }
 }
 

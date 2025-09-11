@@ -183,7 +183,13 @@ enum CommandLine {
 impl CommandLine {
     fn handle_args(self) -> Result<()> {
         let config = Config::from_env()?;
-        let ctx = Context::from_config(config)?;
+        let runtime = Arc::new(
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .context("failed to create Tokio runtime")?,
+        );
+        let ctx = runtime.block_on(Context::from_config(config, runtime.clone()))?;
 
         match self {
             Self::Build { subcommand } => subcommand.handle_args(ctx)?,

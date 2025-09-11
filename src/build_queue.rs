@@ -741,7 +741,7 @@ mod tests {
         let mut config = TestEnvironment::base_config();
         config.max_queued_rebuilds = Some(100);
 
-        let env = TestEnvironment::with_config(config);
+        let env = TestEnvironment::with_config_async(config).await;
 
         env.fake_release()
             .await

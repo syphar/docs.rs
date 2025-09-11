@@ -20,7 +20,7 @@ use http_body_util::BodyExt; // for `collect`
 use serde::de::DeserializeOwned;
 use sqlx::Connection as _;
 use std::{fs, future::Future, panic, rc::Rc, str::FromStr, sync::Arc};
-use tokio::runtime::{Builder, Runtime};
+use tokio::runtime;
 use tower::ServiceExt;
 use tracing::error;
 
@@ -335,32 +335,46 @@ impl TestEnvironment {
     }
 
     pub(crate) fn with_config(config: Config) -> Self {
-        init_logger();
-
-        let config = Arc::new(config);
         let runtime = Arc::new(
-            Builder::new_current_thread()
+            runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .expect("failed to initialize runtime"),
         );
 
+        runtime.block_on(Self::with_config_inner(config, runtime.clone()))
+    }
+
+    pub(crate) async fn with_config_async(config: Config) -> Self {
+        let runtime = Arc::new(
+            runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to initialize runtime"),
+        );
+        Self::with_config_inner(config, runtime).await
+    }
+
+    async fn with_config_inner(config: Config, runtime: Arc<runtime::Runtime>) -> Self {
+        init_logger();
+
+        let config = Arc::new(config);
+
         let instance_metrics =
             Arc::new(InstanceMetrics::new().expect("failed to initialize the instance metrics"));
 
         let test_db = TestDatabase::new(&config, runtime.clone(), instance_metrics.clone())
+            .await
             .expect("can't initialize test database");
         let pool = test_db.pool();
 
         let async_storage = Arc::new(
-            runtime
-                .block_on(AsyncStorage::new(
-                    pool.clone(),
-                    instance_metrics.clone(),
-                    config.clone(),
-                ))
+            AsyncStorage::new(pool.clone(), instance_metrics.clone(), config.clone())
+                .await
                 .expect("can't create async storage"),
         );
+
+        let storage = Arc::new(Storage::new(async_storage.clone(), runtime.clone()));
 
         let async_build_queue = Arc::new(AsyncBuildQueue::new(
             pool.clone(),
@@ -371,9 +385,7 @@ impl TestEnvironment {
 
         let build_queue = Arc::new(BuildQueue::new(runtime.clone(), async_build_queue.clone()));
 
-        let storage = Arc::new(Storage::new(async_storage.clone(), runtime.clone()));
-
-        let cdn = Arc::new(runtime.block_on(CdnBackend::new(&config)));
+        let cdn = Arc::new(CdnBackend::new(&config).await);
 
         let index = Arc::new({
             let path = config.registry_index_path.clone();
@@ -388,9 +400,10 @@ impl TestEnvironment {
         Self {
             context: Context {
                 config: config.clone(),
-                async_build_queue,
+                runtime,
                 build_queue,
                 storage,
+                async_build_queue,
                 async_storage,
                 cdn,
                 pool: pool.clone(),
@@ -407,7 +420,6 @@ impl TestEnvironment {
                     .expect("can't create registry api"),
                 ),
                 repository_stats_updater: Arc::new(RepositoryStatsUpdater::new(&config, pool)),
-                runtime,
             },
             db: test_db,
         }
@@ -470,7 +482,7 @@ impl TestEnvironment {
         self.context.instance_metrics.clone()
     }
 
-    pub(crate) fn runtime(&self) -> Arc<Runtime> {
+    pub(crate) fn runtime(&self) -> Arc<runtime::Runtime> {
         self.context.runtime.clone()
     }
 
@@ -507,61 +519,58 @@ impl Drop for TestEnvironment {
 pub(crate) struct TestDatabase {
     pool: Pool,
     schema: String,
-    runtime: Arc<Runtime>,
+    runtime: Arc<runtime::Runtime>,
 }
 
 impl TestDatabase {
-    fn new(config: &Config, runtime: Arc<Runtime>, metrics: Arc<InstanceMetrics>) -> Result<Self> {
+    async fn new(
+        config: &Config,
+        runtime: Arc<runtime::Runtime>,
+        metrics: Arc<InstanceMetrics>,
+    ) -> Result<Self> {
         // A random schema name is generated and used for the current connection. This allows each
         // test to create a fresh instance of the database to run within.
         let schema = format!("docs_rs_test_schema_{}", rand::random::<u64>());
 
         let pool = Pool::new_with_schema(config, runtime.clone(), metrics, &schema)?;
 
-        runtime.block_on({
-            let schema = schema.clone();
-            async move {
-                let mut conn = sqlx::PgConnection::connect(&config.database_url).await?;
-                sqlx::query(&format!("CREATE SCHEMA {schema}"))
-                    .execute(&mut conn)
-                    .await
-                    .context("error creating schema")?;
-                sqlx::query(&format!("SET search_path TO {schema}, public"))
-                    .execute(&mut conn)
-                    .await
-                    .context("error setting search path")?;
-                db::migrate(&mut conn, None)
-                    .await
-                    .context("error running migrations")?;
+        let mut conn = sqlx::PgConnection::connect(&config.database_url).await?;
+        sqlx::query(&format!("CREATE SCHEMA {schema}"))
+            .execute(&mut conn)
+            .await
+            .context("error creating schema")?;
+        sqlx::query(&format!("SET search_path TO {schema}, public"))
+            .execute(&mut conn)
+            .await
+            .context("error setting search path")?;
+        db::migrate(&mut conn, None)
+            .await
+            .context("error running migrations")?;
 
-                // Move all sequence start positions 10000 apart to avoid overlapping primary keys
-                let sequence_names: Vec<_> = sqlx::query!(
-                    "SELECT relname
+        // Move all sequence start positions 10000 apart to avoid overlapping primary keys
+        let sequence_names: Vec<_> = sqlx::query!(
+            "SELECT relname
                      FROM pg_class
                      INNER JOIN pg_namespace ON
                          pg_class.relnamespace = pg_namespace.oid
                      WHERE pg_class.relkind = 'S'
                          AND pg_namespace.nspname = $1
                     ",
-                    schema,
-                )
-                .fetch(&mut conn)
-                .map_ok(|row| row.relname)
-                .try_collect()
-                .await?;
+            schema,
+        )
+        .fetch(&mut conn)
+        .map_ok(|row| row.relname)
+        .try_collect()
+        .await?;
 
-                for (i, sequence) in sequence_names.into_iter().enumerate() {
-                    let offset = (i + 1) * 10000;
-                    sqlx::query(&format!(
-                        r#"ALTER SEQUENCE "{sequence}" RESTART WITH {offset};"#
-                    ))
-                    .execute(&mut conn)
-                    .await?;
-                }
-
-                Ok::<(), anyhow::Error>(())
-            }
-        })?;
+        for (i, sequence) in sequence_names.into_iter().enumerate() {
+            let offset = (i + 1) * 10000;
+            sqlx::query(&format!(
+                r#"ALTER SEQUENCE "{sequence}" RESTART WITH {offset};"#
+            ))
+            .execute(&mut conn)
+            .await?;
+        }
 
         Ok(TestDatabase {
             pool,
@@ -584,7 +593,13 @@ impl TestDatabase {
 
 impl Drop for TestDatabase {
     fn drop(&mut self) {
-        self.runtime.block_on(async {
+        let handle = if let Ok(handle) = runtime::Handle::try_current() {
+            handle
+        } else {
+            self.runtime.handle().clone()
+        };
+
+        let join_handle = handle.spawn(async move {
             let mut conn = self.async_conn().await;
             let migration_result = db::migrate(&mut conn, Some(0)).await;
 
