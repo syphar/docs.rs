@@ -21,6 +21,7 @@ use serde::de::DeserializeOwned;
 use sqlx::Connection as _;
 use std::{fs, future::Future, panic, rc::Rc, str::FromStr, sync::Arc};
 use tokio::runtime;
+use tokio::task::block_in_place;
 use tower::ServiceExt;
 use tracing::error;
 
@@ -599,18 +600,26 @@ impl Drop for TestDatabase {
             self.runtime.handle().clone()
         };
 
-        let join_handle = handle.spawn(async move {
-            let mut conn = self.async_conn().await;
-            let migration_result = db::migrate(&mut conn, Some(0)).await;
+        let pool = self.pool.clone();
+        let schema = self.schema.clone();
 
-            if let Err(e) = sqlx::query(format!("DROP SCHEMA {} CASCADE;", self.schema).as_str())
-                .execute(&mut *conn)
-                .await
-            {
-                error!("failed to drop test schema {}: {}", self.schema, e);
-            }
+        block_in_place(move || {
+            handle.block_on(async move {
+                let mut conn = pool
+                    .get_async()
+                    .await
+                    .expect("can't get connection for cleanup");
+                let migration_result = db::migrate(&mut *conn, Some(0)).await;
 
-            migration_result.expect("downgrading database works");
+                if let Err(e) = sqlx::query(format!("DROP SCHEMA {} CASCADE;", schema).as_str())
+                    .execute(&mut *conn)
+                    .await
+                {
+                    error!("failed to drop test schema {}: {}", schema, e);
+                }
+
+                migration_result.expect("downgrading database works");
+            })
         });
     }
 }

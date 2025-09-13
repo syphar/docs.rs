@@ -284,7 +284,6 @@ enum QueueSubcommand {
 
 impl QueueSubcommand {
     fn handle_args(self, ctx: Context) -> Result<()> {
-        // let build_queue = ctx.build_queue.clone();
         match self {
             Self::Add {
                 crate_name,
