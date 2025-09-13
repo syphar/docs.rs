@@ -736,7 +736,7 @@ mod tests {
     use chrono::Utc;
     use std::time::Duration;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_rebuild_when_old() -> Result<()> {
         let mut config = TestEnvironment::base_config();
         config.max_queued_rebuilds = Some(100);
