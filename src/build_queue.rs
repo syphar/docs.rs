@@ -730,7 +730,7 @@ pub async fn queue_rebuilds(
 
 #[cfg(test)]
 mod tests {
-    use crate::test::{FakeBuild, async_wrapper_with_config};
+    use crate::test::{FakeBuild, TestEnvironment, async_wrapper_with_config};
 
     use super::*;
     use chrono::Utc;
@@ -1134,269 +1134,265 @@ mod tests {
     }
 
     #[test]
-    fn test_pending_count() {
-        crate::test::wrapper(|env| {
-            let queue = env.build_queue();
+    fn test_pending_count() -> Result<()> {
+        let env = TestEnvironment::new();
 
-            assert_eq!(queue.pending_count()?, 0);
-            queue.add_crate("foo", "1.0.0", 0, None)?;
-            assert_eq!(queue.pending_count()?, 1);
-            queue.add_crate("bar", "1.0.0", 0, None)?;
-            assert_eq!(queue.pending_count()?, 2);
+        let queue = env.build_queue();
 
+        assert_eq!(queue.pending_count()?, 0);
+        queue.add_crate("foo", "1.0.0", 0, None)?;
+        assert_eq!(queue.pending_count()?, 1);
+        queue.add_crate("bar", "1.0.0", 0, None)?;
+        assert_eq!(queue.pending_count()?, 2);
+
+        queue.process_next_crate(|krate| {
+            assert_eq!("foo", krate.name);
+            Ok(BuildPackageSummary::default())
+        })?;
+        assert_eq!(queue.pending_count()?, 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_prioritized_count() -> Result<()> {
+        let env = TestEnvironment::new();
+
+        let queue = env.build_queue();
+
+        assert_eq!(queue.prioritized_count()?, 0);
+        queue.add_crate("foo", "1.0.0", 0, None)?;
+        assert_eq!(queue.prioritized_count()?, 1);
+        queue.add_crate("bar", "1.0.0", -100, None)?;
+        assert_eq!(queue.prioritized_count()?, 2);
+        queue.add_crate("baz", "1.0.0", 100, None)?;
+        assert_eq!(queue.prioritized_count()?, 2);
+
+        queue.process_next_crate(|krate| {
+            assert_eq!("bar", krate.name);
+            Ok(BuildPackageSummary::default())
+        })?;
+        assert_eq!(queue.prioritized_count()?, 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_count_by_priority() -> Result<()> {
+        let env = TestEnvironment::new();
+
+        let queue = env.build_queue();
+
+        assert!(queue.pending_count_by_priority()?.is_empty());
+
+        queue.add_crate("one", "1.0.0", 1, None)?;
+        queue.add_crate("two", "2.0.0", 2, None)?;
+        queue.add_crate("two_more", "2.0.0", 2, None)?;
+
+        assert_eq!(
+            queue.pending_count_by_priority()?,
+            HashMap::from_iter(vec![(1, 1), (2, 2)])
+        );
+
+        while queue.pending_count()? > 0 {
+            queue.process_next_crate(|_| Ok(BuildPackageSummary::default()))?;
+        }
+        assert!(queue.pending_count_by_priority()?.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_failed_count_for_reattempts() -> Result<()> {
+        let mut config = TestEnvironment::base_config();
+        config.build_attempts = MAX_ATTEMPTS;
+        config.delay_between_build_attempts = Duration::ZERO;
+        let env = TestEnvironment::with_config(config);
+
+        const MAX_ATTEMPTS: u16 = 3;
+
+        let queue = env.build_queue();
+
+        assert_eq!(queue.failed_count()?, 0);
+        queue.add_crate("foo", "1.0.0", -100, None)?;
+        assert_eq!(queue.failed_count()?, 0);
+        queue.add_crate("bar", "1.0.0", 0, None)?;
+
+        for _ in 0..MAX_ATTEMPTS {
+            assert_eq!(queue.failed_count()?, 0);
             queue.process_next_crate(|krate| {
                 assert_eq!("foo", krate.name);
-                Ok(BuildPackageSummary::default())
+                Ok(BuildPackageSummary {
+                    should_reattempt: true,
+                    ..Default::default()
+                })
             })?;
-            assert_eq!(queue.pending_count()?, 1);
+        }
+        assert_eq!(queue.failed_count()?, 1);
 
-            Ok(())
-        });
+        queue.process_next_crate(|krate| {
+            assert_eq!("bar", krate.name);
+            Ok(BuildPackageSummary::default())
+        })?;
+        assert_eq!(queue.failed_count()?, 1);
+
+        Ok(())
     }
 
     #[test]
-    fn test_prioritized_count() {
-        crate::test::wrapper(|env| {
-            let queue = env.build_queue();
+    fn test_failed_count_after_error() -> Result<()> {
+        let mut config = TestEnvironment::base_config();
+        config.build_attempts = MAX_ATTEMPTS;
+        config.delay_between_build_attempts = Duration::ZERO;
+        let env = TestEnvironment::with_config(config);
 
-            assert_eq!(queue.prioritized_count()?, 0);
-            queue.add_crate("foo", "1.0.0", 0, None)?;
-            assert_eq!(queue.prioritized_count()?, 1);
-            queue.add_crate("bar", "1.0.0", -100, None)?;
-            assert_eq!(queue.prioritized_count()?, 2);
-            queue.add_crate("baz", "1.0.0", 100, None)?;
-            assert_eq!(queue.prioritized_count()?, 2);
+        const MAX_ATTEMPTS: u16 = 3;
 
+        let queue = env.build_queue();
+
+        assert_eq!(queue.failed_count()?, 0);
+        queue.add_crate("foo", "1.0.0", -100, None)?;
+        assert_eq!(queue.failed_count()?, 0);
+        queue.add_crate("bar", "1.0.0", 0, None)?;
+
+        for _ in 0..MAX_ATTEMPTS {
+            assert_eq!(queue.failed_count()?, 0);
             queue.process_next_crate(|krate| {
-                assert_eq!("bar", krate.name);
-                Ok(BuildPackageSummary::default())
+                assert_eq!("foo", krate.name);
+                anyhow::bail!("this failed");
             })?;
-            assert_eq!(queue.prioritized_count()?, 1);
+        }
+        assert_eq!(queue.failed_count()?, 1);
 
-            Ok(())
-        });
+        queue.process_next_crate(|krate| {
+            assert_eq!("bar", krate.name);
+            Ok(BuildPackageSummary::default())
+        })?;
+        assert_eq!(queue.failed_count()?, 1);
+
+        Ok(())
     }
 
     #[test]
-    fn test_count_by_priority() {
-        crate::test::wrapper(|env| {
-            let queue = env.build_queue();
+    fn test_queued_crates() -> Result<()> {
+        let env = TestEnvironment::new();
 
-            assert!(queue.pending_count_by_priority()?.is_empty());
+        let queue = env.build_queue();
 
-            queue.add_crate("one", "1.0.0", 1, None)?;
-            queue.add_crate("two", "2.0.0", 2, None)?;
-            queue.add_crate("two_more", "2.0.0", 2, None)?;
+        let test_crates = [
+            ("bar", "1.0.0", 0),
+            ("foo", "1.0.0", -10),
+            ("baz", "1.0.0", 10),
+        ];
+        for krate in &test_crates {
+            queue.add_crate(krate.0, krate.1, krate.2, None)?;
+        }
 
-            assert_eq!(
-                queue.pending_count_by_priority()?,
-                HashMap::from_iter(vec![(1, 1), (2, 2)])
-            );
-
-            while queue.pending_count()? > 0 {
-                queue.process_next_crate(|_| Ok(BuildPackageSummary::default()))?;
-            }
-            assert!(queue.pending_count_by_priority()?.is_empty());
-
-            Ok(())
-        });
-    }
-
-    #[test]
-    fn test_failed_count_for_reattempts() {
-        const MAX_ATTEMPTS: u16 = 3;
-        async_wrapper_with_config(
-            |config| {
-                config.build_attempts = MAX_ATTEMPTS;
-                config.delay_between_build_attempts = Duration::ZERO;
-            },
-            |env| async move {
-                let queue = env.build_queue();
-
-                assert_eq!(queue.failed_count()?, 0);
-                queue.add_crate("foo", "1.0.0", -100, None)?;
-                assert_eq!(queue.failed_count()?, 0);
-                queue.add_crate("bar", "1.0.0", 0, None)?;
-
-                for _ in 0..MAX_ATTEMPTS {
-                    assert_eq!(queue.failed_count()?, 0);
-                    queue.process_next_crate(|krate| {
-                        assert_eq!("foo", krate.name);
-                        Ok(BuildPackageSummary {
-                            should_reattempt: true,
-                            ..Default::default()
-                        })
-                    })?;
-                }
-                assert_eq!(queue.failed_count()?, 1);
-
-                queue.process_next_crate(|krate| {
-                    assert_eq!("bar", krate.name);
-                    Ok(BuildPackageSummary::default())
-                })?;
-                assert_eq!(queue.failed_count()?, 1);
-
-                Ok(())
-            },
-        );
-    }
-
-    #[test]
-    fn test_failed_count_after_error() {
-        const MAX_ATTEMPTS: u16 = 3;
-        async_wrapper_with_config(
-            |config| {
-                config.build_attempts = MAX_ATTEMPTS;
-                config.delay_between_build_attempts = Duration::ZERO;
-            },
-            |env| async move {
-                let queue = env.build_queue();
-
-                assert_eq!(queue.failed_count()?, 0);
-                queue.add_crate("foo", "1.0.0", -100, None)?;
-                assert_eq!(queue.failed_count()?, 0);
-                queue.add_crate("bar", "1.0.0", 0, None)?;
-
-                for _ in 0..MAX_ATTEMPTS {
-                    assert_eq!(queue.failed_count()?, 0);
-                    queue.process_next_crate(|krate| {
-                        assert_eq!("foo", krate.name);
-                        anyhow::bail!("this failed");
-                    })?;
-                }
-                assert_eq!(queue.failed_count()?, 1);
-
-                queue.process_next_crate(|krate| {
-                    assert_eq!("bar", krate.name);
-                    Ok(BuildPackageSummary::default())
-                })?;
-                assert_eq!(queue.failed_count()?, 1);
-
-                Ok(())
-            },
-        );
-    }
-
-    #[test]
-    fn test_queued_crates() {
-        crate::test::wrapper(|env| {
-            let queue = env.build_queue();
-
-            let test_crates = [
-                ("bar", "1.0.0", 0),
+        assert_eq!(
+            vec![
                 ("foo", "1.0.0", -10),
+                ("bar", "1.0.0", 0),
                 ("baz", "1.0.0", 10),
-            ];
-            for krate in &test_crates {
-                queue.add_crate(krate.0, krate.1, krate.2, None)?;
-            }
+            ],
+            queue
+                .queued_crates()?
+                .iter()
+                .map(|c| (c.name.as_str(), c.version.as_str(), c.priority))
+                .collect::<Vec<_>>()
+        );
 
-            assert_eq!(
-                vec![
-                    ("foo", "1.0.0", -10),
-                    ("bar", "1.0.0", 0),
-                    ("baz", "1.0.0", 10),
-                ],
-                queue
-                    .queued_crates()?
-                    .iter()
-                    .map(|c| (c.name.as_str(), c.version.as_str(), c.priority))
-                    .collect::<Vec<_>>()
-            );
+        Ok(())
+    }
 
-            Ok(())
+    #[test]
+    fn test_last_seen_reference_in_db() -> Result<()> {
+        let env = TestEnvironment::new();
+
+        let queue = env.build_queue();
+        queue.unlock()?;
+        assert!(!queue.is_locked()?);
+        // initial db ref is empty
+        assert_eq!(queue.last_seen_reference()?, None);
+        assert!(!queue.is_locked()?);
+
+        let oid = crates_index_diff::gix::ObjectId::from_hex(
+            b"ffffffffffffffffffffffffffffffffffffffff",
+        )?;
+        queue.set_last_seen_reference(oid)?;
+
+        assert_eq!(queue.last_seen_reference()?, Some(oid));
+        assert!(!queue.is_locked()?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_broken_db_reference_breaks() -> Result<()> {
+        let env = TestEnvironment::new();
+
+        env.runtime().block_on(async {
+            let mut conn = env.async_db().async_conn().await;
+            set_config(&mut conn, ConfigName::LastSeenIndexReference, "invalid")
+                .await
+                .unwrap();
         });
+
+        let queue = env.build_queue();
+        assert!(queue.last_seen_reference().is_err());
+
+        Ok(())
     }
 
     #[test]
-    fn test_last_seen_reference_in_db() {
-        crate::test::wrapper(|env| {
-            let queue = env.build_queue();
-            queue.unlock()?;
-            assert!(!queue.is_locked()?);
-            // initial db ref is empty
-            assert_eq!(queue.last_seen_reference()?, None);
-            assert!(!queue.is_locked()?);
+    fn test_queue_lock() -> Result<()> {
+        let env = TestEnvironment::new();
 
-            let oid = crates_index_diff::gix::ObjectId::from_hex(
-                b"ffffffffffffffffffffffffffffffffffffffff",
-            )?;
-            queue.set_last_seen_reference(oid)?;
+        let queue = env.build_queue();
+        // unlocked without config
+        assert!(!queue.is_locked()?);
 
-            assert_eq!(queue.last_seen_reference()?, Some(oid));
-            assert!(!queue.is_locked()?);
+        queue.lock()?;
+        assert!(queue.is_locked()?);
 
-            Ok(())
-        });
+        queue.unlock()?;
+        assert!(!queue.is_locked()?);
+
+        Ok(())
     }
 
     #[test]
-    fn test_broken_db_reference_breaks() {
-        crate::test::wrapper(|env| {
-            env.runtime().block_on(async {
-                let mut conn = env.async_db().async_conn().await;
-                set_config(&mut conn, ConfigName::LastSeenIndexReference, "invalid")
-                    .await
-                    .unwrap();
-            });
+    fn test_add_long_name() -> Result<()> {
+        let env = TestEnvironment::new();
 
-            let queue = env.build_queue();
-            assert!(queue.last_seen_reference().is_err());
+        let queue = env.build_queue();
 
-            Ok(())
-        });
+        let name: String = "krate".repeat(100);
+
+        queue.add_crate(&name, "0.0.1", 0, None)?;
+
+        queue.process_next_crate(|krate| {
+            assert_eq!(name, krate.name);
+            Ok(BuildPackageSummary::default())
+        })?;
+
+        Ok(())
     }
 
     #[test]
-    fn test_queue_lock() {
-        crate::test::wrapper(|env| {
-            let queue = env.build_queue();
-            // unlocked without config
-            assert!(!queue.is_locked()?);
+    fn test_add_long_version() -> Result<()> {
+        let env = TestEnvironment::new();
 
-            queue.lock()?;
-            assert!(queue.is_locked()?);
+        let queue = env.build_queue();
 
-            queue.unlock()?;
-            assert!(!queue.is_locked()?);
+        let version: String = "version".repeat(100);
 
-            Ok(())
-        });
-    }
+        queue.add_crate("krate", &version, 0, None)?;
 
-    #[test]
-    fn test_add_long_name() {
-        crate::test::wrapper(|env| {
-            let queue = env.build_queue();
+        queue.process_next_crate(|krate| {
+            assert_eq!(version, krate.version);
+            Ok(BuildPackageSummary::default())
+        })?;
 
-            let name: String = "krate".repeat(100);
-
-            queue.add_crate(&name, "0.0.1", 0, None)?;
-
-            queue.process_next_crate(|krate| {
-                assert_eq!(name, krate.name);
-                Ok(BuildPackageSummary::default())
-            })?;
-
-            Ok(())
-        })
-    }
-
-    #[test]
-    fn test_add_long_version() {
-        crate::test::wrapper(|env| {
-            let queue = env.build_queue();
-
-            let version: String = "version".repeat(100);
-
-            queue.add_crate("krate", &version, 0, None)?;
-
-            queue.process_next_crate(|krate| {
-                assert_eq!(version, krate.version);
-                Ok(BuildPackageSummary::default())
-            })?;
-
-            Ok(())
-        })
+        Ok(())
     }
 }

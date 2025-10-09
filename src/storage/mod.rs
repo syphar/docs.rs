@@ -1549,20 +1549,18 @@ mod backend_tests {
         (@tests { $($test:ident,)* }) => {
             $(
                 #[test]
-                fn $test() {
-                    crate::test::wrapper(|env| {
-                        super::$test(&*get_storage(env))
-                    });
+                fn $test() -> anyhow::Result<()> {
+                    let env = crate::test::TestEnvironment::new();
+                    super::$test(&*get_storage(&env))
                 }
             )*
         };
         (@tests_with_metrics { $($test:ident,)* }) => {
             $(
                 #[test]
-                fn $test() {
-                    crate::test::wrapper(|env| {
-                        super::$test(&*get_storage(env), &*env.instance_metrics())
-                    });
+                fn $test() -> anyhow::Result<()> {
+                    let env = crate::test::TestEnvironment::new();
+                    super::$test(&*get_storage(&env), &*env.instance_metrics())
                 }
             )*
         };

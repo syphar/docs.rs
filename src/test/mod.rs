@@ -24,22 +24,6 @@ use tokio::runtime::{Builder, Runtime};
 use tower::ServiceExt;
 use tracing::error;
 
-#[track_caller]
-pub(crate) fn wrapper_with_config(
-    override_config: impl FnOnce(&mut Config),
-    f: impl FnOnce(&TestEnvironment) -> Result<()>,
-) {
-    let mut config = TestEnvironment::base_config();
-    override_config(&mut config);
-    let env = TestEnvironment::with_config(config);
-    f(&env).expect("test failed");
-}
-
-#[track_caller]
-pub(crate) fn wrapper(f: impl FnOnce(&TestEnvironment) -> Result<()>) {
-    wrapper_with_config(|_| {}, f)
-}
-
 pub(crate) fn async_wrapper_with_config<F, Fut>(override_config: impl FnOnce(&mut Config), f: F)
 where
     F: FnOnce(Rc<TestEnvironment>) -> Fut,
