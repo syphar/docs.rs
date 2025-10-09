@@ -21,6 +21,7 @@ use serde::de::DeserializeOwned;
 use sqlx::Connection as _;
 use std::{fs, future::Future, panic, rc::Rc, str::FromStr, sync::Arc};
 use tokio::runtime::{Handle, Runtime};
+use tokio::task::block_in_place;
 use tower::ServiceExt;
 use tracing::error;
 
@@ -500,10 +501,15 @@ impl TestEnvironment {
 
 impl Drop for TestEnvironment {
     fn drop(&mut self) {
-        self.context
-            .storage
-            .cleanup_after_test()
-            .expect("failed to cleanup after tests");
+        block_in_place({
+            let storage = self.context.storage.clone();
+
+            move || {
+                storage
+                    .cleanup_after_test()
+                    .expect("failed to cleanup after tests");
+            }
+        });
 
         if self.context.config.local_archive_cache_path.exists() {
             fs::remove_dir_all(&self.context.config.local_archive_cache_path).unwrap();
@@ -589,18 +595,21 @@ impl TestDatabase {
 
 impl Drop for TestDatabase {
     fn drop(&mut self) {
-        self.runtime.block_on(async {
-            let mut conn = self.async_conn().await;
-            let migration_result = db::migrate(&mut conn, Some(0)).await;
+        block_in_place(move || {
+            self.runtime.block_on(async {
+                let mut conn = self.async_conn().await;
+                let migration_result = db::migrate(&mut conn, Some(0)).await;
 
-            if let Err(e) = sqlx::query(format!("DROP SCHEMA {} CASCADE;", self.schema).as_str())
-                .execute(&mut *conn)
-                .await
-            {
-                error!("failed to drop test schema {}: {}", self.schema, e);
-            }
+                if let Err(e) =
+                    sqlx::query(format!("DROP SCHEMA {} CASCADE;", self.schema).as_str())
+                        .execute(&mut *conn)
+                        .await
+                {
+                    error!("failed to drop test schema {}: {}", self.schema, e);
+                }
 
-            migration_result.expect("downgrading database works");
-        });
+                migration_result.expect("downgrading database works");
+            });
+        })
     }
 }

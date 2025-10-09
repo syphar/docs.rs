@@ -708,7 +708,7 @@ mod tests {
         )
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn create_dummy() {
         let env = TestEnvironment::new_async().await;
 
@@ -717,8 +717,6 @@ mod tests {
             CdnBackend::new(&env.config()).await,
             CdnBackend::Dummy { .. }
         ));
-
-        std::mem::forget(env);
     }
 
     #[test]
