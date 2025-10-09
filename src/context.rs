@@ -7,7 +7,7 @@ use crate::{
 };
 use anyhow::Result;
 use std::sync::Arc;
-use tokio::runtime;
+use tokio::runtime::{self, Handle};
 
 pub struct Context {
     pub config: Arc<Config>,
@@ -22,22 +22,23 @@ pub struct Context {
     pub index: Arc<Index>,
     pub registry_api: Arc<RegistryApi>,
     pub repository_stats_updater: Arc<RepositoryStatsUpdater>,
-    pub runtime: Arc<runtime::Runtime>,
+    pub runtime: runtime::Handle,
 }
 
 impl Context {
     pub fn from_config(config: Config) -> Result<Self> {
+        todo!();
+    }
+
+    pub async fn from_config_async(config: Config) -> Result<Self> {
         let config = Arc::new(config);
-        let runtime = Arc::new(runtime::Builder::new_multi_thread().enable_all().build()?);
 
         let instance_metrics = Arc::new(InstanceMetrics::new()?);
 
-        let pool = Pool::new(&config, runtime.clone(), instance_metrics.clone())?;
-        let async_storage = Arc::new(runtime.block_on(AsyncStorage::new(
-            pool.clone(),
-            instance_metrics.clone(),
-            config.clone(),
-        ))?);
+        let pool = Pool::new(&config, instance_metrics.clone()).await?;
+        let async_storage = Arc::new(
+            AsyncStorage::new(pool.clone(), instance_metrics.clone(), config.clone()).await?,
+        );
 
         let async_build_queue = Arc::new(AsyncBuildQueue::new(
             pool.clone(),
@@ -45,6 +46,8 @@ impl Context {
             config.clone(),
             async_storage.clone(),
         ));
+
+        let runtime = Handle::current();
 
         let build_queue = Arc::new(BuildQueue::new(runtime.clone(), async_build_queue.clone()));
 

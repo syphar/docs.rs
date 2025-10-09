@@ -642,7 +642,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::test::{TestEnvironment, async_wrapper, async_wrapper_with_config};
+    use crate::test::{TestEnvironment, async_wrapper_with_config};
 
     use aws_sdk_cloudfront::{Config, config::Credentials};
     use aws_smithy_runtime::client::http::test_util::{ReplayEvent, StaticReplayClient};
@@ -710,17 +710,15 @@ mod tests {
 
     #[tokio::test]
     async fn create_dummy() {
-        let env = TestEnvironment::new();
+        let env = TestEnvironment::new_async().await;
 
-        // async_wrapper(|env| async move {
         assert!(matches!(*env.cdn(), CdnBackend::Dummy { .. }));
         assert!(matches!(
             CdnBackend::new(&env.config()).await,
             CdnBackend::Dummy { .. }
         ));
 
-        //     Ok(())
-        // })
+        std::mem::forget(env);
     }
 
     #[test]
