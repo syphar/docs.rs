@@ -351,7 +351,13 @@ pub(crate) fn init_logger() {
 }
 
 impl TestEnvironment {
-    fn with_config(config: Config) -> Self {
+    pub(crate) fn override_config(&self, _f: impl FnOnce(&mut Config)) {}
+
+    pub(crate) fn new() -> Self {
+        Self::with_config(Self::base_config())
+    }
+
+    pub(crate) fn with_config(config: Config) -> Self {
         init_logger();
 
         let config = Arc::new(config);

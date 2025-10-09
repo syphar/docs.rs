@@ -111,7 +111,7 @@ pub(crate) async fn cache_middleware(req: AxumHttpRequest, next: Next) -> AxumRe
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::wrapper;
+    use crate::test::TestEnvironment;
     use test_case::test_case;
 
     #[test_case(CachePolicy::NoCaching, Some("max-age=0"))]
@@ -126,75 +126,59 @@ mod tests {
         Some("stale-while-revalidate=86400")
     )]
     fn render(cache: CachePolicy, expected: Option<&str>) {
-        wrapper(|env| {
-            assert_eq!(
-                cache.render(&env.config()),
-                expected.map(|s| HeaderValue::from_str(s).unwrap())
-            );
-            Ok(())
-        });
+        let config = TestEnvironment::base_config();
+        assert_eq!(
+            cache.render(&config),
+            expected.map(|s| HeaderValue::from_str(s).unwrap())
+        );
     }
 
     #[test]
     fn render_stale_without_config() {
-        wrapper(|env| {
-            env.override_config(|config| config.cache_control_stale_while_revalidate = None);
+        let mut config = TestEnvironment::base_config();
+        config.cache_control_stale_while_revalidate = None;
 
-            assert!(
-                CachePolicy::ForeverInCdnAndStaleInBrowser
-                    .render(&env.config())
-                    .is_none()
-            );
-            Ok(())
-        });
+        assert!(
+            CachePolicy::ForeverInCdnAndStaleInBrowser
+                .render(&config)
+                .is_none()
+        );
     }
 
     #[test]
     fn render_stale_with_config() {
-        wrapper(|env| {
-            env.override_config(|config| {
-                config.cache_control_stale_while_revalidate = Some(666);
-            });
+        let mut config = TestEnvironment::base_config();
+        config.cache_control_stale_while_revalidate = Some(666);
 
-            assert_eq!(
-                CachePolicy::ForeverInCdnAndStaleInBrowser
-                    .render(&env.config())
-                    .unwrap(),
-                "stale-while-revalidate=666"
-            );
-            Ok(())
-        });
+        assert_eq!(
+            CachePolicy::ForeverInCdnAndStaleInBrowser
+                .render(&config)
+                .unwrap(),
+            "stale-while-revalidate=666"
+        );
     }
 
     #[test]
     fn render_forever_in_cdn_disabled() {
-        wrapper(|env| {
-            env.override_config(|config| {
-                config.cache_invalidatable_responses = false;
-            });
+        let mut config = TestEnvironment::base_config();
+        config.cache_invalidatable_responses = false;
 
-            assert_eq!(
-                CachePolicy::ForeverInCdn.render(&env.config()).unwrap(),
-                "max-age=0"
-            );
-            Ok(())
-        });
+        assert_eq!(
+            CachePolicy::ForeverInCdn.render(&config).unwrap(),
+            "max-age=0"
+        );
     }
 
     #[test]
     fn render_forever_in_cdn_or_stale_disabled() {
-        wrapper(|env| {
-            env.override_config(|config| {
-                config.cache_invalidatable_responses = false;
-            });
+        let mut config = TestEnvironment::base_config();
+        config.cache_invalidatable_responses = false;
 
-            assert_eq!(
-                CachePolicy::ForeverInCdnAndStaleInBrowser
-                    .render(&env.config())
-                    .unwrap(),
-                "max-age=0"
-            );
-            Ok(())
-        });
+        assert_eq!(
+            CachePolicy::ForeverInCdnAndStaleInBrowser
+                .render(&config)
+                .unwrap(),
+            "max-age=0"
+        );
     }
 }
