@@ -20,7 +20,7 @@ use http_body_util::BodyExt; // for `collect`
 use serde::de::DeserializeOwned;
 use sqlx::Connection as _;
 use std::{fs, future::Future, panic, rc::Rc, str::FromStr, sync::Arc};
-use tokio::runtime::{Handle, Runtime};
+use tokio::runtime::Handle;
 use tower::ServiceExt;
 use tracing::error;
 
@@ -373,7 +373,7 @@ impl TestEnvironment {
         let instance_metrics =
             Arc::new(InstanceMetrics::new().expect("failed to initialize the instance metrics"));
 
-        let test_db = TestDatabase::new_async(&config, instance_metrics.clone())
+        let test_db = TestDatabase::new(&config, instance_metrics.clone())
             .await
             .expect("can't initialize test database");
         let pool = test_db.pool();
@@ -534,15 +534,10 @@ impl Drop for TestEnvironment {
 pub(crate) struct TestDatabase {
     pool: Pool,
     schema: String,
-    runtime: Handle,
 }
 
 impl TestDatabase {
-    fn new(config: &Config, runtime: Arc<Runtime>, metrics: Arc<InstanceMetrics>) -> Result<Self> {
-        runtime.block_on(Self::new_async(config, metrics))
-    }
-
-    async fn new_async(config: &Config, metrics: Arc<InstanceMetrics>) -> Result<Self> {
+    async fn new(config: &Config, metrics: Arc<InstanceMetrics>) -> Result<Self> {
         // A random schema name is generated and used for the current connection. This allows each
         // test to create a fresh instance of the database to run within.
         let schema = format!("docs_rs_test_schema_{}", rand::random::<u64>());
@@ -565,12 +560,12 @@ impl TestDatabase {
         // Move all sequence start positions 10000 apart to avoid overlapping primary keys
         let sequence_names: Vec<_> = sqlx::query!(
             "SELECT relname
-                     FROM pg_class
-                     INNER JOIN pg_namespace ON
-                         pg_class.relnamespace = pg_namespace.oid
-                     WHERE pg_class.relkind = 'S'
-                         AND pg_namespace.nspname = $1
-                    ",
+             FROM pg_class
+             INNER JOIN pg_namespace ON
+                 pg_class.relnamespace = pg_namespace.oid
+             WHERE pg_class.relkind = 'S'
+                 AND pg_namespace.nspname = $1
+            ",
             schema,
         )
         .fetch(&mut conn)
@@ -587,11 +582,7 @@ impl TestDatabase {
             .await?;
         }
 
-        Ok(TestDatabase {
-            pool,
-            schema,
-            runtime: Handle::current(),
-        })
+        Ok(TestDatabase { pool, schema })
     }
 
     pub(crate) fn pool(&self) -> Pool {

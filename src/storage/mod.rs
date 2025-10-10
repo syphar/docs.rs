@@ -148,10 +148,10 @@ pub fn get_file_list<P: AsRef<Path>>(path: P) -> Box<dyn Iterator<Item = Result<
 
 #[derive(Debug, thiserror::Error)]
 #[error("invalid storage backend")]
-pub(crate) struct InvalidStorageBackendError;
+pub struct InvalidStorageBackendError;
 
 #[derive(Debug)]
-pub(crate) enum StorageKind {
+pub enum StorageKind {
     Database,
     S3,
 }

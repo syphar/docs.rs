@@ -4,7 +4,8 @@ use std::{env::VarError, error::Error, path::PathBuf, str::FromStr, time::Durati
 use tracing::trace;
 use url::Url;
 
-#[derive(Debug)]
+#[derive(Debug, bon::Builder)]
+#[builder(on(_, into))]
 pub struct Config {
     pub prefix: PathBuf,
     pub registry_index_path: PathBuf,
