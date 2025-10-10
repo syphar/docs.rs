@@ -153,22 +153,22 @@ mod test {
         })
     }
 
-    #[test]
-    fn config_default_memory_limit() {
-        async_wrapper_with_config(
-            |config| {
-                config.build_default_memory_limit = Some(6 * GB);
-            },
-            |env| async move {
-                let db = env.async_db();
-                let mut conn = db.async_conn().await;
-
-                let limits = Limits::for_crate(&env.config(), &mut conn, "krate").await?;
-                assert_eq!(limits.memory, 6 * GB);
-
-                Ok(())
-            },
+    #[tokio::test(flavor = "multi_thread")]
+    async fn config_default_memory_limit() -> Result<()> {
+        let env = TestEnvironment::with_config_async(
+            TestEnvironment::base_config()
+                .build_default_memory_limit(Some(6 * GB))
+                .build()?,
         )
+        .await;
+
+        let db = env.async_db();
+        let mut conn = db.async_conn().await;
+
+        let limits = Limits::for_crate(&env.config(), &mut conn, "krate").await?;
+        assert_eq!(limits.memory, 6 * GB);
+
+        Ok(())
     }
 
     #[test]
