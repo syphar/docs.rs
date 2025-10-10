@@ -6,7 +6,6 @@ use url::Url;
 
 #[derive(Debug, derive_builder::Builder)]
 #[builder(pattern = "owned")]
-// #[builder(pattern = "owned", setter(into))]
 pub struct Config {
     pub prefix: PathBuf,
     pub registry_index_path: PathBuf,

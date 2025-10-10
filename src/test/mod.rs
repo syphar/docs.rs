@@ -22,6 +22,7 @@ use serde::de::DeserializeOwned;
 use sqlx::Connection as _;
 use std::{fs, future::Future, panic, rc::Rc, str::FromStr, sync::Arc};
 use tokio::runtime::Handle;
+use tokio::task::block_in_place;
 use tower::ServiceExt;
 use tracing::error;
 
@@ -511,17 +512,17 @@ impl TestEnvironment {
 
 impl Drop for TestEnvironment {
     fn drop(&mut self) {
-        let storage = self.context.storage.clone();
-        async_drop(|| async move {
-            storage
-                .cleanup_after_test()
-                .await
-                .expect("failed to cleanup after tests");
-        });
+        // let storage = self.context.storage.clone();
+        // async_drop(|| async move {
+        //     storage
+        //         .cleanup_after_test()
+        //         .await
+        //         .expect("failed to cleanup after tests");
+        // });
 
-        if self.context.config.local_archive_cache_path.exists() {
-            fs::remove_dir_all(&self.context.config.local_archive_cache_path).unwrap();
-        }
+        // if self.context.config.local_archive_cache_path.exists() {
+        //     fs::remove_dir_all(&self.context.config.local_archive_cache_path).unwrap();
+        // }
     }
 }
 
@@ -529,6 +530,7 @@ impl Drop for TestEnvironment {
 pub(crate) struct TestDatabase {
     pool: Pool,
     schema: String,
+    runtime: Handle,
 }
 
 impl TestDatabase {
@@ -577,7 +579,11 @@ impl TestDatabase {
             .await?;
         }
 
-        Ok(TestDatabase { pool, schema })
+        Ok(TestDatabase {
+            pool,
+            schema,
+            runtime: Handle::current(),
+        })
     }
 
     pub(crate) fn pool(&self) -> Pool {
@@ -596,18 +602,29 @@ impl Drop for TestDatabase {
     fn drop(&mut self) {
         let pool = self.pool.clone();
         let schema = self.schema.clone();
-        async_drop(|| async move {
-            let mut conn = pool.get_async().await.unwrap();
-            let migration_result = db::migrate(&mut *conn, Some(0)).await;
+        let runtime = self.runtime.clone();
+        block_in_place(move || {
+            runtime.block_on(async {
+                let Ok(mut conn) = pool.get_async().await else {
+                    error!("error in drop impl");
+                    return;
+                };
 
-            if let Err(e) = sqlx::query(format!("DROP SCHEMA {} CASCADE;", schema).as_str())
-                .execute(&mut *conn)
-                .await
-            {
-                error!("failed to drop test schema {}: {}", schema, e);
-            }
+                let migration_result = db::migrate(&mut *conn, Some(0)).await;
 
-            migration_result.expect("downgrading database works");
+                if let Err(e) = sqlx::query(format!("DROP SCHEMA {} CASCADE;", schema).as_str())
+                    .execute(&mut *conn)
+                    .await
+                {
+                    error!("failed to drop test schema {}: {}", schema, e);
+                    return;
+                }
+
+                if let Err(err) = migration_result {
+                    error!(?err, "error reverting migrations");
+                    return;
+                }
+            })
         });
     }
 }

@@ -1163,6 +1163,7 @@ mod tests {
         Ok(())
     }
 
+    // #[tokio::test(flavor = "multi_thread")]
     #[tokio::test]
     async fn dont_create_invalidations_without_paths() -> Result<()> {
         let env = TestEnvironment::with_config_async(
