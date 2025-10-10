@@ -21,8 +21,10 @@ use http_body_util::BodyExt; // for `collect`
 use serde::de::DeserializeOwned;
 use sqlx::Connection as _;
 use std::{fs, future::Future, panic, rc::Rc, str::FromStr, sync::Arc};
-use tokio::runtime::Handle;
-use tokio::task::block_in_place;
+use tokio::{
+    runtime::{self, Handle, Runtime},
+    task::block_in_place,
+};
 use tower::ServiceExt;
 use tracing::error;
 
@@ -328,6 +330,7 @@ impl AxumRouterTestExt for axum::Router {
 pub(crate) struct TestEnvironment {
     pub context: Context,
     db: TestDatabase,
+    runtime: Option<Arc<Runtime>>,
 }
 
 pub(crate) fn init_logger() {
@@ -350,8 +353,7 @@ impl TestEnvironment {
     pub(crate) fn override_config(&self, _f: impl FnOnce(&mut Config)) {}
 
     pub(crate) fn new() -> Self {
-        todo!();
-        // Self::with_config(Self::base_config())
+        Self::with_config(Self::base_config().build().unwrap())
     }
 
     pub(crate) async fn new_async() -> Self {
@@ -359,7 +361,15 @@ impl TestEnvironment {
     }
 
     pub(crate) fn with_config(config: Config) -> Self {
-        todo!();
+        let runtime = Arc::new(
+            runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .expect("failed to initialize runtime"),
+        );
+        let mut env = runtime.block_on(Self::with_config_async(config));
+        env.runtime = Some(runtime);
+        env
     }
 
     pub(crate) async fn with_config_async(config: Config) -> Self {
@@ -433,6 +443,7 @@ impl TestEnvironment {
                 runtime,
             },
             db: test_db,
+            runtime: None,
         }
     }
 

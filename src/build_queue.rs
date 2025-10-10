@@ -933,204 +933,200 @@ mod tests {
     }
 
     #[test]
-    fn test_wait_between_build_attempts() {
-        async_wrapper_with_config(
-            |config| {
-                config.build_attempts = 99;
-                config.delay_between_build_attempts = Duration::from_secs(1);
-            },
-            |env| async move {
-                let runtime = env.runtime();
+    fn test_wait_between_build_attempts() -> Result<()> {
+        let env = TestEnvironment::with_config(
+            TestEnvironment::base_config()
+                .build_attempts(99)
+                .delay_between_build_attempts(Duration::from_secs(1))
+                .build()?,
+        );
 
-                let queue = env.build_queue();
+        let runtime = env.runtime();
 
-                queue.add_crate("krate", "1.0.0", 0, None)?;
+        let queue = env.build_queue();
 
-                // first let it fail
-                queue.process_next_crate(|krate| {
-                    assert_eq!(krate.name, "krate");
-                    anyhow::bail!("simulate a failure");
-                })?;
+        queue.add_crate("krate", "1.0.0", 0, None)?;
 
-                queue.process_next_crate(|_| {
-                    // this can't happen since we didn't wait between attempts
-                    unreachable!();
-                })?;
+        // first let it fail
+        queue.process_next_crate(|krate| {
+            assert_eq!(krate.name, "krate");
+            anyhow::bail!("simulate a failure");
+        })?;
 
-                runtime.block_on(async {
-                    // fake the build-attempt timestamp so it's older
-                    let mut conn = env.async_db().async_conn().await;
-                    sqlx::query!(
-                        "UPDATE queue SET last_attempt = $1",
-                        Utc::now() - chrono::Duration::try_seconds(60).unwrap()
-                    )
-                    .execute(&mut *conn)
-                    .await
-                })?;
+        queue.process_next_crate(|_| {
+            // this can't happen since we didn't wait between attempts
+            unreachable!();
+        })?;
 
-                let mut handled = false;
-                // now we can process it again
-                queue.process_next_crate(|krate| {
-                    assert_eq!(krate.name, "krate");
-                    handled = true;
-                    Ok(BuildPackageSummary::default())
-                })?;
+        runtime.block_on(async {
+            // fake the build-attempt timestamp so it's older
+            let mut conn = env.async_db().async_conn().await;
+            sqlx::query!(
+                "UPDATE queue SET last_attempt = $1",
+                Utc::now() - chrono::Duration::try_seconds(60).unwrap()
+            )
+            .execute(&mut *conn)
+            .await
+        })?;
 
-                assert!(handled);
+        let mut handled = false;
+        // now we can process it again
+        queue.process_next_crate(|krate| {
+            assert_eq!(krate.name, "krate");
+            handled = true;
+            Ok(BuildPackageSummary::default())
+        })?;
 
-                Ok(())
-            },
-        )
+        assert!(handled);
+
+        Ok(())
     }
 
     #[test]
-    fn test_add_and_process_crates() {
+    fn test_add_and_process_crates() -> Result<()> {
         const MAX_ATTEMPTS: u16 = 3;
+        let env = TestEnvironment::with_config(
+            TestEnvironment::base_config()
+                .build_attempts(MAX_ATTEMPTS)
+                .delay_between_build_attempts(Duration::ZERO)
+                .build()?,
+        );
 
-        async_wrapper_with_config(
-            |config| {
-                config.build_attempts = MAX_ATTEMPTS;
-                config.delay_between_build_attempts = Duration::ZERO;
-            },
-            |env| async move {
-                let queue = env.build_queue();
+        let queue = env.build_queue();
 
-                let test_crates = [
-                    ("low-priority", "1.0.0", 1000),
-                    ("high-priority-foo", "1.0.0", -1000),
-                    ("medium-priority", "1.0.0", -10),
-                    ("high-priority-bar", "1.0.0", -1000),
-                    ("standard-priority", "1.0.0", 0),
-                    ("high-priority-baz", "1.0.0", -1000),
-                ];
-                for krate in &test_crates {
-                    queue.add_crate(krate.0, krate.1, krate.2, None)?;
-                }
+        let test_crates = [
+            ("low-priority", "1.0.0", 1000),
+            ("high-priority-foo", "1.0.0", -1000),
+            ("medium-priority", "1.0.0", -10),
+            ("high-priority-bar", "1.0.0", -1000),
+            ("standard-priority", "1.0.0", 0),
+            ("high-priority-baz", "1.0.0", -1000),
+        ];
+        for krate in &test_crates {
+            queue.add_crate(krate.0, krate.1, krate.2, None)?;
+        }
 
-                let assert_next = |name| -> Result<()> {
-                    queue.process_next_crate(|krate| {
-                        assert_eq!(name, krate.name);
-                        Ok(BuildPackageSummary::default())
-                    })?;
-                    Ok(())
-                };
-                let assert_next_and_fail = |name| -> Result<()> {
-                    queue.process_next_crate(|krate| {
-                        assert_eq!(name, krate.name);
-                        anyhow::bail!("simulate a failure");
-                    })?;
-                    Ok(())
-                };
+        let assert_next = |name| -> Result<()> {
+            queue.process_next_crate(|krate| {
+                assert_eq!(name, krate.name);
+                Ok(BuildPackageSummary::default())
+            })?;
+            Ok(())
+        };
+        let assert_next_and_fail = |name| -> Result<()> {
+            queue.process_next_crate(|krate| {
+                assert_eq!(name, krate.name);
+                anyhow::bail!("simulate a failure");
+            })?;
+            Ok(())
+        };
 
-                // The first processed item is the one with the highest priority added first.
-                assert_next("high-priority-foo")?;
+        // The first processed item is the one with the highest priority added first.
+        assert_next("high-priority-foo")?;
 
-                // Simulate a failure in high-priority-bar.
-                assert_next_and_fail("high-priority-bar")?;
+        // Simulate a failure in high-priority-bar.
+        assert_next_and_fail("high-priority-bar")?;
 
-                // Continue with the next high priority crate.
-                assert_next("high-priority-baz")?;
+        // Continue with the next high priority crate.
+        assert_next("high-priority-baz")?;
 
-                // After all the crates with the max priority are processed, before starting to process
-                // crates with a lower priority the failed crates with the max priority will be tried
-                // again.
-                assert_next("high-priority-bar")?;
+        // After all the crates with the max priority are processed, before starting to process
+        // crates with a lower priority the failed crates with the max priority will be tried
+        // again.
+        assert_next("high-priority-bar")?;
 
-                // Continue processing according to the priority.
-                assert_next("medium-priority")?;
-                assert_next("standard-priority")?;
+        // Continue processing according to the priority.
+        assert_next("medium-priority")?;
+        assert_next("standard-priority")?;
 
-                // Simulate the crate failing many times.
-                for _ in 0..MAX_ATTEMPTS {
-                    assert_next_and_fail("low-priority")?;
-                }
+        // Simulate the crate failing many times.
+        for _ in 0..MAX_ATTEMPTS {
+            assert_next_and_fail("low-priority")?;
+        }
 
-                // Since low-priority failed many times it will be removed from the queue. Because of
-                // that the queue should now be empty.
-                let mut called = false;
-                queue.process_next_crate(|_| {
-                    called = true;
-                    Ok(BuildPackageSummary::default())
-                })?;
-                assert!(!called, "there were still items in the queue");
+        // Since low-priority failed many times it will be removed from the queue. Because of
+        // that the queue should now be empty.
+        let mut called = false;
+        queue.process_next_crate(|_| {
+            called = true;
+            Ok(BuildPackageSummary::default())
+        })?;
+        assert!(!called, "there were still items in the queue");
 
-                // Ensure metrics were recorded correctly
-                let metrics = env.instance_metrics();
-                assert_eq!(metrics.total_builds.get(), 9);
-                assert_eq!(metrics.failed_builds.get(), 1);
-                assert_eq!(metrics.build_time.get_sample_count(), 9);
+        // Ensure metrics were recorded correctly
+        let metrics = env.instance_metrics();
+        assert_eq!(metrics.total_builds.get(), 9);
+        assert_eq!(metrics.failed_builds.get(), 1);
+        assert_eq!(metrics.build_time.get_sample_count(), 9);
 
-                // no invalidations were run since we don't have a distribution id configured
-                assert!(
-                    env.runtime()
-                        .block_on(async {
-                            cdn::queued_or_active_crate_invalidations(
-                                &mut *env.async_db().async_conn().await,
-                            )
-                            .await
-                        })?
-                        .is_empty()
-                );
+        // no invalidations were run since we don't have a distribution id configured
+        assert!(
+            env.runtime()
+                .block_on(async {
+                    cdn::queued_or_active_crate_invalidations(
+                        &mut *env.async_db().async_conn().await,
+                    )
+                    .await
+                })?
+                .is_empty()
+        );
 
-                Ok(())
-            },
-        )
+        Ok(())
     }
 
     #[test]
-    fn test_invalidate_cdn_after_build_and_error() {
-        async_wrapper_with_config(
-            |config| {
-                config.cloudfront_distribution_id_web = Some("distribution_id_web".into());
-                config.cloudfront_distribution_id_static = Some("distribution_id_static".into());
-            },
-            |env| async move {
-                let queue = env.build_queue();
+    fn test_invalidate_cdn_after_build_and_error() -> Result<()> {
+        let env = TestEnvironment::with_config(
+            TestEnvironment::base_config()
+                .cloudfront_distribution_id_web(Some("distribution_id_web".into()))
+                .cloudfront_distribution_id_static(Some("distribution_id_static".into()))
+                .build()?,
+        );
 
-                queue.add_crate("will_succeed", "1.0.0", -1, None)?;
-                queue.add_crate("will_fail", "1.0.0", 0, None)?;
+        let queue = env.build_queue();
 
-                let fetch_invalidations = || {
-                    env.runtime()
-                        .block_on(async {
-                            let mut conn = env.async_db().async_conn().await;
-                            cdn::queued_or_active_crate_invalidations(&mut conn).await
-                        })
-                        .unwrap()
-                };
+        queue.add_crate("will_succeed", "1.0.0", -1, None)?;
+        queue.add_crate("will_fail", "1.0.0", 0, None)?;
 
-                assert!(fetch_invalidations().is_empty());
+        let fetch_invalidations = || {
+            env.runtime()
+                .block_on(async {
+                    let mut conn = env.async_db().async_conn().await;
+                    cdn::queued_or_active_crate_invalidations(&mut conn).await
+                })
+                .unwrap()
+        };
 
-                queue.process_next_crate(|krate| {
-                    assert_eq!("will_succeed", krate.name);
-                    Ok(BuildPackageSummary::default())
-                })?;
+        assert!(fetch_invalidations().is_empty());
 
-                let queued_invalidations = fetch_invalidations();
-                assert_eq!(queued_invalidations.len(), 3);
-                assert!(
-                    queued_invalidations
-                        .iter()
-                        .all(|i| i.krate == "will_succeed")
-                );
+        queue.process_next_crate(|krate| {
+            assert_eq!("will_succeed", krate.name);
+            Ok(BuildPackageSummary::default())
+        })?;
 
-                queue.process_next_crate(|krate| {
-                    assert_eq!("will_fail", krate.name);
-                    anyhow::bail!("simulate a failure");
-                })?;
+        let queued_invalidations = fetch_invalidations();
+        assert_eq!(queued_invalidations.len(), 3);
+        assert!(
+            queued_invalidations
+                .iter()
+                .all(|i| i.krate == "will_succeed")
+        );
 
-                let queued_invalidations = fetch_invalidations();
-                assert_eq!(queued_invalidations.len(), 6);
-                assert!(
-                    queued_invalidations
-                        .iter()
-                        .skip(3)
-                        .all(|i| i.krate == "will_fail")
-                );
+        queue.process_next_crate(|krate| {
+            assert_eq!("will_fail", krate.name);
+            anyhow::bail!("simulate a failure");
+        })?;
 
-                Ok(())
-            },
-        )
+        let queued_invalidations = fetch_invalidations();
+        assert_eq!(queued_invalidations.len(), 6);
+        assert!(
+            queued_invalidations
+                .iter()
+                .skip(3)
+                .all(|i| i.krate == "will_fail")
+        );
+
+        Ok(())
     }
 
     #[test]
