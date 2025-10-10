@@ -552,14 +552,21 @@ impl Drop for TestEnvironment {
     fn drop(&mut self) {
         let storage = self.context.storage.clone();
         let runtime = self.runtime();
+
+        let cleanup = async move {
+            storage
+                .cleanup_after_test()
+                .await
+                .expect("failed to cleanup after tests");
+        };
+
+        // if Handle::try_current().is_ok() {
         block_in_place(move || {
-            runtime.block_on(async move {
-                storage
-                    .cleanup_after_test()
-                    .await
-                    .expect("failed to cleanup after tests");
-            })
+            runtime.block_on(cleanup);
         });
+        // } else {
+        //     runtime.block_on(cleanup);
+        // }
 
         if self.context.config.local_archive_cache_path.exists() {
             fs::remove_dir_all(&self.context.config.local_archive_cache_path).unwrap();
@@ -644,27 +651,34 @@ impl Drop for TestDatabase {
         let pool = self.pool.clone();
         let schema = self.schema.clone();
         let runtime = self.runtime.clone();
+
+        let cleanup = async move {
+            let Ok(mut conn) = pool.get_async().await else {
+                error!("error in drop impl");
+                return;
+            };
+
+            let migration_result = db::migrate(&mut conn, Some(0)).await;
+
+            if let Err(e) = sqlx::query(format!("DROP SCHEMA {} CASCADE;", schema).as_str())
+                .execute(&mut *conn)
+                .await
+            {
+                error!("failed to drop test schema {}: {}", schema, e);
+                return;
+            }
+
+            if let Err(err) = migration_result {
+                error!(?err, "error reverting migrations");
+            }
+        };
+
+        // if Handle::try_current().is_ok() {
         block_in_place(move || {
-            runtime.block_on(async move {
-                let Ok(mut conn) = pool.get_async().await else {
-                    error!("error in drop impl");
-                    return;
-                };
-
-                let migration_result = db::migrate(&mut conn, Some(0)).await;
-
-                if let Err(e) = sqlx::query(format!("DROP SCHEMA {} CASCADE;", schema).as_str())
-                    .execute(&mut *conn)
-                    .await
-                {
-                    error!("failed to drop test schema {}: {}", schema, e);
-                    return;
-                }
-
-                if let Err(err) = migration_result {
-                    error!(?err, "error reverting migrations");
-                }
-            })
+            runtime.block_on(cleanup);
         });
+        // } else {
+        //     runtime.block_on(cleanup);
+        // }
     }
 }

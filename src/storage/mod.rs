@@ -1529,14 +1529,14 @@ mod backend_tests {
             $(
                 mod $backend {
                     use crate::test::TestEnvironment;
-                    use crate::storage::{Storage, StorageKind};
-                    use std::sync::Arc;
+                    use crate::storage::{ StorageKind};
 
-                    fn get_storage(env: &TestEnvironment) -> Arc<Storage> {
-                        env.override_config(|config| {
-                            config.storage_backend = $config;
-                        });
-                        env.storage()
+                    fn get_env() -> crate::test::TestEnvironment {
+                        crate::test::TestEnvironment::with_config(
+                            TestEnvironment::base_config()
+                                .storage_backend($config)
+                                .build(),
+                        )
                     }
 
                     backend_tests!(@tests $tests);
@@ -1548,8 +1548,8 @@ mod backend_tests {
             $(
                 #[test]
                 fn $test() -> anyhow::Result<()> {
-                    let env = crate::test::TestEnvironment::new();
-                    super::$test(&*get_storage(&env))
+                    let env = get_env();
+                    super::$test(&*env.storage())
                 }
             )*
         };
@@ -1557,8 +1557,8 @@ mod backend_tests {
             $(
                 #[test]
                 fn $test() -> anyhow::Result<()> {
-                    let env = crate::test::TestEnvironment::new();
-                    super::$test(&*get_storage(&env), &*env.instance_metrics())
+                    let env = get_env();
+                    super::$test(&*env.storage(), &*env.instance_metrics())
                 }
             )*
         };
