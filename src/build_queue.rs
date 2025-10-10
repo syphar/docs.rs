@@ -730,127 +730,124 @@ pub async fn queue_rebuilds(
 
 #[cfg(test)]
 mod tests {
-    use crate::test::{FakeBuild, TestEnvironment, async_wrapper_with_config};
+    use crate::test::{FakeBuild, TestEnvironment};
 
     use super::*;
     use chrono::Utc;
     use std::time::Duration;
 
-    #[test]
-    fn test_rebuild_when_old() {
-        async_wrapper_with_config(
-            |config| {
-                config.max_queued_rebuilds = Some(100);
-            },
-            |env| async move {
-                env.fake_release()
-                    .await
-                    .name("foo")
-                    .version("0.1.0")
-                    .builds(vec![
-                        FakeBuild::default()
-                            .rustc_version("rustc 1.84.0-nightly (e7c0d2750 2020-10-15)"),
-                    ])
-                    .create()
-                    .await?;
-
-                let build_queue = env.async_build_queue();
-                assert!(build_queue.queued_crates().await?.is_empty());
-
-                let mut conn = env.async_db().async_conn().await;
-                queue_rebuilds(&mut conn, &env.config(), &build_queue).await?;
-
-                let queue = build_queue.queued_crates().await?;
-                assert_eq!(queue.len(), 1);
-                assert_eq!(queue[0].name, "foo");
-                assert_eq!(queue[0].version, "0.1.0");
-                assert_eq!(queue[0].priority, REBUILD_PRIORITY);
-
-                Ok(())
-            },
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_rebuild_when_old() -> Result<()> {
+        let env = TestEnvironment::with_config_async(
+            TestEnvironment::base_config()
+                .max_queued_rebuilds(Some(100))
+                .build()?,
         )
+        .await;
+
+        env.fake_release()
+            .await
+            .name("foo")
+            .version("0.1.0")
+            .builds(vec![
+                FakeBuild::default().rustc_version("rustc 1.84.0-nightly (e7c0d2750 2020-10-15)"),
+            ])
+            .create()
+            .await?;
+
+        let build_queue = env.async_build_queue();
+        assert!(build_queue.queued_crates().await?.is_empty());
+
+        let mut conn = env.async_db().async_conn().await;
+        queue_rebuilds(&mut conn, &env.config(), &build_queue).await?;
+
+        let queue = build_queue.queued_crates().await?;
+        assert_eq!(queue.len(), 1);
+        assert_eq!(queue[0].name, "foo");
+        assert_eq!(queue[0].version, "0.1.0");
+        assert_eq!(queue[0].priority, REBUILD_PRIORITY);
+
+        Ok(())
     }
 
-    #[test]
-    fn test_still_rebuild_when_full_with_failed() {
-        async_wrapper_with_config(
-            |config| {
-                config.max_queued_rebuilds = Some(1);
-            },
-            |env| async move {
-                let build_queue = env.async_build_queue();
-                build_queue
-                    .add_crate("foo1", "0.1.0", REBUILD_PRIORITY, None)
-                    .await?;
-                build_queue
-                    .add_crate("foo2", "0.1.0", REBUILD_PRIORITY, None)
-                    .await?;
-
-                let mut conn = env.async_db().async_conn().await;
-                sqlx::query!("UPDATE queue SET attempt = 99")
-                    .execute(&mut *conn)
-                    .await?;
-
-                assert_eq!(build_queue.queued_crates().await?.len(), 0);
-
-                env.fake_release()
-                    .await
-                    .name("foo")
-                    .version("0.1.0")
-                    .builds(vec![
-                        FakeBuild::default()
-                            .rustc_version("rustc 1.84.0-nightly (e7c0d2750 2020-10-15)"),
-                    ])
-                    .create()
-                    .await?;
-
-                let build_queue = env.async_build_queue();
-                queue_rebuilds(&mut conn, &env.config(), &build_queue).await?;
-
-                assert_eq!(build_queue.queued_crates().await?.len(), 1);
-
-                Ok(())
-            },
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_still_rebuild_when_full_with_failed() -> Result<()> {
+        let env = TestEnvironment::with_config_async(
+            TestEnvironment::base_config()
+                .max_queued_rebuilds(Some(1))
+                .build()?,
         )
+        .await;
+
+        let build_queue = env.async_build_queue();
+        build_queue
+            .add_crate("foo1", "0.1.0", REBUILD_PRIORITY, None)
+            .await?;
+        build_queue
+            .add_crate("foo2", "0.1.0", REBUILD_PRIORITY, None)
+            .await?;
+
+        let mut conn = env.async_db().async_conn().await;
+        sqlx::query!("UPDATE queue SET attempt = 99")
+            .execute(&mut *conn)
+            .await?;
+
+        assert_eq!(build_queue.queued_crates().await?.len(), 0);
+
+        env.fake_release()
+            .await
+            .name("foo")
+            .version("0.1.0")
+            .builds(vec![
+                FakeBuild::default().rustc_version("rustc 1.84.0-nightly (e7c0d2750 2020-10-15)"),
+            ])
+            .create()
+            .await?;
+
+        let build_queue = env.async_build_queue();
+        queue_rebuilds(&mut conn, &env.config(), &build_queue).await?;
+
+        assert_eq!(build_queue.queued_crates().await?.len(), 1);
+
+        Ok(())
     }
 
-    #[test]
-    fn test_dont_rebuild_when_full() {
-        async_wrapper_with_config(
-            |config| {
-                config.max_queued_rebuilds = Some(1);
-            },
-            |env| async move {
-                let build_queue = env.async_build_queue();
-                build_queue
-                    .add_crate("foo1", "0.1.0", REBUILD_PRIORITY, None)
-                    .await?;
-                build_queue
-                    .add_crate("foo2", "0.1.0", REBUILD_PRIORITY, None)
-                    .await?;
-
-                env.fake_release()
-                    .await
-                    .name("foo")
-                    .version("0.1.0")
-                    .builds(vec![
-                        FakeBuild::default()
-                            .rustc_version("rustc 1.84.0-nightly (e7c0d2750 2020-10-15)"),
-                    ])
-                    .create()
-                    .await?;
-
-                let build_queue = env.async_build_queue();
-                assert_eq!(build_queue.queued_crates().await?.len(), 2);
-
-                let mut conn = env.async_db().async_conn().await;
-                queue_rebuilds(&mut conn, &env.config(), &build_queue).await?;
-
-                assert_eq!(build_queue.queued_crates().await?.len(), 2);
-
-                Ok(())
-            },
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_dont_rebuild_when_full() -> Result<()> {
+        let env = TestEnvironment::with_config_async(
+            TestEnvironment::base_config()
+                .max_queued_rebuilds(Some(1))
+                .build()?,
         )
+        .await;
+
+        let build_queue = env.async_build_queue();
+        build_queue
+            .add_crate("foo1", "0.1.0", REBUILD_PRIORITY, None)
+            .await?;
+        build_queue
+            .add_crate("foo2", "0.1.0", REBUILD_PRIORITY, None)
+            .await?;
+
+        env.fake_release()
+            .await
+            .name("foo")
+            .version("0.1.0")
+            .builds(vec![
+                FakeBuild::default().rustc_version("rustc 1.84.0-nightly (e7c0d2750 2020-10-15)"),
+            ])
+            .create()
+            .await?;
+
+        let build_queue = env.async_build_queue();
+        assert_eq!(build_queue.queued_crates().await?.len(), 2);
+
+        let mut conn = env.async_db().async_conn().await;
+        queue_rebuilds(&mut conn, &env.config(), &build_queue).await?;
+
+        assert_eq!(build_queue.queued_crates().await?.len(), 2);
+
+        Ok(())
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -869,67 +866,65 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_add_duplicate_resets_attempts_and_priority() {
-        async_wrapper_with_config(
-            |config| {
-                config.build_attempts = 5;
-            },
-            |env| async move {
-                let queue = env.async_build_queue();
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_add_duplicate_resets_attempts_and_priority() -> Result<()> {
+        let env = TestEnvironment::with_config_async(
+            TestEnvironment::base_config().build_attempts(5).build()?,
+        )
+        .await;
 
-                let mut conn = env.async_db().async_conn().await;
-                sqlx::query!(
-                    "
+        let queue = env.async_build_queue();
+
+        let mut conn = env.async_db().async_conn().await;
+        sqlx::query!(
+            "
                 INSERT INTO queue (name, version, priority, attempt, last_attempt )
                 VALUES ('failed_crate', '0.1.1', 0, 99, NOW())",
-                )
-                .execute(&mut *conn)
-                .await?;
+        )
+        .execute(&mut *conn)
+        .await?;
 
-                assert_eq!(queue.pending_count().await?, 0);
+        assert_eq!(queue.pending_count().await?, 0);
 
-                queue.add_crate("failed_crate", "0.1.1", 9, None).await?;
+        queue.add_crate("failed_crate", "0.1.1", 9, None).await?;
 
-                assert_eq!(queue.pending_count().await?, 1);
+        assert_eq!(queue.pending_count().await?, 1);
 
-                let row = sqlx::query!(
-                    "SELECT priority, attempt, last_attempt
+        let row = sqlx::query!(
+            "SELECT priority, attempt, last_attempt
                      FROM queue
                      WHERE name = $1 AND version = $2",
-                    "failed_crate",
-                    "0.1.1",
-                )
-                .fetch_one(&mut *conn)
-                .await?;
-
-                assert_eq!(row.priority, 9);
-                assert_eq!(row.attempt, 0);
-                assert!(row.last_attempt.is_none());
-                Ok(())
-            },
+            "failed_crate",
+            "0.1.1",
         )
+        .fetch_one(&mut *conn)
+        .await?;
+
+        assert_eq!(row.priority, 9);
+        assert_eq!(row.attempt, 0);
+        assert!(row.last_attempt.is_none());
+        Ok(())
     }
 
-    #[test]
-    fn test_has_build_queued() {
-        crate::test::async_wrapper(|env| async move {
-            let queue = env.async_build_queue();
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_has_build_queued() -> Result<()> {
+        let env = TestEnvironment::new_async().await;
 
-            queue.add_crate("dummy", "0.1.1", 0, None).await?;
+        let queue = env.async_build_queue();
 
-            let mut conn = env.async_db().async_conn().await;
-            assert!(queue.has_build_queued("dummy", "0.1.1").await.unwrap());
+        queue.add_crate("dummy", "0.1.1", 0, None).await?;
 
-            sqlx::query!("UPDATE queue SET attempt = 6")
-                .execute(&mut *conn)
-                .await
-                .unwrap();
+        let mut conn = env.async_db().async_conn().await;
+        assert!(queue.has_build_queued("dummy", "0.1.1").await.unwrap());
 
-            assert!(!queue.has_build_queued("dummy", "0.1.1").await.unwrap());
+        sqlx::query!("UPDATE queue SET attempt = 6")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
 
-            Ok(())
-        })
+        assert!(!queue.has_build_queued("dummy", "0.1.1").await.unwrap());
+
+        Ok(())
     }
 
     #[test]
