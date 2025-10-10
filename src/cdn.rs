@@ -692,7 +692,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn create_cloudfront() -> Result<()> {
         let env = TestEnvironment::with_config_async(
             TestEnvironment::base_config()
@@ -709,7 +709,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn create_dummy() {
         let env = TestEnvironment::new_async().await;
 
@@ -720,7 +720,7 @@ mod tests {
         ));
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn invalidation_counts_are_zero_with_empty_queue() -> Result<()> {
         let env = TestEnvironment::with_config_async(
             TestEnvironment::base_config()
@@ -746,7 +746,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn escalate_to_full_invalidation() -> Result<()> {
         let env = TestEnvironment::with_config_async(
             TestEnvironment::base_config()
@@ -855,7 +855,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn invalidate_a_crate() -> Result<()> {
         let env = TestEnvironment::with_config_async(
             TestEnvironment::base_config()
@@ -992,7 +992,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn only_add_some_invalidations_when_too_many_are_active() -> Result<()> {
         let env = TestEnvironment::with_config_async(
             TestEnvironment::base_config()
@@ -1071,7 +1071,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn dont_create_invalidations_when_too_many_are_active() -> Result<()> {
         let env = TestEnvironment::with_config_async(
             TestEnvironment::base_config()
@@ -1163,8 +1163,7 @@ mod tests {
         Ok(())
     }
 
-    // #[tokio::test(flavor = "multi_thread")]
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn dont_create_invalidations_without_paths() -> Result<()> {
         let env = TestEnvironment::with_config_async(
             TestEnvironment::base_config()
@@ -1216,7 +1215,7 @@ mod tests {
         Config::new(&cfg)
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn invalidate_path() {
         let conn = StaticReplayClient::new(vec![ReplayEvent::new(
             http02::Request::builder()
@@ -1266,7 +1265,7 @@ mod tests {
         conn.assert_requests_match(&[]);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn get_invalidation_info_doesnt_exist() {
         let conn = StaticReplayClient::new(vec![ReplayEvent::new(
             http02::Request::builder()
@@ -1295,7 +1294,7 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn get_invalidation_info_completed() {
         let conn = StaticReplayClient::new(vec![ReplayEvent::new(
             http02::Request::builder()

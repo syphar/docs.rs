@@ -47,19 +47,13 @@ where
     async_wrapper_with_config(|_| {}, f)
 }
 
-fn async_drop<F, Fut>(f: F)
+fn async_drop<F, Fut>(runtime: &Handle, f: F)
 where
     F: FnOnce() -> Fut + Send + 'static,
     Fut: Future<Output = ()>,
 {
     std::thread::scope(|s| {
-        s.spawn(|| {
-            let runtime = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap();
-            runtime.block_on(f())
-        });
+        s.spawn(|| runtime.block_on(f()));
     });
 }
 
@@ -512,17 +506,20 @@ impl TestEnvironment {
 
 impl Drop for TestEnvironment {
     fn drop(&mut self) {
-        // let storage = self.context.storage.clone();
-        // async_drop(|| async move {
-        //     storage
-        //         .cleanup_after_test()
-        //         .await
-        //         .expect("failed to cleanup after tests");
-        // });
+        let storage = self.context.storage.clone();
+        let runtime = self.runtime();
+        block_in_place(move || {
+            runtime.block_on(async move {
+                storage
+                    .cleanup_after_test()
+                    .await
+                    .expect("failed to cleanup after tests");
+            })
+        });
 
-        // if self.context.config.local_archive_cache_path.exists() {
-        //     fs::remove_dir_all(&self.context.config.local_archive_cache_path).unwrap();
-        // }
+        if self.context.config.local_archive_cache_path.exists() {
+            fs::remove_dir_all(&self.context.config.local_archive_cache_path).unwrap();
+        }
     }
 }
 
@@ -604,7 +601,7 @@ impl Drop for TestDatabase {
         let schema = self.schema.clone();
         let runtime = self.runtime.clone();
         block_in_place(move || {
-            runtime.block_on(async {
+            runtime.block_on(async move {
                 let Ok(mut conn) = pool.get_async().await else {
                     error!("error in drop impl");
                     return;

@@ -148,7 +148,7 @@ mod tests {
     use axum::{Router, routing::get};
     use http::StatusCode;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_path_file_ext() -> anyhow::Result<()> {
         let app = Router::new()
             .route(

@@ -198,7 +198,7 @@ mod tests {
         tf
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn index_create_save_load_sqlite() -> Result<()> {
         let mut tf = create_test_archive(1);
 
@@ -214,7 +214,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     async fn archive_with_more_than_65k_files() -> Result<()> {
         let mut tf = create_test_archive(100_000);
 

@@ -853,20 +853,20 @@ mod tests {
         )
     }
 
-    #[test]
-    fn test_add_duplicate_doesnt_fail_last_priority_wins() {
-        crate::test::async_wrapper(|env| async move {
-            let queue = env.async_build_queue();
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_add_duplicate_doesnt_fail_last_priority_wins() -> Result<()> {
+        let env = TestEnvironment::new_async().await;
 
-            queue.add_crate("some_crate", "0.1.1", 0, None).await?;
-            queue.add_crate("some_crate", "0.1.1", 9, None).await?;
+        let queue = env.async_build_queue();
 
-            let queued_crates = queue.queued_crates().await?;
-            assert_eq!(queued_crates.len(), 1);
-            assert_eq!(queued_crates[0].priority, 9);
+        queue.add_crate("some_crate", "0.1.1", 0, None).await?;
+        queue.add_crate("some_crate", "0.1.1", 9, None).await?;
 
-            Ok(())
-        })
+        let queued_crates = queue.queued_crates().await?;
+        assert_eq!(queued_crates.len(), 1);
+        assert_eq!(queued_crates[0].priority, 9);
+
+        Ok(())
     }
 
     #[test]
