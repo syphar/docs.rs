@@ -49,16 +49,6 @@ where
     async_wrapper_with_config(|_| {}, f)
 }
 
-fn async_drop<F, Fut>(runtime: &Handle, f: F)
-where
-    F: FnOnce() -> Fut + Send + 'static,
-    Fut: Future<Output = ()>,
-{
-    std::thread::scope(|s| {
-        s.spawn(|| runtime.block_on(f()));
-    });
-}
-
 pub(crate) trait AxumResponseTestExt {
     async fn text(self) -> Result<String>;
     async fn bytes(self) -> Result<Bytes>;
