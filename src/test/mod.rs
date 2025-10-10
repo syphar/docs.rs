@@ -22,7 +22,7 @@ use serde::de::DeserializeOwned;
 use sqlx::Connection as _;
 use std::{fs, future::Future, panic, rc::Rc, str::FromStr, sync::Arc};
 use tokio::{
-    runtime::{self, Handle, Runtime},
+    runtime::{self, Handle},
     task::block_in_place,
 };
 use tower::ServiceExt;
@@ -320,7 +320,6 @@ impl AxumRouterTestExt for axum::Router {
 pub(crate) struct TestEnvironment {
     pub context: Context,
     db: TestDatabase,
-    runtime: Option<Arc<Runtime>>,
 }
 
 pub(crate) fn init_logger() {
@@ -358,7 +357,7 @@ impl TestEnvironment {
                 .expect("failed to initialize runtime"),
         );
         let mut env = runtime.block_on(Self::with_config_async(config));
-        env.runtime = Some(runtime);
+        env.context.owned_runtime = Some(runtime);
         env
     }
 
@@ -431,9 +430,9 @@ impl TestEnvironment {
                 ),
                 repository_stats_updater: Arc::new(RepositoryStatsUpdater::new(&config, pool)),
                 runtime,
+                owned_runtime: None,
             },
             db: test_db,
-            runtime: None,
         }
     }
 

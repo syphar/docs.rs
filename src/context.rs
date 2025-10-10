@@ -23,11 +23,20 @@ pub struct Context {
     pub registry_api: Arc<RegistryApi>,
     pub repository_stats_updater: Arc<RepositoryStatsUpdater>,
     pub runtime: runtime::Handle,
+    pub owned_runtime: Option<Arc<runtime::Runtime>>,
 }
 
 impl Context {
     pub fn from_config(config: Config) -> Result<Self> {
-        todo!();
+        let runtime = Arc::new(
+            runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .expect("failed to initialize runtime"),
+        );
+        let mut ctx = runtime.block_on(Self::from_config_async(config))?;
+        ctx.owned_runtime = Some(runtime);
+        Ok(ctx)
     }
 
     pub async fn from_config_async(config: Config) -> Result<Self> {
@@ -81,6 +90,7 @@ impl Context {
             repository_stats_updater: Arc::new(RepositoryStatsUpdater::new(&config, pool)),
             runtime,
             config,
+            owned_runtime: None,
         })
     }
 }
