@@ -182,51 +182,51 @@ enum CommandLine {
 
 impl CommandLine {
     fn handle_args(self) -> Result<()> {
-        let config = Config::from_env()?.build()?;
+        let config = Config::from_env()?.build();
         let ctx = Context::from_config(config)?;
 
-        match self {
-            Self::Build { subcommand } => subcommand.handle_args(ctx)?,
-            Self::StartRegistryWatcher {
-                metric_server_socket_addr,
-                repository_stats_updater,
-                cdn_invalidator,
-                queue_rebuilds,
-            } => {
-                if repository_stats_updater == Toggle::Enabled {
-                    docs_rs::utils::daemon::start_background_repository_stats_updater(&ctx)?;
-                }
-                if cdn_invalidator == Toggle::Enabled {
-                    docs_rs::utils::daemon::start_background_cdn_invalidator(&ctx)?;
-                }
-                if queue_rebuilds == Toggle::Enabled {
-                    docs_rs::utils::daemon::start_background_queue_rebuild(&ctx)?;
-                }
+        // match self {
+        //     Self::Build { subcommand } => subcommand.handle_args(ctx)?,
+        //     Self::StartRegistryWatcher {
+        //         metric_server_socket_addr,
+        //         repository_stats_updater,
+        //         cdn_invalidator,
+        //         queue_rebuilds,
+        //     } => {
+        //         if repository_stats_updater == Toggle::Enabled {
+        //             docs_rs::utils::daemon::start_background_repository_stats_updater(&ctx)?;
+        //         }
+        //         if cdn_invalidator == Toggle::Enabled {
+        //             docs_rs::utils::daemon::start_background_cdn_invalidator(&ctx)?;
+        //         }
+        //         if queue_rebuilds == Toggle::Enabled {
+        //             docs_rs::utils::daemon::start_background_queue_rebuild(&ctx)?;
+        //         }
 
-                start_background_metrics_webserver(Some(metric_server_socket_addr), &ctx)?;
+        //         start_background_metrics_webserver(Some(metric_server_socket_addr), &ctx)?;
 
-                ctx.runtime.block_on(async move {
-                    docs_rs::utils::watch_registry(&ctx.async_build_queue, &ctx.config, ctx.index)
-                        .await
-                })?;
-            }
-            Self::StartBuildServer {
-                metric_server_socket_addr,
-            } => {
-                start_background_metrics_webserver(Some(metric_server_socket_addr), &ctx)?;
+        //         ctx.runtime.block_on(async move {
+        //             docs_rs::utils::watch_registry(&ctx.async_build_queue, &ctx.config, ctx.index)
+        //                 .await
+        //         })?;
+        //     }
+        //     Self::StartBuildServer {
+        //         metric_server_socket_addr,
+        //     } => {
+        //         start_background_metrics_webserver(Some(metric_server_socket_addr), &ctx)?;
 
-                queue_builder(&ctx, RustwideBuilder::init(&ctx)?)?;
-            }
-            Self::StartWebServer { socket_addr } => {
-                // Blocks indefinitely
-                start_web_server(Some(socket_addr), &ctx)?;
-            }
-            Self::Daemon { registry_watcher } => {
-                docs_rs::utils::start_daemon(ctx, registry_watcher == Toggle::Enabled)?;
-            }
-            Self::Database { subcommand } => subcommand.handle_args(ctx)?,
-            Self::Queue { subcommand } => subcommand.handle_args(ctx)?,
-        }
+        //         queue_builder(&ctx, RustwideBuilder::init(&ctx)?)?;
+        //     }
+        //     Self::StartWebServer { socket_addr } => {
+        //         // Blocks indefinitely
+        //         start_web_server(Some(socket_addr), &ctx)?;
+        //     }
+        //     Self::Daemon { registry_watcher } => {
+        //         docs_rs::utils::start_daemon(ctx, registry_watcher == Toggle::Enabled)?;
+        //     }
+        //     Self::Database { subcommand } => subcommand.handle_args(ctx)?,
+        //     Self::Queue { subcommand } => subcommand.handle_args(ctx)?,
+        // }
 
         Ok(())
     }

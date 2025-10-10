@@ -342,11 +342,11 @@ impl TestEnvironment {
     pub(crate) fn override_config(&self, _f: impl FnOnce(&mut Config)) {}
 
     pub(crate) fn new() -> Self {
-        Self::with_config(Self::base_config().build().unwrap())
+        Self::with_config(Config::test_base_config().unwrap().build())
     }
 
     pub(crate) async fn new_async() -> Self {
-        Self::with_config_async(Self::base_config().build().unwrap()).await
+        Self::with_config_async(Config::test_base_config().unwrap().build()).await
     }
 
     pub(crate) fn with_config(config: Config) -> Self {
@@ -434,26 +434,6 @@ impl TestEnvironment {
             },
             db: test_db,
         }
-    }
-
-    pub(crate) fn base_config() -> ConfigBuilder {
-        Config::from_env()
-            .expect("failed to get base config")
-            // Use less connections for each test compared to production.
-            .max_pool_size(8u32)
-            .min_pool_idle(0u32)
-            // Use the database for storage, as it's faster than S3.
-            .storage_backend(StorageKind::Database)
-            // Use a temporary S3 bucket.
-            .s3_bucket(format!("docsrs-test-bucket-{}", rand::random::<u64>()))
-            .s3_bucket_is_temporary(true)
-            .local_archive_cache_path(
-                std::env::temp_dir().join(format!("docsrs-test-index-{}", rand::random::<u64>())),
-            )
-            // set stale content serving so Cache::ForeverInCdn and Cache::ForeverInCdnAndStaleInBrowser
-            // are actually different.
-            .cache_control_stale_while_revalidate(Some(86400u32))
-            .include_default_targets(true)
     }
 
     pub(crate) fn async_build_queue(&self) -> Arc<AsyncBuildQueue> {
