@@ -740,8 +740,8 @@ mod tests {
     async fn test_rebuild_when_old() -> Result<()> {
         let env = TestEnvironment::with_config_async(
             TestEnvironment::base_config()
-                .max_queued_rebuilds(Some(100))
-                .build()?,
+                .max_queued_rebuilds(100)
+                .build(),
         )
         .await;
 
@@ -774,8 +774,8 @@ mod tests {
     async fn test_still_rebuild_when_full_with_failed() -> Result<()> {
         let env = TestEnvironment::with_config_async(
             TestEnvironment::base_config()
-                .max_queued_rebuilds(Some(1))
-                .build()?,
+                .max_queued_rebuilds(1)
+                .build(),
         )
         .await;
 
@@ -816,8 +816,8 @@ mod tests {
     async fn test_dont_rebuild_when_full() -> Result<()> {
         let env = TestEnvironment::with_config_async(
             TestEnvironment::base_config()
-                .max_queued_rebuilds(Some(1))
-                .build()?,
+                .max_queued_rebuilds(1)
+                .build(),
         )
         .await;
 
@@ -869,7 +869,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn test_add_duplicate_resets_attempts_and_priority() -> Result<()> {
         let env = TestEnvironment::with_config_async(
-            TestEnvironment::base_config().build_attempts(5).build()?,
+            TestEnvironment::base_config().build_attempts(5).build(),
         )
         .await;
 
@@ -933,7 +933,7 @@ mod tests {
             TestEnvironment::base_config()
                 .build_attempts(99)
                 .delay_between_build_attempts(Duration::from_secs(1))
-                .build()?,
+                .build(),
         );
 
         let runtime = env.runtime();
@@ -984,7 +984,7 @@ mod tests {
             TestEnvironment::base_config()
                 .build_attempts(MAX_ATTEMPTS)
                 .delay_between_build_attempts(Duration::ZERO)
-                .build()?,
+                .build(),
         );
 
         let queue = env.build_queue();
@@ -1073,9 +1073,9 @@ mod tests {
     fn test_invalidate_cdn_after_build_and_error() -> Result<()> {
         let env = TestEnvironment::with_config(
             TestEnvironment::base_config()
-                .cloudfront_distribution_id_web(Some("distribution_id_web".into()))
-                .cloudfront_distribution_id_static(Some("distribution_id_static".into()))
-                .build()?,
+                .cloudfront_distribution_id_web("distribution_id_web".into())
+                .cloudfront_distribution_id_static("distribution_id_static".into())
+                .build(),
         );
 
         let queue = env.build_queue();
@@ -1199,7 +1199,7 @@ mod tests {
             TestEnvironment::base_config()
                 .build_attempts(MAX_ATTEMPTS)
                 .delay_between_build_attempts(Duration::ZERO)
-                .build()?,
+                .build(),
         );
 
         const MAX_ATTEMPTS: u16 = 3;
@@ -1238,7 +1238,7 @@ mod tests {
             TestEnvironment::base_config()
                 .build_attempts(MAX_ATTEMPTS)
                 .delay_between_build_attempts(Duration::ZERO)
-                .build()?,
+                .build(),
         );
 
         const MAX_ATTEMPTS: u16 = 3;

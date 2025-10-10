@@ -127,7 +127,7 @@ mod tests {
         Some("stale-while-revalidate=86400")
     )]
     fn render(cache: CachePolicy, expected: Option<&str>) -> Result<()> {
-        let config = TestEnvironment::base_config().build()?;
+        let config = TestEnvironment::base_config().build();
         assert_eq!(
             cache.render(&config),
             expected.map(|s| HeaderValue::from_str(s).unwrap())
@@ -138,8 +138,8 @@ mod tests {
     #[test]
     fn render_stale_without_config() -> Result<()> {
         let config = TestEnvironment::base_config()
-            .cache_control_stale_while_revalidate(None)
-            .build()?;
+            .maybe_cache_control_stale_while_revalidate(None)
+            .build();
 
         assert!(
             CachePolicy::ForeverInCdnAndStaleInBrowser
@@ -153,8 +153,8 @@ mod tests {
     #[test]
     fn render_stale_with_config() -> Result<()> {
         let config = TestEnvironment::base_config()
-            .cache_control_stale_while_revalidate(Some(666))
-            .build()?;
+            .cache_control_stale_while_revalidate(666)
+            .build();
 
         assert_eq!(
             CachePolicy::ForeverInCdnAndStaleInBrowser
@@ -170,7 +170,7 @@ mod tests {
     fn render_forever_in_cdn_disabled() -> Result<()> {
         let config = TestEnvironment::base_config()
             .cache_invalidatable_responses(false)
-            .build()?;
+            .build();
 
         assert_eq!(
             CachePolicy::ForeverInCdn.render(&config).unwrap(),
@@ -184,7 +184,7 @@ mod tests {
     fn render_forever_in_cdn_or_stale_disabled() -> Result<()> {
         let config = TestEnvironment::base_config()
             .cache_invalidatable_responses(false)
-            .build()?;
+            .build();
 
         assert_eq!(
             CachePolicy::ForeverInCdnAndStaleInBrowser

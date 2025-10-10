@@ -697,7 +697,7 @@ mod tests {
         let env = TestEnvironment::with_config_async(
             TestEnvironment::base_config()
                 .cdn_backend(CdnKind::CloudFront)
-                .build()?,
+                .build(),
         )
         .await;
 
@@ -724,9 +724,9 @@ mod tests {
     async fn invalidation_counts_are_zero_with_empty_queue() -> Result<()> {
         let env = TestEnvironment::with_config_async(
             TestEnvironment::base_config()
-                .cloudfront_distribution_id_web(Some("distribution_id_web".into()))
-                .cloudfront_distribution_id_static(Some("distribution_id_static".into()))
-                .build()?,
+                .cloudfront_distribution_id_web("distribution_id_web".into())
+                .cloudfront_distribution_id_static("distribution_id_static".into())
+                .build(),
         )
         .await;
 
@@ -750,10 +750,10 @@ mod tests {
     async fn escalate_to_full_invalidation() -> Result<()> {
         let env = TestEnvironment::with_config_async(
             TestEnvironment::base_config()
-                .cloudfront_distribution_id_web(Some("distribution_id_web".into()))
-                .cloudfront_distribution_id_static(Some("distribution_id_static".into()))
+                .cloudfront_distribution_id_web("distribution_id_web".into())
+                .cloudfront_distribution_id_static("distribution_id_static".into())
                 .cdn_max_queued_age(Duration::from_secs(0))
-                .build()?,
+                .build(),
         )
         .await;
 
@@ -859,9 +859,9 @@ mod tests {
     async fn invalidate_a_crate() -> Result<()> {
         let env = TestEnvironment::with_config_async(
             TestEnvironment::base_config()
-                .cloudfront_distribution_id_web(Some("distribution_id_web".into()))
-                .cloudfront_distribution_id_static(Some("distribution_id_static".into()))
-                .build()?,
+                .cloudfront_distribution_id_web("distribution_id_web".into())
+                .cloudfront_distribution_id_static("distribution_id_static".into())
+                .build(),
         )
         .await;
 
@@ -996,8 +996,8 @@ mod tests {
     async fn only_add_some_invalidations_when_too_many_are_active() -> Result<()> {
         let env = TestEnvironment::with_config_async(
             TestEnvironment::base_config()
-                .cloudfront_distribution_id_web(Some("distribution_id_web".into()))
-                .build()?,
+                .cloudfront_distribution_id_web("distribution_id_web".into())
+                .build(),
         )
         .await;
 
@@ -1075,8 +1075,8 @@ mod tests {
     async fn dont_create_invalidations_when_too_many_are_active() -> Result<()> {
         let env = TestEnvironment::with_config_async(
             TestEnvironment::base_config()
-                .cloudfront_distribution_id_web(Some("distribution_id_web".into()))
-                .build()?,
+                .cloudfront_distribution_id_web("distribution_id_web".into())
+                .build(),
         )
         .await;
 
@@ -1167,8 +1167,8 @@ mod tests {
     async fn dont_create_invalidations_without_paths() -> Result<()> {
         let env = TestEnvironment::with_config_async(
             TestEnvironment::base_config()
-                .cloudfront_distribution_id_web(Some("distribution_id_web".into()))
-                .build()?,
+                .cloudfront_distribution_id_web("distribution_id_web".into())
+                .build(),
         )
         .await;
 

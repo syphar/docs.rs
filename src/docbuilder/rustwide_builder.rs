@@ -1536,9 +1536,9 @@ mod tests {
         let metrics_dir = tempfile::tempdir().unwrap().keep();
         let env = TestEnvironment::with_config(
             TestEnvironment::base_config()
-                .compiler_metrics_collection_path(Some(metrics_dir.clone()))
+                .compiler_metrics_collection_path(metrics_dir.clone())
                 .include_default_targets(false)
-                .build()?,
+                .build(),
         );
 
         let crate_ = DUMMY_CRATE_NAME;
@@ -1789,7 +1789,7 @@ mod tests {
         let env = TestEnvironment::with_config(
             TestEnvironment::base_config()
                 .include_default_targets(false)
-                .build()?,
+                .build(),
         );
 
         // if the corrected dependency of the crate was already downloaded we need to remove it
@@ -1821,7 +1821,7 @@ mod tests {
         let env = TestEnvironment::with_config(
             TestEnvironment::base_config()
                 .include_default_targets(false)
-                .build()?,
+                .build(),
         );
 
         // if the corrected dependency of the crate was already downloaded we need to remove it
@@ -2025,7 +2025,7 @@ mod tests {
         let env = TestEnvironment::with_config(
             TestEnvironment::base_config()
                 .build_workspace_reinitialization_interval(Duration::from_secs(1))
-                .build()?,
+                .build(),
         );
 
         use std::thread::sleep;

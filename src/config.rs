@@ -5,7 +5,13 @@ use tracing::trace;
 use url::Url;
 
 #[derive(Debug, bon::Builder)]
-#[builder(on(_, overwritable))]
+#[builder(
+    on(_, overwritable),
+    state_mod(
+        name = config_builder,
+        vis = "pub(crate)",
+    )
+)]
 pub struct Config {
     pub prefix: PathBuf,
     pub registry_index_path: PathBuf,
@@ -126,7 +132,44 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn from_env() -> Result<ConfigBuilder<impl config_builder::IsComplete>> {
+    #[allow(clippy::type_complexity)]
+    pub fn from_env() -> Result<ConfigBuilder<
+        config_builder::SetBuildWorkspaceReinitializationInterval<
+    config_builder::SetDisableMemoryLimit<
+    config_builder::SetIncludeDefaultTargets<
+    config_builder::SetInsideDocker<
+    config_builder::SetRustwideWorkspace<
+    config_builder::SetTempDir<
+    config_builder::SetLocalArchiveCachePath<
+    config_builder::SetCdnMaxQueuedAge<
+    config_builder::SetCdnBackend<
+    config_builder::SetCacheInvalidatableResponses<
+    config_builder::SetCspReportOnly<
+    config_builder::SetRandomCrateSearchViewSize<
+    config_builder::SetReportRequestTimeouts<
+    config_builder::SetRenderThreads<
+    config_builder::SetRegistryGcInterval<
+    config_builder::SetMaxParseMemory<
+    config_builder::SetMaxFileSizeHtml<
+    config_builder::SetMaxFileSize<
+    config_builder::SetGithubUpdaterMinRateLimit<
+    config_builder::SetS3StaticRootPath<
+    config_builder::SetS3BucketIsTemporary<
+    config_builder::SetS3Region<
+    config_builder::SetS3Bucket<
+    config_builder::SetAwsSdkMaxRetries<
+    config_builder::SetStorageBackend<
+    config_builder::SetMinPoolIdle<
+    config_builder::SetMaxPoolSize<
+    config_builder::SetDatabaseUrl<
+    config_builder::SetPrefix<
+    config_builder::SetRegistryApiHost<
+    config_builder::SetRegistryIndexPath<
+    config_builder::SetCratesIoApiCallRetries<
+    config_builder::SetDelayBetweenRegistryFetches<
+    config_builder::SetDelayBetweenBuildAttempts<
+    config_builder::SetBuildAttempts
+    >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>{
         let old_vars = [
             ("CRATESFYI_PREFIX", "DOCSRS_PREFIX"),
             ("CRATESFYI_DATABASE_URL", "DOCSRS_DATABASE_URL"),
@@ -149,7 +192,7 @@ impl Config {
         let prefix: PathBuf = require_env("DOCSRS_PREFIX")?;
         let temp_dir = prefix.join("tmp");
 
-        let builder = Config::builder()
+        Ok(Config::builder()
             .build_attempts(env("DOCSRS_BUILD_ATTEMPTS", 5u16)?)
             .delay_between_build_attempts(Duration::from_secs(env::<u64>(
                 "DOCSRS_DELAY_BETWEEN_BUILD_ATTEMPTS",
@@ -232,29 +275,7 @@ impl Config {
                 "DOCSRS_BUILD_WORKSPACE_REINITIALIZATION_INTERVAL",
                 86400,
             )?))
-            .maybe_max_queued_rebuilds(maybe_env("DOCSRS_MAX_QUEUED_REBUILDS")?);
-
-        Ok(builder)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn test_base_config() -> Result<ConfigBuilder<impl config_builder::IsComplete>> {
-        Ok(Self::from_env()?
-            // Use less connections for each test compared to production.
-            .max_pool_size(8u32)
-            .min_pool_idle(0u32)
-            // Use the database for storage, as it's faster than S3.
-            .storage_backend(StorageKind::Database)
-            // Use a temporary S3 bucket.
-            .s3_bucket(format!("docsrs-test-bucket-{}", rand::random::<u64>()))
-            .s3_bucket_is_temporary(true)
-            .local_archive_cache_path(
-                std::env::temp_dir().join(format!("docsrs-test-index-{}", rand::random::<u64>())),
-            )
-            // set stale content serving so Cache::ForeverInCdn and Cache::ForeverInCdnAndStaleInBrowser
-            // are actually different.
-            .cache_control_stale_while_revalidate(86400u32)
-            .include_default_targets(true))
+            .maybe_max_queued_rebuilds(maybe_env("DOCSRS_MAX_QUEUED_REBUILDS")?))
     }
 }
 

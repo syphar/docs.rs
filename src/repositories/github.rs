@@ -284,8 +284,8 @@ mod tests {
     fn test_rate_limit_fail() {
         crate::test::async_wrapper(|_env| async move {
             let config = TestEnvironment::base_config()
-                .github_accesstoken(Some("qsjdnfqdq".to_owned()))
-                .build()?;
+                .github_accesstoken("qsjdnfqdq".to_owned())
+                .build();
             let (mut server, updater) = mock_server_and_github(&config).await;
 
             let _m1 = server
@@ -308,8 +308,8 @@ mod tests {
     fn test_rate_limit_manual() {
         crate::test::async_wrapper(|_env| async move {
             let config = TestEnvironment::base_config()
-                .github_accesstoken(Some("qsjdnfqdq".to_owned()))
-                .build()?;
+                .github_accesstoken("qsjdnfqdq".to_owned())
+                .build();
             let (mut server, updater) = mock_server_and_github(&config).await;
 
             let _m1 = server
@@ -330,8 +330,8 @@ mod tests {
     fn not_found() {
         crate::test::async_wrapper(|_env| async move {
             let config = TestEnvironment::base_config()
-                .github_accesstoken(Some("qsjdnfqdq".to_owned()))
-                .build()?;
+                .github_accesstoken("qsjdnfqdq".to_owned())
+                .build();
             let (mut server, updater) = mock_server_and_github(&config).await;
 
             let _m1 = server
@@ -358,8 +358,8 @@ mod tests {
     fn get_repository_info() {
         crate::test::async_wrapper(|_env| async move {
             let config = TestEnvironment::base_config()
-                .github_accesstoken(Some("qsjdnfqdq".to_owned()))
-                .build()?;
+                .github_accesstoken("qsjdnfqdq".to_owned())
+                .build();
             let (mut server, updater) = mock_server_and_github(&config).await;
 
             let _m1 = server

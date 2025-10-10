@@ -2,7 +2,7 @@ mod fakes;
 
 pub(crate) use self::fakes::{FakeBuild, fake_release_that_failed_before_build};
 use crate::cdn::CdnBackend;
-use crate::config::ConfigBuilder;
+use crate::config::{ConfigBuilder, config_builder};
 use crate::db::{self, AsyncPoolClient, Pool};
 use crate::error::Result;
 use crate::repositories::RepositoryStatsUpdater;
@@ -33,7 +33,7 @@ where
     F: FnOnce(Rc<TestEnvironment>) -> Fut,
     Fut: Future<Output = Result<()>>,
 {
-    let mut config = TestEnvironment::base_config().build().unwrap();
+    let mut config = TestEnvironment::base_config().build();
     override_config(&mut config);
 
     let env = Rc::new(TestEnvironment::with_config(config));
@@ -342,11 +342,11 @@ impl TestEnvironment {
     pub(crate) fn override_config(&self, _f: impl FnOnce(&mut Config)) {}
 
     pub(crate) fn new() -> Self {
-        Self::with_config(Config::test_base_config().unwrap().build())
+        Self::with_config(Self::base_config().build())
     }
 
     pub(crate) async fn new_async() -> Self {
-        Self::with_config_async(Config::test_base_config().unwrap().build()).await
+        Self::with_config_async(Self::base_config().build()).await
     }
 
     pub(crate) fn with_config(config: Config) -> Self {
@@ -434,6 +434,70 @@ impl TestEnvironment {
             },
             db: test_db,
         }
+    }
+
+    #[cfg(test)]
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn base_config() -> ConfigBuilder<
+        config_builder::SetIncludeDefaultTargets<
+        config_builder::SetLocalArchiveCachePath<
+        config_builder::SetS3BucketIsTemporary<
+        config_builder::SetS3Bucket<
+        config_builder::SetStorageBackend<
+        config_builder::SetMinPoolIdle<
+        config_builder::SetMaxPoolSize<
+        config_builder::SetBuildWorkspaceReinitializationInterval<
+        config_builder::SetDisableMemoryLimit<
+        config_builder::SetIncludeDefaultTargets<
+        config_builder::SetInsideDocker<
+        config_builder::SetRustwideWorkspace<
+        config_builder::SetTempDir<
+        config_builder::SetLocalArchiveCachePath<
+        config_builder::SetCdnMaxQueuedAge<
+        config_builder::SetCdnBackend<
+        config_builder::SetCacheInvalidatableResponses<
+        config_builder::SetCspReportOnly<
+        config_builder::SetRandomCrateSearchViewSize<
+        config_builder::SetReportRequestTimeouts<
+        config_builder::SetRenderThreads<
+        config_builder::SetRegistryGcInterval<
+        config_builder::SetMaxParseMemory<
+        config_builder::SetMaxFileSizeHtml<
+        config_builder::SetMaxFileSize<
+        config_builder::SetGithubUpdaterMinRateLimit<
+        config_builder::SetS3StaticRootPath<
+        config_builder::SetS3BucketIsTemporary<
+        config_builder::SetS3Region<
+        config_builder::SetS3Bucket<
+        config_builder::SetAwsSdkMaxRetries<
+        config_builder::SetStorageBackend<
+        config_builder::SetMinPoolIdle<
+        config_builder::SetMaxPoolSize<
+        config_builder::SetDatabaseUrl<
+        config_builder::SetPrefix<
+        config_builder::SetRegistryApiHost<
+        config_builder::SetRegistryIndexPath<
+        config_builder::SetCratesIoApiCallRetries<
+        config_builder::SetDelayBetweenRegistryFetches<
+        config_builder::SetDelayBetweenBuildAttempts<
+    config_builder::SetBuildAttempts>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>{
+        Config::from_env()
+            .unwrap()
+            // Use less connections for each test compared to production.
+            .max_pool_size(8u32)
+            .min_pool_idle(0u32)
+            // Use the database for storage, as it's faster than S3.
+            .storage_backend(StorageKind::Database)
+            // Use a temporary S3 bucket.
+            .s3_bucket(format!("docsrs-test-bucket-{}", rand::random::<u64>()))
+            .s3_bucket_is_temporary(true)
+            .local_archive_cache_path(
+                std::env::temp_dir().join(format!("docsrs-test-index-{}", rand::random::<u64>())),
+            )
+            // set stale content serving so Cache::ForeverInCdn and Cache::ForeverInCdnAndStaleInBrowser
+            // are actually different.
+            .cache_control_stale_while_revalidate(86400u32)
+            .include_default_targets(true)
     }
 
     pub(crate) fn async_build_queue(&self) -> Arc<AsyncBuildQueue> {
@@ -587,7 +651,7 @@ impl Drop for TestDatabase {
                     return;
                 };
 
-                let migration_result = db::migrate(&mut *conn, Some(0)).await;
+                let migration_result = db::migrate(&mut conn, Some(0)).await;
 
                 if let Err(e) = sqlx::query(format!("DROP SCHEMA {} CASCADE;", schema).as_str())
                     .execute(&mut *conn)
@@ -599,7 +663,6 @@ impl Drop for TestDatabase {
 
                 if let Err(err) = migration_result {
                     error!(?err, "error reverting migrations");
-                    return;
                 }
             })
         });

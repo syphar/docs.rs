@@ -157,8 +157,8 @@ mod test {
     async fn config_default_memory_limit() -> Result<()> {
         let env = TestEnvironment::with_config_async(
             TestEnvironment::base_config()
-                .build_default_memory_limit(Some(6 * GB))
-                .build()?,
+                .build_default_memory_limit(6 * GB)
+                .build(),
         )
         .await;
 
