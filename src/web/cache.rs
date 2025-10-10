@@ -112,6 +112,7 @@ pub(crate) async fn cache_middleware(req: AxumHttpRequest, next: Next) -> AxumRe
 mod tests {
     use super::*;
     use crate::test::TestEnvironment;
+    use anyhow::Result;
     use test_case::test_case;
 
     #[test_case(CachePolicy::NoCaching, Some("max-age=0"))]
@@ -125,30 +126,35 @@ mod tests {
         CachePolicy::ForeverInCdnAndStaleInBrowser,
         Some("stale-while-revalidate=86400")
     )]
-    fn render(cache: CachePolicy, expected: Option<&str>) {
-        let config = TestEnvironment::base_config();
+    fn render(cache: CachePolicy, expected: Option<&str>) -> Result<()> {
+        let config = TestEnvironment::base_config().build()?;
         assert_eq!(
             cache.render(&config),
             expected.map(|s| HeaderValue::from_str(s).unwrap())
         );
+        Ok(())
     }
 
     #[test]
-    fn render_stale_without_config() {
-        let mut config = TestEnvironment::base_config();
-        config.cache_control_stale_while_revalidate = None;
+    fn render_stale_without_config() -> Result<()> {
+        let config = TestEnvironment::base_config()
+            .cache_control_stale_while_revalidate(None)
+            .build()?;
 
         assert!(
             CachePolicy::ForeverInCdnAndStaleInBrowser
                 .render(&config)
                 .is_none()
         );
+
+        Ok(())
     }
 
     #[test]
-    fn render_stale_with_config() {
-        let mut config = TestEnvironment::base_config();
-        config.cache_control_stale_while_revalidate = Some(666);
+    fn render_stale_with_config() -> Result<()> {
+        let config = TestEnvironment::base_config()
+            .cache_control_stale_while_revalidate(Some(666))
+            .build()?;
 
         assert_eq!(
             CachePolicy::ForeverInCdnAndStaleInBrowser
@@ -156,23 +162,29 @@ mod tests {
                 .unwrap(),
             "stale-while-revalidate=666"
         );
+
+        Ok(())
     }
 
     #[test]
-    fn render_forever_in_cdn_disabled() {
-        let mut config = TestEnvironment::base_config();
-        config.cache_invalidatable_responses = false;
+    fn render_forever_in_cdn_disabled() -> Result<()> {
+        let config = TestEnvironment::base_config()
+            .cache_invalidatable_responses(false)
+            .build()?;
 
         assert_eq!(
             CachePolicy::ForeverInCdn.render(&config).unwrap(),
             "max-age=0"
         );
+
+        Ok(())
     }
 
     #[test]
-    fn render_forever_in_cdn_or_stale_disabled() {
-        let mut config = TestEnvironment::base_config();
-        config.cache_invalidatable_responses = false;
+    fn render_forever_in_cdn_or_stale_disabled() -> Result<()> {
+        let config = TestEnvironment::base_config()
+            .cache_invalidatable_responses(false)
+            .build()?;
 
         assert_eq!(
             CachePolicy::ForeverInCdnAndStaleInBrowser
@@ -180,5 +192,6 @@ mod tests {
                 .unwrap(),
             "max-age=0"
         );
+        Ok(())
     }
 }

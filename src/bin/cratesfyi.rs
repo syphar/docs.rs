@@ -182,7 +182,7 @@ enum CommandLine {
 
 impl CommandLine {
     fn handle_args(self) -> Result<()> {
-        let config = Config::from_env()?;
+        let config = Config::from_env()?.build()?;
         let ctx = Context::from_config(config)?;
 
         match self {

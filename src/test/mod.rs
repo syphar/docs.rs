@@ -2,6 +2,7 @@ mod fakes;
 
 pub(crate) use self::fakes::{FakeBuild, fake_release_that_failed_before_build};
 use crate::cdn::CdnBackend;
+use crate::config::ConfigBuilder;
 use crate::db::{self, AsyncPoolClient, Pool};
 use crate::error::Result;
 use crate::repositories::RepositoryStatsUpdater;
@@ -29,7 +30,7 @@ where
     F: FnOnce(Rc<TestEnvironment>) -> Fut,
     Fut: Future<Output = Result<()>>,
 {
-    let mut config = TestEnvironment::base_config();
+    let mut config = TestEnvironment::base_config().build().unwrap();
     override_config(&mut config);
 
     let env = Rc::new(TestEnvironment::with_config(config));
@@ -359,7 +360,7 @@ impl TestEnvironment {
     }
 
     pub(crate) async fn new_async() -> Self {
-        Self::with_config_async(Self::base_config()).await
+        Self::with_config_async(Self::base_config().build().unwrap()).await
     }
 
     pub(crate) fn with_config(config: Config) -> Self {
@@ -368,6 +369,9 @@ impl TestEnvironment {
 
     pub(crate) async fn with_config_async(config: Config) -> Self {
         init_logger();
+
+        // create index directory
+        fs::create_dir_all(config.registry_index_path.clone()).unwrap();
 
         let config = Arc::new(config);
         let instance_metrics =
@@ -437,33 +441,24 @@ impl TestEnvironment {
         }
     }
 
-    pub(crate) fn base_config() -> Config {
-        let mut config = Config::from_env().expect("failed to get base config");
-
-        // create index directory
-        fs::create_dir_all(config.registry_index_path.clone()).unwrap();
-
-        // Use less connections for each test compared to production.
-        config.max_pool_size = 8;
-        config.min_pool_idle = 0;
-
-        // Use the database for storage, as it's faster than S3.
-        config.storage_backend = StorageKind::Database;
-
-        // Use a temporary S3 bucket.
-        config.s3_bucket = format!("docsrs-test-bucket-{}", rand::random::<u64>());
-        config.s3_bucket_is_temporary = true;
-
-        config.local_archive_cache_path =
-            std::env::temp_dir().join(format!("docsrs-test-index-{}", rand::random::<u64>()));
-
-        // set stale content serving so Cache::ForeverInCdn and Cache::ForeverInCdnAndStaleInBrowser
-        // are actually different.
-        config.cache_control_stale_while_revalidate = Some(86400);
-
-        config.include_default_targets = true;
-
-        config
+    pub(crate) fn base_config() -> ConfigBuilder {
+        Config::from_env()
+            .expect("failed to get base config")
+            // Use less connections for each test compared to production.
+            .max_pool_size(8u32)
+            .min_pool_idle(0u32)
+            // Use the database for storage, as it's faster than S3.
+            .storage_backend(StorageKind::Database)
+            // Use a temporary S3 bucket.
+            .s3_bucket(format!("docsrs-test-bucket-{}", rand::random::<u64>()))
+            .s3_bucket_is_temporary(true)
+            .local_archive_cache_path(
+                std::env::temp_dir().join(format!("docsrs-test-index-{}", rand::random::<u64>())),
+            )
+            // set stale content serving so Cache::ForeverInCdn and Cache::ForeverInCdnAndStaleInBrowser
+            // are actually different.
+            .cache_control_stale_while_revalidate(Some(86400u32))
+            .include_default_targets(true)
     }
 
     pub(crate) fn async_build_queue(&self) -> Arc<AsyncBuildQueue> {

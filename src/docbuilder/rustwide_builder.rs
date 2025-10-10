@@ -1534,10 +1534,12 @@ mod tests {
     #[ignore]
     fn test_collect_metrics() -> Result<()> {
         let metrics_dir = tempfile::tempdir().unwrap().keep();
-        let mut config = TestEnvironment::base_config();
-        config.compiler_metrics_collection_path = Some(metrics_dir.clone());
-        config.include_default_targets = false;
-        let env = TestEnvironment::with_config(config);
+        let env = TestEnvironment::with_config(
+            TestEnvironment::base_config()
+                .compiler_metrics_collection_path(Some(metrics_dir.clone()))
+                .include_default_targets(false)
+                .build()?,
+        );
 
         let crate_ = DUMMY_CRATE_NAME;
         let version = DUMMY_CRATE_VERSION;
@@ -1784,9 +1786,11 @@ mod tests {
     #[test]
     #[ignore]
     fn test_locked_fails_unlocked_needs_new_deps() -> Result<()> {
-        let mut config = TestEnvironment::base_config();
-        config.include_default_targets = false;
-        let env = TestEnvironment::with_config(config);
+        let env = TestEnvironment::with_config(
+            TestEnvironment::base_config()
+                .include_default_targets(false)
+                .build()?,
+        );
 
         // if the corrected dependency of the crate was already downloaded we need to remove it
         remove_cache_files(&env, "rand_core", "0.5.1")?;
@@ -1814,9 +1818,11 @@ mod tests {
     #[test]
     #[ignore]
     fn test_locked_fails_unlocked_needs_new_unknown_deps() -> Result<()> {
-        let mut config = TestEnvironment::base_config();
-        config.include_default_targets = false;
-        let env = TestEnvironment::with_config(config);
+        let env = TestEnvironment::with_config(
+            TestEnvironment::base_config()
+                .include_default_targets(false)
+                .build()?,
+        );
 
         // if the corrected dependency of the crate was already downloaded we need to remove it
         remove_cache_files(&env, "value-bag-sval2", "1.4.1")?;
@@ -2016,9 +2022,11 @@ mod tests {
     #[test]
     #[ignore]
     fn test_workspace_reinitialize_after_interval() -> Result<()> {
-        let mut config = TestEnvironment::base_config();
-        config.build_workspace_reinitialization_interval = Duration::from_secs(1);
-        let env = TestEnvironment::with_config(config);
+        let env = TestEnvironment::with_config(
+            TestEnvironment::base_config()
+                .build_workspace_reinitialization_interval(Duration::from_secs(1))
+                .build()?,
+        );
 
         use std::thread::sleep;
         use std::time::Duration;

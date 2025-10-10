@@ -283,8 +283,9 @@ mod tests {
     #[test]
     fn test_rate_limit_fail() {
         crate::test::async_wrapper(|_env| async move {
-            let mut config = TestEnvironment::base_config();
-            config.github_accesstoken = Some("qsjdnfqdq".to_owned());
+            let config = TestEnvironment::base_config()
+                .github_accesstoken(Some("qsjdnfqdq".to_owned()))
+                .build()?;
             let (mut server, updater) = mock_server_and_github(&config).await;
 
             let _m1 = server
@@ -306,8 +307,9 @@ mod tests {
     #[test]
     fn test_rate_limit_manual() {
         crate::test::async_wrapper(|_env| async move {
-            let mut config = TestEnvironment::base_config();
-            config.github_accesstoken = Some("qsjdnfqdq".to_owned());
+            let config = TestEnvironment::base_config()
+                .github_accesstoken(Some("qsjdnfqdq".to_owned()))
+                .build()?;
             let (mut server, updater) = mock_server_and_github(&config).await;
 
             let _m1 = server
@@ -327,8 +329,9 @@ mod tests {
     #[test]
     fn not_found() {
         crate::test::async_wrapper(|_env| async move {
-            let mut config = TestEnvironment::base_config();
-            config.github_accesstoken = Some("qsjdnfqdq".to_owned());
+            let config = TestEnvironment::base_config()
+                .github_accesstoken(Some("qsjdnfqdq".to_owned()))
+                .build()?;
             let (mut server, updater) = mock_server_and_github(&config).await;
 
             let _m1 = server
@@ -354,8 +357,9 @@ mod tests {
     #[test]
     fn get_repository_info() {
         crate::test::async_wrapper(|_env| async move {
-            let mut config = TestEnvironment::base_config();
-            config.github_accesstoken = Some("qsjdnfqdq".to_owned());
+            let config = TestEnvironment::base_config()
+                .github_accesstoken(Some("qsjdnfqdq".to_owned()))
+                .build()?;
             let (mut server, updater) = mock_server_and_github(&config).await;
 
             let _m1 = server

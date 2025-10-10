@@ -1204,10 +1204,12 @@ mod tests {
 
     #[test]
     fn test_failed_count_for_reattempts() -> Result<()> {
-        let mut config = TestEnvironment::base_config();
-        config.build_attempts = MAX_ATTEMPTS;
-        config.delay_between_build_attempts = Duration::ZERO;
-        let env = TestEnvironment::with_config(config);
+        let env = TestEnvironment::with_config(
+            TestEnvironment::base_config()
+                .build_attempts(MAX_ATTEMPTS)
+                .delay_between_build_attempts(Duration::ZERO)
+                .build()?,
+        );
 
         const MAX_ATTEMPTS: u16 = 3;
 
@@ -1241,10 +1243,12 @@ mod tests {
 
     #[test]
     fn test_failed_count_after_error() -> Result<()> {
-        let mut config = TestEnvironment::base_config();
-        config.build_attempts = MAX_ATTEMPTS;
-        config.delay_between_build_attempts = Duration::ZERO;
-        let env = TestEnvironment::with_config(config);
+        let env = TestEnvironment::with_config(
+            TestEnvironment::base_config()
+                .build_attempts(MAX_ATTEMPTS)
+                .delay_between_build_attempts(Duration::ZERO)
+                .build()?,
+        );
 
         const MAX_ATTEMPTS: u16 = 3;
 
