@@ -1142,6 +1142,8 @@ mod tests {
         })?;
         assert_eq!(queue.pending_count()?, 1);
 
+        drop(env);
+
         Ok(())
     }
 
