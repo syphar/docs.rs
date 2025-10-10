@@ -88,12 +88,11 @@ impl IntoResponse for StreamingFile {
 
 #[cfg(test)]
 mod tests {
-    use std::rc::Rc;
-
     use super::*;
     use crate::test::TestEnvironment;
     use chrono::Utc;
     use http::header::CACHE_CONTROL;
+    use std::rc::Rc;
 
     #[tokio::test(flavor = "multi_thread")]
     async fn file_roundtrip_axum() -> Result<()> {
@@ -108,8 +107,8 @@ mod tests {
             "rustdoc/fake-package/1.0.0/fake-package/index.html",
             &env.config(),
         )
-        .await
-        .unwrap();
+        .await?;
+
         file.0.date_updated = now;
 
         let resp = file.into_response();
