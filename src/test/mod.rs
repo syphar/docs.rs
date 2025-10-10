@@ -21,7 +21,6 @@ use serde::de::DeserializeOwned;
 use sqlx::Connection as _;
 use std::{fs, future::Future, panic, rc::Rc, str::FromStr, sync::Arc};
 use tokio::runtime::{Handle, Runtime};
-use tokio::task::block_in_place;
 use tower::ServiceExt;
 use tracing::error;
 
@@ -44,6 +43,22 @@ where
     Fut: Future<Output = Result<()>>,
 {
     async_wrapper_with_config(|_| {}, f)
+}
+
+fn async_drop<F, Fut>(f: F)
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: Future<Output = ()>,
+{
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(f())
+        });
+    });
 }
 
 pub(crate) trait AxumResponseTestExt {
@@ -501,14 +516,12 @@ impl TestEnvironment {
 
 impl Drop for TestEnvironment {
     fn drop(&mut self) {
-        block_in_place({
-            let storage = self.context.storage.clone();
-
-            move || {
-                storage
-                    .cleanup_after_test()
-                    .expect("failed to cleanup after tests");
-            }
+        let storage = self.context.storage.clone();
+        async_drop(|| async move {
+            storage
+                .cleanup_after_test()
+                .await
+                .expect("failed to cleanup after tests");
         });
 
         if self.context.config.local_archive_cache_path.exists() {
@@ -595,21 +608,20 @@ impl TestDatabase {
 
 impl Drop for TestDatabase {
     fn drop(&mut self) {
-        block_in_place(move || {
-            self.runtime.block_on(async {
-                let mut conn = self.async_conn().await;
-                let migration_result = db::migrate(&mut conn, Some(0)).await;
+        let pool = self.pool.clone();
+        let schema = self.schema.clone();
+        async_drop(|| async move {
+            let mut conn = pool.get_async().await.unwrap();
+            let migration_result = db::migrate(&mut *conn, Some(0)).await;
 
-                if let Err(e) =
-                    sqlx::query(format!("DROP SCHEMA {} CASCADE;", self.schema).as_str())
-                        .execute(&mut *conn)
-                        .await
-                {
-                    error!("failed to drop test schema {}: {}", self.schema, e);
-                }
+            if let Err(e) = sqlx::query(format!("DROP SCHEMA {} CASCADE;", schema).as_str())
+                .execute(&mut *conn)
+                .await
+            {
+                error!("failed to drop test schema {}: {}", schema, e);
+            }
 
-                migration_result.expect("downgrading database works");
-            });
-        })
+            migration_result.expect("downgrading database works");
+        });
     }
 }

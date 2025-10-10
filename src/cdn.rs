@@ -692,23 +692,20 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn create_cloudfront() {
-        async_wrapper_with_config(
-            |config| config.cdn_backend = CdnKind::CloudFront,
-            |env| async move {
-                assert!(matches!(*env.cdn(), CdnBackend::CloudFront { .. }));
-                assert!(matches!(
-                    CdnBackend::new(&env.config()).await,
-                    CdnBackend::CloudFront { .. }
-                ));
+    #[tokio::test]
+    async fn create_cloudfront() {
+        let mut config = TestEnvironment::base_config();
+        config.cdn_backend = CdnKind::CloudFront;
+        let env = TestEnvironment::with_config_async(config).await;
 
-                Ok(())
-            },
-        )
+        assert!(matches!(*env.cdn(), CdnBackend::CloudFront { .. }));
+        assert!(matches!(
+            CdnBackend::new(&env.config()).await,
+            CdnBackend::CloudFront { .. }
+        ));
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test]
     async fn create_dummy() {
         let env = TestEnvironment::new_async().await;
 

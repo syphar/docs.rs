@@ -946,8 +946,8 @@ impl Storage {
     // we leak the web server, and Drop isn't executed in that case (since the leaked web server
     // still holds a reference to the storage).
     #[cfg(test)]
-    pub(crate) fn cleanup_after_test(&self) -> Result<()> {
-        self.runtime.block_on(self.inner.cleanup_after_test())
+    pub(crate) async fn cleanup_after_test(&self) -> Result<()> {
+        self.inner.cleanup_after_test().await
     }
 }
 
