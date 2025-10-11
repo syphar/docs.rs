@@ -7,7 +7,7 @@ use crate::{
 };
 use anyhow::Result;
 use std::sync::Arc;
-use tokio::runtime::{self, Handle};
+use tokio::runtime;
 
 pub struct Context {
     pub config: Arc<Config>,
@@ -56,7 +56,7 @@ impl Context {
             async_storage.clone(),
         ));
 
-        let runtime = Handle::current();
+        let runtime = runtime::Handle::current();
 
         let build_queue = Arc::new(BuildQueue::new(runtime.clone(), async_build_queue.clone()));
 

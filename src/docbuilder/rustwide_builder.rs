@@ -37,7 +37,7 @@ use std::io::BufReader;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::runtime::Handle;
+use tokio::runtime;
 use tracing::{debug, error, info, info_span, instrument, warn};
 
 const USER_AGENT: &str = "docs.rs builder (https://github.com/rust-lang/docs.rs)";
@@ -113,7 +113,7 @@ pub enum PackageKind<'a> {
 pub struct RustwideBuilder {
     workspace: Workspace,
     toolchain: Toolchain,
-    runtime: Handle,
+    runtime: runtime::Handle,
     config: Arc<Config>,
     db: Pool,
     storage: Arc<Storage>,

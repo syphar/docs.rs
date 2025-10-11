@@ -21,10 +21,7 @@ use http_body_util::BodyExt; // for `collect`
 use serde::de::DeserializeOwned;
 use sqlx::Connection as _;
 use std::{fs, future::Future, panic, rc::Rc, str::FromStr, sync::Arc};
-use tokio::{
-    runtime::{self, Handle},
-    task::block_in_place,
-};
+use tokio::{runtime, task::block_in_place};
 use tower::ServiceExt;
 use tracing::error;
 
@@ -390,7 +387,7 @@ impl TestEnvironment {
             async_storage.clone(),
         ));
 
-        let runtime = Handle::current();
+        let runtime = runtime::Handle::current();
 
         let build_queue = Arc::new(BuildQueue::new(runtime.clone(), async_build_queue.clone()));
 
@@ -529,7 +526,7 @@ impl TestEnvironment {
         self.context.instance_metrics.clone()
     }
 
-    pub(crate) fn runtime(&self) -> Handle {
+    pub(crate) fn runtime(&self) -> runtime::Handle {
         self.context.runtime.clone()
     }
 
@@ -573,7 +570,7 @@ impl Drop for TestEnvironment {
 pub(crate) struct TestDatabase {
     pool: Pool,
     schema: String,
-    runtime: Handle,
+    runtime: runtime::Handle,
 }
 
 impl TestDatabase {
@@ -625,7 +622,7 @@ impl TestDatabase {
         Ok(TestDatabase {
             pool,
             schema,
-            runtime: Handle::current(),
+            runtime: runtime::Handle::current(),
         })
     }
 

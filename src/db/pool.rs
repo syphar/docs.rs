@@ -7,7 +7,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tokio::runtime::Handle;
+use tokio::runtime;
 use tracing::debug;
 
 const DEFAULT_SCHEMA: &str = "public";
@@ -15,7 +15,7 @@ const DEFAULT_SCHEMA: &str = "public";
 #[derive(Debug, Clone)]
 pub struct Pool {
     async_pool: sqlx::PgPool,
-    runtime: Handle,
+    runtime: runtime::Handle,
     metrics: Arc<InstanceMetrics>,
     max_size: u32,
 }
@@ -78,7 +78,7 @@ impl Pool {
         Ok(Pool {
             async_pool,
             metrics,
-            runtime: Handle::current(),
+            runtime: runtime::Handle::current(),
             max_size: config.max_pool_size,
         })
     }
@@ -168,7 +168,7 @@ where
 #[derive(Debug)]
 pub struct AsyncPoolClient {
     inner: Option<sqlx::pool::PoolConnection<sqlx::postgres::Postgres>>,
-    runtime: Handle,
+    runtime: runtime::Handle,
 }
 
 impl Deref for AsyncPoolClient {
