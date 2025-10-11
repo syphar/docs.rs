@@ -342,8 +342,6 @@ pub(crate) fn init_logger() {
 }
 
 impl TestEnvironment {
-    pub(crate) fn override_config(&self, _f: impl FnOnce(&mut Config)) {}
-
     pub(crate) fn new() -> Self {
         Self::with_config(Self::base_config().build())
     }
