@@ -738,7 +738,7 @@ impl MetaData {
 
     fn target_name_url(&self) -> String {
         if let Some(ref target_name) = self.target_name {
-            format!("{target_name}/index.html")
+            format!("{target_name}/")
         } else {
             String::new()
         }
@@ -774,6 +774,7 @@ mod test {
     };
     use crate::{db::ReleaseId, docbuilder::DocCoverage};
     use kuchikiki::traits::TendrilSink;
+    use pretty_assertions::assert_eq;
     use serde_json::json;
     use test_case::test_case;
 
@@ -1280,7 +1281,7 @@ mod test {
                     target_name: Some("foo".to_string()),
                     rustdoc_status: Some(true),
                     default_target: Some("x86_64-unknown-linux-gnu".to_string()),
-                    doc_targets: Some(vec![]),
+                    doc_targets: Some(vec!["x86_64-unknown-linux-gnu".to_string()]),
                     yanked: Some(false),
                     rustdoc_css_file: Some("rustdoc.css".to_string()),
                 },
