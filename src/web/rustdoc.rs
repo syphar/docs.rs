@@ -265,7 +265,7 @@ pub(crate) async fn rustdoc_redirector_handler(
             &query_pairs,
             description.href.to_string(),
             CachePolicy::ForeverInCdnAndStaleInBrowser,
-            path_in_crate.as_deref(),
+            path_in_crate,
         )?
         .into_response());
     }
@@ -274,7 +274,7 @@ pub(crate) async fn rustdoc_redirector_handler(
     // anyway
     let matched_release = match_version(
         &mut conn,
-        &crate_name,
+        crate_name,
         &params.version.clone().unwrap_or_default(),
     )
     .await?
@@ -357,7 +357,7 @@ pub(crate) async fn rustdoc_redirector_handler(
             &query_pairs,
             encode_url_path(&url_str),
             cache,
-            path_in_crate.as_deref(),
+            path_in_crate,
         )?
         .into_response())
     } else {
@@ -510,9 +510,9 @@ pub(crate) async fn rustdoc_html_server_handler(
     // expects a req_path that looks like `[/:target]/.*`
     if params.target() == krate.metadata.default_target.as_deref() {
         return redirect(
-            &params.name(),
+            params.name(),
             &krate.version,
-            &params.path(),
+            params.path(),
             CachePolicy::ForeverInCdn,
             raw_query.as_deref(),
         );
@@ -529,7 +529,7 @@ pub(crate) async fn rustdoc_html_server_handler(
     // Attempt to load the file from the database
     let blob = match storage
         .stream_rustdoc_file(
-            &params.name(),
+            params.name(),
             &krate.version.to_string(),
             krate.latest_build_id,
             &storage_path,
@@ -558,7 +558,7 @@ pub(crate) async fn rustdoc_html_server_handler(
 
                 if storage
                     .rustdoc_file_exists(
-                        &params.name(),
+                        params.name(),
                         &krate.version.to_string(),
                         krate.latest_build_id,
                         &params.storage_path(),
@@ -567,7 +567,7 @@ pub(crate) async fn rustdoc_html_server_handler(
                     .await?
                 {
                     return redirect(
-                        &params.name(),
+                        params.name(),
                         &krate.version,
                         params.path(),
                         CachePolicy::ForeverInCdn,
@@ -1046,7 +1046,7 @@ mod test {
         storage::compression::file_extension_for,
         test::*,
         utils::Dependency,
-        web::{ReqVersion, cache::CachePolicy, encode_url_path},
+        web::{cache::CachePolicy, encode_url_path},
     };
     use anyhow::Context;
     use chrono::{NaiveDate, Utc};

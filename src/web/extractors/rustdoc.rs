@@ -15,6 +15,9 @@ use crate::web::{ReqVersion, error::AxumNope, extractors::Path};
 /// can extract rustdoc parameters from path and uri.
 ///
 /// includes parsing / interpretation logic using the crate metadata.
+///
+/// TODO: features to add?
+/// * generate standard URLs for these params? Same for the parsed version?
 #[derive(Clone, PartialEq, Debug)]
 pub(crate) struct RustdocParams {
     pub(crate) name: String,
@@ -60,10 +63,10 @@ where
         }
 
         Ok(RustdocParams {
-            name: params.name,
+            name: params.name.trim().to_owned(),
             version: params.version,
-            target: params.target,
-            path: params.path,
+            target: params.target.map(|t| t.trim().to_owned()),
+            path: params.path.map(|p| p.trim().to_owned()),
         })
     }
 }
@@ -93,7 +96,7 @@ impl RustdocParams {
 
         dbg!(&self.path);
         let mut new_path = if let Some(ref path) = self.path {
-            path.trim_start_matches('/').to_string()
+            path.trim_start_matches('/').trim().to_string()
         } else {
             String::new()
         };
@@ -105,18 +108,19 @@ impl RustdocParams {
         dbg!(&self);
 
         if let Some(given_target) = dbg!(self.target.take()) {
+            let given_target = given_target.trim();
             dbg!(&given_target);
             // if a target is given in a separate url parameter, check if it's a target we
             // know about. If yes, keep it, if not, make it part of the path.
-            if doc_targets.iter().any(|s| s == &given_target) {
+            if doc_targets.iter().any(|s| s == given_target) {
                 dbg!("known target");
-                new_target = Some(given_target);
+                new_target = Some(given_target.into());
             } else {
                 new_target = None;
                 if !new_path.is_empty() {
                     new_path = format!("{}/{}", given_target, new_path);
                 } else {
-                    new_path = given_target;
+                    new_path = given_target.into();
                 }
             }
         } else {
@@ -156,43 +160,6 @@ impl RustdocParams {
     pub(crate) fn path(&self) -> &str {
         self.path.as_deref().unwrap_or("")
     }
-
-    pub(crate) fn path_is_folder(&self) -> bool {
-        if let Some(ref path) = self.path {
-            path.is_empty() || path.ends_with('/')
-        } else {
-            true
-        }
-    }
-
-    pub(crate) fn file_extension(&self) -> Option<&str> {
-        self.path.as_deref().and_then(|path| {
-            path.rsplit_once('.').and_then(|(_, ext)| {
-                if ext.contains('/') {
-                    // to handle cases like `foo.html/bar` where I want `None`
-                    None
-                } else {
-                    Some(ext)
-                }
-            })
-        })
-    }
-
-    pub(crate) fn storage_path(&'_ self) -> Cow<'_, str> {
-        let storage_path = self.path();
-
-        if self.path_is_folder() {
-            let mut storage_path = storage_path.to_owned();
-            if !storage_path.ends_with('/') {
-                // this can happen in the case of an empty path
-                storage_path.push('/');
-            }
-            storage_path.push_str("index.html");
-            storage_path.into()
-        } else {
-            storage_path.into()
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -211,7 +178,19 @@ impl ParsedRustdocParams {
         &self.inner.version
     }
     pub(crate) fn storage_path(&'_ self) -> Cow<'_, str> {
-        self.inner.storage_path()
+        let storage_path = self.path();
+
+        if self.path_is_folder() {
+            let mut storage_path = storage_path.to_owned();
+            if !storage_path.ends_with('/') {
+                // this can happen in the case of an empty path
+                storage_path.push('/');
+            }
+            storage_path.push_str("index.html");
+            storage_path.into()
+        } else {
+            storage_path.into()
+        }
     }
     pub(crate) fn inner_path(&self) -> &str {
         &self.inner_path
@@ -220,10 +199,17 @@ impl ParsedRustdocParams {
         self.target.as_deref()
     }
     pub(crate) fn path_is_folder(&self) -> bool {
-        self.inner.path_is_folder()
+        self.inner_path.is_empty() || self.inner_path.ends_with('/')
     }
     pub(crate) fn file_extension(&self) -> Option<&str> {
-        self.inner.file_extension()
+        self.inner_path.rsplit_once('.').and_then(|(_, ext)| {
+            if ext.contains('/') {
+                // to handle cases like `foo.html/bar` where I want `None`
+                None
+            } else {
+                Some(ext)
+            }
+        })
     }
     pub(crate) fn path(&self) -> &str {
         &self.inner_path
@@ -274,13 +260,11 @@ fn find_static_route_suffix<'a, 'b>(route: &'a str, path: &'b str) -> Option<Str
 
     if suffix.is_empty() {
         None
+    } else if suffix.len() == 1 && suffix[0].is_empty() {
+        // special case: if the suffix is just empty, return None
+        None
     } else {
-        if suffix.len() == 1 && suffix[0].is_empty() {
-            // special case: if the suffix is just empty, return None
-            None
-        } else {
-            Some(suffix.iter().rev().join("/"))
-        }
+        Some(suffix.iter().rev().join("/"))
     }
 }
 
@@ -311,7 +295,7 @@ mod tests {
     )]
     #[test_case("", "" => None; "empty strings")]
     #[test_case("/", "" => None; "one slash, one empty")]
-    fn test_find_static_route_suffix<'a, 'b>(route: &'a str, path: &'b str) -> Option<String> {
+    fn test_find_static_route_suffix(route: &str, path: &str) -> Option<String> {
         find_static_route_suffix(route, path)
     }
 
