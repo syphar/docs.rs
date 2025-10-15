@@ -11,9 +11,8 @@ use crate::{
         MatchedRelease, ReqVersion,
         cache::CachePolicy,
         error::{AxumNope, AxumResult, EscapedURI},
-        extractors::{DbConnection, Path},
+        extractors::{DbConnection, Path, rustdoc::RustdocParams},
         page::templates::{RenderBrands, RenderRegular, RenderSolid, filters},
-        rustdoc::RustdocHtmlParams,
     },
 };
 use anyhow::{Context, Result, anyhow};
@@ -581,7 +580,7 @@ impl_axum_webpage! {
 
 #[tracing::instrument]
 pub(crate) async fn get_all_releases(
-    Path(params): Path<RustdocHtmlParams>,
+    params: RustdocParams,
     mut conn: DbConnection,
 ) -> AxumResult<AxumResponse> {
     // NOTE: we're getting RustDocHtmlParams here, where both target and path are optional.
@@ -678,7 +677,7 @@ impl_axum_webpage! {
 
 #[tracing::instrument]
 pub(crate) async fn get_all_platforms_inner(
-    Path(params): Path<RustdocHtmlParams>,
+    params: RustdocParams,
     mut conn: DbConnection,
     is_crate_root: bool,
 ) -> AxumResult<AxumResponse> {
@@ -787,15 +786,15 @@ pub(crate) async fn get_all_platforms_inner(
 }
 
 pub(crate) async fn get_all_platforms_root(
-    Path(mut params): Path<RustdocHtmlParams>,
+    mut params: RustdocParams,
     conn: DbConnection,
 ) -> AxumResult<AxumResponse> {
     params.path.take();
-    get_all_platforms_inner(Path(params), conn, true).await
+    get_all_platforms_inner(params, conn, true).await
 }
 
 pub(crate) async fn get_all_platforms(
-    params: Path<RustdocHtmlParams>,
+    params: RustdocParams,
     conn: DbConnection,
 ) -> AxumResult<AxumResponse> {
     get_all_platforms_inner(params, conn, false).await

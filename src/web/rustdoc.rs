@@ -14,7 +14,7 @@ use crate::{
         csp::Csp,
         encode_url_path,
         error::{AxumNope, AxumResult, EscapedURI},
-        extractors::{DbConnection, Path},
+        extractors::{DbConnection, Path, rustdoc::RustdocParams},
         file::StreamingFile,
         match_version,
         page::{
@@ -35,7 +35,6 @@ use http::{HeaderValue, header};
 use semver::Version;
 use serde::Deserialize;
 use std::{
-    borrow::Cow,
     collections::{BTreeMap, HashMap},
     sync::{Arc, LazyLock},
 };
@@ -430,170 +429,6 @@ impl RustdocPage {
     }
 }
 
-#[derive(Clone, Deserialize, Debug)]
-pub(crate) struct RustdocHtmlParams {
-    pub(crate) name: String,
-    pub(crate) version: ReqVersion,
-    pub(crate) target: Option<String>,
-    pub(crate) path: Option<String>,
-}
-
-impl RustdocHtmlParams {
-    /// parse the params, mostly split the path into the target and the inner path.
-    /// A path can looks like
-    /// * `/:crate/:version/:target/:*path`
-    /// * `/:crate/:version/:*path`
-    ///
-    /// Since our route matching just contains `/:crate/:version/*path` we need a way to figure
-    /// out if we have a target in the path or not.
-    ///
-    /// We do this by comparing the first part of the path with the list of targets for that crate.
-    pub(crate) fn parse<I, S>(self, doc_targets: I) -> ParsedRustdocHtmlParams
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<str>,
-    {
-        let doc_targets = doc_targets
-            .into_iter()
-            .map(|s| s.as_ref().to_owned())
-            .collect::<Vec<_>>();
-
-        dbg!(&self.path);
-        let path = if let Some(ref path) = self.path {
-            path.trim_start_matches('/')
-        } else {
-            return ParsedRustdocHtmlParams {
-                inner: self,
-                target: None,
-                inner_path: "".into(),
-                doc_targets,
-            };
-        };
-
-        let (target, inner_path) = if let Some(pos) = path.find('/') {
-            let potential_target = dbg!(&path[..pos]);
-            trace!(%potential_target, "potential target");
-
-            if doc_targets.iter().any(|s| s == potential_target) {
-                dbg!((
-                    Some(potential_target),
-                    path.get((pos + 1)..)
-                        // .map(|s| s.trim_end_matches('/'))
-                        .unwrap_or(""),
-                ))
-            } else {
-                dbg!((
-                    None, // path.trim_end_matches('/')
-                    path
-                ))
-            }
-        } else {
-            // no slash in the path, can be target or inner path
-            if doc_targets.iter().any(|s| s == path) {
-                dbg!((Some(path), ""))
-            } else {
-                dbg!((None, path))
-            }
-        };
-
-        let inner_path = inner_path.to_owned();
-        let target = target.map(|p| p.to_owned());
-
-        ParsedRustdocHtmlParams {
-            inner: self,
-            target,
-            inner_path,
-            doc_targets,
-        }
-    }
-
-    pub(crate) fn path(&self) -> &str {
-        self.path.as_deref().unwrap_or("")
-    }
-
-    pub(crate) fn path_is_folder(&self) -> bool {
-        if let Some(ref path) = self.path {
-            path.is_empty() || path.ends_with('/')
-        } else {
-            true
-        }
-    }
-
-    pub(crate) fn file_extension(&self) -> Option<&str> {
-        self.path.as_deref().and_then(|path| {
-            path.rsplit_once('.').and_then(|(_, ext)| {
-                if ext.contains('/') {
-                    // to handle cases like `foo.html/bar` where I want `None`
-                    None
-                } else {
-                    Some(ext)
-                }
-            })
-        })
-    }
-
-    pub(crate) fn storage_path(&'_ self) -> Cow<'_, str> {
-        let storage_path = self.path();
-
-        if self.path_is_folder() {
-            let mut storage_path = storage_path.to_owned();
-            if !storage_path.ends_with('/') {
-                // this can happen in the case of an empty path
-                storage_path.push('/');
-            }
-            storage_path.push_str("index.html");
-            storage_path.into()
-        } else {
-            storage_path.into()
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct ParsedRustdocHtmlParams {
-    inner: RustdocHtmlParams,
-    doc_targets: Vec<String>,
-    target: Option<String>,
-    inner_path: String,
-}
-
-impl ParsedRustdocHtmlParams {
-    pub(crate) fn name(&self) -> &str {
-        &self.inner.name
-    }
-    pub(crate) fn version(&self) -> &ReqVersion {
-        &self.inner.version
-    }
-    pub(crate) fn storage_path(&'_ self) -> Cow<'_, str> {
-        self.inner.storage_path()
-    }
-    pub(crate) fn inner_path(&self) -> &str {
-        &self.inner_path
-    }
-    pub(crate) fn target(&self) -> Option<&str> {
-        self.target.as_deref()
-    }
-    pub(crate) fn path_is_folder(&self) -> bool {
-        self.inner.path_is_folder()
-    }
-    pub(crate) fn file_extension(&self) -> Option<&str> {
-        self.inner.file_extension()
-    }
-    pub(crate) fn path(&self) -> &str {
-        self.inner.path()
-    }
-
-    pub(crate) fn update<F>(self, f: F) -> Self
-    where
-        F: FnOnce(&mut RustdocHtmlParams),
-    {
-        let mut this = self;
-        f(&mut this.inner);
-        this.inner
-            .parse(this.doc_targets.iter().map(String::as_str))
-    }
-}
-
 /// Serves documentation generated by rustdoc.
 ///
 /// This includes all HTML files for an individual crate, as well as the `search-index.js`, which is
@@ -601,7 +436,7 @@ impl ParsedRustdocHtmlParams {
 #[allow(clippy::too_many_arguments)]
 #[instrument(skip_all)]
 pub(crate) async fn rustdoc_html_server_handler(
-    Path(params): Path<RustdocHtmlParams>,
+    params: RustdocParams,
     Extension(metrics): Extension<Arc<InstanceMetrics>>,
     Extension(templates): Extension<Arc<TemplateData>>,
     Extension(storage): Extension<Arc<AsyncStorage>>,
@@ -609,7 +444,6 @@ pub(crate) async fn rustdoc_html_server_handler(
     Extension(csp): Extension<Arc<Csp>>,
     RawQuery(raw_query): RawQuery,
     mut conn: DbConnection,
-    uri: Uri,
 ) -> AxumResult<AxumResponse> {
     // Pages generated by Rustdoc are not ready to be served with a CSP yet.
     csp.suppress(true);
@@ -621,11 +455,11 @@ pub(crate) async fn rustdoc_html_server_handler(
         vers: &Version,
         path: &str,
         cache_policy: CachePolicy,
-        uri: &Uri,
+        raw_query: Option<&str>,
     ) -> AxumResult<AxumResponse> {
         trace!("redirect");
         Ok(axum_cached_redirect(
-            EscapedURI::new(&format!("/{}/{}/{}", name, vers, path), uri.query()).as_str(),
+            EscapedURI::new(&format!("/{}/{}/{}", name, vers, path), raw_query).as_str(),
             cache_policy,
         )?
         .into_response())
@@ -645,7 +479,7 @@ pub(crate) async fn rustdoc_html_server_handler(
             AxumNope::Redirect(
                 EscapedURI::new(
                     &format!("/{}/{}/{}", corrected_name, req_version, params.path()),
-                    uri.query(),
+                    raw_query.as_deref(),
                 ),
                 CachePolicy::NoCaching,
             )
@@ -674,13 +508,13 @@ pub(crate) async fn rustdoc_html_server_handler(
 
     // if visiting the full path to the default target, remove the target from the path
     // expects a req_path that looks like `[/:target]/.*`
-    if params.target == krate.metadata.default_target {
+    if params.target() == krate.metadata.default_target.as_deref() {
         return redirect(
             &params.name(),
             &krate.version,
-            &params.inner_path,
+            &params.path(),
             CachePolicy::ForeverInCdn,
-            &uri,
+            raw_query.as_deref(),
         );
     }
 
@@ -688,7 +522,7 @@ pub(crate) async fn rustdoc_html_server_handler(
 
     trace!(
         storage_path,
-        inner_path = params.inner_path,
+        inner_path = params.path(),
         "try fetching from storage"
     );
 
@@ -737,12 +571,12 @@ pub(crate) async fn rustdoc_html_server_handler(
                         &krate.version,
                         params.path(),
                         CachePolicy::ForeverInCdn,
-                        &uri,
+                        raw_query.as_deref(),
                     );
                 }
             }
 
-            if params.target.is_some() {
+            if params.target().is_some() {
                 // This is a target, not a module; it may not have been built.
                 // Redirect to the default target and show a search page instead of a hard 404.
                 // One example where we end up here is with intra-doc links when the
@@ -799,7 +633,7 @@ pub(crate) async fn rustdoc_html_server_handler(
     let is_prerelease = !(krate.version.pre.is_empty());
 
     // Find the path of the latest version for the `Go to latest` and `Permalink` links
-    let current_target = params.target.as_deref().unwrap_or_else(|| {
+    let current_target = params.target().unwrap_or_else(|| {
         krate
             .metadata
             .default_target
@@ -807,7 +641,7 @@ pub(crate) async fn rustdoc_html_server_handler(
             .expect("with docs we always have a default_target")
     });
     let target_redirect = if latest_release.build_status.is_success() {
-        format!("/target-redirect/{current_target}/{}", params.inner_path)
+        format!("/target-redirect/{current_target}/{}", params.path())
     } else {
         "".to_string()
     };
@@ -818,7 +652,7 @@ pub(crate) async fn rustdoc_html_server_handler(
         "/{}/{}/{}{}",
         params.name(),
         latest_version,
-        params.inner_path,
+        params.path(),
         query_string
     );
 
@@ -837,7 +671,7 @@ pub(crate) async fn rustdoc_html_server_handler(
     let page = Arc::new(RustdocPage {
         latest_path,
         permalink_path,
-        inner_path: params.inner_path.clone(),
+        inner_path: params.path().to_owned(),
         is_latest_version,
         is_latest_url: params.version().is_latest(),
         is_prerelease,
@@ -1204,7 +1038,6 @@ pub(crate) async fn static_asset_handler(
 
 #[cfg(test)]
 mod test {
-    use super::RustdocHtmlParams;
     use super::*;
     use crate::{
         Config,
@@ -3637,33 +3470,5 @@ mod test {
             assert_eq!(response.status(), StatusCode::NOT_FOUND);
             Ok(())
         });
-    }
-
-    #[test_case("", None, ""; "empty")]
-    #[test_case("/", None, ""; "just slash")]
-    #[test_case("something", None, "something"; "without trailing slash")]
-    #[test_case("something/", None, "something"; "with trailing slash")]
-    #[test_case("some-target-name", Some("some-target-name"), ""; "just target without trailing slash")]
-    #[test_case("some-target-name/", Some("some-target-name"), ""; "just target with trailing slash")]
-    #[test_case("some-target-name/one", Some("some-target-name"), "one"; "target + one without trailing slash")]
-    #[test_case("some-target-name/one/", Some("some-target-name"), "one"; "target + one target with trailing slash")]
-    #[test_case("some-target-name/some/inner/path", Some("some-target-name"), "some/inner/path"; "all without trailing slash")]
-    #[test_case("some-target-name/some/inner/path/", Some("some-target-name"), "some/inner/path"; "all with trailing slash")]
-    fn test_split_path_and_target_name(
-        path: &str,
-        expected_target: Option<&str>,
-        expected_inner_path: &str,
-    ) {
-        // let params = RustdocHtmlParams {
-        //     name: "krate".into(),
-        //     version: ReqVersion::Latest,
-        //     path: Some(path.to_string()),
-        // };
-
-        // let (target, inner_path) =
-        //     params.split_path_into_target_and_inner_path(["some-target-name"]);
-        // assert_eq!(target, expected_target);
-        // assert_eq!(inner_path, expected_inner_path);
-        todo!();
     }
 }
