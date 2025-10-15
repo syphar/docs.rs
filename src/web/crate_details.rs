@@ -610,6 +610,29 @@ pub(crate) async fn get_all_releases(
         String::new()
     };
 
+    // let doc_targets = sqlx::query_scalar!(
+    //     "SELECT
+    //         releases.doc_targets
+    //      FROM releases
+    //      WHERE releases.id = $1;",
+    //     matched_release.id().0,
+    // )
+    // .fetch_optional(&mut *conn)
+    // .await?
+    // .ok_or(AxumNope::VersionNotFound)?
+    // .map(MetaData::parse_doc_targets)
+    // .ok_or_else(|| anyhow!("empty doc targets for successful release"))?;
+
+    // let params = params.parse(doc_targets.iter());
+
+    // let inner_path = if params.inner_path().is_empty() {
+    //     "index.html"
+    // } else {
+    //     params.inner_path()
+    // };
+
+    // let target = params.target().map(|t| format!("{t}/")).unwrap_or_default();
+
     let inner_path = params.path.unwrap_or_default();
     let inner_path = inner_path.trim_end_matches('/');
 
@@ -659,9 +682,6 @@ pub(crate) async fn get_all_platforms_inner(
     mut conn: DbConnection,
     is_crate_root: bool,
 ) -> AxumResult<AxumResponse> {
-    let req_path: String = params.path.unwrap_or_default();
-    let req_path: Vec<&str> = req_path.split('/').collect();
-
     let matched_release = match_version(&mut conn, &params.name, &params.version)
         .await?
         .into_exactly_named_or_else(|corrected_name, req_version| {
@@ -671,7 +691,7 @@ pub(crate) async fn get_all_platforms_inner(
                         "/platforms/{}/{}/{}",
                         corrected_name,
                         req_version,
-                        req_path.join("/")
+                        params.path(),
                     ),
                     None,
                 ),
@@ -681,12 +701,7 @@ pub(crate) async fn get_all_platforms_inner(
         .into_canonical_req_version_or_else(|version| {
             AxumNope::Redirect(
                 EscapedURI::new(
-                    &format!(
-                        "/platforms/{}/{}/{}",
-                        &params.name,
-                        version,
-                        req_path.join("/")
-                    ),
+                    &format!("/platforms/{}/{}/{}", &params.name, version, params.path(),),
                     None,
                 ),
                 CachePolicy::ForeverInCdn,
@@ -696,6 +711,7 @@ pub(crate) async fn get_all_platforms_inner(
     let krate = sqlx::query!(
         "SELECT
             releases.default_target,
+            releases.target_name,
             releases.doc_targets
         FROM releases
         WHERE releases.id = $1;",
@@ -725,54 +741,45 @@ pub(crate) async fn get_all_platforms_inner(
         .into_response());
     }
 
-    let doc_targets = MetaData::parse_doc_targets(krate.doc_targets.unwrap());
+    let doc_targets: Vec<_> = krate
+        .doc_targets
+        .map(MetaData::parse_doc_targets)
+        .into_iter()
+        .flatten()
+        .collect();
 
-    // The path within this crate version's rustdoc output
-    let inner;
-    let (target, inner_path) = {
-        let mut inner_path = req_path.clone();
+    let params = params.parse(doc_targets.iter());
 
-        let target = if inner_path.len() > 1
-            && doc_targets
-                .iter()
-                .any(|s| Some(s) == params.target.as_ref())
-        {
-            inner_path.remove(0);
-            params.target.as_ref().unwrap()
+    let inner_path = format!(
+        "{}/{}",
+        matched_release.target_name().unwrap(),
+        if params.inner_path().is_empty() {
+            "index.html"
         } else {
-            ""
-        };
-
-        inner = inner_path.join("/");
-        (target, inner.trim_end_matches('/'))
-    };
-    let inner_path = if inner_path.is_empty() {
-        format!("{}/index.html", matched_release.target_name().unwrap())
-    } else {
-        format!("{}/{inner_path}", matched_release.target_name().unwrap())
-    };
+            params.inner_path()
+        }
+    );
 
     let latest_release = latest_release(&matched_release.all_releases)
         .expect("we couldn't end up here without releases");
 
     let current_target = if latest_release.build_status.is_success() {
-        if target.is_empty() {
-            krate.default_target.unwrap()
-        } else {
-            target.to_owned()
-        }
+        params
+            .target()
+            .unwrap_or(&krate.default_target.unwrap())
+            .to_owned()
     } else {
         String::new()
     };
 
     Ok(PlatformList {
         metadata: ShortMetadata {
-            name: params.name,
+            name: params.name().to_owned(),
             version: matched_release.version().clone(),
-            req_version: params.version.clone(),
+            req_version: params.version().clone(),
             doc_targets,
         },
-        inner_path,
+        inner_path: inner_path.to_owned(),
         use_direct_platform_links: is_crate_root,
         current_target,
     }
@@ -783,7 +790,7 @@ pub(crate) async fn get_all_platforms_root(
     Path(mut params): Path<RustdocHtmlParams>,
     conn: DbConnection,
 ) -> AxumResult<AxumResponse> {
-    params.path = None;
+    params.path.take();
     get_all_platforms_inner(Path(params), conn, true).await
 }
 
