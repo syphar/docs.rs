@@ -372,7 +372,11 @@ pub(super) fn build_axum_routes() -> AxumRouter {
             get_rustdoc(super::rustdoc::rustdoc_redirector_handler),
         )
         .route(
-            "/{name}/{version}/{*path}",
+            "/{name}/{version}/{target}/",
+            get_rustdoc(super::rustdoc::rustdoc_html_server_handler),
+        )
+        .route(
+            "/{name}/{version}/{target}/{*path}",
             get_rustdoc(super::rustdoc::rustdoc_html_server_handler),
         )
         .fallback(fallback)
