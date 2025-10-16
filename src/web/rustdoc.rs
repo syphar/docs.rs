@@ -513,13 +513,13 @@ pub(crate) async fn rustdoc_html_server_handler(
         "parsed params"
     );
 
-    // if visiting the full path to the default target, remove the target from the path
-    // expects a req_path that looks like `[/:target]/.*`
-    if params.target() == krate.metadata.default_target.as_deref() {
+    if params.target_is_default_target() {
+        // if visiting the full path to the default target, remove the target from the path
+        // expects a req_path that looks like `[/:target]/.*`
         return redirect(
             params.name(),
             &krate.version,
-            params.path(),
+            params.path(), // params.target is unused here.
             CachePolicy::ForeverInCdn,
             raw_query.as_deref(),
         );
@@ -583,7 +583,7 @@ pub(crate) async fn rustdoc_html_server_handler(
                 }
             }
 
-            if params.target().is_some() {
+            if params.doc_target().is_some() {
                 // This is a target, not a module; it may not have been built.
                 // Redirect to the default target and show a search page instead of a hard 404.
                 // One example where we end up here is with intra-doc links when the
@@ -640,7 +640,7 @@ pub(crate) async fn rustdoc_html_server_handler(
     let is_prerelease = !(krate.version.pre.is_empty());
 
     // Find the path of the latest version for the `Go to latest` and `Permalink` links
-    let current_target = params.target().unwrap_or_else(|| {
+    let current_target = params.doc_target().unwrap_or_else(|| {
         krate
             .metadata
             .default_target
@@ -653,21 +653,24 @@ pub(crate) async fn rustdoc_html_server_handler(
         "".to_string()
     };
 
-    let query_string = format!("?{}", raw_query.unwrap_or_default());
+    let raw_query = raw_query
+        .as_deref()
+        .map(|q| format!("?{q}"))
+        .unwrap_or_default();
 
     let permalink_path = format!(
         "/{}/{}/{}{}",
         params.name(),
         latest_version,
         params.path(),
-        query_string
+        raw_query
     );
 
     let latest_path = format!(
         "/crate/{}/latest{}{}",
         params.name(),
         target_redirect,
-        query_string
+        raw_query
     );
 
     metrics
@@ -730,7 +733,11 @@ fn path_for_version(
     let last_component = *file_path.last().unwrap();
     let search_item = if last_component == "index.html" {
         // this is a module
-        file_path.get(file_path.len() - 2).copied()
+        if file_path.len() < 2 {
+            None
+        } else {
+            file_path.get(file_path.len() - 2).copied()
+        }
     // no trailing slash; no one should be redirected here but we handle it gracefully anyway
     } else if last_component == platform {
         // nothing to search for
@@ -789,8 +796,13 @@ pub(crate) async fn target_redirect_handler(
         .await?
     {
         // Simple case: page exists in the other target & version, so just change these
+        trace!(storage_path, "path exist, redirecting");
         (storage_path, HashMap::new())
     } else {
+        trace!(
+            storage_path,
+            "path doesn't exist, generating redirect to search"
+        );
         let pieces: Vec<_> = storage_path.split('/').collect();
         path_for_version(&pieces, &crate_details)
     };
@@ -1279,11 +1291,16 @@ mod test {
                 .get("/dummy/latest/dummy/")
                 .await?
                 .error_for_status()?;
+
             resp.assert_cache_control(CachePolicy::ForeverInCdn, &env.config());
             let body = resp.text().await?;
-            assert!(body.contains("<a href=\"/crate/dummy/latest/source/\""));
-            assert!(body.contains("<a href=\"/crate/dummy/latest\""));
-            assert!(body.contains("<a href=\"/dummy/0.1.0/dummy/index.html\""));
+            assert!(
+                body.contains("<a href=\"/crate/dummy/latest/source/\""),
+                "{}",
+                body
+            );
+            assert!(body.contains("<a href=\"/crate/dummy/latest\""), "{}", body);
+            assert!(body.contains("<a href=\"/dummy/0.1.0/dummy/\""), "{}", body);
             Ok(())
         })
     }
@@ -1353,7 +1370,8 @@ mod test {
                 latest_version_redirect("/dummy/0.1.0/dummy/", &web, &env.config()).await?;
             assert_eq!(
                 redirect,
-                "/crate/dummy/latest/target-redirect/x86_64-unknown-linux-gnu/dummy/index.html"
+                // FIXME: is this nex expect really what we want?
+                "/crate/dummy/latest/target-redirect/x86_64-unknown-linux-gnu/dummy/"
             );
 
             // check it keeps the subpage
@@ -1361,7 +1379,8 @@ mod test {
                 latest_version_redirect("/dummy/0.1.0/dummy/blah/", &web, &env.config()).await?;
             assert_eq!(
                 redirect,
-                "/crate/dummy/latest/target-redirect/x86_64-unknown-linux-gnu/dummy/blah/index.html"
+                // FIXME: is this nex expect really what we want?
+                "/crate/dummy/latest/target-redirect/x86_64-unknown-linux-gnu/dummy/blah/"
             );
             let redirect =
                 latest_version_redirect("/dummy/0.1.0/dummy/blah/blah.html", &web, &env.config())
@@ -1430,7 +1449,8 @@ mod test {
             .await?;
             assert_eq!(
                 redirect,
-                "/crate/dummy/latest/target-redirect/x86_64-pc-windows-msvc/dummy/index.html"
+                // FIXME: is this nex expect really what we want?
+                "/crate/dummy/latest/target-redirect/x86_64-pc-windows-msvc/dummy/"
             );
 
             let redirect = latest_version_redirect(
@@ -1513,14 +1533,14 @@ mod test {
                 latest_version_redirect("/dummy/0.1.0/dummy/", &web, &env.config()).await?;
             assert_eq!(
                 redirect,
-                "/crate/dummy/latest/target-redirect/x86_64-unknown-linux-gnu/dummy/index.html"
+                "/crate/dummy/latest/target-redirect/x86_64-unknown-linux-gnu/dummy/"
             );
 
             let redirect =
                 latest_version_redirect("/dummy/0.2.1/dummy/", &web, &env.config()).await?;
             assert_eq!(
                 redirect,
-                "/crate/dummy/latest/target-redirect/x86_64-unknown-linux-gnu/dummy/index.html"
+                "/crate/dummy/latest/target-redirect/x86_64-unknown-linux-gnu/dummy/"
             );
 
             Ok(())

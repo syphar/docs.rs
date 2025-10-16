@@ -603,7 +603,7 @@ pub(crate) async fn get_all_releases(
     // If the target doesn't exist, the target-redirect will think
     // it's part of the `inner_path`, don't find the file in storage,
     // and redirect to a search.
-    let target = if let Some(req_target) = params.target {
+    let target = if let Some(req_target) = params.doc_target {
         format!("{req_target}/")
     } else {
         String::new()
@@ -740,14 +740,18 @@ pub(crate) async fn get_all_platforms_inner(
         .into_response());
     }
 
-    let doc_targets: Vec<_> = krate
+    let doc_targets: Vec<String> = krate
         .doc_targets
         .map(MetaData::parse_doc_targets)
         .into_iter()
         .flatten()
         .collect();
 
-    let params = params.parse(krate.default_target.as_deref(), doc_targets.iter());
+    let params = params.parse(
+        krate.default_target.as_deref(),
+        krate.target_name.as_deref(),
+        doc_targets.iter(),
+    );
 
     let inner_path = format!(
         "{}/{}",
@@ -764,7 +768,7 @@ pub(crate) async fn get_all_platforms_inner(
 
     let current_target = if latest_release.build_status.is_success() {
         params
-            .target()
+            .doc_target()
             .unwrap_or(&krate.default_target.unwrap())
             .to_owned()
     } else {
