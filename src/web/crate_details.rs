@@ -748,8 +748,14 @@ pub(crate) async fn get_all_platforms_inner(
         .collect();
 
     let params = params.parse(
-        krate.default_target.as_deref(),
-        krate.target_name.as_deref(),
+        krate
+            .default_target
+            .as_deref()
+            .ok_or_else(|| anyhow!("default target missing in release"))?,
+        krate
+            .target_name
+            .as_deref()
+            .ok_or_else(|| anyhow!("target name missing in release"))?,
         doc_targets.iter(),
     );
 

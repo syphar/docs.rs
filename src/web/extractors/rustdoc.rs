@@ -75,12 +75,18 @@ where
 }
 
 impl RustdocParams {
-    pub(crate) fn parse_from_metadata(self, metadata: &MetaData) -> ParsedRustdocParams {
-        self.parse(
-            metadata.default_target.as_deref(),
-            metadata.target_name.as_deref(),
+    pub(crate) fn parse_from_metadata(self, metadata: &MetaData) -> Result<ParsedRustdocParams> {
+        Ok(self.parse(
+            metadata
+                .default_target
+                .as_deref()
+                .ok_or_else(|| anyhow!("default target missing in release"))?,
+            metadata
+                .target_name
+                .as_deref()
+                .ok_or_else(|| anyhow!("target name missing in release"))?,
             metadata.doc_targets.iter().flatten(),
-        )
+        ))
     }
 
     /// parse the params, mostly split the path into the target and the inner path.
@@ -94,8 +100,8 @@ impl RustdocParams {
     /// We do this by comparing the first part of the path with the list of targets for that crate.
     pub(crate) fn parse<D, T, I, V>(
         mut self,
-        default_target: Option<D>,
-        target_name: Option<T>,
+        default_target: D,
+        target_name: T,
         doc_targets: I,
     ) -> ParsedRustdocParams
     where
@@ -106,12 +112,13 @@ impl RustdocParams {
     {
         // TODO: optimization: less owned variables, more references
         // TODO: nicer target logic
-        let default_target = default_target.map(|t| t.as_ref().to_owned());
+        let default_target = default_target.as_ref().to_owned();
 
         let doc_targets = doc_targets
             .into_iter()
             .map(|s| s.as_ref().to_owned())
             .collect::<Vec<_>>();
+        debug_assert!(!doc_targets.is_empty());
 
         dbg!(&self.path);
         let mut new_path = if let Some(ref path) = self.path {
@@ -176,7 +183,7 @@ impl RustdocParams {
         ParsedRustdocParams {
             doc_targets,
             default_target,
-            target_name: target_name.map(|s| s.as_ref().to_owned()),
+            target_name: target_name.as_ref().to_owned(),
             inner: self,
         }
     }
@@ -215,8 +222,8 @@ impl RustdocParams {
 pub(crate) struct ParsedRustdocParams {
     inner: RustdocParams,
     doc_targets: Vec<String>,
-    default_target: Option<String>,
-    target_name: Option<String>,
+    default_target: String,
+    target_name: String,
 }
 
 impl ParsedRustdocParams {
@@ -228,23 +235,13 @@ impl ParsedRustdocParams {
     }
     pub(crate) fn storage_path(&'_ self) -> String {
         let mut storage_path = if let Some(ref target) = self.inner.doc_target {
-            if let Some(ref default_target) = self.default_target {
-                if target == default_target {
-                    // when we have a target url param, and it matches the default target,
-                    // we don't include it in the storage path.
-                    // Files for the default target are typically at the root of the archive.
-                    self.inner.path.clone().unwrap_or_default()
-                } else {
-                    // all non-default targets are in subfolders named by that target.
-                    format!(
-                        "{}/{}",
-                        target,
-                        self.inner.path.as_deref().unwrap_or_default()
-                    )
-                }
+            if target == &self.default_target {
+                // when we have a target url param, and it matches the default target,
+                // we don't include it in the storage path.
+                // Files for the default target are typically at the root of the archive.
+                self.inner.path.clone().unwrap_or_default()
             } else {
-                // without knowing about a default target, we assume the target is non-default
-                // when it's in the URL.
+                // all non-default targets are in subfolders named by that target.
                 format!(
                     "{}/{}",
                     target,
@@ -287,8 +284,8 @@ impl ParsedRustdocParams {
     /// check if we have a target component in the path, that matches the default
     /// target. This affects the geneated storage path, since default target docs are at the root,
     /// and the other target docs are in subfolders named after the target.
-    pub(crate) fn target_is_default_target(&self) -> bool {
-        self.doc_target() == self.default_target.as_deref()
+    pub(crate) fn target_is_default(&self) -> bool {
+        self.doc_target() == Some(&self.default_target)
     }
 
     // pub(crate) fn generate_target_redirect_url(&self, other_version: ReqVersion) -> Uri {}
@@ -306,7 +303,7 @@ impl ParsedRustdocParams {
         )
     }
 
-    /// Generate a possible target path to redirect to.
+    /// Generate a possible target path to redirect to, with the information we have.
     ///
     /// Built for the target-redirect view, when we don't find the
     /// target in our storage.
@@ -322,7 +319,6 @@ impl ParsedRustdocParams {
 
         let is_source_view = components.first() == Some(&"src");
 
-        // FIXME: optimize this
         let search_item: Option<String> = if let Some(last_component) = components.last() {
             if *last_component == "index.html" {
                 // this is a module, we extract the module name
@@ -353,15 +349,10 @@ impl ParsedRustdocParams {
             None
         };
 
-        let target_name = self
-            .target_name
-            .as_deref()
-            .ok_or_else(|| anyhow!("target name missing"))?;
-
         let path = if let Some(doc_target) = self.doc_target() {
-            format!("{doc_target}/{target_name}/")
+            format!("{doc_target}/{}/", &self.target_name)
         } else {
-            format!("{target_name}/")
+            format!("{}/", &self.target_name)
         };
 
         Ok((path, search_item))
@@ -558,36 +549,113 @@ mod tests {
         Ok(())
     }
 
-    #[test_case(None, None, None, ""; "super empty 1")]
-    #[test_case(Some(""), Some(""), None, ""; "super empty 2")]
+    #[test_case(
+        None, None,
+        None, "", "FIXME";
+        "super empty 1"
+    )]
+    #[test_case(
+        Some(""), Some(""),
+        None, "", "FIXME";
+        "super empty 2"
+    )]
     // test cases when no separate "target" component was present in the params
-    #[test_case(None, Some("/"), None, ""; "just slash")]
-    #[test_case(None, Some("something"), None, "something"; "without trailing slash")]
-    #[test_case(None, Some("/something"), None, "something"; "leading slash is cut")]
-    #[test_case(None, Some("something/"), None, "something/"; "with trailing slash")]
+    #[test_case(
+        None, Some("/"),
+        None, "", "FIXME";
+        "just slash"
+    )]
+    #[test_case(
+        None, Some("something"),
+        None, "something", "something";
+        "without trailing slash"
+    )]
+    #[test_case(
+        None, Some("/something"),
+        None, "something", "something";
+        "leading slash is cut"
+    )]
+    #[test_case(
+        None, Some("something/"),
+        None, "something/", "something/index.html";
+        "with trailing slash"
+    )]
     // a target is given, but as first component of the path, for routes without separate
     // "target" component
-    #[test_case(None, Some("some-target-name"), Some("some-target-name"), ""; "just target without trailing slash")]
-    #[test_case(None, Some("some-target-name/"), Some("some-target-name"), ""; "just target with trailing slash")]
-    #[test_case(None, Some("some-target-name/one"), Some("some-target-name"), "one"; "target + one without trailing slash")]
-    #[test_case(None, Some("some-target-name/one/"), Some("some-target-name"), "one/"; "target + one target with trailing slash")]
-    #[test_case(None, Some("unknown-target-name/one/"), None, "unknown-target-name/one/"; "unknown target stays in path")]
-    #[test_case(None, Some("some-target-name/some/inner/path"), Some("some-target-name"), "some/inner/path"; "all without trailing slash")]
-    #[test_case(None, Some("some-target-name/some/inner/path/"), Some("some-target-name"), "some/inner/path/"; "all with trailing slash")]
+    #[test_case(
+        None, Some("some-target-name"),
+        Some("some-target-name"), "", "FIXME";
+        "just target without trailing slash"
+    )]
+    #[test_case(
+        None, Some("some-target-name/"),
+        Some("some-target-name"), "", "FIXME";
+        "just target with trailing slash"
+    )]
+    #[test_case(
+        None, Some("some-target-name/one"),
+        Some("some-target-name"), "one", "one";
+        "target + one without trailing slash"
+    )]
+    #[test_case(
+        None, Some("some-target-name/one/"),
+        Some("some-target-name"), "one/", "one/index.html";
+        "target + one target with trailing slash"
+    )]
+    #[test_case(
+        None, Some("unknown-target-name/one/"),
+        None, "unknown-target-name/one/", "unknown-target-name/one/index.html";
+        "unknown target stays in path"
+    )]
+    #[test_case(
+        None, Some("some-target-name/some/inner/path"),
+        Some("some-target-name"), "some/inner/path", "some/inner/path";
+        "all without trailing slash"
+    )]
+    #[test_case(
+        None, Some("some-target-name/some/inner/path/"),
+        Some("some-target-name"), "some/inner/path/", "some/inner/path/index.html";
+        "all with trailing slash"
+    )]
     // here we have a separate target path parameter, we check it and use it accordingly
-    #[test_case(Some("some-target-name"), None, Some("some-target-name"), ""; "actual target")]
-    #[test_case(Some("some-target-name"), Some("inner/path.html"), Some("some-target-name"), "inner/path.html"; "actual target with path")]
-    #[test_case(Some("some-target-name"), Some("inner/path/"), Some("some-target-name"), "inner/path/"; "actual target with path slash")]
-    #[test_case(Some("unknown-target"), None, None, "unknown-target/"; "unknown target")]
-    #[test_case(Some("unknown-target"), Some("inner/path.html"), None, "unknown-target/inner/path.html"; "unknown target with path")]
-    #[test_case(Some("unknown-target"), Some("inner/path/"), None, "unknown-target/inner/path/"; "unknown target with path slash")]
+    #[test_case(
+        Some("some-target-name"), None,
+        Some("some-target-name"), "", "FIXME";
+        "actual target"
+    )]
+    #[test_case(
+        Some("some-target-name"), Some("inner/path.html"),
+        Some("some-target-name"), "inner/path.html", "inner/path.html";
+        "actual target with path"
+    )]
+    #[test_case(
+        Some("some-target-name"), Some("inner/path/"),
+        Some("some-target-name"), "inner/path/", "inner/path/index.html";
+        "actual target with path slash"
+    )]
+    #[test_case(
+        Some("unknown-target"), None,
+        None, "unknown-target/", "unknown-target/index.html";
+        "unknown target"
+    )]
+    #[test_case(
+        Some("unknown-target"), Some("inner/path.html"),
+        None, "unknown-target/inner/path.html", "unknown-target/inner/path.html";
+        "unknown target with path"
+    )]
+    #[test_case(
+        Some("unknown-target"), Some("inner/path/"),
+        None, "unknown-target/inner/path/", "unknown-target/inner/path/index.htm";
+        "unknown target with path slash"
+    )]
     // TODO: test for /crate/foo-ab/0.0.1/target-redirect/x86_64-unknown-linux-gnu, check storage
     // path
-    fn test_split_path_and_target_name(
+    fn test_parse(
         target: Option<&str>,
         path: Option<&str>,
         expected_target: Option<&str>,
         expected_path: &str,
+        expected_storage_path: &str,
     ) {
         static TARGETS: &[&str] = &["some-target-name", "other-target"];
         static DEFAULT_TARGET: &str = "some-target-name";
@@ -604,6 +672,6 @@ mod tests {
         assert_eq!(parsed.version(), &ReqVersion::Latest);
         assert_eq!(parsed.doc_target(), expected_target);
         assert_eq!(parsed.path(), expected_path);
-        // FIXME: tests for storage path?
+        assert_eq!(parsed.storage_path(), expected_storage_path);
     }
 }

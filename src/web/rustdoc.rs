@@ -505,7 +505,7 @@ pub(crate) async fn rustdoc_html_server_handler(
 
     let krate = CrateDetails::from_matched_release(&mut conn, matched_release).await?;
 
-    let params = params.parse_from_metadata(&krate.metadata);
+    let params = params.parse_from_metadata(&krate.metadata)?;
     trace!(
         ?params,
         doc_targets=?krate.metadata.doc_targets,
@@ -513,7 +513,7 @@ pub(crate) async fn rustdoc_html_server_handler(
         "parsed params"
     );
 
-    if params.target_is_default_target() {
+    if params.target_is_default() {
         // if visiting the full path to the default target, remove the target from the path
         // expects a req_path that looks like `[/:target]/.*`
         return redirect(
@@ -780,7 +780,7 @@ pub(crate) async fn target_redirect_handler(
         .into_canonical_req_version_or_else(|_| AxumNope::VersionNotFound)?;
 
     let crate_details = CrateDetails::from_matched_release(&mut conn, matched_release).await?;
-    let params = params.parse_from_metadata(&crate_details.metadata);
+    let params = params.parse_from_metadata(&crate_details.metadata)?;
     trace!(?params, "parsed params");
 
     let storage_path = params.storage_path();
