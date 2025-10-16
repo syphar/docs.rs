@@ -557,10 +557,13 @@ impl<'a> FakeRelease<'a> {
         let release_id = initialize_release(&mut async_conn, crate_id, &package.version).await?;
 
         // FIXME: better way?
-        let default_target = self.default_target.unwrap_or("x86_64-unknown-linux-gnu");
+        let default_target = self
+            .default_target
+            .unwrap_or("x86_64-unknown-linux-gnu")
+            .to_owned();
         let mut targets = self.doc_targets.clone();
-        if !targets.contains(&default_target.to_owned()) {
-            targets.push(default_target.to_owned());
+        if !targets.contains(&default_target) {
+            targets.insert(0, default_target.clone());
         }
 
         crate::db::finish_release(
@@ -569,7 +572,7 @@ impl<'a> FakeRelease<'a> {
             release_id,
             &package,
             crate_dir,
-            default_target,
+            &default_target,
             file_list_to_json(source_meta),
             targets,
             &self.registry_release_data,
@@ -589,7 +592,7 @@ impl<'a> FakeRelease<'a> {
         .await?;
         for build in builds {
             build
-                .create(&mut async_conn, &storage, release_id, default_target)
+                .create(&mut async_conn, &storage, release_id, &default_target)
                 .await?;
         }
         if let Some(coverage) = self.doc_coverage {
