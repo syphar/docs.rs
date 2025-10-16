@@ -513,13 +513,16 @@ impl<'a> FakeRelease<'a> {
         }
         store_files_into(&self.source_files, crate_dir)?;
 
-        let default_target = self.default_target.unwrap_or("x86_64-unknown-linux-gnu");
+        let default_target = self
+            .default_target
+            .unwrap_or("x86_64-unknown-linux-gnu")
+            .to_owned();
+        let mut targets = self.doc_targets.clone();
+        if !targets.contains(&default_target) {
+            targets.insert(0, default_target.clone());
+        }
 
         {
-            let mut targets = self.doc_targets.clone();
-            if !targets.contains(&default_target.to_owned()) {
-                targets.push(default_target.to_owned());
-            }
             for target in &targets {
                 let dummy_rustdoc_json_content = serde_json::to_vec(&serde_json::json!({
                     "format_version": 42
@@ -555,15 +558,6 @@ impl<'a> FakeRelease<'a> {
         let mut async_conn = db.async_conn().await;
         let crate_id = initialize_crate(&mut async_conn, &package.name).await?;
         let release_id = initialize_release(&mut async_conn, crate_id, &package.version).await?;
-
-        let default_target = self
-            .default_target
-            .unwrap_or("x86_64-unknown-linux-gnu")
-            .to_owned();
-        let mut targets = self.doc_targets.clone();
-        if !targets.contains(&default_target) {
-            targets.insert(0, default_target.clone());
-        }
 
         crate::db::finish_release(
             &mut async_conn,
