@@ -1329,17 +1329,16 @@ mod test {
 
             {
                 let resp = web.get("/dummy/latest/dummy/").await?;
-                assert!(resp.status().is_success(), "{}", resp.text().await?);
                 resp.assert_cache_control(CachePolicy::ForeverInCdn, &env.config());
             }
 
-            // {
-            //     let resp = web.get("/dummy/0.1.0/dummy/").await?;
-            //     resp.assert_cache_control(
-            //         CachePolicy::ForeverInCdnAndStaleInBrowser,
-            //         &env.config(),
-            //     );
-            // }
+            {
+                let resp = web.get("/dummy/0.1.0/dummy/").await?;
+                resp.assert_cache_control(
+                    CachePolicy::ForeverInCdnAndStaleInBrowser,
+                    &env.config(),
+                );
+            }
             Ok(())
         })
     }
