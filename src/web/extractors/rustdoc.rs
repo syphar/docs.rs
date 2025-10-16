@@ -106,7 +106,9 @@ impl RustdocParams {
 
         dbg!(&self);
 
-        if let Some(given_target) = dbg!(self.target.take()) {
+        if let Some(given_target) = dbg!(self.target.take())
+            && !given_target.trim().is_empty()
+        {
             let given_target = given_target.trim();
             dbg!(&given_target);
             // if a target is given in a separate url parameter, check if it's a target we
@@ -119,7 +121,7 @@ impl RustdocParams {
                 if !new_path.is_empty() {
                     new_path = format!("{}/{}", given_target, new_path);
                 } else {
-                    new_path = given_target.into();
+                    new_path = format!("{}/", given_target);
                 }
             }
         } else {
@@ -434,7 +436,7 @@ mod tests {
     #[test_case(Some("some-target-name"), None, Some("some-target-name"), ""; "actual target")]
     #[test_case(Some("some-target-name"), Some("inner/path.html"), Some("some-target-name"), "inner/path.html"; "actual target with path")]
     #[test_case(Some("some-target-name"), Some("inner/path/"), Some("some-target-name"), "inner/path/"; "actual target with path slash")]
-    #[test_case(Some("unknown-target"), None, None, "unknown-target"; "unknown target")]
+    #[test_case(Some("unknown-target"), None, None, "unknown-target/"; "unknown target")]
     #[test_case(Some("unknown-target"), Some("inner/path.html"), None, "unknown-target/inner/path.html"; "unknown target with path")]
     #[test_case(Some("unknown-target"), Some("inner/path/"), None, "unknown-target/inner/path/"; "unknown target with path slash")]
     fn test_split_path_and_target_name(
