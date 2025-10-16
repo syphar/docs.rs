@@ -655,6 +655,8 @@ mod tests {
     )]
     // TODO: test for /crate/foo-ab/0.0.1/target-redirect/x86_64-unknown-linux-gnu, check storage
     // /crate/itertools/0.14.0/targeet-redirect/x86_64-unknown-linux-gnu
+    // FIXME: old master logic has an empty storage path in this example, kind of like "we don't
+    // know enough?
 
     // path
     fn test_parse(
