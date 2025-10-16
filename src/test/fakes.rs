@@ -555,6 +555,14 @@ impl<'a> FakeRelease<'a> {
         let mut async_conn = db.async_conn().await;
         let crate_id = initialize_crate(&mut async_conn, &package.name).await?;
         let release_id = initialize_release(&mut async_conn, crate_id, &package.version).await?;
+
+        // FIXME: better way?
+        let default_target = self.default_target.unwrap_or("x86_64-unknown-linux-gnu");
+        let mut targets = self.doc_targets.clone();
+        if !targets.contains(&default_target.to_owned()) {
+            targets.push(default_target.to_owned());
+        }
+
         crate::db::finish_release(
             &mut async_conn,
             crate_id,
@@ -563,7 +571,7 @@ impl<'a> FakeRelease<'a> {
             crate_dir,
             default_target,
             file_list_to_json(source_meta),
-            self.doc_targets,
+            targets,
             &self.registry_release_data,
             self.has_docs,
             self.has_examples,

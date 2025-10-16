@@ -506,7 +506,12 @@ pub(crate) async fn rustdoc_html_server_handler(
     let krate = CrateDetails::from_matched_release(&mut conn, matched_release).await?;
 
     let params = params.parse(krate.metadata.doc_targets.iter().flatten());
-    trace!(?params, "parsed params");
+    trace!(
+        ?params,
+        doc_targets=?krate.metadata.doc_targets,
+        default_target=?krate.metadata.default_target,
+        "parsed params"
+    );
 
     // if visiting the full path to the default target, remove the target from the path
     // expects a req_path that looks like `[/:target]/.*`
