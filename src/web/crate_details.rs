@@ -752,10 +752,10 @@ pub(crate) async fn get_all_platforms_inner(
     let inner_path = format!(
         "{}/{}",
         matched_release.target_name().unwrap(),
-        if params.inner_path().is_empty() {
+        if params.path().is_empty() {
             "index.html"
         } else {
-            params.inner_path()
+            params.path()
         }
     );
 

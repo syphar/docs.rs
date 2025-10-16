@@ -8,7 +8,6 @@ use axum::{
 };
 use itertools::Itertools as _;
 use serde::Deserialize;
-use std::borrow::Cow;
 
 use crate::web::{ReqVersion, error::AxumNope, extractors::Path};
 
@@ -177,23 +176,22 @@ impl ParsedRustdocParams {
     pub(crate) fn version(&self) -> &ReqVersion {
         &self.inner.version
     }
-    pub(crate) fn storage_path(&'_ self) -> Cow<'_, str> {
-        let storage_path = self.path();
+    pub(crate) fn storage_path(&'_ self) -> String {
+        let mut storage_path = if let Some(ref target) = self.target {
+            format!("{}/{}", target, self.inner_path)
+        } else {
+            self.inner_path.clone()
+        };
 
         if self.path_is_folder() {
-            let mut storage_path = storage_path.to_owned();
             if !storage_path.ends_with('/') {
                 // this can happen in the case of an empty path
                 storage_path.push('/');
             }
             storage_path.push_str("index.html");
-            storage_path.into()
-        } else {
-            storage_path.into()
         }
-    }
-    pub(crate) fn inner_path(&self) -> &str {
-        &self.inner_path
+
+        storage_path
     }
     pub(crate) fn target(&self) -> Option<&str> {
         self.target.as_deref()
@@ -459,5 +457,6 @@ mod tests {
         assert_eq!(parsed.version(), &ReqVersion::Latest);
         assert_eq!(parsed.target(), expected_target);
         assert_eq!(parsed.path(), expected_path);
+        // FIXME: tests for storage path?
     }
 }
