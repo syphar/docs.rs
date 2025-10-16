@@ -645,10 +645,17 @@ mod tests {
     )]
     #[test_case(
         Some("unknown-target"), Some("inner/path/"),
-        None, "unknown-target/inner/path/", "unknown-target/inner/path/index.htm";
+        None, "unknown-target/inner/path/", "unknown-target/inner/path/index.html";
         "unknown target with path slash"
     )]
+    #[test_case(
+        Some("some-target-name"), None,
+        Some("some-target-name"), "", "some-target-name/inner/path/index.html";
+        "pure target, without trailing slash"
+    )]
     // TODO: test for /crate/foo-ab/0.0.1/target-redirect/x86_64-unknown-linux-gnu, check storage
+    // /crate/itertools/0.14.0/targeet-redirect/x86_64-unknown-linux-gnu
+
     // path
     fn test_parse(
         target: Option<&str>,
@@ -666,7 +673,7 @@ mod tests {
             doc_target: target.map(|s| s.into()),
             path: path.map(|s| s.into()),
         }
-        .parse(DEFAULT_TARGET.into(), "krate".into(), TARGETS.iter());
+        .parse(DEFAULT_TARGET, "krate", TARGETS.iter());
 
         assert_eq!(parsed.name(), "krate");
         assert_eq!(parsed.version(), &ReqVersion::Latest);
