@@ -505,7 +505,7 @@ pub(crate) async fn rustdoc_html_server_handler(
 
     let krate = CrateDetails::from_matched_release(&mut conn, matched_release).await?;
 
-    let params = params.parse(krate.metadata.doc_targets.iter().flatten());
+    let params = params.parse_from_metadata(&krate.metadata);
     trace!(
         ?params,
         doc_targets=?krate.metadata.doc_targets,
@@ -766,72 +766,43 @@ pub(crate) async fn target_redirect_handler(
     mut conn: DbConnection,
     Extension(storage): Extension<Arc<AsyncStorage>>,
 ) -> AxumResult<impl IntoResponse> {
-    trace!(parmams=?params, "target redirect endpoint with params");
+    trace!(params=?params, "target redirect endpoint with params");
 
     let matched_release = match_version(&mut conn, &params.name, &params.version)
         .await?
         .into_canonical_req_version_or_else(|_| AxumNope::VersionNotFound)?;
 
     let crate_details = CrateDetails::from_matched_release(&mut conn, matched_release).await?;
+    let params = params.parse_from_metadata(&crate_details.metadata);
 
-    // this handler should only be used when we have docs.
-    // So we can assume here that we always have a default_target.
-    // the only case where this would be empty is when the build failed before calling rustdoc.
-    let default_target = crate_details
-        .metadata
-        .default_target
-        .as_ref()
-        .ok_or_else(|| {
-            error!("target_redirect_handler was called with release with missing default_target");
-            AxumNope::VersionNotFound
-        })?;
-
-    // We're trying to find the storage location
-    // for the requested path in the target-redirect.
-    // *path always contains the target,
-    // here we are dropping it when it's the
-    // default target,
-    // and add `/index.html` if we request
-    // a folder.
-    let storage_location_for_path = {
-        let mut pieces: Vec<_> = req_path.split('/').map(str::to_owned).collect();
-
-        if pieces.first() == Some(default_target) {
-            pieces.remove(0);
-        }
-
-        if let Some(last) = pieces.last_mut()
-            && last.is_empty()
-        {
-            *last = "index.html".to_string();
-        }
-
-        pieces.join("/")
-    };
-
+    let storage_path = params.storage_path();
     let (redirect_path, query_args) = if storage
         .rustdoc_file_exists(
-            &name,
+            params.name(),
             &crate_details.version.to_string(),
             crate_details.latest_build_id,
-            &storage_location_for_path,
+            &storage_path,
             crate_details.archive_storage,
         )
         .await?
     {
         // Simple case: page exists in the other target & version, so just change these
-        (storage_location_for_path, HashMap::new())
+        (storage_path, HashMap::new())
     } else {
-        let pieces: Vec<_> = storage_location_for_path.split('/').collect();
+        let pieces: Vec<_> = storage_path.split('/').collect();
         path_for_version(&pieces, &crate_details)
     };
 
     Ok(axum_cached_redirect(
         axum_parse_uri_with_params(
-            &encode_url_path(&format!("/{name}/{req_version}/{redirect_path}")),
+            &encode_url_path(&format!(
+                "/{}/{}/{redirect_path}",
+                params.name(),
+                params.version()
+            )),
             query_args,
         )?,
-        if req_version.is_latest() {
+        if params.version().is_latest() {
             CachePolicy::ForeverInCdn
         } else {
             CachePolicy::ForeverInCdnAndStaleInBrowser

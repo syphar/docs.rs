@@ -747,7 +747,7 @@ pub(crate) async fn get_all_platforms_inner(
         .flatten()
         .collect();
 
-    let params = params.parse(doc_targets.iter());
+    let params = params.parse(krate.default_target.as_deref(), doc_targets.iter());
 
     let inner_path = format!(
         "{}/{}",

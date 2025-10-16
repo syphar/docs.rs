@@ -9,7 +9,7 @@ use axum::{
 use itertools::Itertools as _;
 use serde::Deserialize;
 
-use crate::web::{ReqVersion, error::AxumNope, extractors::Path};
+use crate::web::{MetaData, ReqVersion, error::AxumNope, extractors::Path};
 
 /// can extract rustdoc parameters from path and uri.
 ///
@@ -71,6 +71,11 @@ where
 }
 
 impl RustdocParams {
+    pub(crate) fn parse_from_metadata(self, metadata: &MetaData) -> ParsedRustdocParams {
+        let default_target = metadata.default_target.as_ref();
+        self.parse(default_target, metadata.doc_targets.iter().flatten())
+    }
+
     /// parse the params, mostly split the path into the target and the inner path.
     /// A path can looks like
     /// * `/:crate/:version/:target/:*path`
@@ -80,13 +85,19 @@ impl RustdocParams {
     /// out if we have a target in the path or not.
     ///
     /// We do this by comparing the first part of the path with the list of targets for that crate.
-    pub(crate) fn parse<I, S>(mut self, doc_targets: I) -> ParsedRustdocParams
+    pub(crate) fn parse<I, S, T>(
+        mut self,
+        default_target: Option<T>,
+        doc_targets: I,
+    ) -> ParsedRustdocParams
     where
         I: IntoIterator<Item = S>,
         S: AsRef<str>,
+        T: AsRef<str>,
     {
         // TODO: optimization: less owned variables, more references
         // TODO: nicer target logic
+        let default_target = default_target.map(|t| t.as_ref().to_owned());
 
         let doc_targets = doc_targets
             .into_iter()
@@ -149,11 +160,12 @@ impl RustdocParams {
                 }
             };
         }
+        self.target = new_target;
+        self.path = Some(new_path);
 
         ParsedRustdocParams {
-            target: new_target,
-            inner_path: new_path.to_owned(),
             doc_targets,
+            default_target,
             inner: self,
         }
     }
@@ -161,30 +173,34 @@ impl RustdocParams {
     pub(crate) fn path(&self) -> &str {
         self.path.as_deref().unwrap_or("")
     }
-}
 
-#[derive(Clone, Debug)]
-pub(crate) struct ParsedRustdocParams {
-    inner: RustdocParams,
-    doc_targets: Vec<String>,
-    target: Option<String>,
-    inner_path: String,
-}
+    pub(crate) fn path_is_folder(&self) -> bool {
+        self.path
+            .as_deref()
+            .map(|p| p.is_empty() || p.ends_with('/'))
+            .unwrap_or(true)
+    }
 
-impl ParsedRustdocParams {
-    pub(crate) fn name(&self) -> &str {
-        &self.inner.name
+    pub(crate) fn file_extension(&self) -> Option<&str> {
+        self.path.as_deref().and_then(|p| {
+            p.rsplit_once('.').and_then(|(_, ext)| {
+                if ext.contains('/') {
+                    // to handle cases like `foo.html/bar` where I want `None`
+                    None
+                } else {
+                    Some(ext)
+                }
+            })
+        })
     }
-    pub(crate) fn version(&self) -> &ReqVersion {
-        &self.inner.version
-    }
+
     pub(crate) fn storage_path(&'_ self) -> String {
         // FIXME: drop target from path if it's the default target.
         // FIXME: remove self.target parameter when it's the default target
         let mut storage_path = if let Some(ref target) = self.target {
-            format!("{}/{}", target, self.inner_path)
+            format!("{}/{}", target, self.path.as_deref().unwrap_or_default())
         } else {
-            self.inner_path.clone()
+            self.path.clone().unwrap_or_default()
         };
 
         if self.path_is_folder() {
@@ -197,24 +213,39 @@ impl ParsedRustdocParams {
 
         storage_path
     }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct ParsedRustdocParams {
+    inner: RustdocParams,
+    doc_targets: Vec<String>,
+    default_target: Option<String>,
+}
+
+impl ParsedRustdocParams {
+    pub(crate) fn name(&self) -> &str {
+        &self.inner.name
+    }
+    pub(crate) fn version(&self) -> &ReqVersion {
+        &self.inner.version
+    }
+    pub(crate) fn storage_path(&'_ self) -> String {
+        self.inner.storage_path()
+    }
     pub(crate) fn target(&self) -> Option<&str> {
-        self.target.as_deref()
+        self.inner.target.as_deref()
     }
     pub(crate) fn path_is_folder(&self) -> bool {
-        self.inner_path.is_empty() || self.inner_path.ends_with('/')
+        self.inner.path_is_folder()
     }
+
     pub(crate) fn file_extension(&self) -> Option<&str> {
-        self.inner_path.rsplit_once('.').and_then(|(_, ext)| {
-            if ext.contains('/') {
-                // to handle cases like `foo.html/bar` where I want `None`
-                None
-            } else {
-                Some(ext)
-            }
-        })
+        self.inner.file_extension()
     }
+
     pub(crate) fn path(&self) -> &str {
-        &self.inner_path
+        // in our logic, when `parse` is done, the path is never `None`.
+        self.inner.path.as_deref().unwrap_or_default()
     }
 
     pub(crate) fn update<F>(self, f: F) -> Self
@@ -223,8 +254,10 @@ impl ParsedRustdocParams {
     {
         let mut this = self;
         f(&mut this.inner);
-        this.inner
-            .parse(this.doc_targets.iter().map(String::as_str))
+        this.inner.parse(
+            this.default_target,
+            this.doc_targets.iter().map(String::as_str),
+        )
     }
 }
 
@@ -448,6 +481,7 @@ mod tests {
         expected_path: &str,
     ) {
         static TARGETS: &[&str] = &["some-target-name", "other-target"];
+        static DEFAULT_TARGET: &str = "some-target-name";
 
         let parsed = RustdocParams {
             name: "krate".into(),
@@ -455,7 +489,7 @@ mod tests {
             target: target.map(|s| s.into()),
             path: path.map(|s| s.into()),
         }
-        .parse(TARGETS.iter());
+        .parse(DEFAULT_TARGET.into(), TARGETS.iter());
 
         assert_eq!(parsed.name(), "krate");
         assert_eq!(parsed.version(), &ReqVersion::Latest);
