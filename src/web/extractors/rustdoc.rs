@@ -179,6 +179,8 @@ impl ParsedRustdocParams {
         &self.inner.version
     }
     pub(crate) fn storage_path(&'_ self) -> String {
+        // FIXME: drop target from path if it's the default target.
+        // FIXME: remove self.target parameter when it's the default target
         let mut storage_path = if let Some(ref target) = self.target {
             format!("{}/{}", target, self.inner_path)
         } else {

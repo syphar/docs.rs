@@ -762,11 +762,13 @@ fn path_for_version(
 
 #[instrument(skip_all)]
 pub(crate) async fn target_redirect_handler(
-    Path((name, req_version, req_path)): Path<(String, ReqVersion, String)>,
+    params: RustdocParams,
     mut conn: DbConnection,
     Extension(storage): Extension<Arc<AsyncStorage>>,
 ) -> AxumResult<impl IntoResponse> {
-    let matched_release = match_version(&mut conn, &name, &req_version)
+    trace!(parmams=?params, "target redirect endpoint with params");
+
+    let matched_release = match_version(&mut conn, &params.name, &params.version)
         .await?
         .into_canonical_req_version_or_else(|_| AxumNope::VersionNotFound)?;
 

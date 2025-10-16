@@ -556,7 +556,6 @@ impl<'a> FakeRelease<'a> {
         let crate_id = initialize_crate(&mut async_conn, &package.name).await?;
         let release_id = initialize_release(&mut async_conn, crate_id, &package.version).await?;
 
-        // FIXME: better way?
         let default_target = self
             .default_target
             .unwrap_or("x86_64-unknown-linux-gnu")
