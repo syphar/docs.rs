@@ -160,7 +160,12 @@ impl RustdocParams {
                 }
             };
         }
-        self.target = new_target;
+
+        self.target = if new_target == default_target {
+            None
+        } else {
+            new_target
+        };
         self.path = Some(new_path);
 
         ParsedRustdocParams {
