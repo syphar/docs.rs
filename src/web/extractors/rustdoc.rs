@@ -43,16 +43,23 @@ where
     type Rejection = AxumNope;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let Path(mut params) = parts.extract::<Path<UrlParams>>().await?;
+        let Path(mut params) = parts
+            .extract::<Path<UrlParams>>()
+            .await
+            .map_err(|err| AxumNope::BadRequest(err.into()))?;
+
         dbg!(&params);
         let uri = dbg!(parts.extract::<Uri>().await.expect("infallible extractor"));
-        let uri_path = dbg!(url_decode(uri.path())?);
+        let uri_path =
+            dbg!(url_decode(uri.path()).map_err(|err| AxumNope::BadRequest(err.into()))?);
 
         let matched_path = parts
             .extract::<MatchedPath>()
             .await
             .map_err(|err| AxumNope::BadRequest(err.into()))?;
-        let matched_route = url_decode(matched_path.as_str())?;
+
+        let matched_route =
+            url_decode(matched_path.as_str()).map_err(|err| AxumNope::BadRequest(err.into()))?;
 
         let static_route_suffix = find_static_route_suffix(&matched_route, &uri_path);
 
@@ -115,11 +122,13 @@ impl RustdocParams {
         // TODO: optimization: less owned variables, more references
         // TODO: nicer target logic
         let default_target = default_target.as_ref().to_owned();
+        debug_assert!(!default_target.is_empty());
 
         let doc_targets = doc_targets
             .into_iter()
             .map(|s| s.as_ref().to_owned())
             .collect::<Vec<_>>();
+
         debug_assert!(!doc_targets.is_empty());
 
         dbg!(&self.path);
@@ -181,11 +190,13 @@ impl RustdocParams {
 
         self.doc_target = new_target;
         self.path = Some(new_path);
+        let target_name = target_name.as_ref().to_owned();
+        debug_assert!(!target_name.is_empty());
 
         ParsedRustdocParams {
             doc_targets,
             default_target,
-            target_name: target_name.as_ref().to_owned(),
+            target_name,
             inner: self,
         }
     }
