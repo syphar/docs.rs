@@ -309,14 +309,8 @@ impl ParsedRustdocParams {
         self.inner.path.as_deref().unwrap_or_default()
     }
 
-    /// TODO: often needed, but is this the right place? Or do we rather want full URL generation
-    /// here?
     pub(crate) fn target_and_path(&self) -> String {
-        if let Some(doc_target) = self.doc_target() {
-            format!("{}/{}", doc_target, self.path())
-        } else {
-            self.path().to_string()
-        }
+        self.inner.target_and_path()
     }
 
     /// check if we have a target component in the path, that matches the default
