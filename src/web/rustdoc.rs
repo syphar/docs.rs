@@ -483,7 +483,7 @@ pub(crate) async fn rustdoc_html_server_handler(
                         "/{}/{}/{}",
                         corrected_name,
                         req_version,
-                        params.target_and_path()
+                        params.path_for_url(),
                     ),
                     raw_query.as_deref(),
                 ),
@@ -493,7 +493,7 @@ pub(crate) async fn rustdoc_html_server_handler(
         .into_canonical_req_version_or_else(|version| {
             AxumNope::Redirect(
                 EscapedURI::new(
-                    &format!("/{}/{}/{}", &params.name, version, params.target_and_path()),
+                    &format!("/{}/{}/{}", &params.name, version, params.path_for_url()),
                     None,
                 ),
                 CachePolicy::ForeverInCdn,
@@ -510,7 +510,7 @@ pub(crate) async fn rustdoc_html_server_handler(
 
     let krate = CrateDetails::from_matched_release(&mut conn, matched_release).await?;
 
-    let params = params.parse_from_metadata(&krate.metadata)?;
+    let params = params.parse_with_metadata(&krate.metadata)?;
     trace!(
         ?params,
         doc_targets=?krate.metadata.doc_targets,
@@ -524,7 +524,7 @@ pub(crate) async fn rustdoc_html_server_handler(
         return redirect(
             params.name(),
             &krate.version,
-            params.path(), // params.target is unused here.
+            params.inner_path(), // params.target is unused here.
             CachePolicy::ForeverInCdn,
             raw_query.as_deref(),
         );
@@ -534,7 +534,7 @@ pub(crate) async fn rustdoc_html_server_handler(
 
     trace!(
         storage_path,
-        inner_path = params.path(),
+        inner_path = params.inner_path(),
         "try fetching from storage"
     );
 
@@ -563,9 +563,9 @@ pub(crate) async fn rustdoc_html_server_handler(
                 // * the path doesn't contain a file extension. in this case, we won't ever find
                 //   a file with another `/index.html` attached.
                 let params = params.clone().update(|params| {
-                    let mut path = params.path().trim_end_matches('/').to_owned();
+                    let mut path = params.inner_path().trim_end_matches('/').to_owned();
                     path.push_str("/index.html");
-                    params.path = Some(path)
+                    params.inner_path = Some(path)
                 });
 
                 if storage
@@ -581,7 +581,7 @@ pub(crate) async fn rustdoc_html_server_handler(
                     return redirect(
                         params.name(),
                         &krate.version,
-                        &params.target_and_path(),
+                        &params.path_for_url(),
                         CachePolicy::ForeverInCdn,
                         raw_query.as_deref(),
                     );
@@ -599,7 +599,7 @@ pub(crate) async fn rustdoc_html_server_handler(
                         "/crate/{}/{}/target-redirect/{}",
                         params.name(),
                         params.version(),
-                        params.target_and_path(),
+                        params.path_for_url(),
                     )),
                     CachePolicy::ForeverInCdn,
                 )?
@@ -617,7 +617,7 @@ pub(crate) async fn rustdoc_html_server_handler(
                 error!(
                     krate = params.name(),
                     version = krate.version.to_string(),
-                    original_path = params.path(),
+                    original_path = params.inner_path(),
                     storage_path,
                     "Couldn't find crate documentation root on storage.
                         Something is wrong with the build."
@@ -655,7 +655,7 @@ pub(crate) async fn rustdoc_html_server_handler(
             .expect("with docs we always have a default_target")
     });
     let target_redirect = if latest_release.build_status.is_success() {
-        format!("/target-redirect/{current_target}/{}", params.path())
+        format!("/target-redirect/{current_target}/{}", params.inner_path())
     } else {
         "".to_string()
     };
@@ -669,7 +669,7 @@ pub(crate) async fn rustdoc_html_server_handler(
         "/{}/{}/{}{}",
         params.name(),
         latest_version,
-        &params.target_and_path(),
+        &params.path_for_url(),
         raw_query
     );
 
@@ -688,7 +688,7 @@ pub(crate) async fn rustdoc_html_server_handler(
     let page = Arc::new(RustdocPage {
         latest_path,
         permalink_path,
-        inner_path: params.target_and_path(),
+        inner_path: params.path_for_url(),
         is_latest_version,
         is_latest_url: params.version().is_latest(),
         is_prerelease,
@@ -698,80 +698,6 @@ pub(crate) async fn rustdoc_html_server_handler(
     });
     page.into_response(templates, metrics, blob, config.max_parse_memory)
         .await
-}
-
-/// Checks whether the given path exists.
-/// The crate's `target_name` is used to confirm whether a platform triple is part of the path.
-///
-/// Note that path is overloaded in this context to mean both the path of a URL
-/// and the file path of a static file in the DB.
-///
-/// `file_path` is assumed to have the following format:
-/// `[/platform]/module/[kind.name.html|index.html]`
-///
-/// Returns a path that can be appended to `/crate/version/` to create a complete URL.
-fn path_for_version(
-    file_path: &[&str],
-    crate_details: &CrateDetails,
-) -> (String, HashMap<String, String>) {
-    // check if req_path[3] is the platform choice or the name of the crate
-    // Note we don't require the platform to have a trailing slash.
-    let platform = if crate_details
-        .metadata
-        .doc_targets
-        .as_ref()
-        .expect("this method is only used when we have docs, so this field contains data")
-        .iter()
-        .any(|s| s == file_path[0])
-        && !file_path.is_empty()
-    {
-        file_path[0]
-    } else {
-        ""
-    };
-    let is_source_view = if platform.is_empty() {
-        // /{name}/{version}/src/{crate}/index.html
-        file_path.first().copied() == Some("src")
-    } else {
-        // /{name}/{version}/{platform}/src/{crate}/index.html
-        file_path.get(1).copied() == Some("src")
-    };
-    // this page doesn't exist in the latest version
-    let last_component = *file_path.last().unwrap();
-    let search_item = if last_component == "index.html" {
-        // this is a module
-        if file_path.len() < 2 {
-            None
-        } else {
-            file_path.get(file_path.len() - 2).copied()
-        }
-    // no trailing slash; no one should be redirected here but we handle it gracefully anyway
-    } else if last_component == platform {
-        // nothing to search for
-        None
-    } else if !is_source_view {
-        // this is an item
-        last_component.split('.').nth(1)
-    } else {
-        // if this is a Rust source file, try searching for the module;
-        // else, don't try searching at all, we don't know how to find it
-        last_component.strip_suffix(".rs.html")
-    };
-    let target_name = &crate_details
-        .target_name
-        .as_ref()
-        .expect("this method is only used when we have docs, so this field contains data");
-    let path = if platform.is_empty() {
-        format!("{target_name}/")
-    } else {
-        format!("{platform}/{target_name}/")
-    };
-
-    let query_params = search_item
-        .map(|i| HashMap::from_iter([("search".into(), i.into())]))
-        .unwrap_or_default();
-
-    (path, query_params)
 }
 
 #[instrument(skip_all)]
@@ -787,7 +713,7 @@ pub(crate) async fn target_redirect_handler(
         .into_canonical_req_version_or_else(|_| AxumNope::VersionNotFound)?;
 
     let crate_details = CrateDetails::from_matched_release(&mut conn, matched_release).await?;
-    let params = params.parse_from_metadata(&crate_details.metadata)?;
+    let params = params.parse_with_metadata(&crate_details.metadata)?;
     trace!(?params, "parsed params");
 
     let storage_path = params.storage_path();
@@ -810,8 +736,12 @@ pub(crate) async fn target_redirect_handler(
             storage_path,
             "path doesn't exist, generating redirect to search"
         );
-        let pieces: Vec<_> = storage_path.split('/').collect();
-        path_for_version(&pieces, &crate_details)
+        let (path, search) = params.generate_fallback_url()?;
+        let mut query_args = HashMap::new();
+        if let Some(search) = search {
+            query_args.insert("search".to_string(), search);
+        }
+        (path, query_args)
     };
 
     let encoded_path = encode_url_path(&format!(

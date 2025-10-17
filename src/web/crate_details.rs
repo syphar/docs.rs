@@ -632,7 +632,7 @@ pub(crate) async fn get_all_releases(
 
     // let target = params.target().map(|t| format!("{t}/")).unwrap_or_default();
 
-    let inner_path = params.path.unwrap_or_default();
+    let inner_path = params.inner_path.unwrap_or_default();
     let inner_path = inner_path.trim_end_matches('/');
 
     Ok(ReleaseList {
@@ -690,7 +690,7 @@ pub(crate) async fn get_all_platforms_inner(
                         "/platforms/{}/{}/{}",
                         corrected_name,
                         req_version,
-                        params.path(),
+                        params.inner_path(),
                     ),
                     None,
                 ),
@@ -700,7 +700,12 @@ pub(crate) async fn get_all_platforms_inner(
         .into_canonical_req_version_or_else(|version| {
             AxumNope::Redirect(
                 EscapedURI::new(
-                    &format!("/platforms/{}/{}/{}", &params.name, version, params.path(),),
+                    &format!(
+                        "/platforms/{}/{}/{}",
+                        &params.name,
+                        version,
+                        params.inner_path(),
+                    ),
                     None,
                 ),
                 CachePolicy::ForeverInCdn,
@@ -762,10 +767,10 @@ pub(crate) async fn get_all_platforms_inner(
     let inner_path = format!(
         "{}/{}",
         matched_release.target_name().unwrap(),
-        if params.path().is_empty() {
+        if params.inner_path().is_empty() {
             "index.html"
         } else {
-            params.path()
+            params.inner_path()
         }
     );
 
@@ -799,7 +804,7 @@ pub(crate) async fn get_all_platforms_root(
     mut params: RustdocParams,
     conn: DbConnection,
 ) -> AxumResult<AxumResponse> {
-    params.path.take();
+    params.inner_path.take();
     get_all_platforms_inner(params, conn, true).await
 }
 
