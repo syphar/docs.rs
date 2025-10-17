@@ -1,5 +1,7 @@
 //! special rustdoc extractors
 
+use std::borrow::Cow;
+
 use anyhow::{Result, anyhow};
 use axum::{
     RequestPartsExt,
@@ -42,17 +44,17 @@ where
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         let Path(mut params) = parts.extract::<Path<UrlParams>>().await?;
-        let uri = parts.extract::<Uri>().await.expect("infallible extractor");
-        let uri_path = percent_encoding::percent_decode(uri.path().as_bytes())
-            .decode_utf8()
-            .map_err(|err| AxumNope::BadRequest(err.into()))?;
+        dbg!(&params);
+        let uri = dbg!(parts.extract::<Uri>().await.expect("infallible extractor"));
+        let uri_path = dbg!(url_decode(uri.path())?);
 
-        let matched_route = parts
+        let matched_path = parts
             .extract::<MatchedPath>()
             .await
-            .map_err(|err| anyhow!("couldn't extract matched route: {err}"))?;
+            .map_err(|err| AxumNope::BadRequest(err.into()))?;
+        let matched_route = url_decode(matched_path.as_str())?;
 
-        let static_route_suffix = find_static_route_suffix(matched_route.as_str(), &uri_path);
+        let static_route_suffix = find_static_route_suffix(&matched_route, &uri_path);
 
         if let Some(static_suffix) = static_route_suffix {
             if let Some(ref mut path) = params.path
@@ -230,14 +232,17 @@ impl ParsedRustdocParams {
     pub(crate) fn name(&self) -> &str {
         &self.inner.name
     }
+
     pub(crate) fn version(&self) -> &ReqVersion {
         &self.inner.version
     }
+
     pub(crate) fn storage_path(&'_ self) -> String {
+        // FIXME: make nicer.
         let mut storage_path = if let Some(ref target) = self.inner.doc_target {
             if target == &self.default_target {
                 // when we have a target url param, and it matches the default target,
-                // we don't include it in the storage path.
+                // We don't include it in the storage path.
                 // Files for the default target are typically at the root of the archive.
                 self.inner.path.clone().unwrap_or_default()
             } else {
@@ -315,6 +320,7 @@ impl ParsedRustdocParams {
     fn generate_crate_search_from_path(&self) -> Result<(String, Option<String>)> {
         // we already split out the potentially leading target information in `Self::parse`.
         // So we have an optional target, and then the path.
+        // FIXME: perhaps move this somewhere else? Taking `ParsedRustdocParams` as parameter?
         let components: Vec<_> = self.path().trim_start_matches('/').split('/').collect();
 
         let is_source_view = components.first() == Some(&"src");
@@ -357,6 +363,10 @@ impl ParsedRustdocParams {
 
         Ok((path, search_item))
     }
+}
+
+fn url_decode<'a>(input: &'a str) -> Result<Cow<'a, str>> {
+    Ok(percent_encoding::percent_decode(input.as_bytes()).decode_utf8()?)
 }
 
 /// we sometimes have routes with a static suffix.
@@ -464,6 +474,17 @@ mod tests {
             path: Some("path_add/static.html".into())
         };
         "name, version, path extract, static suffix"
+    )]
+    #[test_case(
+        "/{name}/{version}/clapproc%20%60macro.html",
+        "/clap/latest/clapproc%20%60macro.html",
+        RustdocParams {
+            name: "clap".into(),
+            version: ReqVersion::Latest,
+            doc_target: None,
+            path: Some("clapproc `macro.html".into()),
+        };
+        "name, version, static suffix with some urlencoding"
     )]
     #[test_case(
         "/{name}/{version}/static.html",
