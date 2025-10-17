@@ -248,6 +248,7 @@ impl ParsedRustdocParams {
         &self.inner.version
     }
 
+    /// generate a potential storage path where to find the file that is described by these params.
     pub(crate) fn storage_path(&'_ self) -> String {
         // FIXME: make nicer.
         let mut storage_path = if let Some(ref target) = self.inner.doc_target {
@@ -271,8 +272,9 @@ impl ParsedRustdocParams {
 
         if self.path_is_folder() {
             if !storage_path.is_empty() && !storage_path.ends_with('/') {
-                // this can happen in the case of an empty path
-                storage_path.push('/');
+                unreachable!();
+                panic!("never!");
+                // storage_path.push('/');
             }
             storage_path.push_str("index.html");
         }
@@ -583,18 +585,18 @@ mod tests {
 
     #[test_case(
         None, None,
-        None, "", "FIXME";
+        None, "", "index.html";
         "super empty 1"
     )]
     #[test_case(
         Some(""), Some(""),
-        None, "", "FIXME";
+        None, "", "index.html";
         "super empty 2"
     )]
     // test cases when no separate "target" component was present in the params
     #[test_case(
         None, Some("/"),
-        None, "", "FIXME";
+        None, "", "index.html";
         "just slash"
     )]
     #[test_case(
@@ -616,13 +618,13 @@ mod tests {
     // "target" component
     #[test_case(
         None, Some("some-target-name"),
-        Some("some-target-name"), "", "FIXME";
+        Some("some-target-name"), "", "index.html";
         "just target without trailing slash"
     )]
     #[test_case(
         None, Some("some-target-name/"),
-        Some("some-target-name"), "", "FIXME";
-        "just target with trailing slash"
+        Some("some-target-name"), "", "index.html";
+        "just default target with trailing slash"
     )]
     #[test_case(
         None, Some("some-target-name/one"),
@@ -652,8 +654,8 @@ mod tests {
     // here we have a separate target path parameter, we check it and use it accordingly
     #[test_case(
         Some("some-target-name"), None,
-        Some("some-target-name"), "", "FIXME";
-        "actual target"
+        Some("some-target-name"), "", "index.html";
+        "actual target, that is default"
     )]
     #[test_case(
         Some("some-target-name"), Some("inner/path.html"),
@@ -676,14 +678,24 @@ mod tests {
         "unknown target with path"
     )]
     #[test_case(
+        Some("other-target"), Some("inner/path.html"),
+        Some("other-target"), "inner/path.html", "other-target/inner/path.html";
+        "other target with path"
+    )]
+    #[test_case(
         Some("unknown-target"), Some("inner/path/"),
         None, "unknown-target/inner/path/", "unknown-target/inner/path/index.html";
         "unknown target with path slash"
     )]
     #[test_case(
+        Some("other-target"), Some("inner/path/"),
+        Some("other-target"), "inner/path/", "other-target/inner/path/index.html";
+        "other target with path slash"
+    )]
+    #[test_case(
         Some("some-target-name"), None,
-        Some("some-target-name"), "", "some-target-name/inner/path/index.html";
-        "pure target, without trailing slash"
+        Some("some-target-name"), "", "index.html";
+        "pure default target, without trailing slash"
     )]
     // TODO: test for /crate/foo-ab/0.0.1/target-redirect/x86_64-unknown-linux-gnu, check storage
     // /crate/itertools/0.14.0/targeet-redirect/x86_64-unknown-linux-gnu
