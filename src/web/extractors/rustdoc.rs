@@ -319,6 +319,8 @@ impl ParsedRustdocParams {
     }
 
     /// generate the path portion of a URL for these params.
+    ///
+    /// MOst of the time this is the storage path, but without `/index.html` if its a folder.
     pub(crate) fn path_for_url(&self) -> String {
         // FIXME: make nicer.
         let path = if let Some(ref target) = self.inner.doc_target {
@@ -380,6 +382,8 @@ impl ParsedRustdocParams {
     ///
     /// This method is typically only used when we already know the target file doesn't exist,
     /// and we just need to redirect to a search or something similar.
+    ///
+    /// FIXME: add tests! :)
     pub(crate) fn generate_fallback_url(&self) -> Result<(String, Option<String>)> {
         // we already split out the potentially leading target information in `Self::parse`.
         // So we have an optional target, and then the path.
@@ -422,7 +426,9 @@ impl ParsedRustdocParams {
             None
         };
 
-        let path = if let Some(doc_target) = self.doc_target() {
+        let path = if let Some(doc_target) = self.doc_target()
+            && doc_target != self.default_target
+        {
             format!("{doc_target}/{}/", &self.target_name)
         } else {
             format!("{}/", &self.target_name)
