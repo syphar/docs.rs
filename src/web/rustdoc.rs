@@ -479,7 +479,12 @@ pub(crate) async fn rustdoc_html_server_handler(
         .into_exactly_named_or_else(|corrected_name, req_version| {
             AxumNope::Redirect(
                 EscapedURI::new(
-                    &format!("/{}/{}/{}", corrected_name, req_version, params.path()),
+                    &format!(
+                        "/{}/{}/{}",
+                        corrected_name,
+                        req_version,
+                        params.target_and_path()
+                    ),
                     raw_query.as_deref(),
                 ),
                 CachePolicy::NoCaching,
@@ -488,7 +493,7 @@ pub(crate) async fn rustdoc_html_server_handler(
         .into_canonical_req_version_or_else(|version| {
             AxumNope::Redirect(
                 EscapedURI::new(
-                    &format!("/{}/{}/{}", &params.name, version, params.path()),
+                    &format!("/{}/{}/{}", &params.name, version, params.target_and_path()),
                     None,
                 ),
                 CachePolicy::ForeverInCdn,
@@ -533,7 +538,7 @@ pub(crate) async fn rustdoc_html_server_handler(
         "try fetching from storage"
     );
 
-    // Attempt to load the file from the database
+    // Attempt to load the given file from storage.
     let blob = match storage
         .stream_rustdoc_file(
             params.name(),
@@ -576,7 +581,7 @@ pub(crate) async fn rustdoc_html_server_handler(
                     return redirect(
                         params.name(),
                         &krate.version,
-                        params.path(),
+                        &params.target_and_path(),
                         CachePolicy::ForeverInCdn,
                         raw_query.as_deref(),
                     );
@@ -589,11 +594,12 @@ pub(crate) async fn rustdoc_html_server_handler(
                 // One example where we end up here is with intra-doc links when the
                 // link source is a target which doesn't exist in the target crate.
                 return Ok(axum_cached_redirect(
+                    // FIXME: better way to construct URL with path?
                     encode_url_path(&format!(
                         "/crate/{}/{}/target-redirect/{}",
                         params.name(),
                         params.version(),
-                        params.path(),
+                        params.target_and_path(),
                     )),
                     CachePolicy::ForeverInCdn,
                 )?
@@ -641,6 +647,7 @@ pub(crate) async fn rustdoc_html_server_handler(
 
     // Find the path of the latest version for the `Go to latest` and `Permalink` links
     let current_target = params.doc_target().unwrap_or_else(|| {
+        // FIXME: pull default target from params too?
         krate
             .metadata
             .default_target
@@ -662,7 +669,7 @@ pub(crate) async fn rustdoc_html_server_handler(
         "/{}/{}/{}{}",
         params.name(),
         latest_version,
-        params.path(),
+        &params.target_and_path(),
         raw_query
     );
 
@@ -681,7 +688,7 @@ pub(crate) async fn rustdoc_html_server_handler(
     let page = Arc::new(RustdocPage {
         latest_path,
         permalink_path,
-        inner_path: params.path().to_owned(),
+        inner_path: params.target_and_path(),
         is_latest_version,
         is_latest_url: params.version().is_latest(),
         is_prerelease,
@@ -3151,6 +3158,7 @@ mod test {
                 .await
                 .name("clap")
                 .version("2.24.0")
+                .add_platform("i686-pc-windows-gnu")
                 .archive_storage(true)
                 .create()
                 .await?;

@@ -203,10 +203,20 @@ impl RustdocParams {
 
     pub(crate) fn path(&self) -> &str {
         if let Some(ref path) = self.path {
-            debug_assert!(path.starts_with('/')); // we trim leading slashes
+            debug_assert!(!path.starts_with('/')); // we trim leading slashes
             path
         } else {
             ""
+        }
+    }
+
+    /// TODO: often needed, but is this the right place? Or do we rather want full URL generation
+    /// here?
+    pub(crate) fn target_and_path(&self) -> String {
+        if let Some(ref doc_target) = self.doc_target {
+            format!("{}/{}", doc_target, self.path())
+        } else {
+            self.path().to_string()
         }
     }
 
@@ -297,6 +307,16 @@ impl ParsedRustdocParams {
     pub(crate) fn path(&self) -> &str {
         // in our logic, when `parse` is done, the path is never `None`.
         self.inner.path.as_deref().unwrap_or_default()
+    }
+
+    /// TODO: often needed, but is this the right place? Or do we rather want full URL generation
+    /// here?
+    pub(crate) fn target_and_path(&self) -> String {
+        if let Some(doc_target) = self.doc_target() {
+            format!("{}/{}", doc_target, self.path())
+        } else {
+            self.path().to_string()
+        }
     }
 
     /// check if we have a target component in the path, that matches the default
