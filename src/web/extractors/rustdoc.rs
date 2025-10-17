@@ -282,6 +282,7 @@ impl ParsedRustdocParams {
 
         if self.path_is_folder() {
             if !storage_path.is_empty() && !storage_path.ends_with('/') {
+                // FIXME: do I have to handle this case somehow?
                 unreachable!();
                 panic!("never!");
                 // storage_path.push('/');
