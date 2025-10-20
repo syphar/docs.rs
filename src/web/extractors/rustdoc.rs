@@ -48,15 +48,15 @@ where
             .await
             .map_err(|err| AxumNope::BadRequest(err.into()))?;
 
-        dbg!(&params);
-        let uri = dbg!(parts.extract::<Uri>().await.expect("infallible extractor"));
-        let uri_path = dbg!(url_decode(uri.path()).map_err(AxumNope::BadRequest)?);
+        // we're extracting the full path since we need to be able to extract static suffixes
+        // that are not in the ``
+        let uri = parts.extract::<Uri>().await.expect("infallible extractor");
+        let uri_path = url_decode(uri.path()).map_err(AxumNope::BadRequest)?;
 
         let matched_path = parts
             .extract::<MatchedPath>()
             .await
             .map_err(|err| AxumNope::BadRequest(err.into()))?;
-
         let matched_route = url_decode(matched_path.as_str()).map_err(AxumNope::BadRequest)?;
 
         let static_route_suffix = find_static_route_suffix(&matched_route, &uri_path);
@@ -121,28 +121,21 @@ impl RustdocParams {
 
         debug_assert!(!doc_targets.is_empty());
 
-        dbg!(&self.inner_path);
         let mut new_path = if let Some(ref path) = self.inner_path {
             path.trim_start_matches('/').trim().to_string()
         } else {
             String::new()
         };
 
-        dbg!(&new_path);
-
         let mut new_target: Option<String> = None;
 
-        dbg!(&self);
-
-        if let Some(given_target) = dbg!(self.doc_target.take())
+        if let Some(given_target) = self.doc_target.take()
             && !given_target.trim().is_empty()
         {
             let given_target = given_target.trim();
-            dbg!(&given_target);
             // if a target is given in a separate url parameter, check if it's a target we
             // know about. If yes, keep it, if not, make it part of the path.
             if doc_targets.iter().any(|s| s == given_target) {
-                dbg!("known target");
                 new_target = Some(given_target.into());
             } else {
                 new_target = None;
@@ -157,7 +150,7 @@ impl RustdocParams {
             // we look at the first component of the path and see if it matches a target.
 
             if let Some(pos) = new_path.find('/') {
-                let potential_target = dbg!(&new_path[..pos]);
+                let potential_target = &new_path[..pos];
 
                 if doc_targets.iter().any(|s| s == potential_target) {
                     new_target = Some(potential_target.to_owned());
