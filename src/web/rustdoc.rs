@@ -323,7 +323,16 @@ pub(crate) async fn rustdoc_redirector_handler(
     }
 
     let matched_release = matched_release.into_canonical_req_version();
+
+    // let mut target = params.target.clone();
+    // if target.as_deref() == Some("index.html") {
+    //     // special case from old code.
+    //     // TODO: should this be in the url-generation in RustdocParams?
+    //     target = None;
+    // }
+
     let rustdoc_params = RustdocParams {
+        had_trailing_slash: uri.path().ends_with('/'),
         name: matched_release.name.clone(),
         version: matched_release.req_version.clone(),
         doc_target: params.target,
@@ -331,6 +340,8 @@ pub(crate) async fn rustdoc_redirector_handler(
     }
     .load_and_parse(&mut *conn, matched_release.id())
     .await?;
+
+    dbg!(&rustdoc_params);
 
     if matched_release.rustdoc_status() {
         let cache = if matched_release.is_latest_url() {
@@ -3026,7 +3037,7 @@ mod test {
 
             web.assert_redirect_cached_unchecked(
                 "/clap/latest/clapproc%20macro%20%60Parser%60%20not%20expanded:%20Cannot%20create%20expander%20for",
-                "/clap/latest/clapproc%20macro%20%60Parser%60%20not%20expanded:%20Cannot%20create%20expander%20for/clap/",
+                "/clap/latest/clapproc%20macro%20%60Parser%60%20not%20expanded:%20Cannot%20create%20expander%20for",
                 CachePolicy::ForeverInCdn,
                 &env.config(),
             ).await?;

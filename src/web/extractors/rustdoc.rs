@@ -28,6 +28,7 @@ use crate::{
 /// * generate standard URLs for these params? Same for the parsed version?
 #[derive(Clone, PartialEq, Debug)]
 pub(crate) struct RustdocParams {
+    pub(crate) had_trailing_slash: bool,
     pub(crate) name: String,
     pub(crate) version: ReqVersion,
     pub(crate) doc_target: Option<String>,
@@ -57,8 +58,8 @@ where
 
         // we're extracting the full path since we need to be able to extract static suffixes
         // that are not in the ``
-        let uri = parts.extract::<Uri>().await.expect("infallible extractor");
-        let uri_path = url_decode(uri.path()).map_err(AxumNope::BadRequest)?;
+        let original_uri = parts.extract::<Uri>().await.expect("infallible extractor");
+        let uri_path = url_decode(original_uri.path()).map_err(AxumNope::BadRequest)?;
 
         let matched_path = parts
             .extract::<MatchedPath>()
@@ -84,6 +85,7 @@ where
             version: params.version,
             doc_target: params.target.map(|t| t.trim().to_owned()),
             inner_path: params.path.map(|p| p.trim().to_owned()),
+            had_trailing_slash: original_uri.path().ends_with('/'),
         })
     }
 }
@@ -91,6 +93,7 @@ where
 impl RustdocParams {
     pub(crate) fn with_name(self, name: &str) -> Self {
         RustdocParams {
+            had_trailing_slash: false,
             name: name.to_owned(),
             ..self
         }
@@ -98,6 +101,7 @@ impl RustdocParams {
 
     pub(crate) fn with_version(self, version: &ReqVersion) -> Self {
         RustdocParams {
+            had_trailing_slash: false,
             version: version.clone(),
             ..self
         }
@@ -200,8 +204,10 @@ impl RustdocParams {
                 new_target = None;
                 if !new_path.is_empty() {
                     new_path = format!("{}/{}", given_target, new_path);
-                } else {
+                } else if self.had_trailing_slash {
                     new_path = format!("{}/", given_target);
+                } else {
+                    new_path = given_target.into();
                 }
             }
         } else {
@@ -411,26 +417,36 @@ impl ParsedRustdocParams {
 
     /// generate the path portion of a URL for these params.
     ///
-    /// MOst of the time this is the storage path, but without `/index.html` if its a folder.
+    /// Most of the time this is the storage path, but without `/index.html` if its a folder.
+    ///
+    /// Will also check the inner path:
+    /// If its empty, it defaults to the target name folder
     pub(crate) fn path_for_url(&self) -> String {
+        let inner_path = if let Some(ref inner_path) = self.inner.inner_path
+            && !inner_path.is_empty()
+            // special case: if the inner path is just "index.html", we assume we have to attach
+            // the `target_name`
+            && inner_path != "index.html"
+        {
+            inner_path.to_owned()
+        } else {
+            format!("{}/", &self.target_name)
+        };
+
         // FIXME: make nicer.
         let path = if let Some(ref target) = self.inner.doc_target {
             if target == &self.default_target {
                 // when we have a target url param and it matches the default target
                 // we don't include it in the storage path.
                 // Files for the default target are placed at the root of the archive.
-                self.inner.inner_path.clone().unwrap_or_default()
+                inner_path
             } else {
                 // all non-default targets are in subfolders named after that target.
-                format!(
-                    "{}/{}",
-                    target,
-                    self.inner.inner_path.as_deref().unwrap_or_default()
-                )
+                format!("{}/{}", target, inner_path)
             }
         } else {
             // without target in the url params, we can just use the path.
-            self.inner.inner_path.clone().unwrap_or_default()
+            inner_path
         };
 
         // for folders we might have `index.html` at the end.
@@ -649,7 +665,7 @@ mod tests {
     #[test_case(
         "/{name}/{version}",
         "/krate/latest",
-        RustdocParams {
+        RustdocParams {had_trailing_slash: false,
             name: "krate".into(),
             version: ReqVersion::Latest,
             doc_target: None,
@@ -660,7 +676,7 @@ mod tests {
     #[test_case(
         "/{name}/{version}/{*path}",
         "/krate/latest/static.html",
-        RustdocParams {
+        RustdocParams {had_trailing_slash: false,
             name: "krate".into(),
             version: ReqVersion::Latest,
             doc_target: None,
@@ -671,7 +687,7 @@ mod tests {
     #[test_case(
         "/{name}/{version}/{path}/static.html",
         "/krate/latest/path_add/static.html",
-        RustdocParams {
+        RustdocParams {had_trailing_slash: false,
             name: "krate".into(),
             version: ReqVersion::Latest,
             doc_target: None,
@@ -682,7 +698,7 @@ mod tests {
     #[test_case(
         "/{name}/{version}/clapproc%20%60macro.html",
         "/clap/latest/clapproc%20%60macro.html",
-        RustdocParams {
+        RustdocParams {had_trailing_slash: false,
             name: "clap".into(),
             version: ReqVersion::Latest,
             doc_target: None,
@@ -693,7 +709,7 @@ mod tests {
     #[test_case(
         "/{name}/{version}/static.html",
         "/krate/latest/static.html",
-        RustdocParams {
+        RustdocParams {had_trailing_slash: false,
             name: "krate".into(),
             version: ReqVersion::Latest,
             doc_target: None,
@@ -704,7 +720,7 @@ mod tests {
     #[test_case(
         "/{name}/{version}/{target}",
         "/krate/1.2.3/some-target",
-        RustdocParams {
+        RustdocParams {had_trailing_slash: false,
             name: "krate".into(),
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
             doc_target: Some("some-target".into()),
@@ -715,7 +731,7 @@ mod tests {
     #[test_case(
         "/{name}/{version}/{target}/folder/something.html",
         "/krate/1.2.3/some-target/folder/something.html",
-        RustdocParams {
+        RustdocParams {had_trailing_slash: false,
             name: "krate".into(),
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
             doc_target: Some("some-target".into()),
@@ -726,7 +742,7 @@ mod tests {
     #[test_case(
         "/{name}/{version}/{target}/",
         "/krate/1.2.3/some-target/",
-        RustdocParams {
+        RustdocParams {had_trailing_slash: false,
             name: "krate".into(),
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
             doc_target: Some("some-target".into()),
@@ -737,7 +753,7 @@ mod tests {
     #[test_case(
         "/{name}/{version}/{target}/{*path}",
         "/krate/1.2.3/some-target/some/path/to/a/file.html",
-        RustdocParams {
+        RustdocParams {had_trailing_slash: false,
             name: "krate".into(),
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
             doc_target: Some("some-target".into()),
@@ -748,7 +764,7 @@ mod tests {
     #[test_case(
         "/{name}/{version}/{target}/{path}/path/to/a/file.html",
         "/krate/1.2.3/some-target/path_add/path/to/a/file.html",
-        RustdocParams {
+        RustdocParams {had_trailing_slash: false,
             name: "krate".into(),
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
             doc_target: Some("some-target".into()),
@@ -899,6 +915,7 @@ mod tests {
         static DEFAULT_TARGET: &str = "some-target-name";
 
         let parsed = RustdocParams {
+            had_trailing_slash: false,
             name: "krate".into(),
             version: ReqVersion::Latest,
             doc_target: target.map(|s| s.into()),
