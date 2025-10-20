@@ -721,7 +721,7 @@ pub(crate) async fn target_redirect_handler(
 
     let storage_path = params.storage_path();
     trace!(storage_path, "checking if path exists in other version");
-    let (redirect_path, query_args) = if storage
+    let redirect_uri = if storage
         .rustdoc_file_exists(
             params.name(),
             &crate_details.version.to_string(),
@@ -733,28 +733,18 @@ pub(crate) async fn target_redirect_handler(
     {
         // Simple case: page exists in the other target & version, so just change these
         trace!(storage_path, "path exist, redirecting");
-        (params.path_for_url(), HashMap::new())
+        params.rustdoc_url()
     } else {
         trace!(
             storage_path,
             "path doesn't exist, generating redirect to search"
         );
-        let (path, search) = params.generate_fallback_path()?;
-        let mut query_args = HashMap::new();
-        if let Some(search) = search {
-            query_args.insert("search".to_string(), search);
-        }
-        (path, query_args)
+        params.generate_fallback_url()
     };
 
-    let encoded_path = encode_url_path(&format!(
-        "/{}/{}/{redirect_path}",
-        params.name(),
-        params.version()
-    ));
-    trace!(?query_args, encoded_path, "generate URL");
+    trace!(?redirect_uri, "generate URL");
     Ok(axum_cached_redirect(
-        axum_parse_uri_with_params(&encoded_path, query_args)?,
+        redirect_uri,
         if params.version().is_latest() {
             CachePolicy::ForeverInCdn
         } else {

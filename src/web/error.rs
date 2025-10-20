@@ -9,8 +9,9 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response as AxumResponse},
 };
-use std::borrow::Cow;
+use std::borrow::{Borrow, Cow};
 use tracing::error;
+use url::form_urlencoded;
 
 use super::AxumErrorPage;
 
@@ -24,15 +25,46 @@ impl EscapedURI {
 
     pub fn new_with_raw_query(path: &str, raw_query: Option<&str>) -> Self {
         let mut path = encode_url_path(path);
-        if let Some(query) = raw_query {
+        if let Some(query) = raw_query
+            && !query.is_empty()
+        {
             path.push('?');
             path.push_str(query);
         }
         Self(path)
     }
 
+    pub(crate) fn new_with_query<I, K, V>(path: &str, queries: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: Borrow<(K, V)>,
+        K: AsRef<str>,
+        V: AsRef<str>,
+    {
+        let mut queries = queries.into_iter().peekable();
+        let raw_query = if queries.peek().is_some() {
+            Some(
+                form_urlencoded::Serializer::new(String::new())
+                    .extend_pairs(queries)
+                    .finish(),
+            )
+        } else {
+            None
+        };
+
+        Self::new_with_raw_query(path, raw_query.as_deref())
+    }
+
     pub fn as_str(&self) -> &str {
         self.0.as_str()
+    }
+}
+
+impl TryFrom<EscapedURI> for http::Uri {
+    type Error = http::uri::InvalidUri;
+
+    fn try_from(value: EscapedURI) -> Result<Self, Self::Error> {
+        value.0.parse::<http::Uri>()
     }
 }
 

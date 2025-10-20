@@ -11,7 +11,11 @@ use axum::{
 use itertools::Itertools as _;
 use serde::Deserialize;
 
-use crate::web::{MetaData, ReqVersion, error::AxumNope, extractors::Path};
+use crate::web::{
+    MetaData, ReqVersion,
+    error::{AxumNope, EscapedURI},
+    extractors::Path,
+};
 
 /// can extract rustdoc parameters from path and uri.
 ///
@@ -361,6 +365,16 @@ impl ParsedRustdocParams {
         )
     }
 
+    /// generate rustdoc URL to show the rustdoc page for the given params
+    pub(crate) fn rustdoc_url(&self) -> EscapedURI {
+        EscapedURI::new(&format!(
+            "/{}/{}/{}",
+            self.name(),
+            self.version(),
+            self.path_for_url()
+        ))
+    }
+
     /// Generate a possible target path to redirect to, with the information we have.
     ///
     /// Built for the target-redirect view, when we don't find the
@@ -372,7 +386,7 @@ impl ParsedRustdocParams {
     /// and we just need to redirect to a search or something similar.
     ///
     /// FIXME: add tests! :)
-    pub(crate) fn generate_fallback_path(&self) -> Result<(String, Option<String>)> {
+    pub(crate) fn generate_fallback_path(&self) -> (String, Option<String>) {
         // we already split out the potentially leading target information in `Self::parse`.
         // So we have an optional target, and then the path.
         // FIXME: perhaps move this somewhere else? Taking `ParsedRustdocParams` as parameter?
@@ -422,7 +436,20 @@ impl ParsedRustdocParams {
             format!("{}/", &self.target_name)
         };
 
-        Ok((path, search_item))
+        (path, search_item)
+    }
+
+    pub(crate) fn generate_fallback_url(&self) -> EscapedURI {
+        let (path, search_item) = self.generate_fallback_path();
+
+        if let Some(search_item) = search_item {
+            EscapedURI::new_with_query(
+                &format!("/{}/{}/{}", self.name(), self.version(), path),
+                &[("search", &search_item)],
+            )
+        } else {
+            EscapedURI::new(&format!("/{}/{}/{}", self.name(), self.version(), path))
+        }
     }
 }
 
