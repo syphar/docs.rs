@@ -362,7 +362,7 @@ pub(crate) async fn rustdoc_redirector_handler(
         .into_response())
     } else {
         Ok(axum_cached_redirect(
-            EscapedURI::new(
+            EscapedURI::new_with_raw_query(
                 &format!("/crate/{crate_name}/{}", matched_release.req_version),
                 uri.query(),
             )
@@ -460,7 +460,8 @@ pub(crate) async fn rustdoc_html_server_handler(
     ) -> AxumResult<AxumResponse> {
         trace!("redirect");
         Ok(axum_cached_redirect(
-            EscapedURI::new(&format!("/{}/{}/{}", name, vers, path), raw_query).as_str(),
+            EscapedURI::new_with_raw_query(&format!("/{}/{}/{}", name, vers, path), raw_query)
+                .as_str(),
             cache_policy,
         )?
         .into_response())
@@ -478,7 +479,7 @@ pub(crate) async fn rustdoc_html_server_handler(
         .await?
         .into_exactly_named_or_else(|corrected_name, req_version| {
             AxumNope::Redirect(
-                EscapedURI::new(
+                EscapedURI::new_with_raw_query(
                     &format!(
                         "/{}/{}/{}",
                         corrected_name,
@@ -492,10 +493,12 @@ pub(crate) async fn rustdoc_html_server_handler(
         })?
         .into_canonical_req_version_or_else(|version| {
             AxumNope::Redirect(
-                EscapedURI::new(
-                    &format!("/{}/{}/{}", &params.name, version, params.path_for_url()),
-                    None,
-                ),
+                EscapedURI::new(&format!(
+                    "/{}/{}/{}",
+                    &params.name,
+                    version,
+                    params.path_for_url()
+                )),
                 CachePolicy::ForeverInCdn,
             )
         })?;

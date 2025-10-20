@@ -28,7 +28,7 @@ pub(crate) async fn status_handler(
             let version = matched_release
                 .into_canonical_req_version_or_else(|version| {
                     AxumNope::Redirect(
-                        EscapedURI::new(&format!("/crate/{name}/{version}/status.json"), None),
+                        EscapedURI::new(&format!("/crate/{name}/{version}/status.json")),
                         CachePolicy::NoCaching,
                     )
                 })?

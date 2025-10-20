@@ -203,22 +203,19 @@ pub(crate) async fn source_browser_handler(
         .await?
         .into_exactly_named_or_else(|corrected_name, req_version| {
             AxumNope::Redirect(
-                EscapedURI::new(
-                    &format!(
-                        "/crate/{corrected_name}/{req_version}/source/{}",
-                        params.path
-                    ),
-                    None,
-                ),
+                EscapedURI::new(&format!(
+                    "/crate/{corrected_name}/{req_version}/source/{}",
+                    params.path
+                )),
                 CachePolicy::NoCaching,
             )
         })?
         .into_canonical_req_version_or_else(|version| {
             AxumNope::Redirect(
-                EscapedURI::new(
-                    &format!("/crate/{}/{version}/source/{}", params.name, params.path),
-                    None,
-                ),
+                EscapedURI::new(&format!(
+                    "/crate/{}/{version}/source/{}",
+                    params.name, params.path
+                )),
                 CachePolicy::ForeverInCdn,
             )
         })?

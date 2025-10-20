@@ -477,10 +477,7 @@ pub(crate) async fn crate_details_handler(
 ) -> AxumResult<AxumResponse> {
     let req_version = params.version.ok_or_else(|| {
         AxumNope::Redirect(
-            EscapedURI::new(
-                &format!("/crate/{}/{}", &params.name, ReqVersion::Latest),
-                None,
-            ),
+            EscapedURI::new(&format!("/crate/{}/{}", &params.name, ReqVersion::Latest)),
             CachePolicy::ForeverInCdn,
         )
     })?;
@@ -490,7 +487,7 @@ pub(crate) async fn crate_details_handler(
         .assume_exact_name()?
         .into_canonical_req_version_or_else(|version| {
             AxumNope::Redirect(
-                EscapedURI::new(&format!("/crate/{}/{}", &params.name, version), None),
+                EscapedURI::new(&format!("/crate/{}/{}", &params.name, version)),
                 CachePolicy::ForeverInCdn,
             )
         })?;
@@ -653,29 +650,23 @@ pub(crate) async fn get_all_platforms_inner(
         .await?
         .into_exactly_named_or_else(|corrected_name, req_version| {
             AxumNope::Redirect(
-                EscapedURI::new(
-                    &format!(
-                        "/platforms/{}/{}/{}",
-                        corrected_name,
-                        req_version,
-                        params.inner_path(),
-                    ),
-                    None,
-                ),
+                EscapedURI::new(&format!(
+                    "/platforms/{}/{}/{}",
+                    corrected_name,
+                    req_version,
+                    params.inner_path(),
+                )),
                 CachePolicy::NoCaching,
             )
         })?
         .into_canonical_req_version_or_else(|version| {
             AxumNope::Redirect(
-                EscapedURI::new(
-                    &format!(
-                        "/platforms/{}/{}/{}",
-                        &params.name,
-                        version,
-                        params.inner_path(),
-                    ),
-                    None,
-                ),
+                EscapedURI::new(&format!(
+                    "/platforms/{}/{}/{}",
+                    &params.name,
+                    version,
+                    params.inner_path(),
+                )),
                 CachePolicy::ForeverInCdn,
             )
         })?;

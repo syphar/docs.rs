@@ -18,9 +18,13 @@ use super::AxumErrorPage;
 pub struct EscapedURI(String);
 
 impl EscapedURI {
-    pub fn new(path: &str, query: Option<&str>) -> Self {
+    pub fn new(path: &str) -> Self {
+        Self::new_with_raw_query(path, None)
+    }
+
+    pub fn new_with_raw_query(path: &str, raw_query: Option<&str>) -> Self {
         let mut path = encode_url_path(path);
-        if let Some(query) = query {
+        if let Some(query) = raw_query {
             path.push('?');
             path.push_str(query);
         }
@@ -251,7 +255,7 @@ mod tests {
     #[test]
     fn test_redirect_error_encodes_url_path() {
         let response = AxumNope::Redirect(
-            EscapedURI::new("/something>", None),
+            EscapedURI::new("/something>"),
             CachePolicy::ForeverInCdnAndBrowser,
         )
         .into_response();
