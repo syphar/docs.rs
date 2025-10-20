@@ -583,7 +583,7 @@ pub(crate) async fn get_all_releases(
     params: RustdocParams,
     mut conn: DbConnection,
 ) -> AxumResult<AxumResponse> {
-    // NOTE: we're getting RustDocHtmlParams here, where both target and path are optional.
+    // NOTE: we're getting RustDocParams here, where both target and path are optional.
     // Due to how this handler is used in the `releases_list` macro, we always get both values.
     // both values (when used in the topbar).
 
@@ -599,46 +599,14 @@ pub(crate) async fn get_all_releases(
         return Err(AxumNope::CrateNotFound);
     }
 
-    // NOTE: we don't check if the target exists here.
-    // If the target doesn't exist, the target-redirect will think
-    // it's part of the `inner_path`, don't find the file in storage,
-    // and redirect to a search.
-    let target = if let Some(req_target) = params.doc_target {
-        format!("{req_target}/")
-    } else {
-        String::new()
-    };
-
-    // let doc_targets = sqlx::query_scalar!(
-    //     "SELECT
-    //         releases.doc_targets
-    //      FROM releases
-    //      WHERE releases.id = $1;",
-    //     matched_release.id().0,
-    // )
-    // .fetch_optional(&mut *conn)
-    // .await?
-    // .ok_or(AxumNope::VersionNotFound)?
-    // .map(MetaData::parse_doc_targets)
-    // .ok_or_else(|| anyhow!("empty doc targets for successful release"))?;
-
-    // let params = params.parse(doc_targets.iter());
-
-    // let inner_path = if params.inner_path().is_empty() {
-    //     "index.html"
-    // } else {
-    //     params.inner_path()
-    // };
-
-    // let target = params.target().map(|t| format!("{t}/")).unwrap_or_default();
-
-    let inner_path = params.inner_path.unwrap_or_default();
-    let inner_path = inner_path.trim_end_matches('/');
-
     Ok(ReleaseList {
         releases: matched_release.all_releases,
-        target,
-        inner_path: inner_path.to_string(),
+        // NOTE: we don't check if the target exists here.
+        // If the target doesn't exist, the target-redirect will think
+        // it's part of the `inner_path`, don't find the file in storage,
+        // and redirect to a search.
+        target: params.doc_target.as_deref().unwrap_or_default().to_string(),
+        inner_path: params.inner_path().to_string(),
         crate_name: params.name,
     }
     .into_response())

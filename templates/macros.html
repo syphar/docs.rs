@@ -92,15 +92,20 @@
     * `inner_path` The current rustdoc page (empty string if a `/crate` page)
 #}
 {% macro releases_list(name, releases, target, inner_path) %}
+    {% set target_for_url %}
+    {% if target.is_empty() %}
+        {%- set target_for_url = "".into() -%}
+    {% else %}
+        {%- set target_for_url = "{}/"|format(target) -%}
+    {% endif %}
     {%- for release in releases -%}
         {# The url for the release, `/crate/:name/:version` #}
-        {# NOTE: `/` is part of target if it exists (to avoid `target-direct//path`) #}
         {% set release_url %}
         {%- set retain_fragment = !inner_path.is_empty() -%}
         {% if inner_path.is_empty() %} {# /crate #}
             {%- set release_url = "/crate/{}/{}"|format(name, release.version) -%}
         {% else %}
-            {%- set release_url = "/crate/{}/{}/target-redirect/{}{}"|format(name, release.version, target, inner_path) -%}
+            {%- set release_url = "/crate/{}/{}/target-redirect/{}{}"|format(name, release.version, target_for_url, inner_path) -%}
         {% endif %}
         {# The release's name and version, `:name-:version` #}
         {%- set release_name = "{}-{}"|format(name, release.version) -%}
