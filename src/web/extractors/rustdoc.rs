@@ -297,6 +297,11 @@ impl ParsedRustdocParams {
         &self.inner.version
     }
 
+    pub(crate) fn with_version(mut self, version: &ReqVersion) -> Self {
+        self.inner.version = version.clone();
+        self
+    }
+
     pub(crate) fn with_inner_path(mut self, inner_path: &str) -> Self {
         self.inner.inner_path = Some(inner_path.into());
         self
@@ -435,6 +440,10 @@ impl ParsedRustdocParams {
             self.version(),
             self.path_for_url(),
         ))
+    }
+
+    pub(crate) fn crate_details_url(&self) -> EscapedURI {
+        self.inner.crate_details_url()
     }
 
     /// Generate a possible target path to redirect to, with the information we have.

@@ -13,3 +13,6 @@
 - this means all url generation needs to be put into this param struct, or needs
   to be based on the struct to be able to differentiate between subdomain-access
   & main domain-access
+- changes some generated URLs. instead of always pointing to `/index.html` on
+  folders, we use the folder itself.
+- also changes some target-redirect URLs, don't include the default target
