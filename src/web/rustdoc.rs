@@ -568,16 +568,10 @@ pub(crate) async fn rustdoc_html_server_handler(
             if params.doc_target().is_some() {
                 // This is a target, not a module; it may not have been built.
                 // Redirect to the default target and show a search page instead of a hard 404.
-                // One example where we end up here is with intra-doc links when the
-                // link source is a target which doesn't exist in the target crate.
+                // TODO: I'm not sure about the use-case here, I can totally imagine redirecing
+                // to search in case of other 404s.
                 return Ok(axum_cached_redirect(
-                    // FIXME: better way to construct URL with path?
-                    encode_url_path(&format!(
-                        "/crate/{}/{}/target-redirect/{}",
-                        params.name(),
-                        params.version(),
-                        params.path_for_url(),
-                    )),
+                    params.target_redirect_url(),
                     CachePolicy::ForeverInCdn,
                 )?
                 .into_response());

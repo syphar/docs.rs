@@ -297,6 +297,16 @@ impl ParsedRustdocParams {
         &self.inner.version
     }
 
+    pub(crate) fn with_inner_path(mut self, inner_path: &str) -> Self {
+        self.inner.inner_path = Some(inner_path.into());
+        self
+    }
+
+    pub(crate) fn with_doc_target(mut self, doc_target: &str) -> Self {
+        self.inner.doc_target = Some(doc_target.into());
+        self
+    }
+
     /// generate a potential storage path where to find the file that is described by these params.
     ///
     /// This is the path _inside_ the ZIP file we create in the build process.
@@ -415,6 +425,15 @@ impl ParsedRustdocParams {
             self.name(),
             self.version(),
             self.path_for_url()
+        ))
+    }
+
+    pub(crate) fn target_redirect_url(&self) -> EscapedURI {
+        EscapedURI::new(&format!(
+            "/crate/{}/{}/target-redirect/{}",
+            self.name(),
+            self.version(),
+            self.path_for_url(),
         ))
     }
 
