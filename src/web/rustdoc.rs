@@ -554,7 +554,7 @@ pub(crate) async fn rustdoc_html_server_handler(
             if !matches!(err.downcast_ref(), Some(AxumNope::ResourceNotFound))
                 && !matches!(err.downcast_ref(), Some(crate::storage::PathNotFoundError))
             {
-                error!("got error serving {}: {}", storage_path, err);
+                debug!("got error serving {}: {}", storage_path, err);
             }
 
             if !params.path_is_folder() && params.file_extension().is_none() {
