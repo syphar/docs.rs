@@ -36,6 +36,7 @@ mod sitemap;
 mod source;
 mod statics;
 mod status;
+mod urls;
 
 use crate::{Context, impl_axum_webpage};
 use anyhow::Error;

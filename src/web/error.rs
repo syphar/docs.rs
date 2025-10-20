@@ -3,19 +3,22 @@ use crate::{
     storage::PathNotFoundError,
     web::{cache::CachePolicy, encode_url_path, releases::Search},
 };
-use anyhow::anyhow;
+use anyhow::{Context, Result, anyhow, bail};
 use axum::{
     Json,
     http::StatusCode,
     response::{IntoResponse, Response as AxumResponse},
 };
+use derive_more::{Deref, Display};
+use http::Uri;
 use std::borrow::{Borrow, Cow};
 use tracing::error;
 use url::form_urlencoded;
 
 use super::AxumErrorPage;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Display, Deref)]
+#[deref(forward)]
 pub struct EscapedURI(String);
 
 impl EscapedURI {
@@ -57,6 +60,27 @@ impl EscapedURI {
 
     pub fn as_str(&self) -> &str {
         self.0.as_str()
+    }
+
+    /// attach raw query, but only if there wasn't one
+    /// FIXME: add tests
+    /// TODO: or extend query when there is already one?
+    pub fn with_raw_query(self, raw_query: Option<&str>) -> Self {
+        if let Some(raw_query) = raw_query {
+            let uri: Uri = self
+                .0
+                .parse()
+                .expect("EscapedURI always contains valid URI");
+
+            if uri.query().is_none() {
+                EscapedURI::new_with_raw_query(uri.path(), Some(raw_query))
+            } else {
+                // FIXME: no pani
+                panic!("URI already has a query");
+            }
+        } else {
+            self
+        }
     }
 }
 

@@ -377,8 +377,8 @@ pub(crate) async fn rustdoc_redirector_handler(
 #[template(path = "rustdoc/topbar.html")]
 #[derive(Debug, Clone)]
 pub struct RustdocPage {
-    pub latest_path: String,
-    pub permalink_path: String,
+    pub latest_path: EscapedURI,
+    pub permalink_path: EscapedURI,
     pub inner_path: String,
     // true if we are displaying the latest version of the crate, regardless
     // of whether the URL specifies a version number or the string "latest."
@@ -425,7 +425,7 @@ impl RustdocPage {
     }
 
     pub(crate) fn use_direct_platform_links(&self) -> bool {
-        !self.latest_path.contains("/target-redirect/")
+        !&self.latest_path.contains("/target-redirect/")
     }
 }
 
@@ -451,20 +451,9 @@ pub(crate) async fn rustdoc_html_server_handler(
 
     // Convenience function to allow for easy redirection
     #[instrument]
-    fn redirect(
-        name: &str,
-        vers: &Version,
-        path: &str,
-        cache_policy: CachePolicy,
-        raw_query: Option<&str>,
-    ) -> AxumResult<AxumResponse> {
+    fn redirect(uri: EscapedURI, cache_policy: CachePolicy) -> AxumResult<AxumResponse> {
         trace!("redirect");
-        Ok(axum_cached_redirect(
-            EscapedURI::new_with_raw_query(&format!("/{}/{}/{}", name, vers, path), raw_query)
-                .as_str(),
-            cache_policy,
-        )?
-        .into_response())
+        Ok(axum_cached_redirect(uri, cache_policy)?.into_response())
     }
 
     trace!("match version");
@@ -479,36 +468,27 @@ pub(crate) async fn rustdoc_html_server_handler(
         .await?
         .into_exactly_named_or_else(|corrected_name, req_version| {
             AxumNope::Redirect(
-                EscapedURI::new_with_raw_query(
-                    &format!(
-                        "/{}/{}/{}",
-                        corrected_name,
-                        req_version,
-                        params.path_for_url(),
-                    ),
-                    raw_query.as_deref(),
-                ),
+                params
+                    .clone()
+                    .with_name(corrected_name)
+                    .with_version(req_version)
+                    .rustdoc_url()
+                    .with_raw_query(raw_query.as_deref()),
                 CachePolicy::NoCaching,
             )
         })?
         .into_canonical_req_version_or_else(|version| {
             AxumNope::Redirect(
-                EscapedURI::new(&format!(
-                    "/{}/{}/{}",
-                    &params.name,
-                    version,
-                    params.path_for_url()
-                )),
+                params.clone().with_version(version).rustdoc_url(),
                 CachePolicy::ForeverInCdn,
             )
         })?;
 
     if !matched_release.rustdoc_status() {
-        return Ok(axum_cached_redirect(
-            format!("/crate/{}/{}", params.name, params.version),
-            CachePolicy::ForeverInCdn,
-        )?
-        .into_response());
+        return Ok(
+            axum_cached_redirect(params.crate_details_url(), CachePolicy::ForeverInCdn)?
+                .into_response(),
+        );
     }
 
     let krate = CrateDetails::from_matched_release(&mut conn, matched_release).await?;
@@ -525,11 +505,8 @@ pub(crate) async fn rustdoc_html_server_handler(
         // if visiting the full path to the default target, remove the target from the path
         // expects a req_path that looks like `[/:target]/.*`
         return redirect(
-            params.name(),
-            &krate.version,
-            params.inner_path(), // params.target is unused here.
+            params.rustdoc_url().with_raw_query(raw_query.as_deref()),
             CachePolicy::ForeverInCdn,
-            raw_query.as_deref(),
         );
     }
 
@@ -582,11 +559,8 @@ pub(crate) async fn rustdoc_html_server_handler(
                     .await?
                 {
                     return redirect(
-                        params.name(),
-                        &krate.version,
-                        &params.path_for_url(),
+                        params.rustdoc_url().with_raw_query(raw_query.as_deref()),
                         CachePolicy::ForeverInCdn,
-                        raw_query.as_deref(),
                     );
                 }
             }
@@ -649,38 +623,26 @@ pub(crate) async fn rustdoc_html_server_handler(
     let is_prerelease = !(krate.version.pre.is_empty());
 
     // Find the path of the latest version for the `Go to latest` and `Permalink` links
-    let current_target = params.doc_target().unwrap_or_else(|| {
-        // FIXME: pull default target from params too?
-        krate
-            .metadata
-            .default_target
-            .as_ref()
-            .expect("with docs we always have a default_target")
-    });
+    let current_target = params.doc_target_or_default();
     let target_redirect = if latest_release.build_status.is_success() {
         format!("/target-redirect/{current_target}/{}", params.inner_path())
     } else {
         "".to_string()
     };
 
-    let raw_query = raw_query
-        .as_deref()
-        .map(|q| format!("?{q}"))
-        .unwrap_or_default();
-
-    let permalink_path = format!(
-        "/{}/{}/{}{}",
-        params.name(),
-        latest_version,
-        &params.path_for_url(),
-        raw_query
+    let permalink_path = EscapedURI::new_with_raw_query(
+        &format!(
+            "/{}/{}/{}",
+            params.name(),
+            latest_version,
+            &params.path_for_url()
+        ),
+        raw_query.as_deref(),
     );
 
-    let latest_path = format!(
-        "/crate/{}/latest{}{}",
-        params.name(),
-        target_redirect,
-        raw_query
+    let latest_path = EscapedURI::new_with_raw_query(
+        &format!("/crate/{}/latest{}", params.name(), target_redirect),
+        raw_query.as_deref(),
     );
 
     metrics

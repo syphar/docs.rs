@@ -86,6 +86,20 @@ where
 }
 
 impl RustdocParams {
+    pub(crate) fn with_name(self, name: &str) -> Self {
+        RustdocParams {
+            name: name.to_owned(),
+            ..self
+        }
+    }
+
+    pub(crate) fn with_version(self, version: &ReqVersion) -> Self {
+        RustdocParams {
+            version: version.clone(),
+            ..self
+        }
+    }
+
     pub(crate) fn parse_with_metadata(self, metadata: &MetaData) -> Result<ParsedRustdocParams> {
         Ok(self.parse(
             metadata
@@ -242,6 +256,28 @@ impl RustdocParams {
             path
         }
     }
+
+    pub(crate) fn rustdoc_url(&self) -> EscapedURI {
+        EscapedURI::new(&format!(
+            "/{}/{}/{}",
+            self.name,
+            self.version,
+            self.path_for_url(),
+        ))
+    }
+
+    pub(crate) fn crate_details_url(&self) -> EscapedURI {
+        EscapedURI::new(&format!("/crate/{}/{}", self.name, self.version))
+    }
+
+    pub(crate) fn target_redirect_url(&self) -> EscapedURI {
+        EscapedURI::new(&format!(
+            "/crate/{}/{}/target-redirect/{}",
+            self.name,
+            self.version,
+            self.path_for_url(),
+        ))
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -294,6 +330,13 @@ impl ParsedRustdocParams {
 
     pub(crate) fn doc_target(&self) -> Option<&str> {
         self.inner.doc_target.as_deref()
+    }
+
+    pub(crate) fn doc_target_or_default(&self) -> &str {
+        self.inner
+            .doc_target
+            .as_deref()
+            .unwrap_or(&self.default_target)
     }
 
     pub(crate) fn path_is_folder(&self) -> bool {
