@@ -11,10 +11,13 @@ use axum::{
 use itertools::Itertools as _;
 use serde::Deserialize;
 
-use crate::web::{
-    MetaData, ReqVersion,
-    error::{AxumNope, EscapedURI},
-    extractors::Path,
+use crate::{
+    db::ReleaseId,
+    web::{
+        MetaData, ReqVersion,
+        error::{AxumNope, EscapedURI},
+        extractors::Path,
+    },
 };
 
 /// can extract rustdoc parameters from path and uri.
@@ -111,6 +114,44 @@ impl RustdocParams {
                 .as_deref()
                 .ok_or_else(|| anyhow!("target name missing in release"))?,
             metadata.doc_targets.iter().flatten(),
+        ))
+    }
+
+    pub(crate) async fn load_and_parse(
+        self,
+        conn: &mut sqlx::PgConnection,
+        release_id: ReleaseId,
+    ) -> Result<ParsedRustdocParams> {
+        let krate = sqlx::query!(
+            "SELECT
+                releases.default_target,
+                releases.target_name,
+                releases.doc_targets
+            FROM releases
+            WHERE releases.id = $1;",
+            release_id.0,
+        )
+        .fetch_optional(&mut *conn)
+        .await?
+        .ok_or(AxumNope::CrateNotFound)?;
+
+        let doc_targets: Vec<String> = krate
+            .doc_targets
+            .map(MetaData::parse_doc_targets)
+            .into_iter()
+            .flatten()
+            .collect();
+
+        Ok(self.parse(
+            krate
+                .default_target
+                .as_deref()
+                .ok_or_else(|| anyhow!("default target missing in release"))?,
+            krate
+                .target_name
+                .as_deref()
+                .ok_or_else(|| anyhow!("target name missing in release"))?,
+            doc_targets.iter(),
         ))
     }
 
@@ -521,6 +562,10 @@ impl ParsedRustdocParams {
         } else {
             EscapedURI::new(&format!("/{}/{}/{}", self.name(), self.version(), path))
         }
+    }
+
+    pub(crate) fn doc_targets(&self) -> &[String] {
+        &self.doc_targets
     }
 }
 

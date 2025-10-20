@@ -3,7 +3,7 @@ use crate::{
     storage::PathNotFoundError,
     web::{cache::CachePolicy, encode_url_path, releases::Search},
 };
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Result, anyhow};
 use axum::{
     Json,
     http::StatusCode,

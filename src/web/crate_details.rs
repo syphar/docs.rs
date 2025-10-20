@@ -671,23 +671,7 @@ pub(crate) async fn get_all_platforms_inner(
             )
         })?;
 
-    let krate = sqlx::query!(
-        "SELECT
-            releases.default_target,
-            releases.target_name,
-            releases.doc_targets
-        FROM releases
-        WHERE releases.id = $1;",
-        matched_release.id().0,
-    )
-    .fetch_optional(&mut *conn)
-    .await?
-    .ok_or(AxumNope::CrateNotFound)?;
-
-    if krate.doc_targets.is_none()
-        || krate.default_target.is_none()
-        || matched_release.target_name().is_none()
-    {
+    if !matched_release.build_status().is_success() {
         // when the build wasn't finished, we don't have any target platforms
         // we could read from.
         return Ok(PlatformList {
@@ -704,24 +688,9 @@ pub(crate) async fn get_all_platforms_inner(
         .into_response());
     }
 
-    let doc_targets: Vec<String> = krate
-        .doc_targets
-        .map(MetaData::parse_doc_targets)
-        .into_iter()
-        .flatten()
-        .collect();
-
-    let params = params.parse(
-        krate
-            .default_target
-            .as_deref()
-            .ok_or_else(|| anyhow!("default target missing in release"))?,
-        krate
-            .target_name
-            .as_deref()
-            .ok_or_else(|| anyhow!("target name missing in release"))?,
-        doc_targets.iter(),
-    );
+    let params = params
+        .load_and_parse(&mut *conn, matched_release.id())
+        .await?;
 
     let inner_path = if params.inner_path().is_empty() {
         format!("{}/", matched_release.target_name().unwrap())
@@ -733,10 +702,7 @@ pub(crate) async fn get_all_platforms_inner(
         .expect("we couldn't end up here without releases");
 
     let current_target = if latest_release.build_status.is_success() {
-        params
-            .doc_target()
-            .unwrap_or(&krate.default_target.unwrap())
-            .to_owned()
+        params.doc_target_or_default().to_owned()
     } else {
         String::new()
     };
@@ -746,7 +712,7 @@ pub(crate) async fn get_all_platforms_inner(
             name: params.name().to_owned(),
             version: matched_release.version().clone(),
             req_version: params.version().clone(),
-            doc_targets,
+            doc_targets: params.doc_targets().iter().map(ToOwned::to_owned).collect(),
         },
         inner_path,
         use_direct_platform_links: is_crate_root,

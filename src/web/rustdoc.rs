@@ -12,7 +12,6 @@ use crate::{
         cache::CachePolicy,
         crate_details::CrateDetails,
         csp::Csp,
-        encode_url_path,
         error::{AxumNope, AxumResult, EscapedURI},
         extractors::{DbConnection, Path, rustdoc::RustdocParams},
         file::StreamingFile,
@@ -32,7 +31,6 @@ use axum::{
     response::{IntoResponse, Response as AxumResponse},
 };
 use http::{HeaderValue, header};
-use semver::Version;
 use serde::Deserialize;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -325,28 +323,16 @@ pub(crate) async fn rustdoc_redirector_handler(
     }
 
     let matched_release = matched_release.into_canonical_req_version();
+    let rustdoc_params = RustdocParams {
+        name: matched_release.name.clone(),
+        version: matched_release.req_version.clone(),
+        doc_target: params.target,
+        inner_path: None,
+    }
+    .load_and_parse(&mut *conn, matched_release.id())
+    .await?;
 
     if matched_release.rustdoc_status() {
-        let target_name = matched_release
-            .target_name()
-            .expect("when rustdoc_status is true, target name exists");
-        let mut target = params.target.as_deref();
-        if target == Some("index.html") || target == Some(target_name) {
-            target = None;
-        }
-
-        let url_str = if let Some(target) = target {
-            format!(
-                "/{crate_name}/{}/{target}/{}/",
-                matched_release.req_version, target_name
-            )
-        } else {
-            format!(
-                "/{crate_name}/{}/{}/",
-                matched_release.req_version, target_name
-            )
-        };
-
         let cache = if matched_release.is_latest_url() {
             CachePolicy::ForeverInCdn
         } else {
@@ -355,18 +341,16 @@ pub(crate) async fn rustdoc_redirector_handler(
 
         Ok(redirect_to_doc(
             &query_pairs,
-            encode_url_path(&url_str),
+            rustdoc_params.rustdoc_url().as_str().to_string(),
             cache,
             path_in_crate,
         )?
         .into_response())
     } else {
         Ok(axum_cached_redirect(
-            EscapedURI::new_with_raw_query(
-                &format!("/crate/{crate_name}/{}", matched_release.req_version),
-                uri.query(),
-            )
-            .as_str(),
+            rustdoc_params
+                .crate_details_url()
+                .with_raw_query(uri.query()),
             CachePolicy::ForeverInCdn,
         )?
         .into_response())
