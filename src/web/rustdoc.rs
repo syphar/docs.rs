@@ -736,7 +736,7 @@ pub(crate) async fn target_redirect_handler(
             storage_path,
             "path doesn't exist, generating redirect to search"
         );
-        let (path, search) = params.generate_fallback_url()?;
+        let (path, search) = params.generate_fallback_path()?;
         let mut query_args = HashMap::new();
         if let Some(search) = search {
             query_args.insert("search".to_string(), search);

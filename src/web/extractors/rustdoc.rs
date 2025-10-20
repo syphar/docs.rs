@@ -289,12 +289,6 @@ impl ParsedRustdocParams {
         };
 
         if self.path_is_folder() {
-            if !storage_path.is_empty() && !storage_path.ends_with('/') {
-                // FIXME: do I have to handle this case somehow?
-                unreachable!();
-                panic!("never!");
-                // storage_path.push('/');
-            }
             storage_path.push_str("index.html");
         }
 
@@ -385,7 +379,7 @@ impl ParsedRustdocParams {
     /// and we just need to redirect to a search or something similar.
     ///
     /// FIXME: add tests! :)
-    pub(crate) fn generate_fallback_url(&self) -> Result<(String, Option<String>)> {
+    pub(crate) fn generate_fallback_path(&self) -> Result<(String, Option<String>)> {
         // we already split out the potentially leading target information in `Self::parse`.
         // So we have an optional target, and then the path.
         // FIXME: perhaps move this somewhere else? Taking `ParsedRustdocParams` as parameter?
