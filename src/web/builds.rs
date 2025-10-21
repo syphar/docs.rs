@@ -1,6 +1,7 @@
 use super::{
     cache::CachePolicy,
     error::{AxumNope, JsonAxumNope, JsonAxumResult},
+    extractors::rustdoc::RustdocParams,
     headers::CanonicalUrl,
 };
 use crate::{
@@ -58,26 +59,38 @@ impl BuildsPage {
 }
 
 pub(crate) async fn build_list_handler(
-    Path((name, req_version)): Path<(String, ReqVersion)>,
+    params: RustdocParams,
     mut conn: DbConnection,
     Extension(config): Extension<Arc<Config>>,
 ) -> AxumResult<impl IntoResponse> {
-    let version = match_version(&mut conn, &name, &req_version)
+    let version = match_version(&mut conn, &params.name, &params.version)
         .await?
         .assume_exact_name()?
         .into_canonical_req_version_or_else(|version| {
             AxumNope::Redirect(
-                EscapedURI::from_path(&format!("/crate/{name}/{version}/builds")),
+                params.clone().with_version(version).builds_url(),
                 CachePolicy::ForeverInCdn,
             )
         })?
         .into_version();
 
     Ok(BuildsPage {
-        metadata: MetaData::from_crate(&mut conn, &name, &version, Some(req_version)).await?,
-        builds: get_builds(&mut conn, &name, &version).await?,
-        limits: Limits::for_crate(&config, &mut conn, &name).await?,
-        canonical_url: CanonicalUrl::from_path(format!("/crate/{name}/latest/builds")),
+        metadata: MetaData::from_crate(
+            &mut conn,
+            &params.name,
+            &version,
+            Some(params.version.clone()),
+        )
+        .await?,
+        builds: get_builds(&mut conn, &params.name, &version).await?,
+        limits: Limits::for_crate(&config, &mut conn, &params.name).await?,
+        canonical_url: CanonicalUrl::from_path(
+            params
+                .clone()
+                .with_version(ReqVersion::Latest)
+                .builds_url()
+                .path(),
+        ),
     }
     .into_response())
 }

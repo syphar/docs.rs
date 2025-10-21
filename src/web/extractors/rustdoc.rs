@@ -301,6 +301,10 @@ impl RustdocParams {
         EscapedURI::from_path(&format!("/crate/{}/{}", self.name, self.version))
     }
 
+    pub(crate) fn builds_url(&self) -> EscapedURI {
+        EscapedURI::from_path(&format!("/crate/{}/{}/builds", self.name, self.version))
+    }
+
     fn has_trailing_slash(&self) -> bool {
         self.original_uri.path().ends_with('/')
     }
@@ -442,6 +446,10 @@ impl ParsedRustdocParams {
 
     pub(crate) fn crate_details_url(&self) -> EscapedURI {
         self.inner.crate_details_url()
+    }
+
+    pub(crate) fn builds_url(&self) -> EscapedURI {
+        self.inner.builds_url()
     }
 
     /// Generate a possible target path to redirect to, with the information we have.

@@ -7,6 +7,9 @@ use std::fmt;
 
 /// simplified typed header for a `Link rel=canonical` header in the response.
 /// Only takes the path to be used, url-encodes it and attaches domain & schema to it.
+///
+/// FIXME: this needs to be changed to use `Uri`, because we might have canonical urls
+/// with another domain ( = the subdomain of the crate)
 #[derive(Debug, Clone)]
 pub struct CanonicalUrl(PathAndQuery);
 
