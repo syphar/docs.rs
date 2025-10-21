@@ -167,19 +167,19 @@ impl RustdocParams {
         doc_targets: I,
     ) -> ParsedRustdocParams
     where
-        D: AsRef<str>,
-        T: AsRef<str>,
+        D: Into<String>,
+        T: Into<String>,
         I: IntoIterator<Item = V>,
-        V: AsRef<str>,
+        V: Into<String>,
     {
         // TODO: optimization: less owned variables, more references
         // TODO: nicer target logic
-        let default_target = default_target.as_ref().to_owned();
+        let default_target = default_target.into();
         debug_assert!(!default_target.is_empty());
 
         let doc_targets = doc_targets
             .into_iter()
-            .map(|s| s.as_ref().to_owned())
+            .map(|s| s.into())
             .collect::<Vec<_>>();
 
         debug_assert!(!doc_targets.is_empty());
@@ -238,7 +238,7 @@ impl RustdocParams {
 
         self.doc_target = new_target;
         self.inner_path = Some(new_path);
-        let target_name = target_name.as_ref().to_owned();
+        let target_name = target_name.into();
         debug_assert!(!target_name.is_empty());
 
         ParsedRustdocParams {
@@ -473,11 +473,8 @@ impl ParsedRustdocParams {
     {
         let mut this = self;
         f(&mut this.inner);
-        this.inner.parse(
-            this.default_target,
-            this.target_name,
-            this.doc_targets.iter().map(String::as_str),
-        )
+        this.inner
+            .parse(this.default_target, this.target_name, this.doc_targets)
     }
 
     /// generate rustdoc URL to show the rustdoc page for the given params
@@ -921,7 +918,7 @@ mod tests {
             doc_target: target.map(|s| s.into()),
             inner_path: path.map(|s| s.into()),
         }
-        .parse(DEFAULT_TARGET, "krate", TARGETS.iter());
+        .parse(DEFAULT_TARGET, "krate", TARGETS.iter().cloned());
 
         assert_eq!(parsed.name(), "krate");
         assert_eq!(parsed.version(), &ReqVersion::Latest);

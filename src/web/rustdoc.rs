@@ -36,7 +36,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     sync::{Arc, LazyLock},
 };
-use tracing::{Instrument, debug, error, info_span, instrument, trace};
+use tracing::{Instrument, error, info_span, instrument, trace};
 
 use super::extractors::PathFileExtension;
 
@@ -215,7 +215,7 @@ pub(crate) async fn rustdoc_redirector_handler(
         url_str: String,
         cache_policy: CachePolicy,
         path_in_crate: Option<&str>,
-    ) -> AxumResult<impl IntoResponse> {
+    ) -> AxumResult<AxumResponse> {
         let mut queries: BTreeMap<String, String> = BTreeMap::new();
         if let Some(path) = path_in_crate {
             queries.insert("search".into(), path.into());
@@ -249,8 +249,7 @@ pub(crate) async fn rustdoc_redirector_handler(
         return Ok(axum_cached_redirect(
             "/-/static/favicon.ico",
             CachePolicy::ForeverInCdnAndBrowser,
-        )?
-        .into_response());
+        )?);
     }
 
     let (crate_name, path_in_crate) = match params.name.split_once("::") {
@@ -259,13 +258,12 @@ pub(crate) async fn rustdoc_redirector_handler(
     };
 
     if let Some(description) = DOC_RUST_LANG_ORG_REDIRECTS.get(crate_name) {
-        return Ok(redirect_to_doc(
+        return redirect_to_doc(
             &query_pairs,
             description.href.to_string(),
             CachePolicy::ForeverInCdnAndStaleInBrowser,
             path_in_crate,
-        )?
-        .into_response());
+        );
     }
 
     // it doesn't matter if the version that was given was exact or not, since we're redirecting
@@ -276,7 +274,8 @@ pub(crate) async fn rustdoc_redirector_handler(
         &params.version.clone().unwrap_or_default(),
     )
     .await?
-    .into_exactly_named();
+    .into_exactly_named()
+    .into_canonical_req_version();
     trace!(?matched_release, "matched version");
     let crate_name = matched_release.name.clone();
 
@@ -303,7 +302,7 @@ pub(crate) async fn rustdoc_redirector_handler(
                     if !matches!(err.downcast_ref(), Some(AxumNope::ResourceNotFound))
                         && !matches!(err.downcast_ref(), Some(crate::storage::PathNotFoundError))
                     {
-                        debug!(?target, ?err, "got error serving file");
+                        error!(?target, ?err, "got error serving file");
                     }
                     // FIXME: we sometimes still get requests for toolchain
                     // specific static assets under the crate/version/ path.
@@ -322,15 +321,6 @@ pub(crate) async fn rustdoc_redirector_handler(
         .await;
     }
 
-    let matched_release = matched_release.into_canonical_req_version();
-
-    // let mut target = params.target.clone();
-    // if target.as_deref() == Some("index.html") {
-    //     // special case from old code.
-    //     // TODO: should this be in the url-generation in RustdocParams?
-    //     target = None;
-    // }
-
     let rustdoc_params = RustdocParams {
         had_trailing_slash: uri.path().ends_with('/'),
         name: matched_release.name.clone(),
@@ -338,10 +328,8 @@ pub(crate) async fn rustdoc_redirector_handler(
         doc_target: params.target,
         inner_path: None,
     }
-    .load_and_parse(&mut *conn, matched_release.id())
+    .load_and_parse(&mut conn, matched_release.id())
     .await?;
-
-    dbg!(&rustdoc_params);
 
     if matched_release.rustdoc_status() {
         let cache = if matched_release.is_latest_url() {
@@ -522,7 +510,7 @@ pub(crate) async fn rustdoc_html_server_handler(
             if !matches!(err.downcast_ref(), Some(AxumNope::ResourceNotFound))
                 && !matches!(err.downcast_ref(), Some(crate::storage::PathNotFoundError))
             {
-                debug!("got error serving {}: {}", storage_path, err);
+                error!("got error serving {}: {}", storage_path, err);
             }
 
             if !params.path_is_folder() && params.file_extension().is_none() {
@@ -561,8 +549,7 @@ pub(crate) async fn rustdoc_html_server_handler(
                 return Ok(axum_cached_redirect(
                     params.target_redirect_url(),
                     CachePolicy::ForeverInCdn,
-                )?
-                .into_response());
+                )?);
             }
 
             if storage_path

@@ -66,20 +66,46 @@ impl EscapedURI {
     /// FIXME: add tests
     /// TODO: or extend query when there is already one?
     pub fn with_raw_query(self, raw_query: Option<&str>) -> Self {
-        if let Some(raw_query) = raw_query {
-            let uri: Uri = self
-                .0
-                .parse()
-                .expect("EscapedURI always contains valid URI");
+        let Some(raw_query) = raw_query else {
+            return self;
+        };
 
-            if uri.query().is_none() {
-                EscapedURI::new_with_raw_query(uri.path(), Some(raw_query))
-            } else {
-                // FIXME: no pani
-                panic!("URI already has a query");
-            }
+        let uri: Uri = self
+            .0
+            .parse()
+            .expect("EscapedURI always contains valid URI");
+
+        if let Some(existing_query) = uri.query() {
+            let new_query = form_urlencoded::Serializer::new(String::new())
+                .extend_pairs(form_urlencoded::parse(raw_query.as_bytes()))
+                .extend_pairs(form_urlencoded::parse(existing_query.as_bytes()))
+                .finish();
+            EscapedURI::new_with_raw_query(uri.path(), Some(&new_query))
         } else {
-            self
+            EscapedURI::new_with_raw_query(uri.path(), Some(raw_query))
+        }
+    }
+
+    /// extend query part
+    pub fn extend_query(self, key: impl AsRef<str>, value: impl AsRef<str>) -> Self {
+        let uri: Uri = self
+            .0
+            .parse()
+            .expect("EscapedURI always contains valid URI");
+
+        if let Some(raw_query) = uri.query() {
+            let new_query = form_urlencoded::Serializer::new(String::new())
+                .extend_pairs(form_urlencoded::parse(raw_query.as_bytes()))
+                .append_pair(key.as_ref(), value.as_ref())
+                .finish();
+
+            EscapedURI::new_with_raw_query(uri.path(), Some(&new_query))
+        } else {
+            self.with_raw_query(Some(
+                &form_urlencoded::Serializer::new(String::new())
+                    .append_pair(key.as_ref(), value.as_ref())
+                    .finish(),
+            ))
         }
     }
 }

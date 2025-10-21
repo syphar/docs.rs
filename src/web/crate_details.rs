@@ -689,7 +689,7 @@ pub(crate) async fn get_all_platforms_inner(
     }
 
     let params = params
-        .load_and_parse(&mut *conn, matched_release.id())
+        .load_and_parse(&mut conn, matched_release.id())
         .await?;
 
     let inner_path = if params.inner_path().is_empty() {
