@@ -36,10 +36,10 @@ pub(crate) enum PageKind {
 #[derive(Clone, PartialEq, Debug)]
 pub(crate) struct RustdocParams {
     original_uri: Option<Uri>,
-    pub(crate) name: String,
-    pub(crate) version: ReqVersion,
-    pub(crate) doc_target: Option<String>,
-    pub(crate) inner_path: Option<String>,
+    name: String,
+    version: ReqVersion,
+    doc_target: Option<String>,
+    inner_path: Option<String>,
     page_kind: PageKind,
 }
 
@@ -119,9 +119,9 @@ impl RustdocParams {
         }
     }
 
-    pub(crate) fn with_name(self, name: &str) -> Self {
+    pub(crate) fn with_name(self, name: impl Into<String>) -> Self {
         RustdocParams {
-            name: name.to_owned(),
+            name: name.into(),
             ..self
         }
     }
@@ -308,6 +308,10 @@ impl RustdocParams {
 
     pub(crate) fn name(&self) -> &str {
         &self.name
+    }
+
+    pub(crate) fn version(&self) -> &ReqVersion {
+        &self.version
     }
 
     pub(crate) fn inner_path(&self) -> &str {

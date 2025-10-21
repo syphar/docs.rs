@@ -468,7 +468,7 @@ impl_axum_webpage! {
 
 #[tracing::instrument(skip(conn, storage))]
 pub(crate) async fn crate_details_handler(
-    mut params: RustdocParams,
+    params: RustdocParams,
     Extension(storage): Extension<Arc<AsyncStorage>>,
     mut conn: DbConnection,
 ) -> AxumResult<AxumResponse> {
@@ -479,7 +479,7 @@ pub(crate) async fn crate_details_handler(
         ));
     }
 
-    let matched_release = match_version(&mut conn, &params.name, &params.version)
+    let matched_release = match_version(&mut conn, &params.name(), &params.version())
         .await?
         .assume_exact_name()?
         .into_canonical_req_version_or_else(|version| {
@@ -488,7 +488,7 @@ pub(crate) async fn crate_details_handler(
                 CachePolicy::ForeverInCdn,
             )
         })?;
-    matched_release.update_params(&mut params);
+    let params = matched_release.update_params(params);
 
     let mut details = CrateDetails::from_matched_release(&mut conn, matched_release).await?;
 
@@ -523,7 +523,7 @@ pub(crate) async fn crate_details_handler(
         ..
     } = details;
 
-    let is_latest_version = params.version.is_latest();
+    let is_latest_version = params.version().is_latest();
 
     let params = params.parse_with_metadata(&metadata)?;
 
@@ -578,14 +578,14 @@ impl_axum_webpage! {
 
 #[tracing::instrument]
 pub(crate) async fn get_all_releases(
-    mut params: RustdocParams,
+    params: RustdocParams,
     mut conn: DbConnection,
 ) -> AxumResult<AxumResponse> {
     // NOTE: we're getting RustDocParams here, where both target and path are optional.
-    let matched_release = match_version(&mut conn, &params.name, &params.version)
+    let matched_release = match_version(&mut conn, &params.name(), &params.version())
         .await?
         .into_canonical_req_version_or_else(|_| AxumNope::VersionNotFound)?;
-    matched_release.update_params(&mut params);
+    let params = matched_release.update_params(params);
 
     if matched_release.build_status() != BuildStatus::Success {
         // This handler should only be used for successful builds, so then we have all rows in the
@@ -600,21 +600,6 @@ pub(crate) async fn get_all_releases(
         params,
     }
     .into_response())
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct ShortMetadata {
-    name: String,
-    version: Version,
-    req_version: ReqVersion,
-    doc_targets: Vec<String>,
-}
-
-impl ShortMetadata {
-    // Used in templates.
-    pub(crate) fn doc_targets(&self) -> Option<&[String]> {
-        Some(&self.doc_targets)
-    }
 }
 
 #[derive(Template)]
@@ -634,13 +619,14 @@ impl_axum_webpage! {
 
 #[tracing::instrument]
 pub(crate) async fn get_all_platforms_inner(
-    mut params: RustdocParams,
+    params: RustdocParams,
     mut conn: DbConnection,
     is_crate_root: bool,
 ) -> AxumResult<AxumResponse> {
-    let matched_release = match_version(&mut conn, &params.name, &params.version)
+    let matched_release = match_version(&mut conn, &params.name(), &params.version())
         .await?
         .into_exactly_named_or_else(|corrected_name, req_version| {
+            // FIXME: generate platforms url?
             AxumNope::Redirect(
                 EscapedURI::from_path(format!(
                     "/platforms/{}/{}/{}",
@@ -655,14 +641,14 @@ pub(crate) async fn get_all_platforms_inner(
             AxumNope::Redirect(
                 EscapedURI::from_path(format!(
                     "/platforms/{}/{}/{}",
-                    &params.name,
+                    &params.name(),
                     version,
                     params.inner_path(),
                 )),
                 CachePolicy::ForeverInCdn,
             )
         })?;
-    matched_release.update_params(&mut params);
+    let params = matched_release.update_params(params);
 
     let params = params
         .load_and_parse(&mut conn, matched_release.id())
@@ -700,11 +686,10 @@ pub(crate) async fn get_all_platforms_inner(
 }
 
 pub(crate) async fn get_all_platforms_root(
-    mut params: RustdocParams,
+    params: RustdocParams,
     conn: DbConnection,
 ) -> AxumResult<AxumResponse> {
-    params.inner_path.take();
-    get_all_platforms_inner(params, conn, true).await
+    get_all_platforms_inner(params.with_inner_path(""), conn, true).await
 }
 
 pub(crate) async fn get_all_platforms(

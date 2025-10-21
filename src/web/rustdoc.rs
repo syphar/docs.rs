@@ -210,7 +210,7 @@ async fn try_serve_legacy_toolchain_asset(
 /// or crate details page based on whether the given crate version was successfully built.
 #[instrument(skip(storage, conn))]
 pub(crate) async fn rustdoc_redirector_handler(
-    mut params: RustdocParams,
+    params: RustdocParams,
     Extension(storage): Extension<Arc<AsyncStorage>>,
     mut conn: DbConnection,
     RawQuery(original_query): RawQuery,
@@ -232,12 +232,12 @@ pub(crate) async fn rustdoc_redirector_handler(
 
     // global static assets for older builds are served from the root, which ends up
     // in this handler as `params.name`.
-    if let Some((_, extension)) = params.name.rsplit_once('.')
+    if let Some((_, extension)) = params.name().rsplit_once('.')
         && ["css", "js", "png", "svg", "woff", "woff2"]
             .binary_search(&extension)
             .is_ok()
     {
-        return try_serve_legacy_toolchain_asset(storage, params.name)
+        return try_serve_legacy_toolchain_asset(storage, params.name())
             .instrument(info_span!("serve static asset"))
             .await;
     }
@@ -254,9 +254,9 @@ pub(crate) async fn rustdoc_redirector_handler(
         )?);
     }
 
-    let (crate_name, path_in_crate) = match params.name.split_once("::") {
+    let (crate_name, path_in_crate) = match params.name().split_once("::") {
         Some((krate, path)) => (krate.to_owned(), Some(path.to_owned())),
-        None => (params.name.clone(), None),
+        None => (params.name().to_owned(), None),
     };
 
     if let Some(description) = DOC_RUST_LANG_ORG_REDIRECTS.get(&*crate_name) {
@@ -271,16 +271,16 @@ pub(crate) async fn rustdoc_redirector_handler(
 
     // it doesn't matter if the version that was given was exact or not, since we're redirecting
     // anyway
-    let matched_release = match_version(&mut conn, &crate_name, &params.version.clone())
+    let matched_release = match_version(&mut conn, &crate_name, &params.version().clone())
         .await?
         .into_exactly_named()
         .into_canonical_req_version();
     trace!(?matched_release, "matched version");
-    matched_release.update_params(&mut params);
+    let params = matched_release.update_params(params);
     let crate_name = matched_release.name.clone();
 
     // we might get requests to crate-specific JS/CSS files here.
-    if let Some(ref target) = params.doc_target
+    if let Some(target) = params.doc_target()
         && (target.ends_with(".js") || target.ends_with(".css"))
     {
         // this URL is actually from a crate-internal path, serve it there instead
@@ -409,7 +409,7 @@ impl RustdocPage {
 #[allow(clippy::too_many_arguments)]
 #[instrument(skip_all)]
 pub(crate) async fn rustdoc_html_server_handler(
-    mut params: RustdocParams,
+    params: RustdocParams,
     Extension(metrics): Extension<Arc<InstanceMetrics>>,
     Extension(templates): Extension<Arc<TemplateData>>,
     Extension(storage): Extension<Arc<AsyncStorage>>,
@@ -430,7 +430,7 @@ pub(crate) async fn rustdoc_html_server_handler(
     // * If both the name and the version are an exact match, return the version of the crate.
     // * If there is an exact match, but the requested crate name was corrected (dashes vs. underscores), redirect to the corrected name.
     // * If there is a semver (but not exact) match, redirect to the exact version.
-    let matched_release = match_version(&mut conn, &params.name, &params.version)
+    let matched_release = match_version(&mut conn, &params.name(), &params.version())
         .await?
         .into_exactly_named_or_else(|corrected_name, req_version| {
             AxumNope::Redirect(
@@ -449,7 +449,7 @@ pub(crate) async fn rustdoc_html_server_handler(
                 CachePolicy::ForeverInCdn,
             )
         })?;
-    matched_release.update_params(&mut params);
+    let params = matched_release.update_params(params);
 
     if !matched_release.rustdoc_status() {
         return Ok(
@@ -627,16 +627,16 @@ pub(crate) async fn rustdoc_html_server_handler(
 
 #[instrument(skip_all)]
 pub(crate) async fn target_redirect_handler(
-    mut params: RustdocParams,
+    params: RustdocParams,
     mut conn: DbConnection,
     Extension(storage): Extension<Arc<AsyncStorage>>,
 ) -> AxumResult<impl IntoResponse> {
     trace!(params=?params, "target redirect endpoint with params");
 
-    let matched_release = match_version(&mut conn, &params.name, &params.version)
+    let matched_release = match_version(&mut conn, &params.name(), &params.version())
         .await?
         .into_canonical_req_version_or_else(|_| AxumNope::VersionNotFound)?;
-    matched_release.update_params(&mut params);
+    let params = matched_release.update_params(params);
 
     let crate_details = CrateDetails::from_matched_release(&mut conn, matched_release).await?;
     let params = params.parse_with_metadata(&crate_details.metadata)?;

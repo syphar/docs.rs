@@ -246,9 +246,8 @@ impl MatchedRelease {
         matches!(self.req_version, ReqVersion::Latest)
     }
 
-    fn update_params(&self, params: &mut RustdocParams) {
-        params.name = self.name.clone();
-        params.version = self.req_version.clone();
+    fn update_params(&self, params: RustdocParams) -> RustdocParams {
+        params.with_name(&self.name).with_version(&self.req_version)
     }
 }
 
