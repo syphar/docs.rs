@@ -577,9 +577,6 @@ pub(crate) async fn get_all_releases(
     mut conn: DbConnection,
 ) -> AxumResult<AxumResponse> {
     // NOTE: we're getting RustDocParams here, where both target and path are optional.
-    // Due to how this handler is used in the `releases_list` macro, we always get both values.
-    // both values (when used in the topbar).
-
     let matched_release = match_version(&mut conn, &params.name, &params.version)
         .await?
         .into_canonical_req_version_or_else(|_| AxumNope::VersionNotFound)?;
