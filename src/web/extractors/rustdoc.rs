@@ -317,15 +317,6 @@ impl RustdocParams {
     pub(crate) fn crate_details_url(&self) -> EscapedURI {
         EscapedURI::new(&format!("/crate/{}/{}", self.name, self.version))
     }
-
-    pub(crate) fn target_redirect_url(&self) -> EscapedURI {
-        EscapedURI::new(&format!(
-            "/crate/{}/{}/target-redirect/{}",
-            self.name,
-            self.version,
-            self.path_for_url(),
-        ))
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -347,16 +338,6 @@ impl ParsedRustdocParams {
 
     pub(crate) fn with_version(mut self, version: &ReqVersion) -> Self {
         self.inner.version = version.clone();
-        self
-    }
-
-    pub(crate) fn with_inner_path(mut self, inner_path: &str) -> Self {
-        self.inner.inner_path = Some(inner_path.into());
-        self
-    }
-
-    pub(crate) fn with_doc_target(mut self, doc_target: &str) -> Self {
-        self.inner.doc_target = Some(doc_target.into());
         self
     }
 
