@@ -3,9 +3,12 @@ use crate::{
     db::{BuildId, types::BuildStatus},
     impl_axum_webpage,
     web::{
-        MetaData,
+        MetaData, ReqVersion,
         error::{AxumNope, AxumResult},
-        extractors::{DbConnection, Path},
+        extractors::{
+            DbConnection, Path,
+            rustdoc::{ParsedRustdocParams, RustdocParams},
+        },
         file::File,
         filters,
         page::templates::{RenderBrands, RenderRegular, RenderSolid},
@@ -33,12 +36,13 @@ pub(crate) struct BuildDetails {
 
 #[derive(Template)]
 #[template(path = "crate/build_details.html")]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 struct BuildDetailsPage {
     metadata: MetaData,
     build_details: BuildDetails,
     all_log_filenames: Vec<String>,
     current_filename: Option<String>,
+    params: ParsedRustdocParams,
 }
 
 impl_axum_webpage! { BuildDetailsPage }
@@ -141,8 +145,14 @@ pub(crate) async fn build_details_handler(
         (file_content, all_log_filenames, current_filename)
     };
 
+    let metadata =
+        dbg!(MetaData::from_crate(&mut conn, &params.name, &params.version, None).await?);
+    let params = RustdocParams::new(&params.name)
+        .with_version(ReqVersion::Exact(params.version))
+        .parse_with_metadata(&metadata)?;
+
     Ok(BuildDetailsPage {
-        metadata: MetaData::from_crate(&mut conn, &params.name, &params.version, None).await?,
+        metadata,
         build_details: BuildDetails {
             id,
             rustc_version: row.rustc_version,
@@ -154,6 +164,7 @@ pub(crate) async fn build_details_handler(
         },
         all_log_filenames,
         current_filename,
+        params,
     }
     .into_response())
 }

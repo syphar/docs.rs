@@ -103,7 +103,7 @@
             {%- set release_url = release_params.crate_details_url() -%}
         {% endif %}
         {# The release's name and version, `:name-:version` #}
-        {%- set release_name = "{}-{}"|format(params.name, release.version) -%}
+        {%- set release_name = "{}-{}"|format(params.name(), release.version) -%}
         {%- set warning -%}
         {%- set title -%}
         {%- set yanked = release.yanked.unwrap_or_default() -%}

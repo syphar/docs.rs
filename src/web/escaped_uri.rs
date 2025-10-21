@@ -166,6 +166,24 @@ impl PartialEq for EscapedURI {
     }
 }
 
+impl PartialEq<Uri> for EscapedURI {
+    fn eq(&self, other: &Uri) -> bool {
+        &self.0 == other
+    }
+}
+
+impl PartialEq<&str> for EscapedURI {
+    fn eq(&self, other: &&str) -> bool {
+        &self.0.to_string() == *other
+    }
+}
+
+impl PartialEq<String> for EscapedURI {
+    fn eq(&self, other: &String) -> bool {
+        &self.0.to_string() == other
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::EscapedURI;

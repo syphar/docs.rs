@@ -1,8 +1,3 @@
-use super::{
-    error::AxumResult,
-    extractors::{DbConnection, rustdoc::RustdocParams},
-    match_version,
-};
 use crate::{
     AsyncStorage,
     db::BuildId,
@@ -11,9 +6,14 @@ use crate::{
     web::{
         MetaData, ReqVersion,
         cache::CachePolicy,
-        error::AxumNope,
+        error::{AxumNope, AxumResult},
+        extractors::{
+            DbConnection,
+            rustdoc::{ParsedRustdocParams, RustdocParams},
+        },
         file::File as DbFile,
         headers::CanonicalUrl,
+        match_version,
         page::templates::{RenderBrands, RenderRegular, RenderSolid, filters},
     },
 };
@@ -165,6 +165,7 @@ struct SourcePage {
     canonical_url: CanonicalUrl,
     is_file_too_large: bool,
     is_latest_url: bool,
+    params: ParsedRustdocParams,
 }
 
 impl_axum_webpage! {
@@ -304,6 +305,7 @@ pub(crate) async fn source_browser_handler(
     } else {
         ""
     };
+    let show_parent_link = !current_folder.is_empty();
 
     let file_list = FileList::from_path(
         &mut conn,
@@ -315,21 +317,27 @@ pub(crate) async fn source_browser_handler(
     .await?
     .unwrap_or_default();
 
+    let metadata = MetaData::from_crate(
+        &mut conn,
+        &params.name,
+        &version,
+        Some(params.version.clone()),
+    )
+    .await?;
+
+    let params = params.parse_with_metadata(&metadata)?;
+    dbg!(&params);
+
     Ok(SourcePage {
         file_list,
-        metadata: MetaData::from_crate(
-            &mut conn,
-            &params.name,
-            &version,
-            Some(params.version.clone()),
-        )
-        .await?,
-        show_parent_link: !current_folder.is_empty(),
+        metadata,
+        show_parent_link,
         file,
         file_content,
         canonical_url,
         is_file_too_large,
-        is_latest_url: params.version.is_latest(),
+        is_latest_url: params.version().is_latest(),
+        params,
     }
     .into_response())
 }

@@ -1,9 +1,3 @@
-use super::{
-    cache::CachePolicy,
-    error::{AxumNope, JsonAxumNope, JsonAxumResult},
-    extractors::rustdoc::RustdocParams,
-    headers::CanonicalUrl,
-};
 use crate::{
     AsyncBuildQueue, Config,
     db::{BuildId, types::BuildStatus},
@@ -11,9 +5,15 @@ use crate::{
     impl_axum_webpage,
     web::{
         MetaData, ReqVersion,
-        error::AxumResult,
-        extractors::{DbConnection, Path},
-        filters, match_version,
+        cache::CachePolicy,
+        error::{AxumNope, AxumResult, JsonAxumNope, JsonAxumResult},
+        extractors::{
+            DbConnection, Path,
+            rustdoc::{ParsedRustdocParams, RustdocParams},
+        },
+        filters,
+        headers::CanonicalUrl,
+        match_version,
         page::templates::{RenderBrands, RenderRegular, RenderSolid},
     },
 };
@@ -48,6 +48,7 @@ struct BuildsPage {
     builds: Vec<Build>,
     limits: Limits,
     canonical_url: CanonicalUrl,
+    params: ParsedRustdocParams,
 }
 
 impl_axum_webpage! { BuildsPage }
@@ -74,19 +75,26 @@ pub(crate) async fn build_list_handler(
         })?
         .into_version();
 
+    let metadata = MetaData::from_crate(
+        &mut conn,
+        &params.name,
+        &version,
+        Some(params.version.clone()),
+    )
+    .await?;
+    let params = params.parse_with_metadata(&metadata)?;
+
     Ok(BuildsPage {
-        metadata: MetaData::from_crate(
-            &mut conn,
-            &params.name,
-            &version,
-            Some(params.version.clone()),
-        )
-        .await?,
-        builds: get_builds(&mut conn, &params.name, &version).await?,
-        limits: Limits::for_crate(&config, &mut conn, &params.name).await?,
+        metadata,
+        builds: get_builds(&mut conn, &params.name(), &version).await?,
+        limits: Limits::for_crate(&config, &mut conn, &params.name()).await?,
         canonical_url: CanonicalUrl::from_uri(
-            params.clone().with_version(ReqVersion::Latest).builds_url(),
+            params
+                .clone()
+                .with_version(&ReqVersion::Latest)
+                .builds_url(),
         ),
+        params,
     }
     .into_response())
 }

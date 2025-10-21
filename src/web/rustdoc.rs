@@ -14,7 +14,10 @@ use crate::{
         csp::Csp,
         error::{AxumNope, AxumResult},
         escaped_uri::EscapedURI,
-        extractors::{DbConnection, Path, rustdoc::RustdocParams},
+        extractors::{
+            DbConnection, Path, PathFileExtension,
+            rustdoc::{ParsedRustdocParams, RustdocParams},
+        },
         file::StreamingFile,
         match_version,
         page::{
@@ -38,8 +41,6 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use tracing::{Instrument, error, info_span, instrument, trace};
-
-use super::extractors::PathFileExtension;
 
 pub(crate) struct OfficialCrateDescription {
     pub(crate) name: &'static str,
@@ -360,6 +361,7 @@ pub struct RustdocPage {
     pub krate: CrateDetails,
     pub metadata: MetaData,
     pub current_target: String,
+    params: ParsedRustdocParams,
 }
 
 impl RustdocPage {
@@ -600,7 +602,7 @@ pub(crate) async fn rustdoc_html_server_handler(
     }
     .append_raw_query(raw_query.as_deref());
 
-    let current_target = params.doc_target_or_default();
+    let current_target = params.doc_target_or_default().unwrap_or_default();
 
     metrics
         .recently_accessed_releases
@@ -617,6 +619,7 @@ pub(crate) async fn rustdoc_html_server_handler(
         metadata: krate.metadata.clone(),
         current_target: current_target.to_owned(),
         krate,
+        params,
     });
     page.into_response(templates, metrics, blob, config.max_parse_memory)
         .await

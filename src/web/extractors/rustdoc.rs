@@ -99,6 +99,16 @@ where
 }
 
 impl RustdocParams {
+    pub(crate) fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            version: ReqVersion::default(),
+            doc_target: None,
+            inner_path: None,
+            original_uri: None,
+        }
+    }
+
     pub(crate) fn with_name(self, name: &str) -> Self {
         RustdocParams {
             name: name.to_owned(),
@@ -113,16 +123,45 @@ impl RustdocParams {
         }
     }
 
+    pub(crate) fn with_maybe_doc_target(self, doc_target: Option<impl Into<String>>) -> Self {
+        RustdocParams {
+            doc_target: doc_target.map(Into::into),
+            ..self
+        }
+    }
+
+    pub(crate) fn with_doc_target(self, doc_target: impl Into<String>) -> Self {
+        RustdocParams {
+            doc_target: Some(doc_target.into()),
+            ..self
+        }
+    }
+
+    pub(crate) fn with_inner_path(self, inner_path: impl Into<String>) -> Self {
+        RustdocParams {
+            inner_path: Some(inner_path.into()),
+            ..self
+        }
+    }
+
+    pub(crate) fn with_maybe_inner_path(self, inner_path: Option<impl Into<String>>) -> Self {
+        RustdocParams {
+            inner_path: inner_path.map(Into::into),
+            ..self
+        }
+    }
+
+    pub(crate) fn with_original_uri(self, original_uri: impl Into<Uri>) -> Self {
+        RustdocParams {
+            original_uri: Some(original_uri.into()),
+            ..self
+        }
+    }
+
     pub(crate) fn parse_with_metadata(self, metadata: &MetaData) -> Result<ParsedRustdocParams> {
         Ok(self.parse(
-            metadata
-                .default_target
-                .as_deref()
-                .ok_or_else(|| anyhow!("default target missing in release"))?,
-            metadata
-                .target_name
-                .as_deref()
-                .ok_or_else(|| anyhow!("target name missing in release"))?,
+            metadata.default_target.as_deref(),
+            metadata.target_name.as_deref(),
             metadata.doc_targets.iter().flatten(),
         ))
     }
@@ -153,14 +192,8 @@ impl RustdocParams {
             .collect();
 
         Ok(self.parse(
-            krate
-                .default_target
-                .as_deref()
-                .ok_or_else(|| anyhow!("default target missing in release"))?,
-            krate
-                .target_name
-                .as_deref()
-                .ok_or_else(|| anyhow!("target name missing in release"))?,
+            krate.default_target.as_deref(),
+            krate.target_name.as_deref(),
             doc_targets.iter(),
         ))
     }
@@ -168,8 +201,8 @@ impl RustdocParams {
     /// TODO: nice docstring
     pub(crate) fn parse<D, T, I, V>(
         mut self,
-        default_target: D,
-        target_name: T,
+        default_target: Option<D>,
+        target_name: Option<T>,
         doc_targets: I,
     ) -> ParsedRustdocParams
     where
@@ -180,15 +213,18 @@ impl RustdocParams {
     {
         // TODO: optimization: less owned variables, more references
         // TODO: nicer target logic
-        let default_target = default_target.into();
-        debug_assert!(!default_target.is_empty());
+        let default_target = default_target.map(Into::into);
+        debug_assert!(
+            default_target
+                .as_ref()
+                .map(|s| !s.is_empty())
+                .unwrap_or(true)
+        );
 
         let doc_targets = doc_targets
             .into_iter()
             .map(|s| s.into())
             .collect::<Vec<_>>();
-
-        debug_assert!(!doc_targets.is_empty());
 
         let mut new_path = if let Some(ref path) = self.inner_path {
             path.trim_start_matches('/').trim().to_string()
@@ -251,8 +287,8 @@ impl RustdocParams {
         debug_assert!(!new_path.starts_with('/')); // we should trim leading slashes
         self.inner_path = Some(new_path);
 
-        let target_name = target_name.into();
-        debug_assert!(!target_name.is_empty());
+        let target_name = target_name.map(Into::into);
+        debug_assert!(target_name.as_ref().map(|s| !s.is_empty()).unwrap_or(true));
 
         ParsedRustdocParams {
             doc_targets,
@@ -262,8 +298,16 @@ impl RustdocParams {
         }
     }
 
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+
     pub(crate) fn inner_path(&self) -> &str {
         self.inner_path.as_deref().unwrap_or_default()
+    }
+
+    pub(crate) fn doc_target(&self) -> Option<&str> {
+        self.doc_target.as_deref()
     }
 
     pub(crate) fn path_is_folder(&self) -> bool {
@@ -342,8 +386,8 @@ impl RustdocParams {
 pub(crate) struct ParsedRustdocParams {
     inner: RustdocParams,
     doc_targets: Vec<String>,
-    default_target: String,
-    target_name: String,
+    default_target: Option<String>,
+    target_name: Option<String>,
 }
 
 impl ParsedRustdocParams {
@@ -355,8 +399,13 @@ impl ParsedRustdocParams {
         &self.inner.version
     }
 
-    pub(crate) fn with_version(mut self, version: &ReqVersion) -> Self {
-        self.inner.version = version.clone();
+    pub(crate) fn with_version(mut self, version: impl Into<ReqVersion>) -> Self {
+        self.inner.version = version.into();
+        self
+    }
+
+    pub(crate) fn with_doc_target(mut self, doc_target: impl Into<String>) -> Self {
+        self.inner.doc_target = Some(doc_target.into());
         self
     }
 
@@ -364,9 +413,10 @@ impl ParsedRustdocParams {
     ///
     /// This is the path _inside_ the ZIP file we create in the build process.
     pub(crate) fn storage_path(&'_ self) -> String {
-        // FIXME: make nicer.
         let mut storage_path = if let Some(ref target) = self.inner.doc_target {
-            if target == &self.default_target {
+            if let Some(ref default_target) = self.default_target
+                && target == default_target
+            {
                 // when we have a target url param and it matches the default target
                 // we don't include it in the storage path.
                 // Files for the default target are placed at the root of the archive.
@@ -395,11 +445,11 @@ impl ParsedRustdocParams {
         self.inner.doc_target.as_deref()
     }
 
-    pub(crate) fn doc_target_or_default(&self) -> &str {
+    pub(crate) fn doc_target_or_default(&self) -> Option<&str> {
         self.inner
             .doc_target
             .as_deref()
-            .unwrap_or(&self.default_target)
+            .or(self.default_target.as_deref())
     }
 
     pub(crate) fn path_is_folder(&self) -> bool {
@@ -422,8 +472,8 @@ impl ParsedRustdocParams {
     /// If its empty, it defaults to the target name folder
     pub(crate) fn path_for_url(&self) -> String {
         generate_path_for_url(
-            Some(&self.target_name),
-            Some(&self.default_target),
+            self.target_name.as_deref(),
+            self.default_target.as_deref(),
             self.inner.doc_target.as_deref(),
             self.inner.inner_path.as_deref(),
         )
@@ -433,7 +483,10 @@ impl ParsedRustdocParams {
     /// target. This affects the geneated storage path, since default target docs are at the root,
     /// and the other target docs are in subfolders named after the target.
     pub(crate) fn target_is_default(&self) -> bool {
-        self.doc_target() == Some(&self.default_target)
+        self.default_target
+            .as_deref()
+            .map(|t| self.doc_target() == Some(t))
+            .unwrap_or(false)
     }
 
     pub(crate) fn update<F>(mut self, f: F) -> Self
@@ -448,6 +501,18 @@ impl ParsedRustdocParams {
     /// generate rustdoc URL to show the rustdoc page for the given params
     pub(crate) fn rustdoc_url(&self) -> EscapedURI {
         generate_rustdoc_url(self.name(), self.version(), &self.path_for_url())
+    }
+
+    pub(crate) fn source_url(&self) -> EscapedURI {
+        self.inner.source_url()
+    }
+
+    pub(crate) fn builds_url(&self) -> EscapedURI {
+        self.inner.builds_url()
+    }
+
+    pub(crate) fn features_url(&self) -> EscapedURI {
+        self.inner.features_url()
     }
 
     pub(crate) fn target_redirect_url(&self) -> EscapedURI {
@@ -516,12 +581,19 @@ impl ParsedRustdocParams {
             None
         };
 
+        let target_name_folder = self
+            .target_name
+            .as_deref()
+            .map(|t| format!("{t}/"))
+            .unwrap_or_default();
+
         let path = if let Some(doc_target) = self.doc_target()
-            && doc_target != self.default_target
+            && let Some(ref default_target) = self.default_target
+            && doc_target != default_target
         {
-            format!("{doc_target}/{}/", &self.target_name)
+            format!("{doc_target}/{target_name_folder}")
         } else {
-            format!("{}/", &self.target_name)
+            target_name_folder
         };
 
         (path, search_item)
@@ -565,15 +637,13 @@ impl TryFrom<MatchedRelease> for ParsedRustdocParams {
             .ok_or_else(|| anyhow!("default target missing in release"))?
             .to_owned();
 
-        let params = RustdocParams {
-            original_uri: None,
-            name: release.name,
-            version: release.req_version.clone(),
-            doc_target: None,
-            inner_path: None,
-        };
-
-        Ok(params.parse(HOST_TARGET, target_name, iter::once(HOST_TARGET)))
+        Ok(RustdocParams::new(&release.name)
+            .with_version(release.req_version)
+            .parse(
+                HOST_TARGET.into(),
+                target_name.into(),
+                iter::once(HOST_TARGET),
+            ))
     }
 }
 
@@ -679,6 +749,7 @@ mod tests {
     use super::*;
     use crate::test::{AxumResponseTestExt, AxumRouterTestExt};
     use axum::{Router, routing::get};
+    use semver::Version;
     use test_case::test_case;
 
     #[test_case(
@@ -997,14 +1068,16 @@ mod tests {
             dummy_path.push('/');
         }
 
-        let parsed = RustdocParams {
-            original_uri: Some(dummy_path.parse().unwrap()),
-            name: "krate".into(),
-            version: ReqVersion::Latest,
-            doc_target: target.map(|s| s.into()),
-            inner_path: path.map(|s| s.into()),
-        }
-        .parse(DEFAULT_TARGET, "krate", TARGETS.iter().cloned());
+        let parsed = RustdocParams::new("krate")
+            .with_version(ReqVersion::Latest)
+            .with_maybe_doc_target(target)
+            .with_maybe_inner_path(path)
+            .with_original_uri(dummy_path.parse::<Uri>().unwrap())
+            .parse(
+                DEFAULT_TARGET.into(),
+                "krate".into(),
+                TARGETS.iter().cloned(),
+            );
 
         assert_eq!(parsed.name(), "krate");
         assert_eq!(parsed.version(), &ReqVersion::Latest);
@@ -1013,5 +1086,32 @@ mod tests {
         assert_eq!(parsed.storage_path(), expected_storage_path);
     }
 
-    // TODO: tests for fallback search
+    #[test]
+    fn test_parse_source() {
+        let params = ParsedRustdocParams {
+            inner: RustdocParams {
+                original_uri: Some("/crate/dummy/0.4.0/source/README.md".parse().unwrap()),
+                name: "dummy".into(),
+                version: ReqVersion::Exact(Version::new(0, 4, 0)),
+                doc_target: None,
+                inner_path: Some("README.md".into()),
+            },
+            doc_targets: vec![
+                "x86_64-pc-windows-msvc".into(),
+                "x86_64-unknown-linux-gnu".into(),
+            ],
+            default_target: Some("x86_64-unknown-linux-gnu".into()),
+            target_name: Some("dummy".into()),
+        };
+
+        assert_eq!(params.rustdoc_url().to_string(), "/dummy/0.4.0/README.md");
+        assert_eq!(
+            params.source_url().to_string(),
+            "/crate/dummy/0.4.0/source/README.md"
+        );
+        assert_eq!(
+            params.target_redirect_url().to_string(),
+            "/crate/dummy/0.4.0/target-redirect/README.md"
+        );
+    }
 }

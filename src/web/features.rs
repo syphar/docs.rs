@@ -5,7 +5,10 @@ use crate::{
         MetaData, ReqVersion,
         cache::CachePolicy,
         error::{AxumNope, AxumResult},
-        extractors::DbConnection,
+        extractors::{
+            DbConnection,
+            rustdoc::{ParsedRustdocParams, RustdocParams},
+        },
         filters,
         headers::CanonicalUrl,
         match_version,
@@ -17,8 +20,6 @@ use askama::Template;
 use axum::response::IntoResponse;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
-
-use super::extractors::rustdoc::RustdocParams;
 
 const DEFAULT_NAME: &str = "default";
 
@@ -91,6 +92,7 @@ struct FeaturesPage {
     default_features: HashSet<String>,
     canonical_url: CanonicalUrl,
     is_latest_url: bool,
+    params: ParsedRustdocParams,
 }
 
 impl FeaturesPage {
@@ -161,6 +163,8 @@ pub(crate) async fn build_features_handler(
     )
     .await?;
 
+    let params = params.parse_with_metadata(&metadata)?;
+
     let row = sqlx::query!(
         r#"
         SELECT
@@ -169,7 +173,7 @@ pub(crate) async fn build_features_handler(
         FROM releases
         INNER JOIN crates ON crates.id = releases.crate_id
         WHERE crates.name = $1 AND releases.version = $2"#,
-        params.name,
+        params.name(),
         version.to_string(),
     )
     .fetch_optional(&mut *conn)
@@ -189,13 +193,14 @@ pub(crate) async fn build_features_handler(
         dependencies,
         sorted_features,
         default_features,
-        is_latest_url: params.version.is_latest(),
+        is_latest_url: params.version().is_latest(),
         canonical_url: CanonicalUrl::from_uri(
             params
                 .clone()
                 .with_version(ReqVersion::Latest)
                 .features_url(),
         ),
+        params,
     }
     .into_response())
 }
