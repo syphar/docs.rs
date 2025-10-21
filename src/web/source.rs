@@ -9,7 +9,7 @@ use crate::{
         error::{AxumNope, AxumResult},
         extractors::{
             DbConnection,
-            rustdoc::{ParsedRustdocParams, RustdocParams},
+            rustdoc::{PageKind, ParsedRustdocParams, RustdocParams},
         },
         file::File as DbFile,
         headers::CanonicalUrl,
@@ -192,7 +192,8 @@ pub(crate) async fn source_browser_handler(
     Extension(storage): Extension<Arc<AsyncStorage>>,
     mut conn: DbConnection,
 ) -> AxumResult<impl IntoResponse> {
-    let version = match_version(&mut conn, &params.name, &params.version)
+    let mut params = params.with_page_kind(PageKind::Source);
+    let matched_release = match_version(&mut conn, &params.name, &params.version)
         .await?
         .into_exactly_named_or_else(|corrected_name, req_version| {
             AxumNope::Redirect(
@@ -209,8 +210,9 @@ pub(crate) async fn source_browser_handler(
                 params.clone().with_version(version).source_url(),
                 CachePolicy::ForeverInCdn,
             )
-        })?
-        .into_version();
+        })?;
+    matched_release.update_params(&mut params);
+    let version = matched_release.into_version();
 
     let row = sqlx::query!(
         r#"SELECT
@@ -327,6 +329,14 @@ pub(crate) async fn source_browser_handler(
 
     let params = params.parse_with_metadata(&metadata)?;
     dbg!(&params);
+
+    for doc_target in params.doc_targets() {
+        let p = params.clone().with_doc_target(doc_target);
+        dbg!(&p);
+        dbg!(&p.rustdoc_url());
+        dbg!(&p.source_url());
+        dbg!(&p.target_redirect_url());
+    }
 
     Ok(SourcePage {
         file_list,

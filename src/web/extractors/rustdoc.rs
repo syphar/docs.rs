@@ -20,6 +20,13 @@ use crate::{
     },
 };
 
+#[derive(Clone, Debug, PartialEq, Default)]
+pub(crate) enum PageKind {
+    #[default]
+    Rustdoc,
+    Source,
+}
+
 /// can extract rustdoc parameters from path and uri.
 ///
 /// includes parsing / interpretation logic using the crate metadata.
@@ -33,6 +40,7 @@ pub(crate) struct RustdocParams {
     pub(crate) version: ReqVersion,
     pub(crate) doc_target: Option<String>,
     pub(crate) inner_path: Option<String>,
+    page_kind: PageKind,
 }
 
 /// the parameters that might come as url parameters via route.
@@ -94,6 +102,7 @@ where
             doc_target: params.target.map(|t| t.trim().to_owned()),
             inner_path: params.path.map(|p| p.trim().to_owned()),
             original_uri: Some(original_uri),
+            page_kind: PageKind::default(),
         })
     }
 }
@@ -103,9 +112,10 @@ impl RustdocParams {
         Self {
             name: name.into(),
             version: ReqVersion::default(),
+            original_uri: None,
             doc_target: None,
             inner_path: None,
-            original_uri: None,
+            page_kind: PageKind::default(),
         }
     }
 
@@ -154,6 +164,13 @@ impl RustdocParams {
     pub(crate) fn with_original_uri(self, original_uri: impl Into<Uri>) -> Self {
         RustdocParams {
             original_uri: Some(original_uri.into()),
+            ..self
+        }
+    }
+
+    pub(crate) fn with_page_kind(self, page_kind: impl Into<PageKind>) -> Self {
+        RustdocParams {
+            page_kind: page_kind.into(),
             ..self
         }
     }
@@ -323,21 +340,23 @@ impl RustdocParams {
             .and_then(|uri| get_file_extension(uri.path()))
     }
 
-    /// generate the path portion of a URL for these params.
-    ///
-    /// Simpler version than `ParsedRustdocParams::path_for_url`, for cases where we don't
-    /// have all the information yet.
-    pub(crate) fn path_for_url(&self) -> String {
-        generate_path_for_url(
-            None,
-            None,
-            self.doc_target.as_deref(),
-            self.inner_path.as_deref(),
-        )
+    pub(crate) fn page_kind(&self) -> &PageKind {
+        &self.page_kind
     }
 
     pub(crate) fn rustdoc_url(&self) -> EscapedURI {
-        generate_rustdoc_url(&self.name, &self.version, &self.path_for_url())
+        let inner_path = if matches!(self.page_kind, PageKind::Rustdoc) {
+            generate_path_for_url(
+                None,
+                None,
+                self.doc_target.as_deref(),
+                self.inner_path.as_deref(),
+            )
+        } else {
+            generate_path_for_url(None, None, self.doc_target.as_deref(), None)
+        };
+
+        generate_rustdoc_url(&self.name, &self.version, &inner_path)
     }
 
     pub(crate) fn crate_details_url(&self) -> EscapedURI {
@@ -353,11 +372,17 @@ impl RustdocParams {
     }
 
     pub(crate) fn source_url(&self) -> EscapedURI {
+        // if the params were created for a rustdoc page,
+        // the inner path is a source file path, so is not usable for
+        // source urls.
+        let inner_path = if matches!(self.page_kind, PageKind::Source) {
+            self.inner_path()
+        } else {
+            ""
+        };
         EscapedURI::from_path(format!(
             "/crate/{}/{}/source/{}",
-            self.name,
-            self.version,
-            self.inner_path()
+            &self.name, &self.version, &inner_path
         ))
     }
 
@@ -366,11 +391,26 @@ impl RustdocParams {
     }
 
     pub(crate) fn target_redirect_url(&self) -> EscapedURI {
+        let inner_path = if matches!(self.page_kind(), PageKind::Rustdoc) {
+            generate_path_for_url(
+                None,
+                None,
+                self.doc_target.as_deref(),
+                self.inner_path.as_deref(),
+            )
+        } else {
+            generate_path_for_url(
+                None,
+                None,
+                self.doc_target.as_deref(),
+                // without path when we have a source page
+                None,
+            )
+        };
+
         EscapedURI::from_path(format!(
             "/crate/{}/{}/target-redirect/{}",
-            self.name,
-            self.version,
-            self.path_for_url(),
+            self.name, self.version, inner_path,
         ))
     }
 
@@ -464,21 +504,6 @@ impl ParsedRustdocParams {
         self.inner.inner_path.as_deref().unwrap_or_default()
     }
 
-    /// generate the path portion of a URL for these params.
-    ///
-    /// Most of the time this is the storage path, but without `/index.html` if its a folder.
-    ///
-    /// Will also check the inner path:
-    /// If its empty, it defaults to the target name folder
-    pub(crate) fn path_for_url(&self) -> String {
-        generate_path_for_url(
-            self.target_name.as_deref(),
-            self.default_target.as_deref(),
-            self.inner.doc_target.as_deref(),
-            self.inner.inner_path.as_deref(),
-        )
-    }
-
     /// check if we have a target component in the path, that matches the default
     /// target. This affects the geneated storage path, since default target docs are at the root,
     /// and the other target docs are in subfolders named after the target.
@@ -498,9 +523,30 @@ impl ParsedRustdocParams {
             .parse(self.default_target, self.target_name, self.doc_targets)
     }
 
+    pub(crate) fn page_kind(&self) -> &PageKind {
+        self.inner.page_kind()
+    }
+
     /// generate rustdoc URL to show the rustdoc page for the given params
     pub(crate) fn rustdoc_url(&self) -> EscapedURI {
-        generate_rustdoc_url(self.name(), self.version(), &self.path_for_url())
+        let inner_path = if matches!(self.page_kind(), PageKind::Rustdoc) {
+            generate_path_for_url(
+                self.target_name.as_deref(),
+                self.default_target.as_deref(),
+                self.doc_target().as_deref(),
+                self.inner.inner_path.as_deref(),
+            )
+        } else {
+            generate_path_for_url(
+                self.target_name.as_deref(),
+                self.default_target.as_deref(),
+                self.doc_target().as_deref(),
+                // ignore the path when we have a rustdoc page in the params.
+                None,
+            )
+        };
+
+        generate_rustdoc_url(self.name(), self.version(), &inner_path)
     }
 
     pub(crate) fn source_url(&self) -> EscapedURI {
@@ -516,11 +562,26 @@ impl ParsedRustdocParams {
     }
 
     pub(crate) fn target_redirect_url(&self) -> EscapedURI {
+        let inner_path = if matches!(self.page_kind(), PageKind::Rustdoc) {
+            generate_path_for_url(
+                self.target_name.as_deref(),
+                self.default_target.as_deref(),
+                self.inner.doc_target.as_deref(),
+                self.inner.inner_path.as_deref(),
+            )
+        } else {
+            generate_path_for_url(
+                self.target_name.as_deref(),
+                self.default_target.as_deref(),
+                self.inner.doc_target.as_deref(),
+                None,
+            )
+        };
         EscapedURI::from_path(format!(
             "/crate/{}/{}/target-redirect/{}",
             self.name(),
             self.version(),
-            self.path_for_url(),
+            inner_path,
         ))
     }
 
@@ -783,7 +844,8 @@ mod tests {
             name: "krate".into(),
             version: ReqVersion::Latest,
             doc_target: None,
-            inner_path: None
+            inner_path: None,
+            page_kind: PageKind::Rustdoc,
         };
         "just name"
     )]
@@ -794,7 +856,8 @@ mod tests {
             name: "krate".into(),
             version: ReqVersion::Latest,
             doc_target: None,
-            inner_path: None
+            inner_path: None,
+            page_kind: PageKind::Rustdoc,
         };
         "just name with trailing slash"
     )]
@@ -805,7 +868,8 @@ mod tests {
             name: "krate".into(),
             version: ReqVersion::Latest,
             doc_target: None,
-            inner_path: None
+            inner_path: None,
+            page_kind: PageKind::Rustdoc,
         };
         "just name and version"
     )]
@@ -816,7 +880,8 @@ mod tests {
             name: "krate".into(),
             version: ReqVersion::Latest,
             doc_target: None,
-            inner_path: Some("static.html".into())
+            inner_path: Some("static.html".into()),
+            page_kind: PageKind::Rustdoc,
         };
         "name, version, path extract"
     )]
@@ -827,7 +892,8 @@ mod tests {
             name: "krate".into(),
             version: ReqVersion::Latest,
             doc_target: None,
-            inner_path: Some("path_add/static.html".into())
+            inner_path: Some("path_add/static.html".into()),
+            page_kind: PageKind::Rustdoc,
         };
         "name, version, path extract, static suffix"
     )]
@@ -839,6 +905,7 @@ mod tests {
             version: ReqVersion::Latest,
             doc_target: None,
             inner_path: Some("clapproc `macro.html".into()),
+            page_kind: PageKind::Rustdoc,
         };
         "name, version, static suffix with some urlencoding"
     )]
@@ -849,7 +916,8 @@ mod tests {
             name: "krate".into(),
             version: ReqVersion::Latest,
             doc_target: None,
-            inner_path: Some("static.html".into())
+            inner_path: Some("static.html".into()),
+            page_kind: PageKind::Rustdoc,
         };
         "name, version, static suffix"
     )]
@@ -860,7 +928,8 @@ mod tests {
             name: "krate".into(),
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
             doc_target: Some("some-target".into()),
-            inner_path: None
+            inner_path: None,
+            page_kind: PageKind::Rustdoc,
         };
         "name, version, target"
     )]
@@ -871,7 +940,8 @@ mod tests {
             name: "krate".into(),
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
             doc_target: Some("some-target".into()),
-            inner_path: Some("folder/something.html".into())
+            inner_path: Some("folder/something.html".into()),
+            page_kind: PageKind::Rustdoc,
         };
         "name, version, target, static suffix"
     )]
@@ -882,7 +952,8 @@ mod tests {
             name: "krate".into(),
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
             doc_target: Some("some-target".into()),
-            inner_path: None
+            inner_path: None,
+            page_kind: PageKind::Rustdoc,
         };
         "name, version, target trailing slash"
     )]
@@ -893,7 +964,8 @@ mod tests {
             name: "krate".into(),
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
             doc_target: Some("some-target".into()),
-            inner_path: Some("some/path/to/a/file.html".into())
+            inner_path: Some("some/path/to/a/file.html".into()),
+            page_kind: PageKind::Rustdoc,
         };
         "name, version, target, path"
     )]
@@ -904,7 +976,8 @@ mod tests {
             name: "krate".into(),
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
             doc_target: Some("some-target".into()),
-            inner_path: Some("path_add/path/to/a/file.html".into())
+            inner_path: Some("path_add/path/to/a/file.html".into()),
+            page_kind: PageKind::Rustdoc,
         };
         "name, version, target, path, static suffix"
     )]
@@ -1095,6 +1168,7 @@ mod tests {
                 version: ReqVersion::Exact(Version::new(0, 4, 0)),
                 doc_target: None,
                 inner_path: Some("README.md".into()),
+                page_kind: PageKind::Source,
             },
             doc_targets: vec![
                 "x86_64-pc-windows-msvc".into(),
@@ -1104,14 +1178,47 @@ mod tests {
             target_name: Some("dummy".into()),
         };
 
-        assert_eq!(params.rustdoc_url().to_string(), "/dummy/0.4.0/README.md");
+        assert_eq!(params.rustdoc_url().to_string(), "/dummy/0.4.0/dummy/");
         assert_eq!(
             params.source_url().to_string(),
             "/crate/dummy/0.4.0/source/README.md"
         );
         assert_eq!(
             params.target_redirect_url().to_string(),
-            "/crate/dummy/0.4.0/target-redirect/README.md"
+            "/crate/dummy/0.4.0/target-redirect/dummy/"
+        );
+    }
+
+    #[test]
+    fn test_parse_source_2() {
+        let params = ParsedRustdocParams {
+            inner: RustdocParams {
+                original_uri: Some("/crate/dummy/0.4.0/source/README.md".parse().unwrap()),
+                name: "dummy".into(),
+                version: ReqVersion::Exact(Version::new(0, 4, 0)),
+                doc_target: Some("x86_64-pc-windows-msvc".into()),
+                inner_path: Some("README.md".into()),
+                page_kind: PageKind::Source,
+            },
+            doc_targets: vec![
+                "x86_64-pc-windows-msvc".into(),
+                "x86_64-unknown-linux-gnu".into(),
+            ],
+            default_target: Some("x86_64-unknown-linux-gnu".into()),
+            target_name: Some("dummy".into()),
+        };
+
+        assert_eq!(
+            params.rustdoc_url().to_string(),
+            "/dummy/0.4.0/x86_64-pc-windows-msvc/dummy/"
+        );
+        assert_eq!(
+            params.source_url().to_string(),
+            "/crate/dummy/0.4.0/source/README.md"
+        );
+        assert_eq!(
+            params.target_redirect_url().to_string(),
+            "/crate/dummy/0.4.0/target-redirect/x86_64-pc-windows-msvc/dummy/"
         );
     }
 }
