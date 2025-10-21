@@ -464,16 +464,20 @@ impl_axum_webpage! {
 
 #[tracing::instrument(skip(conn, storage))]
 pub(crate) async fn crate_details_handler(
-    mut params: RustdocParams,
+    params: RustdocParams,
     Extension(storage): Extension<Arc<AsyncStorage>>,
     mut conn: DbConnection,
 ) -> AxumResult<AxumResponse> {
-    if !params.path_matches_generated_crate_details() {
-        return Err(AxumNope::Redirect(
-            params.crate_details_url(),
-            CachePolicy::ForeverInCdn,
-        ));
-    }
+    let mut params = params.normalize_or_else(|original_path: &str, params: &RustdocParams| {
+        if original_path != params.crate_details_url().as_str() {
+            Some(AxumNope::Redirect(
+                params.crate_details_url(),
+                CachePolicy::ForeverInCdn,
+            ))
+        } else {
+            None
+        }
+    })?;
 
     let matched_release = match_version(&mut conn, &params.name, &params.version)
         .await?
@@ -1953,8 +1957,8 @@ mod tests {
                 &env,
                 "/crate/dummy-ba/latest/menus/releases/dummy_ba/index.html",
                 vec![
-                    "/crate/dummy-ba/0.5.0/target-redirect/dummy_ba/index.html".to_string(),
-                    "/crate/dummy-ba/0.4.0/target-redirect/dummy_ba/index.html".to_string(),
+                    "/crate/dummy-ba/0.5.0/target-redirect/dummy_ba/".to_string(),
+                    "/crate/dummy-ba/0.4.0/target-redirect/dummy_ba/".to_string(),
                 ],
             )
             .await;
@@ -1963,8 +1967,8 @@ mod tests {
                 &env,
                 "/crate/dummy-ba/latest/menus/releases/x86_64-unknown-linux-gnu/dummy_ba/index.html",
                 vec![
-                    "/crate/dummy-ba/0.5.0/target-redirect/x86_64-unknown-linux-gnu/dummy_ba/index.html".to_string(),
-                    "/crate/dummy-ba/0.4.0/target-redirect/x86_64-unknown-linux-gnu/dummy_ba/index.html".to_string(),
+                    "/crate/dummy-ba/0.5.0/target-redirect/x86_64-unknown-linux-gnu/dummy_ba/".to_string(),
+                    "/crate/dummy-ba/0.4.0/target-redirect/x86_64-unknown-linux-gnu/dummy_ba/".to_string(),
                 ],
             ).await;
 

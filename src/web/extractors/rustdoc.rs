@@ -210,8 +210,8 @@ impl RustdocParams {
                 }
             }
         } else {
-            // there is no separate target component given.
-            // we look at the first component of the path and see if it matches a target.
+            // there is no separate target component given in the route parameters.
+            // We look at the first component of the path and see if it matches a target.
 
             if let Some(pos) = new_path.find('/') {
                 let potential_target = &new_path[..pos];
@@ -235,8 +235,15 @@ impl RustdocParams {
             };
         }
 
+        if let Some(ref new_target) = new_target {
+            debug_assert!(!new_target.contains('/'));
+            debug_assert!(new_target.contains('-'));
+        }
         self.doc_target = new_target;
+
+        debug_assert!(!new_path.starts_with('/')); // we should trim leading slashes
         self.inner_path = Some(new_path);
+
         let target_name = target_name.into();
         debug_assert!(!target_name.is_empty());
 
@@ -249,12 +256,7 @@ impl RustdocParams {
     }
 
     pub(crate) fn inner_path(&self) -> &str {
-        if let Some(ref path) = self.inner_path {
-            debug_assert!(!path.starts_with('/')); // we trim leading slashes
-            path
-        } else {
-            ""
-        }
+        self.inner_path.as_deref().unwrap_or_default()
     }
 
     pub(crate) fn path_is_folder(&self) -> bool {
@@ -283,46 +285,35 @@ impl RustdocParams {
     /// Simpler version than `ParsedRustdocParams::path_for_url`, for cases where we don't
     /// have all the information yet.
     pub(crate) fn path_for_url(&self) -> String {
-        // FIXME: make nicer.
-        let path = if let Some(ref target) = self.doc_target {
-            format!(
-                "{}/{}",
-                target,
-                self.inner_path.as_deref().unwrap_or_default()
-            )
-        } else {
-            // without target in the url params, we can just use the path.
-            self.inner_path.clone().unwrap_or_default()
-        };
-
-        // for folders we might have `index.html` at the end.
-        // We want to normalize the requests here, so a trailing `/index.html` will be cut off.
-        if path.ends_with("/index.html") {
-            path.trim_end_matches("index.html").to_string()
-        } else {
-            path
-        }
+        generate_path_for_url(
+            None,
+            None,
+            self.doc_target.as_deref(),
+            self.inner_path.as_deref(),
+        )
     }
 
     pub(crate) fn rustdoc_url(&self) -> EscapedURI {
-        EscapedURI::new(&format!(
-            "/{}/{}/{}",
-            self.name,
-            self.version,
-            self.path_for_url(),
-        ))
+        generate_rustdoc_url(&self.name, &self.version, &self.path_for_url())
     }
 
     pub(crate) fn crate_details_url(&self) -> EscapedURI {
         EscapedURI::new(&format!("/crate/{}/{}", self.name, self.version))
     }
 
-    pub(crate) fn has_trailing_slash(&self) -> bool {
+    fn has_trailing_slash(&self) -> bool {
         self.original_uri.path().ends_with('/')
     }
 
-    pub(crate) fn path_matches_generated_crate_details(&self) -> bool {
-        self.original_uri.path() == self.crate_details_url().as_str()
+    pub(crate) fn normalize_or_else<F>(self, f: F) -> Result<Self, AxumNope>
+    where
+        F: FnOnce(&str, &Self) -> Option<AxumNope>,
+    {
+        if let Some(err) = f(&self.original_uri.path(), &self) {
+            Err(err)
+        } else {
+            Ok(self)
+        }
     }
 
     pub(crate) fn target_redirect_url(&self) -> EscapedURI {
@@ -418,40 +409,12 @@ impl ParsedRustdocParams {
     /// Will also check the inner path:
     /// If its empty, it defaults to the target name folder
     pub(crate) fn path_for_url(&self) -> String {
-        let inner_path = if let Some(ref inner_path) = self.inner.inner_path
-            && !inner_path.is_empty()
-            // special case: if the inner path is just "index.html", we assume we have to attach
-            // the `target_name`
-            && inner_path != "index.html"
-        {
-            inner_path.to_owned()
-        } else {
-            format!("{}/", &self.target_name)
-        };
-
-        // FIXME: make nicer.
-        let path = if let Some(ref target) = self.inner.doc_target {
-            if target == &self.default_target {
-                // when we have a target url param and it matches the default target
-                // we don't include it in the storage path.
-                // Files for the default target are placed at the root of the archive.
-                inner_path
-            } else {
-                // all non-default targets are in subfolders named after that target.
-                format!("{}/{}", target, inner_path)
-            }
-        } else {
-            // without target in the url params, we can just use the path.
-            inner_path
-        };
-
-        // for folders we might have `index.html` at the end.
-        // We want to normalize the requests here, so a trailing `/index.html` will be cut off.
-        if path.ends_with("/index.html") {
-            path.trim_end_matches("index.html").to_string()
-        } else {
-            path
-        }
+        generate_path_for_url(
+            Some(&self.target_name),
+            Some(&self.default_target),
+            self.inner.doc_target.as_deref(),
+            self.inner.inner_path.as_deref(),
+        )
     }
 
     /// check if we have a target component in the path, that matches the default
@@ -461,24 +424,18 @@ impl ParsedRustdocParams {
         self.doc_target() == Some(&self.default_target)
     }
 
-    pub(crate) fn update<F>(self, f: F) -> Self
+    pub(crate) fn update<F>(mut self, f: F) -> Self
     where
         F: FnOnce(&mut RustdocParams),
     {
-        let mut this = self;
-        f(&mut this.inner);
-        this.inner
-            .parse(this.default_target, this.target_name, this.doc_targets)
+        f(&mut self.inner);
+        self.inner
+            .parse(self.default_target, self.target_name, self.doc_targets)
     }
 
     /// generate rustdoc URL to show the rustdoc page for the given params
     pub(crate) fn rustdoc_url(&self) -> EscapedURI {
-        EscapedURI::new(&format!(
-            "/{}/{}/{}",
-            self.name(),
-            self.version(),
-            self.path_for_url()
-        ))
+        generate_rustdoc_url(self.name(), self.version(), &self.path_for_url())
     }
 
     pub(crate) fn target_redirect_url(&self) -> EscapedURI {
@@ -580,6 +537,57 @@ fn url_decode<'a>(input: &'a str) -> Result<Cow<'a, str>> {
     Ok(percent_encoding::percent_decode(input.as_bytes()).decode_utf8()?)
 }
 
+fn generate_rustdoc_url(name: &str, version: &ReqVersion, path: &str) -> EscapedURI {
+    EscapedURI::new(&format!("/{}/{}/{}", name, version, path))
+}
+
+fn generate_path_for_url(
+    target_name: Option<&str>,
+    default_target: Option<&str>,
+    doc_target: Option<&str>,
+    inner_path: Option<&str>,
+) -> String {
+    let inner_path = if let Some(target_name) = target_name {
+        if let Some(inner_path) = inner_path
+                && !inner_path.is_empty()
+                // special case: if the inner path is just "index.html", we assume we have to attach
+                // the `target_name`
+                && inner_path != "index.html"
+        {
+            inner_path.to_owned()
+        } else {
+            format!("{}/", target_name)
+        }
+    } else {
+        inner_path.unwrap_or("").to_owned()
+    };
+
+    let path = if let Some(target) = doc_target {
+        if let Some(default_target) = default_target
+            && target == default_target
+        {
+            // when we have a target url param and it matches the default target
+            // we don't include it in the storage path.
+            // Files for the default target are placed at the root of the archive.
+            inner_path
+        } else {
+            // all non-default targets are in subfolders named after that target.
+            format!("{}/{}", target, inner_path)
+        }
+    } else {
+        // without target in the url params, we can just use the path.
+        inner_path
+    };
+
+    // for folders we might have `index.html` at the end.
+    // We want to normalize the requests here, so a trailing `/index.html` will be cut off.
+    if path.ends_with("/index.html") {
+        path.trim_end_matches("index.html").to_string()
+    } else {
+        path
+    }
+}
+
 /// we sometimes have routes with a static suffix.
 ///
 /// For example: `/{name}/{version}/help.html`
@@ -653,6 +661,28 @@ mod tests {
         find_static_route_suffix(route, path)
     }
 
+    #[test_case(
+        "/{name}",
+        RustdocParams {
+            original_uri: "/krate".parse().unwrap(),
+            name: "krate".into(),
+            version: ReqVersion::Latest,
+            doc_target: None,
+            inner_path: None
+        };
+        "just name"
+    )]
+    #[test_case(
+        "/{name}/",
+        RustdocParams {
+            original_uri: "/krate/".parse().unwrap(),
+            name: "krate".into(),
+            version: ReqVersion::Latest,
+            doc_target: None,
+            inner_path: None
+        };
+        "just name with trailing slash"
+    )]
     #[test_case(
         "/{name}/{version}",
         RustdocParams {
