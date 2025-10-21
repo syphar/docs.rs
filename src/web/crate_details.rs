@@ -9,7 +9,6 @@ use crate::{
         MatchedRelease, MetaData, ReqVersion,
         cache::CachePolicy,
         error::{AxumNope, AxumResult},
-        escaped_uri::EscapedURI,
         extractors::{
             DbConnection,
             rustdoc::{ParsedRustdocParams, RustdocParams},
@@ -626,25 +625,18 @@ pub(crate) async fn get_all_platforms_inner(
     let matched_release = match_version(&mut conn, &params.name(), &params.version())
         .await?
         .into_exactly_named_or_else(|corrected_name, req_version| {
-            // FIXME: generate platforms url?
             AxumNope::Redirect(
-                EscapedURI::from_path(format!(
-                    "/platforms/{}/{}/{}",
-                    corrected_name,
-                    req_version,
-                    params.inner_path(),
-                )),
+                params
+                    .clone()
+                    .with_name(corrected_name)
+                    .with_version(req_version)
+                    .platforms_partial_url(),
                 CachePolicy::NoCaching,
             )
         })?
         .into_canonical_req_version_or_else(|version| {
             AxumNope::Redirect(
-                EscapedURI::from_path(format!(
-                    "/platforms/{}/{}/{}",
-                    &params.name(),
-                    version,
-                    params.inner_path(),
-                )),
+                params.clone().with_version(version).platforms_partial_url(),
                 CachePolicy::ForeverInCdn,
             )
         })?;
@@ -1795,6 +1787,7 @@ mod tests {
             url: &str,
             should_contain_redirect: bool,
         ) {
+            dbg!(&url);
             let response = env.web_app().await.get(url).await.unwrap();
             let status = response.status();
             assert!(
@@ -1808,17 +1801,23 @@ mod tests {
             let list1 = check_links(text.clone(), false, should_contain_redirect);
 
             // Same test with AJAX endpoint.
-            let platform_menu_url = kuchikiki::parse_html()
-                .one(text)
-                .select_first("#platforms")
-                .expect("invalid selector")
-                .attributes
-                .borrow()
-                .get("data-url")
-                .expect("data-url")
-                .to_string();
+            let platform_menu_url = dbg!(
+                kuchikiki::parse_html()
+                    .one(text)
+                    .select_first("#platforms")
+                    .expect("invalid selector")
+                    .attributes
+                    .borrow()
+                    .get("data-url")
+                    .expect("data-url")
+                    .to_string()
+            );
             let response = env.web_app().await.get(&platform_menu_url).await.unwrap();
-            assert!(response.status().is_success());
+            assert!(
+                response.status().is_success(),
+                "{}",
+                response.text().await.unwrap()
+            );
             response.assert_cache_control(CachePolicy::ForeverInCdn, &env.config());
             let list2 = check_links(
                 response.text().await.unwrap(),

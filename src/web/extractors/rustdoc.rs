@@ -360,6 +360,26 @@ impl RustdocParams {
         EscapedURI::from_path(format!("/crate/{}/{}", self.name, self.version))
     }
 
+    pub(crate) fn platforms_partial_url(&self) -> EscapedURI {
+        dbg!(&self);
+        dbg!(&self.path_for_rustdoc_url());
+        EscapedURI::from_path(format!(
+            "/crate/{}/{}/menus/platforms/{}",
+            self.name,
+            self.version,
+            self.path_for_rustdoc_url()
+        ))
+    }
+
+    pub(crate) fn releases_partial_url(&self) -> EscapedURI {
+        EscapedURI::from_path(format!(
+            "/crate/{}/{}/menus/releases/{}",
+            self.name,
+            self.version,
+            self.path_for_rustdoc_url()
+        ))
+    }
+
     pub(crate) fn builds_url(&self) -> EscapedURI {
         EscapedURI::from_path(format!("/crate/{}/{}/builds", self.name, self.version))
     }
@@ -527,6 +547,14 @@ impl ParsedRustdocParams {
 
     pub(crate) fn builds_url(&self) -> EscapedURI {
         self.inner.builds_url()
+    }
+
+    pub(crate) fn platforms_partial_url(&self) -> EscapedURI {
+        self.inner.platforms_partial_url()
+    }
+
+    pub(crate) fn releases_partial_url(&self) -> EscapedURI {
+        self.inner.releases_partial_url()
     }
 
     pub(crate) fn features_url(&self) -> EscapedURI {

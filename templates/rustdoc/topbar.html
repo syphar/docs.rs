@@ -9,8 +9,6 @@
 {%- else -%}
     {%- set rest_menu_url = String::new() -%}
 {%- endif -%}
-{%- set platform_menu_url = "{}/menus/platforms{}"|format(crate_url, rest_menu_url) -%}
-{%- set releases_menu_url = "{}/menus/releases{}"|format(crate_url, rest_menu_url) -%}
 <ul class="pure-menu-list">
     <script id="crate-metadata" type="application/json">
         {# the only text that needs escaping in a <script> is `</`, none of the
@@ -153,7 +151,7 @@
                             <li class="pure-menu-heading">Versions</li>
 
                             <li class="pure-menu-item">
-                                <div class="pure-menu pure-menu-scrollable sub-menu" id="releases-list" tabindex="-1" data-url="{{ releases_menu_url }}">
+                                <div class="pure-menu pure-menu-scrollable sub-menu" id="releases-list" tabindex="-1" data-url="{{ params.releases_partial_url() }}">
                                     <span class="rotate">{{ crate::icons::IconSpinner.render_solid(false, false, "") }}</span>
                                 </div>
                             </li>
@@ -233,7 +231,7 @@
                 </a>
 
                 {# Build the dropdown list showing available targets #}
-                <ul class="pure-menu-children" id="platforms" data-url="{{ platform_menu_url }}">
+                <ul class="pure-menu-children" id="platforms" data-url="{{ params.platforms_partial_url() }}">
                     {%- if doc_targets.len() < crate::DEFAULT_MAX_TARGETS -%}
                         {%- set use_direct_platform_links = use_direct_platform_links() -%}
                         {%- include "rustdoc/platforms.html" -%}

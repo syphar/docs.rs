@@ -258,7 +258,7 @@ pub(super) fn build_axum_routes() -> AxumRouter {
             get_internal(super::source::source_browser_handler),
         )
         .route(
-            "/crate/{name}/{version}/menus/platforms/{target}",
+            "/crate/{name}/{version}/menus/platforms/{target}/",
             get_internal(super::crate_details::get_all_platforms),
         )
         .route(
@@ -266,7 +266,7 @@ pub(super) fn build_axum_routes() -> AxumRouter {
             get_internal(super::crate_details::get_all_platforms),
         )
         .route(
-            "/crate/{name}/{version}/menus/platforms",
+            "/crate/{name}/{version}/menus/platforms/",
             get_internal(super::crate_details::get_all_platforms_root),
         )
         .route(
