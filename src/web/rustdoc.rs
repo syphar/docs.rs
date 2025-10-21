@@ -164,13 +164,6 @@ pub(crate) static DOC_RUST_LANG_ORG_REDIRECTS: LazyLock<HashMap<&str, OfficialCr
         ])
     });
 
-#[derive(Debug, Clone, Deserialize)]
-pub(crate) struct RustdocRedirectorParams {
-    name: String,
-    version: Option<ReqVersion>,
-    target: Option<String>,
-}
-
 /// try to serve a toolchain specific asset from the legacy location.
 ///
 /// Newer rustdoc builds use a specific subfolder on the bucket,
@@ -203,7 +196,7 @@ async fn try_serve_legacy_toolchain_asset(
 /// or crate details page based on whether the given crate version was successfully built.
 #[instrument(skip(storage, conn))]
 pub(crate) async fn rustdoc_redirector_handler(
-    Path(params): Path<RustdocRedirectorParams>,
+    mut params: RustdocParams,
     Extension(storage): Extension<Arc<AsyncStorage>>,
     mut conn: DbConnection,
     Query(query_pairs): Query<HashMap<String, String>>,
@@ -253,34 +246,34 @@ pub(crate) async fn rustdoc_redirector_handler(
     }
 
     let (crate_name, path_in_crate) = match params.name.split_once("::") {
-        Some((krate, path)) => (krate, Some(path)),
-        None => (params.name.as_str(), None),
+        Some((krate, path)) => (krate.to_owned(), Some(path.to_owned())),
+        None => (params.name.clone(), None),
     };
 
-    if let Some(description) = DOC_RUST_LANG_ORG_REDIRECTS.get(crate_name) {
+    params.name = crate_name.to_owned();
+
+    if let Some(description) = DOC_RUST_LANG_ORG_REDIRECTS.get(&*crate_name) {
         return redirect_to_doc(
             &query_pairs,
             description.href.to_string(),
             CachePolicy::ForeverInCdnAndStaleInBrowser,
-            path_in_crate,
+            path_in_crate.as_deref(),
         );
     }
 
     // it doesn't matter if the version that was given was exact or not, since we're redirecting
     // anyway
-    let matched_release = match_version(
-        &mut conn,
-        crate_name,
-        &params.version.clone().unwrap_or_default(),
-    )
-    .await?
-    .into_exactly_named()
-    .into_canonical_req_version();
+    let matched_release = match_version(&mut conn, &crate_name, &params.version.clone())
+        .await?
+        .into_exactly_named()
+        .into_canonical_req_version();
     trace!(?matched_release, "matched version");
     let crate_name = matched_release.name.clone();
+    params.name = crate_name.clone();
+    params.version = matched_release.req_version.clone();
 
     // we might get requests to crate-specific JS/CSS files here.
-    if let Some(ref target) = params.target
+    if let Some(ref target) = params.doc_target
         && (target.ends_with(".js") || target.ends_with(".css"))
     {
         // this URL is actually from a crate-internal path, serve it there instead
@@ -321,15 +314,9 @@ pub(crate) async fn rustdoc_redirector_handler(
         .await;
     }
 
-    let rustdoc_params = RustdocParams {
-        had_trailing_slash: uri.path().ends_with('/'),
-        name: matched_release.name.clone(),
-        version: matched_release.req_version.clone(),
-        doc_target: params.target,
-        inner_path: None,
-    }
-    .load_and_parse(&mut conn, matched_release.id())
-    .await?;
+    let params = params
+        .load_and_parse(&mut conn, matched_release.id())
+        .await?;
 
     if matched_release.rustdoc_status() {
         let cache = if matched_release.is_latest_url() {
@@ -340,16 +327,14 @@ pub(crate) async fn rustdoc_redirector_handler(
 
         Ok(redirect_to_doc(
             &query_pairs,
-            rustdoc_params.rustdoc_url().as_str().to_string(),
+            params.rustdoc_url().as_str().to_string(),
             cache,
-            path_in_crate,
+            path_in_crate.as_deref(),
         )?
         .into_response())
     } else {
         Ok(axum_cached_redirect(
-            rustdoc_params
-                .crate_details_url()
-                .with_raw_query(uri.query()),
+            params.crate_details_url().with_raw_query(uri.query()),
             CachePolicy::ForeverInCdn,
         )?
         .into_response())

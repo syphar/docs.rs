@@ -39,6 +39,7 @@ pub(crate) struct RustdocParams {
 #[derive(Deserialize, Debug)]
 struct UrlParams {
     pub(crate) name: String,
+    #[serde(default)]
     pub(crate) version: ReqVersion,
     pub(crate) target: Option<String>,
     pub(crate) path: Option<String>,
@@ -462,8 +463,6 @@ impl ParsedRustdocParams {
     pub(crate) fn target_is_default(&self) -> bool {
         self.doc_target() == Some(&self.default_target)
     }
-
-    // pub(crate) fn generate_target_redirect_url(&self, other_version: ReqVersion) -> Uri {}
 
     pub(crate) fn update<F>(self, f: F) -> Self
     where
