@@ -561,9 +561,6 @@ pub(crate) async fn crate_details_handler(
 #[derive(Debug, Clone, PartialEq)]
 struct ReleaseList {
     releases: Vec<Release>,
-    crate_name: String,
-    inner_path: String,
-    target: String,
     params: RustdocParams,
 }
 
@@ -597,13 +594,6 @@ pub(crate) async fn get_all_releases(
 
     Ok(ReleaseList {
         releases: matched_release.all_releases,
-        // NOTE: we don't check if the target exists here.
-        // If the target doesn't exist, the target-redirect will think
-        // it's part of the `inner_path`, don't find the file in storage,
-        // and redirect to a search.
-        target: params.doc_target.as_deref().unwrap_or_default().to_string(),
-        inner_path: params.inner_path().to_string(),
-        crate_name: params.name.clone(),
         params,
     }
     .into_response())

@@ -11,7 +11,7 @@ use crate::{
     impl_axum_webpage,
     web::{
         MetaData, ReqVersion,
-        error::{AxumResult, EscapedURI},
+        error::AxumResult,
         extractors::{DbConnection, Path},
         filters, match_version,
         page::templates::{RenderBrands, RenderRegular, RenderSolid},
