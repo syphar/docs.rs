@@ -1,14 +1,15 @@
 //! Web interface of docs.rs
 
 pub mod page;
-// mod tmp;
 
-use crate::db::CrateId;
-use crate::db::ReleaseId;
-use crate::db::types::BuildStatus;
-use crate::utils::get_correct_docsrs_style_file;
-use crate::utils::report_error;
-use crate::web::page::templates::{RenderBrands, RenderSolid, filters};
+use crate::{
+    db::{CrateId, ReleaseId, types::BuildStatus},
+    utils::{get_correct_docsrs_style_file, report_error},
+    web::{
+        extractors::rustdoc::RustdocParams,
+        page::templates::{RenderBrands, RenderSolid, filters},
+    },
+};
 use anyhow::{Context as _, Result, anyhow, bail};
 use askama::Template;
 use axum_extra::middleware::option_layer;
@@ -36,7 +37,6 @@ mod sitemap;
 mod source;
 mod statics;
 mod status;
-mod urls;
 
 use crate::{Context, impl_axum_webpage};
 use anyhow::Error;
@@ -238,6 +238,11 @@ impl MatchedRelease {
 
     fn is_latest_url(&self) -> bool {
         matches!(self.req_version, ReqVersion::Latest)
+    }
+
+    fn update_params(&self, params: &mut RustdocParams) {
+        params.name = self.name.clone();
+        params.version = self.req_version.clone();
     }
 }
 

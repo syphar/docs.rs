@@ -577,7 +577,7 @@ impl_axum_webpage! {
 
 #[tracing::instrument]
 pub(crate) async fn get_all_releases(
-    params: RustdocParams,
+    mut params: RustdocParams,
     mut conn: DbConnection,
 ) -> AxumResult<AxumResponse> {
     // NOTE: we're getting RustDocParams here, where both target and path are optional.
@@ -587,6 +587,7 @@ pub(crate) async fn get_all_releases(
     let matched_release = match_version(&mut conn, &params.name, &params.version)
         .await?
         .into_canonical_req_version_or_else(|_| AxumNope::VersionNotFound)?;
+    matched_release.update_params(&mut params);
 
     if matched_release.build_status() != BuildStatus::Success {
         // This handler should only be used for successful builds, so then we have all rows in the
@@ -642,7 +643,7 @@ impl_axum_webpage! {
 
 #[tracing::instrument]
 pub(crate) async fn get_all_platforms_inner(
-    params: RustdocParams,
+    mut params: RustdocParams,
     mut conn: DbConnection,
     is_crate_root: bool,
 ) -> AxumResult<AxumResponse> {
@@ -670,6 +671,7 @@ pub(crate) async fn get_all_platforms_inner(
                 CachePolicy::ForeverInCdn,
             )
         })?;
+    matched_release.update_params(&mut params);
 
     if !matched_release.build_status().is_success() {
         // when the build wasn't finished, we don't have any target platforms

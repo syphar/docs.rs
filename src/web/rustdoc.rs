@@ -250,8 +250,6 @@ pub(crate) async fn rustdoc_redirector_handler(
         None => (params.name.clone(), None),
     };
 
-    params.name = crate_name.to_owned();
-
     if let Some(description) = DOC_RUST_LANG_ORG_REDIRECTS.get(&*crate_name) {
         return redirect_to_doc(
             &query_pairs,
@@ -268,9 +266,8 @@ pub(crate) async fn rustdoc_redirector_handler(
         .into_exactly_named()
         .into_canonical_req_version();
     trace!(?matched_release, "matched version");
+    matched_release.update_params(&mut params);
     let crate_name = matched_release.name.clone();
-    params.name = crate_name.clone();
-    params.version = matched_release.req_version.clone();
 
     // we might get requests to crate-specific JS/CSS files here.
     if let Some(ref target) = params.doc_target
@@ -404,7 +401,7 @@ impl RustdocPage {
 #[allow(clippy::too_many_arguments)]
 #[instrument(skip_all)]
 pub(crate) async fn rustdoc_html_server_handler(
-    params: RustdocParams,
+    mut params: RustdocParams,
     Extension(metrics): Extension<Arc<InstanceMetrics>>,
     Extension(templates): Extension<Arc<TemplateData>>,
     Extension(storage): Extension<Arc<AsyncStorage>>,
@@ -444,6 +441,7 @@ pub(crate) async fn rustdoc_html_server_handler(
                 CachePolicy::ForeverInCdn,
             )
         })?;
+    matched_release.update_params(&mut params);
 
     if !matched_release.rustdoc_status() {
         return Ok(
@@ -620,7 +618,7 @@ pub(crate) async fn rustdoc_html_server_handler(
 
 #[instrument(skip_all)]
 pub(crate) async fn target_redirect_handler(
-    params: RustdocParams,
+    mut params: RustdocParams,
     mut conn: DbConnection,
     Extension(storage): Extension<Arc<AsyncStorage>>,
 ) -> AxumResult<impl IntoResponse> {
@@ -629,6 +627,7 @@ pub(crate) async fn target_redirect_handler(
     let matched_release = match_version(&mut conn, &params.name, &params.version)
         .await?
         .into_canonical_req_version_or_else(|_| AxumNope::VersionNotFound)?;
+    matched_release.update_params(&mut params);
 
     let crate_details = CrateDetails::from_matched_release(&mut conn, matched_release).await?;
     let params = params.parse_with_metadata(&crate_details.metadata)?;
