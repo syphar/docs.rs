@@ -2161,7 +2161,7 @@ mod test {
             .await?;
             web.assert_redirect(
                 "/some_random_crate::some::path?go_to_first=true",
-                "/some_random_crate/latest/some_random_crate/?search=some%3A%3Apath&go_to_first=true",
+                "/some_random_crate/latest/some_random_crate/?go_to_first=true&search=some%3A%3Apath",
             ).await?;
 
             web.assert_redirect_unchecked(
