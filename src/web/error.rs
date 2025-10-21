@@ -37,18 +37,18 @@ impl EscapedURI {
                 let mut parts = uri.into_parts();
 
                 parts.path_and_query = Some(
-                    PathAndQuery::from_maybe_shared(format!(
-                        "{}{}",
+                    PathAndQuery::from_maybe_shared(
                         parts
                             .path_and_query
-                            .as_ref()
-                            .map(|pq| encode_url_path(pq.path()))
+                            .take()
+                            .map(|pq| {
+                                let path = encode_url_path(pq.path());
+                                let query =
+                                    pq.query().map(|q| format!("?{}", q)).unwrap_or_default();
+                                format!("{}{}", path, query)
+                            })
                             .unwrap_or_default(),
-                        parts
-                            .path_and_query
-                            .and_then(|pq| pq.query().map(|q| format!("?{}", q)))
-                            .unwrap_or_default(),
-                    ))
+                    )
                     .expect("can't fail since we encode the path ourselves"),
                 );
 
