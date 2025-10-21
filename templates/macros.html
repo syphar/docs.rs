@@ -79,7 +79,7 @@
 
 {#
     Constructs a list of a crate's releases
-    * `name` The crate's name as a string
+    * `params`: `RustdocParams` to access the functions to generate URLs.
     * `releases` A list of crate releases where each release has the following fields:
         * `version` A string of the release's version
         * `yanked` A boolean of the release's yanked status
@@ -88,7 +88,8 @@
           * "failure" for failed build
           * "in_progress" for in progress
         * `is_library` A boolean that's true if the crate is a library and false if it's a binary
-    * `inner_path` The current rustdoc page (empty string if a `/crate` page)
+    * `use_target_redirect`: either link to the crate-details page, or a target-redirect
+    * `retain_fragment`: if the link should retain the fragment from the current page
 #}
 {% macro releases_list(params, releases, use_target_redirect, retain_fragment) %}
     {%- for release in releases -%}
