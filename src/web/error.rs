@@ -42,10 +42,11 @@ impl EscapedURI {
                             .path_and_query
                             .take()
                             .map(|pq| {
-                                let path = encode_url_path(pq.path());
-                                let query =
-                                    pq.query().map(|q| format!("?{}", q)).unwrap_or_default();
-                                format!("{}{}", path, query)
+                                format!(
+                                    "{}{}",
+                                    encode_url_path(pq.path()),
+                                    pq.query().map(|q| format!("?{}", q)).unwrap_or_default(),
+                                )
                             })
                             .unwrap_or_default(),
                     )
