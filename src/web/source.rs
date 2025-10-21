@@ -328,15 +328,6 @@ pub(crate) async fn source_browser_handler(
     .await?;
 
     let params = params.parse_with_metadata(&metadata)?;
-    dbg!(&params);
-
-    for doc_target in params.doc_targets() {
-        let p = params.clone().with_doc_target(doc_target);
-        dbg!(&p);
-        dbg!(&p.rustdoc_url());
-        dbg!(&p.source_url());
-        dbg!(&p.target_redirect_url());
-    }
 
     Ok(SourcePage {
         file_list,

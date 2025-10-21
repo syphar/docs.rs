@@ -145,8 +145,7 @@ pub(crate) async fn build_details_handler(
         (file_content, all_log_filenames, current_filename)
     };
 
-    let metadata =
-        dbg!(MetaData::from_crate(&mut conn, &params.name, &params.version, None).await?);
+    let metadata = MetaData::from_crate(&mut conn, &params.name, &params.version, None).await?;
     let params = RustdocParams::new(&params.name)
         .with_version(ReqVersion::Exact(params.version))
         .parse_with_metadata(&metadata)?;
