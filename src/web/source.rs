@@ -304,18 +304,15 @@ pub(crate) async fn source_browser_handler(
     } else {
         ""
     };
-    dbg!(&current_folder);
 
-    let file_list = dbg!(
-        FileList::from_path(
-            &mut conn,
-            &params.name,
-            &version,
-            Some(params.version.clone()),
-            current_folder,
-        )
-        .await?
+    let file_list = FileList::from_path(
+        &mut conn,
+        &params.name,
+        &version,
+        Some(params.version.clone()),
+        current_folder,
     )
+    .await?
     .unwrap_or_default();
 
     Ok(SourcePage {
