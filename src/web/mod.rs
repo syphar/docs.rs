@@ -56,7 +56,7 @@ use semver::{Version, VersionReq};
 use sentry::integrations::tower as sentry_tower;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::{
-    borrow::{Borrow, Cow},
+    borrow::Cow,
     fmt::{self, Display},
     net::{IpAddr, Ipv4Addr, SocketAddr},
     str::FromStr,
@@ -64,7 +64,6 @@ use std::{
 };
 use tower::ServiceBuilder;
 use tower_http::{catch_panic::CatchPanicLayer, timeout::TimeoutLayer, trace::TraceLayer};
-use url::form_urlencoded;
 
 use self::crate_details::Release;
 
@@ -633,29 +632,6 @@ where
     let mut resp = axum_redirect(uri)?.into_response();
     resp.extensions_mut().insert(cache_policy);
     Ok(resp)
-}
-
-/// Parse an URI into a http::Uri struct.
-/// When `queries` are given these are added to the URL,
-/// with empty `queries` the `?` will be omitted.
-pub(crate) fn axum_parse_uri_with_params<I, K, V>(uri: &str, queries: I) -> Result<http::Uri, Error>
-where
-    I: IntoIterator,
-    I::Item: Borrow<(K, V)>,
-    K: AsRef<str>,
-    V: AsRef<str>,
-{
-    let mut queries = queries.into_iter().peekable();
-    if queries.peek().is_some() {
-        let query_params: String = form_urlencoded::Serializer::new(String::new())
-            .extend_pairs(queries)
-            .finish();
-        format!("{uri}?{query_params}")
-            .parse::<http::Uri>()
-            .context("error parsing URL")
-    } else {
-        uri.parse::<http::Uri>().context("error parsing URL")
-    }
 }
 
 /// MetaData used in header

@@ -6,9 +6,9 @@ use crate::{
     cdn, impl_axum_webpage,
     utils::report_error,
     web::{
-        ReqVersion, axum_parse_uri_with_params, axum_redirect, encode_url_path,
+        ReqVersion, axum_redirect, encode_url_path,
         error::{AxumNope, AxumResult},
-        extractors::{DbConnection, Path},
+        extractors::{DbConnection, Path, rustdoc::ParsedRustdocParams},
         match_version,
         page::templates::{RenderBrands, RenderRegular, RenderSolid, filters},
     },
@@ -529,19 +529,19 @@ pub(crate) async fn search_handler(
     Extension(config): Extension<Arc<Config>>,
     Extension(registry): Extension<Arc<RegistryApi>>,
     Extension(metrics): Extension<Arc<InstanceMetrics>>,
-    Query(mut params): Query<HashMap<String, String>>,
+    Query(mut query_params): Query<HashMap<String, String>>,
 ) -> AxumResult<AxumResponse> {
-    let mut query = params
+    let mut query = query_params
         .get("query")
         .map(|q| q.to_string())
         .unwrap_or_else(|| "".to_string());
-    let mut sort_by = params
+    let mut sort_by = query_params
         .get("sort")
         .map(|q| q.to_string())
         .unwrap_or_else(|| "relevance".to_string());
     // check if I am feeling lucky button pressed and redirect user to crate page
     // if there is a match. Also check for paths to items within crates.
-    if params.remove("i-am-feeling-lucky").is_some() || query.contains("::") {
+    if query_params.remove("i-am-feeling-lucky").is_some() || query.contains("::") {
         // redirect to a random crate if query is empty
         if query.is_empty() {
             return Ok(redirect_to_random_crate(config, metrics, &mut conn)
@@ -566,32 +566,25 @@ pub(crate) async fn search_handler(
             .await
             .map(|matched_release| matched_release.into_exactly_named())
         {
-            params.remove("query");
-            queries.extend(params);
+            query_params.remove("query");
+            queries.extend(query_params);
 
-            let uri = if matchver.rustdoc_status() {
-                axum_parse_uri_with_params(
-                    &format!(
-                        "/{}/{}/{}/",
-                        matchver.name,
-                        matchver.version(),
-                        matchver
-                            .target_name()
-                            .expect("target name will exist when rustdoc_status is true"),
-                    ),
-                    queries,
-                )?
+            let rustdoc_status = matchver.rustdoc_status();
+            let params: ParsedRustdocParams = matchver
+                .try_into()
+                .context("couldn't create rustdoc params from matched release ")?;
+
+            let uri = if rustdoc_status {
+                params.rustdoc_url().append_query_pairs(queries)?
             } else {
-                format!("/crate/{}/{}", matchver.name, matchver.version())
-                    .parse::<http::Uri>()
-                    .context("could not parse redirect URI")?
+                params.crate_details_url()
             };
 
             return Ok(super::axum_redirect(uri)?.into_response());
         }
     }
 
-    let search_result = if let Some(paginate) = params.get("paginate") {
+    let search_result = if let Some(paginate) = query_params.get("paginate") {
         let decoded = b64.decode(paginate.as_bytes()).map_err(|e| {
             warn!("error when decoding pagination base64 string \"{paginate}\": {e:?}");
             AxumNope::NoResults

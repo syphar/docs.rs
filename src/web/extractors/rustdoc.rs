@@ -1,6 +1,6 @@
 //! special rustdoc extractors
 
-use std::borrow::Cow;
+use std::{borrow::Cow, iter};
 
 use anyhow::{Result, anyhow};
 use axum::{
@@ -8,13 +8,14 @@ use axum::{
     extract::{FromRequestParts, MatchedPath},
     http::{Uri, request::Parts},
 };
+use docsrs_metadata::HOST_TARGET;
 use itertools::Itertools as _;
 use serde::Deserialize;
 
 use crate::{
     db::ReleaseId,
     web::{
-        MetaData, ReqVersion,
+        MatchedRelease, MetaData, ReqVersion,
         error::{AxumNope, EscapedURI},
         extractors::Path,
     },
@@ -28,7 +29,7 @@ use crate::{
 /// * generate standard URLs for these params? Same for the parsed version?
 #[derive(Clone, PartialEq, Debug)]
 pub(crate) struct RustdocParams {
-    original_uri: Uri,
+    original_uri: Option<Uri>,
     pub(crate) name: String,
     pub(crate) version: ReqVersion,
     pub(crate) doc_target: Option<String>,
@@ -86,7 +87,7 @@ where
             version: params.version,
             doc_target: params.target.map(|t| t.trim().to_owned()),
             inner_path: params.path.map(|p| p.trim().to_owned()),
-            original_uri,
+            original_uri: Some(original_uri),
         })
     }
 }
@@ -267,10 +268,8 @@ impl RustdocParams {
     }
 
     pub(crate) fn file_extension(&self) -> Option<&str> {
-        self.original_uri
-            .path()
-            .rsplit_once('.')
-            .and_then(|(_, ext)| {
+        self.original_uri.as_ref().and_then(|uri| {
+            uri.path().rsplit_once('.').and_then(|(_, ext)| {
                 if ext.contains('/') {
                     // to handle cases like `foo.html/bar` where I want `None`
                     None
@@ -278,6 +277,7 @@ impl RustdocParams {
                     Some(ext)
                 }
             })
+        })
     }
 
     /// generate the path portion of a URL for these params.
@@ -306,7 +306,7 @@ impl RustdocParams {
     }
 
     fn has_trailing_slash(&self) -> bool {
-        self.original_uri.path().ends_with('/')
+        self.original_path().ends_with('/')
     }
 
     pub(crate) fn target_redirect_url(&self) -> EscapedURI {
@@ -319,7 +319,10 @@ impl RustdocParams {
     }
 
     pub(crate) fn original_path(&self) -> &str {
-        self.original_uri.path()
+        self.original_uri
+            .as_ref()
+            .map(|p| p.path())
+            .unwrap_or_default()
     }
 }
 
@@ -534,6 +537,27 @@ impl ParsedRustdocParams {
     }
 }
 
+impl TryFrom<MatchedRelease> for ParsedRustdocParams {
+    type Error = anyhow::Error;
+
+    fn try_from(release: MatchedRelease) -> Result<Self> {
+        let target_name = release
+            .target_name()
+            .ok_or_else(|| anyhow!("default target missing in release"))?
+            .to_owned();
+
+        let params = RustdocParams {
+            original_uri: None,
+            name: release.name,
+            version: release.req_version.clone(),
+            doc_target: None,
+            inner_path: None,
+        };
+
+        Ok(params.parse(HOST_TARGET, target_name, iter::once(HOST_TARGET)))
+    }
+}
+
 fn url_decode<'a>(input: &'a str) -> Result<Cow<'a, str>> {
     Ok(percent_encoding::percent_decode(input.as_bytes()).decode_utf8()?)
 }
@@ -665,7 +689,7 @@ mod tests {
     #[test_case(
         "/{name}",
         RustdocParams {
-            original_uri: "/krate".parse().unwrap(),
+            original_uri: Some("/krate".parse().unwrap()),
             name: "krate".into(),
             version: ReqVersion::Latest,
             doc_target: None,
@@ -676,7 +700,7 @@ mod tests {
     #[test_case(
         "/{name}/",
         RustdocParams {
-            original_uri: "/krate/".parse().unwrap(),
+            original_uri: Some("/krate/".parse().unwrap()),
             name: "krate".into(),
             version: ReqVersion::Latest,
             doc_target: None,
@@ -687,7 +711,7 @@ mod tests {
     #[test_case(
         "/{name}/{version}",
         RustdocParams {
-            original_uri: "/krate/latest".parse().unwrap(),
+            original_uri: Some("/krate/latest".parse().unwrap()),
             name: "krate".into(),
             version: ReqVersion::Latest,
             doc_target: None,
@@ -698,7 +722,7 @@ mod tests {
     #[test_case(
         "/{name}/{version}/{*path}",
         RustdocParams {
-            original_uri: "/krate/latest/static.html".parse().unwrap(),
+            original_uri: Some("/krate/latest/static.html".parse().unwrap()),
             name: "krate".into(),
             version: ReqVersion::Latest,
             doc_target: None,
@@ -709,7 +733,7 @@ mod tests {
     #[test_case(
         "/{name}/{version}/{path}/static.html",
         RustdocParams {
-            original_uri: "/krate/latest/path_add/static.html".parse().unwrap(),
+            original_uri: Some("/krate/latest/path_add/static.html".parse().unwrap()),
             name: "krate".into(),
             version: ReqVersion::Latest,
             doc_target: None,
@@ -720,7 +744,7 @@ mod tests {
     #[test_case(
         "/{name}/{version}/clapproc%20%60macro.html",
         RustdocParams {
-            original_uri: "/clap/latest/clapproc%20%60macro.html".parse().unwrap(),
+            original_uri: Some("/clap/latest/clapproc%20%60macro.html".parse().unwrap()),
             name: "clap".into(),
             version: ReqVersion::Latest,
             doc_target: None,
@@ -731,7 +755,7 @@ mod tests {
     #[test_case(
         "/{name}/{version}/static.html",
         RustdocParams {
-            original_uri: "/krate/latest/static.html".parse().unwrap(),
+            original_uri: Some("/krate/latest/static.html".parse().unwrap()),
             name: "krate".into(),
             version: ReqVersion::Latest,
             doc_target: None,
@@ -742,7 +766,7 @@ mod tests {
     #[test_case(
         "/{name}/{version}/{target}",
         RustdocParams {
-            original_uri: "/krate/1.2.3/some-target".parse().unwrap(),
+            original_uri: Some("/krate/1.2.3/some-target".parse().unwrap()),
             name: "krate".into(),
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
             doc_target: Some("some-target".into()),
@@ -753,7 +777,7 @@ mod tests {
     #[test_case(
         "/{name}/{version}/{target}/folder/something.html",
         RustdocParams {
-            original_uri: "/krate/1.2.3/some-target/folder/something.html".parse().unwrap(),
+            original_uri: Some("/krate/1.2.3/some-target/folder/something.html".parse().unwrap()),
             name: "krate".into(),
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
             doc_target: Some("some-target".into()),
@@ -764,7 +788,7 @@ mod tests {
     #[test_case(
         "/{name}/{version}/{target}/",
         RustdocParams {
-            original_uri: "/krate/1.2.3/some-target/".parse().unwrap(),
+            original_uri: Some("/krate/1.2.3/some-target/".parse().unwrap()),
             name: "krate".into(),
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
             doc_target: Some("some-target".into()),
@@ -775,7 +799,7 @@ mod tests {
     #[test_case(
         "/{name}/{version}/{target}/{*path}",
         RustdocParams {
-            original_uri: "/krate/1.2.3/some-target/some/path/to/a/file.html".parse().unwrap(),
+            original_uri: Some("/krate/1.2.3/some-target/some/path/to/a/file.html".parse().unwrap()),
             name: "krate".into(),
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
             doc_target: Some("some-target".into()),
@@ -786,7 +810,7 @@ mod tests {
     #[test_case(
         "/{name}/{version}/{target}/{path}/path/to/a/file.html",
         RustdocParams {
-            original_uri: "/krate/1.2.3/some-target/path_add/path/to/a/file.html".parse().unwrap(),
+            original_uri: Some("/krate/1.2.3/some-target/path_add/path/to/a/file.html".parse().unwrap()),
             name: "krate".into(),
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
             doc_target: Some("some-target".into()),
@@ -804,9 +828,9 @@ mod tests {
             get(|params: RustdocParams| async move { format!("{:?}", params) }),
         );
 
-        let path = expected.original_uri.path();
+        let path = expected.original_uri.as_ref().unwrap().path().to_owned();
 
-        let res = app.get(path).await?;
+        let res = app.get(&path).await?;
         assert!(res.status().is_success());
         assert_eq!(res.text().await?, format!("{:?}", expected));
 
@@ -955,7 +979,7 @@ mod tests {
         }
 
         let parsed = RustdocParams {
-            original_uri: dummy_path.parse().unwrap(),
+            original_uri: Some(dummy_path.parse().unwrap()),
             name: "krate".into(),
             version: ReqVersion::Latest,
             doc_target: target.map(|s| s.into()),
