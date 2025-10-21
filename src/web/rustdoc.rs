@@ -30,7 +30,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response as AxumResponse},
 };
-use http::{HeaderValue, header};
+use http::{HeaderValue, Uri, header};
 use serde::Deserialize;
 use std::{
     collections::HashMap,
@@ -42,7 +42,7 @@ use super::extractors::PathFileExtension;
 
 pub(crate) struct OfficialCrateDescription {
     pub(crate) name: &'static str,
-    pub(crate) href: &'static str,
+    pub(crate) href: Uri,
     pub(crate) description: &'static str,
 }
 
@@ -53,7 +53,7 @@ pub(crate) static DOC_RUST_LANG_ORG_REDIRECTS: LazyLock<HashMap<&str, OfficialCr
                 "alloc",
                 OfficialCrateDescription {
                     name: "alloc",
-                    href: "https://doc.rust-lang.org/stable/alloc/",
+                    href: "https://doc.rust-lang.org/stable/alloc/".parse().unwrap(),
                     description: "Rust alloc library",
                 },
             ),
@@ -61,7 +61,7 @@ pub(crate) static DOC_RUST_LANG_ORG_REDIRECTS: LazyLock<HashMap<&str, OfficialCr
                 "liballoc",
                 OfficialCrateDescription {
                     name: "alloc",
-                    href: "https://doc.rust-lang.org/stable/alloc/",
+                    href: "https://doc.rust-lang.org/stable/alloc/".parse().unwrap(),
                     description: "Rust alloc library",
                 },
             ),
@@ -69,7 +69,7 @@ pub(crate) static DOC_RUST_LANG_ORG_REDIRECTS: LazyLock<HashMap<&str, OfficialCr
                 "core",
                 OfficialCrateDescription {
                     name: "core",
-                    href: "https://doc.rust-lang.org/stable/core/",
+                    href: "https://doc.rust-lang.org/stable/core/".parse().unwrap(),
                     description: "Rust core library",
                 },
             ),
@@ -77,7 +77,7 @@ pub(crate) static DOC_RUST_LANG_ORG_REDIRECTS: LazyLock<HashMap<&str, OfficialCr
                 "libcore",
                 OfficialCrateDescription {
                     name: "core",
-                    href: "https://doc.rust-lang.org/stable/core/",
+                    href: "https://doc.rust-lang.org/stable/core/".parse().unwrap(),
                     description: "Rust core library",
                 },
             ),
@@ -85,7 +85,9 @@ pub(crate) static DOC_RUST_LANG_ORG_REDIRECTS: LazyLock<HashMap<&str, OfficialCr
                 "proc_macro",
                 OfficialCrateDescription {
                     name: "proc_macro",
-                    href: "https://doc.rust-lang.org/stable/proc_macro/",
+                    href: "https://doc.rust-lang.org/stable/proc_macro/"
+                        .parse()
+                        .unwrap(),
                     description: "Rust proc_macro library",
                 },
             ),
@@ -93,7 +95,9 @@ pub(crate) static DOC_RUST_LANG_ORG_REDIRECTS: LazyLock<HashMap<&str, OfficialCr
                 "libproc_macro",
                 OfficialCrateDescription {
                     name: "proc_macro",
-                    href: "https://doc.rust-lang.org/stable/proc_macro/",
+                    href: "https://doc.rust-lang.org/stable/proc_macro/"
+                        .parse()
+                        .unwrap(),
                     description: "Rust proc_macro library",
                 },
             ),
@@ -101,7 +105,9 @@ pub(crate) static DOC_RUST_LANG_ORG_REDIRECTS: LazyLock<HashMap<&str, OfficialCr
                 "proc-macro",
                 OfficialCrateDescription {
                     name: "proc_macro",
-                    href: "https://doc.rust-lang.org/stable/proc_macro/",
+                    href: "https://doc.rust-lang.org/stable/proc_macro/"
+                        .parse()
+                        .unwrap(),
                     description: "Rust proc_macro library",
                 },
             ),
@@ -109,7 +115,9 @@ pub(crate) static DOC_RUST_LANG_ORG_REDIRECTS: LazyLock<HashMap<&str, OfficialCr
                 "libproc-macro",
                 OfficialCrateDescription {
                     name: "proc_macro",
-                    href: "https://doc.rust-lang.org/stable/proc_macro/",
+                    href: "https://doc.rust-lang.org/stable/proc_macro/"
+                        .parse()
+                        .unwrap(),
                     description: "Rust proc_macro library",
                 },
             ),
@@ -117,7 +125,7 @@ pub(crate) static DOC_RUST_LANG_ORG_REDIRECTS: LazyLock<HashMap<&str, OfficialCr
                 "std",
                 OfficialCrateDescription {
                     name: "std",
-                    href: "https://doc.rust-lang.org/stable/std/",
+                    href: "https://doc.rust-lang.org/stable/std/".parse().unwrap(),
                     description: "Rust standard library",
                 },
             ),
@@ -125,7 +133,7 @@ pub(crate) static DOC_RUST_LANG_ORG_REDIRECTS: LazyLock<HashMap<&str, OfficialCr
                 "libstd",
                 OfficialCrateDescription {
                     name: "std",
-                    href: "https://doc.rust-lang.org/stable/std/",
+                    href: "https://doc.rust-lang.org/stable/std/".parse().unwrap(),
                     description: "Rust standard library",
                 },
             ),
@@ -133,7 +141,7 @@ pub(crate) static DOC_RUST_LANG_ORG_REDIRECTS: LazyLock<HashMap<&str, OfficialCr
                 "test",
                 OfficialCrateDescription {
                     name: "test",
-                    href: "https://doc.rust-lang.org/stable/test/",
+                    href: "https://doc.rust-lang.org/stable/test/".parse().unwrap(),
                     description: "Rust test library",
                 },
             ),
@@ -141,7 +149,7 @@ pub(crate) static DOC_RUST_LANG_ORG_REDIRECTS: LazyLock<HashMap<&str, OfficialCr
                 "libtest",
                 OfficialCrateDescription {
                     name: "test",
-                    href: "https://doc.rust-lang.org/stable/test/",
+                    href: "https://doc.rust-lang.org/stable/test/".parse().unwrap(),
                     description: "Rust test library",
                 },
             ),
@@ -149,7 +157,9 @@ pub(crate) static DOC_RUST_LANG_ORG_REDIRECTS: LazyLock<HashMap<&str, OfficialCr
                 "rustc",
                 OfficialCrateDescription {
                     name: "rustc",
-                    href: "https://doc.rust-lang.org/nightly/nightly-rustc/",
+                    href: "https://doc.rust-lang.org/nightly/nightly-rustc/"
+                        .parse()
+                        .unwrap(),
                     description: "rustc API",
                 },
             ),
@@ -157,7 +167,9 @@ pub(crate) static DOC_RUST_LANG_ORG_REDIRECTS: LazyLock<HashMap<&str, OfficialCr
                 "rustdoc",
                 OfficialCrateDescription {
                     name: "rustdoc",
-                    href: "https://doc.rust-lang.org/nightly/nightly-rustc/rustdoc/",
+                    href: "https://doc.rust-lang.org/nightly/nightly-rustc/rustdoc/"
+                        .parse()
+                        .unwrap(),
                     description: "rustdoc API",
                 },
             ),
@@ -207,7 +219,7 @@ pub(crate) async fn rustdoc_redirector_handler(
         path_in_crate: Option<&str>,
     ) -> AxumResult<AxumResponse> {
         let url = if let Some(path) = path_in_crate {
-            url.append_query_pair("search", path)?
+            url.append_query_pair("search", path)
         } else {
             url
         };
@@ -246,9 +258,8 @@ pub(crate) async fn rustdoc_redirector_handler(
     };
 
     if let Some(description) = DOC_RUST_LANG_ORG_REDIRECTS.get(&*crate_name) {
-        dbg!(&description.href);
         let target_uri =
-            EscapedURI::from_uri(description.href)?.append_raw_query(original_query)?;
+            EscapedURI::from_uri(description.href.clone()).append_raw_query(original_query);
         return redirect_to_doc(
             target_uri,
             CachePolicy::ForeverInCdnAndStaleInBrowser,
@@ -314,7 +325,7 @@ pub(crate) async fn rustdoc_redirector_handler(
 
     if matched_release.rustdoc_status() {
         Ok(redirect_to_doc(
-            params.rustdoc_url().append_raw_query(original_query)?,
+            params.rustdoc_url().append_raw_query(original_query),
             if matched_release.is_latest_url() {
                 CachePolicy::ForeverInCdn
             } else {
@@ -325,9 +336,7 @@ pub(crate) async fn rustdoc_redirector_handler(
         .into_response())
     } else {
         Ok(axum_cached_redirect(
-            params
-                .crate_details_url()
-                .append_raw_query(original_query)?,
+            params.crate_details_url().append_raw_query(original_query),
             CachePolicy::ForeverInCdn,
         )?
         .into_response())
@@ -427,8 +436,7 @@ pub(crate) async fn rustdoc_html_server_handler(
                     .with_name(corrected_name)
                     .with_version(req_version)
                     .rustdoc_url()
-                    .append_raw_query(raw_query.as_deref())
-                    .expect("rustdoc url should be valid, and the raw query via axum is validated by axum"),
+                    .append_raw_query(raw_query.as_deref()),
                 CachePolicy::NoCaching,
             )
         })?
@@ -461,9 +469,7 @@ pub(crate) async fn rustdoc_html_server_handler(
         // if visiting the full path to the default target, remove the target from the path
         // expects a req_path that looks like `[/:target]/.*`
         return Ok(axum_cached_redirect(
-            params
-                .rustdoc_url()
-                .append_raw_query(raw_query.as_deref())?,
+            params.rustdoc_url().append_raw_query(raw_query.as_deref()),
             CachePolicy::ForeverInCdn,
         )?);
     }
@@ -517,9 +523,7 @@ pub(crate) async fn rustdoc_html_server_handler(
                     .await?
                 {
                     return Ok(axum_cached_redirect(
-                        params
-                            .rustdoc_url()
-                            .append_raw_query(raw_query.as_deref())?,
+                        params.rustdoc_url().append_raw_query(raw_query.as_deref()),
                         CachePolicy::ForeverInCdn,
                     )?);
                 }
@@ -580,7 +584,7 @@ pub(crate) async fn rustdoc_html_server_handler(
         .clone()
         .with_version(&ReqVersion::Exact(latest_version))
         .rustdoc_url()
-        .append_raw_query(raw_query.as_deref())?;
+        .append_raw_query(raw_query.as_deref());
 
     let latest_path = if latest_release.build_status.is_success() {
         params
@@ -593,7 +597,7 @@ pub(crate) async fn rustdoc_html_server_handler(
             .with_version(&ReqVersion::Latest)
             .crate_details_url()
     }
-    .append_raw_query(raw_query.as_deref())?;
+    .append_raw_query(raw_query.as_deref());
 
     let current_target = params.doc_target_or_default();
 

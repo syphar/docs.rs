@@ -462,7 +462,7 @@ impl ParsedRustdocParams {
     /// and we just need to redirect to a search or something similar.
     ///
     /// FIXME: add tests! :)
-    pub(crate) fn generate_fallback_path(&self) -> (String, Option<String>) {
+    fn generate_fallback_path(&self) -> (String, Option<String>) {
         // we already split out the potentially leading target information in `Self::parse`.
         // So we have an optional target, and then the path.
         // FIXME: perhaps move this somewhere else? Taking `ParsedRustdocParams` as parameter?
@@ -522,7 +522,7 @@ impl ParsedRustdocParams {
             EscapedURI::from_path_and_query(
                 &format!("/{}/{}/{}", self.name(), self.version(), path),
                 &[("search", &search_item)],
-            )?
+            )
         } else {
             EscapedURI::from_path(&format!("/{}/{}/{}", self.name(), self.version(), path))
         })

@@ -3,7 +3,7 @@ use crate::{
     storage::PathNotFoundError,
     web::{cache::CachePolicy, encode_url_path, releases::Search},
 };
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Result, anyhow};
 use axum::{
     Json,
     http::StatusCode,
@@ -13,6 +13,7 @@ use derive_more::Display;
 use http::{Uri, uri::PathAndQuery};
 use std::{
     borrow::{Borrow, Cow},
+    iter,
     ops::Deref,
 };
 use tracing::error;
@@ -20,56 +21,29 @@ use url::form_urlencoded;
 
 use super::AxumErrorPage;
 
+/// internal wrapper around `http::Uri` with some convenience functions.
 #[derive(Debug, Clone, Display)]
 pub struct EscapedURI(Uri);
 
 impl EscapedURI {
-    pub fn from_uri<U>(uri: U) -> Result<Self>
-    where
-        U: TryInto<Uri>,
-        U::Error: std::error::Error + Send + Sync + 'static,
-    {
-        let mut uri: Uri = uri.try_into().context("couldn't parse URL")?;
-
-        let encoded_path = encode_url_path(uri.path());
-        if encoded_path != uri.path() {
-            let mut parts = uri.into_parts();
-
-            let existing_query = if let Some(pq) = parts.path_and_query
-                && let Some(existing_query) = pq.query()
-            {
-                format!("?{}", existing_query)
-            } else {
-                String::new()
-            };
-
-            parts.path_and_query = Some(
-                PathAndQuery::from_maybe_shared(format!("{}{}", encoded_path, existing_query))
-                    .context("couldn't rebuild path & query with encoded path")?,
-            );
-
-            uri = Uri::from_parts(parts).context("couln't recreate URI with new encoded path")?;
-        }
-
-        Ok(Self(uri))
+    pub fn from_uri(uri: Uri) -> Self {
+        Self(uri)
     }
+
     pub fn from_path(path: &str) -> Self {
-        Self::from_path_and_raw_query(path, None)
-            .expect("this can never fail because we encode the path")
+        Self(
+            Uri::builder()
+                .path_and_query(encode_url_path(path))
+                .build()
+                .expect("this can never fail because we encode the path"),
+        )
     }
 
-    pub fn from_path_and_raw_query(path: &str, raw_query: Option<&str>) -> Result<Self> {
-        let mut path = encode_url_path(path);
-        if let Some(query) = raw_query
-            && !query.is_empty()
-        {
-            path.push('?');
-            path.push_str(query);
-        }
-        Ok(Self(Uri::builder().path_and_query(path).build()?))
+    pub fn from_path_and_raw_query(path: &str, raw_query: Option<&str>) -> Self {
+        Self::from_path(path).append_raw_query(raw_query)
     }
 
-    pub(crate) fn from_path_and_query<I, K, V>(path: &str, queries: I) -> Result<Self>
+    pub(crate) fn from_path_and_query<I, K, V>(path: &str, queries: I) -> Self
     where
         I: IntoIterator,
         I::Item: Borrow<(K, V)>,
@@ -83,33 +57,37 @@ impl EscapedURI {
         self.0.path()
     }
 
-    pub fn append_raw_query(self, raw_query: Option<impl AsRef<str>>) -> Result<Self> {
+    /// extend the query part of the Uri with the given raw query string.
+    ///
+    /// Will parse & re-encode the string, which is why the method is infallible (I think)
+    pub fn append_raw_query(self, raw_query: Option<impl AsRef<str>>) -> Self {
         let raw_query = match raw_query {
             Some(ref q) => q.as_ref(),
-            None => return Ok(self),
+            None => return self,
         };
 
         self.append_query_pairs(form_urlencoded::parse(raw_query.as_bytes()))
     }
 
-    pub fn append_query_pairs<I, K, V>(self, queries: I) -> Result<Self>
+    pub fn append_query_pairs<I, K, V>(self, new_query_args: I) -> Self
     where
         I: IntoIterator,
         I::Item: Borrow<(K, V)>,
         K: AsRef<str>,
         V: AsRef<str>,
     {
-        let mut queries = queries.into_iter().peekable();
-        if queries.peek().is_none() {
-            return Ok(self);
+        let mut new_query_args = new_query_args.into_iter().peekable();
+        if new_query_args.peek().is_none() {
+            return self;
         }
 
         let mut serializer = form_urlencoded::Serializer::new(String::new());
-        serializer.extend_pairs(queries);
 
-        if let Some(existing_query) = self.0.query() {
-            serializer.extend_pairs(form_urlencoded::parse(existing_query.as_bytes()));
+        if let Some(existing_query_args) = self.0.query() {
+            serializer.extend_pairs(form_urlencoded::parse(existing_query_args.as_bytes()));
         }
+
+        serializer.extend_pairs(new_query_args);
 
         let mut parts = self.0.into_parts();
 
@@ -122,17 +100,19 @@ impl EscapedURI {
                     .unwrap_or_default(),
                 serializer.finish(),
             ))
-            .context("couldn't rebuild path & query with encoded path")?,
+            .expect("can't fail since all the data is either coming from a previous Uri, or we encode it ourselves")
         );
 
         Self::from_uri(
-            Uri::from_parts(parts).context("couln't recreate URI with new encoded path")?,
+            Uri::from_parts(parts).expect(
+                "can't fail since data is either coming from an Uri, or encoded by ourselves.",
+            ),
         )
     }
 
     /// extend query part
-    pub fn append_query_pair(self, key: impl AsRef<str>, value: impl AsRef<str>) -> Result<Self> {
-        self.append_query_pairs(std::iter::once((key, value)))
+    pub fn append_query_pair(self, key: impl AsRef<str>, value: impl AsRef<str>) -> Self {
+        self.append_query_pairs(iter::once((key, value)))
     }
 }
 
@@ -147,6 +127,12 @@ impl Deref for EscapedURI {
 impl From<EscapedURI> for http::Uri {
     fn from(value: EscapedURI) -> Self {
         value.0
+    }
+}
+
+impl From<Uri> for EscapedURI {
+    fn from(value: Uri) -> Self {
+        Self::from_uri(value)
     }
 }
 
@@ -370,7 +356,9 @@ mod tests {
     use super::{AxumNope, EscapedURI, IntoResponse};
     use crate::test::{AxumResponseTestExt, AxumRouterTestExt, async_wrapper};
     use crate::web::cache::CachePolicy;
+    use http::Uri;
     use kuchikiki::traits::TendrilSink;
+    use test_case::test_case;
 
     #[test]
     fn test_redirect_error_encodes_url_path() {
@@ -382,6 +370,99 @@ mod tests {
 
         assert_eq!(response.status(), 302);
         assert_eq!(response.headers().get("Location").unwrap(), "/something%3E");
+    }
+
+    #[test_case("/something" => "/something")]
+    #[test_case("/something>" => "/something%3E")]
+    fn test_escaped_uri_encodes_from_path(input: &str) -> String {
+        let escaped = EscapedURI::from_path(input);
+        escaped.path().to_owned()
+    }
+
+    #[test]
+    fn test_escaped_uri_encodes_path_from_uri() {
+        let uri: Uri = "/something".parse().unwrap();
+        let escaped = EscapedURI::from_uri(uri);
+        assert_eq!(escaped.path(), "/something");
+    }
+
+    #[test]
+    fn test_escaped_uri_from_uri_with_query_args() {
+        let uri: Uri = "/something?key=value&foo=bar".parse().unwrap();
+        let escaped = EscapedURI::from_uri(uri);
+        assert_eq!(escaped.path(), "/something");
+        assert_eq!(escaped.query(), Some("key=value&foo=bar"));
+    }
+
+    #[test_case("/something>")]
+    #[test_case("/something?key=<value&foo=\rbar")]
+    fn test_escaped_uri_encodes_path_from_uri_invalid(input: &str) {
+        // things that are invalid URIs should error out,
+        // so are unusable for EscapedURI::from_uri`
+        //
+        // More to test if my assumption is correct that we don't have to re-encode.
+        assert!(input.parse::<Uri>().is_err());
+    }
+
+    #[test_case(
+        "/something", "key=value&foo=bar"
+        => ("/something".into(), "key=value&foo=bar".into());
+        "plain convert"
+    )]
+    #[test_case(
+        "/something", "value=foo\rbar&key=<value"
+        => ("/something".into(), "value=foo%0Dbar&key=%3Cvalue".into());
+        "invalid query gets re-encoded without error"
+    )]
+    fn test_escaped_uri_from_raw_query(path: &str, query: &str) -> (String, String) {
+        let uri = EscapedURI::from_path_and_raw_query(path, Some(query));
+
+        (uri.path().to_owned(), uri.query().unwrap().to_owned())
+    }
+
+    #[test]
+    fn test_escaped_uri_from_query() {
+        let uri =
+            EscapedURI::from_path_and_query("/something", &[("key", "value"), ("foo", "bar")]);
+
+        assert_eq!(uri.path(), "/something");
+        assert_eq!(uri.query(), Some("key=value&foo=bar"));
+    }
+
+    #[test]
+    fn test_escaped_uri_from_query_with_chars_to_encode() {
+        let uri =
+            EscapedURI::from_path_and_query("/something", &[("key", "value>"), ("foo", "\rbar")]);
+
+        assert_eq!(uri.path(), "/something");
+        assert_eq!(uri.query(), Some("key=value%3E&foo=%0Dbar"));
+    }
+
+    #[test]
+    fn test_escaped_uri_append_query_pairs_without_path() {
+        let uri = Uri::builder().build().unwrap();
+
+        let parts = uri.into_parts();
+        // `append_query_pairs` has a special case when path_and_query is `None`,
+        // which I want to test here.
+        assert!(parts.path_and_query.is_none());
+
+        // also tests appending query pairs if there are no existing query args
+        let uri = EscapedURI::from_uri(Uri::from_parts(parts).unwrap())
+            .append_query_pairs(&[("foo", "bar"), ("bar", "baz")]);
+
+        assert_eq!(uri.path(), "/");
+        assert_eq!(uri.query(), Some("foo=bar&bar=baz"));
+    }
+
+    #[test]
+    fn test_escaped_uri_append_query_pairs() {
+        let uri = EscapedURI::from_path_and_query("/something", &[("key", "value")])
+            .append_query_pairs(&[("foo", "bar"), ("bar", "baz")])
+            .append_query_pair("last", "one");
+
+        assert_eq!(uri.path(), "/something");
+        assert_eq!(uri.query(), Some("key=value&foo=bar&bar=baz&last=one"));
     }
 
     #[test]

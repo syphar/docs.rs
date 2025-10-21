@@ -22,6 +22,7 @@ use axum::{
 use base64::{Engine, engine::general_purpose::STANDARD as b64};
 use chrono::{DateTime, Utc};
 use futures_util::stream::TryStreamExt;
+use http::Uri;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -50,7 +51,8 @@ pub struct Release {
     pub(crate) build_time: Option<DateTime<Utc>>,
     pub(crate) stars: i32,
     pub(crate) has_unyanked_releases: Option<bool>,
-    pub(crate) href: Option<&'static str>,
+    #[serde(with = "http_serde::option::uri")]
+    pub(crate) href: Option<Uri>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -144,7 +146,7 @@ struct SearchResult {
     pub next_page: Option<String>,
 }
 
-fn rust_lib_release(name: &str, description: &str, href: &'static str) -> ReleaseStatus {
+fn rust_lib_release(name: &str, description: &str, href: &Uri) -> ReleaseStatus {
     ReleaseStatus::Available(Release {
         name: name.to_string(),
         version: String::new(),
@@ -154,7 +156,7 @@ fn rust_lib_release(name: &str, description: &str, href: &'static str) -> Releas
         rustdoc_status: false,
         stars: 0,
         has_unyanked_releases: None,
-        href: Some(href),
+        href: Some(href.clone()),
     })
 }
 
@@ -575,7 +577,7 @@ pub(crate) async fn search_handler(
                 .context("couldn't create rustdoc params from matched release ")?;
 
             let uri = if rustdoc_status {
-                params.rustdoc_url().append_query_pairs(queries)?
+                params.rustdoc_url().append_query_pairs(queries)
             } else {
                 params.crate_details_url()
             };

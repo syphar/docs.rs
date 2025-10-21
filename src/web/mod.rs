@@ -751,6 +751,7 @@ pub(crate) struct AxumErrorPage {
 impl_axum_webpage! {
     AxumErrorPage,
     status = |err| err.status,
+
 }
 
 #[cfg(test)]
