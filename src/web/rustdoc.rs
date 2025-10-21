@@ -27,7 +27,7 @@ use askama::Template;
 use axum::{
     body::Body,
     extract::{Extension, Query, RawQuery},
-    http::{StatusCode, Uri},
+    http::StatusCode,
     response::{IntoResponse, Response as AxumResponse},
 };
 use http::{HeaderValue, header};
