@@ -32,21 +32,25 @@ impl EscapedURI {
         Self(uri)
     }
 
-    pub fn from_path(path: &str) -> Self {
+    pub fn from_path(path: impl AsRef<str>) -> Self {
         Self(
             Uri::builder()
-                .path_and_query(encode_url_path(path))
+                .path_and_query(encode_url_path(path.as_ref()))
                 .build()
                 .expect("this can never fail because we encode the path"),
         )
     }
 
-    pub fn from_path_and_raw_query(path: &str, raw_query: Option<&str>) -> Self {
+    pub fn from_path_and_raw_query(
+        path: impl AsRef<str>,
+        raw_query: Option<impl AsRef<str>>,
+    ) -> Self {
         Self::from_path(path).append_raw_query(raw_query)
     }
 
-    pub(crate) fn from_path_and_query<I, K, V>(path: &str, queries: I) -> Self
+    pub(crate) fn from_path_and_query<P, I, K, V>(path: P, queries: I) -> Self
     where
+        P: AsRef<str>,
         I: IntoIterator,
         I::Item: Borrow<(K, V)>,
         K: AsRef<str>,

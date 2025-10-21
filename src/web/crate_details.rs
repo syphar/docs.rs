@@ -640,7 +640,7 @@ pub(crate) async fn get_all_platforms_inner(
         .await?
         .into_exactly_named_or_else(|corrected_name, req_version| {
             AxumNope::Redirect(
-                EscapedURI::from_path(&format!(
+                EscapedURI::from_path(format!(
                     "/platforms/{}/{}/{}",
                     corrected_name,
                     req_version,
@@ -651,7 +651,7 @@ pub(crate) async fn get_all_platforms_inner(
         })?
         .into_canonical_req_version_or_else(|version| {
             AxumNope::Redirect(
-                EscapedURI::from_path(&format!(
+                EscapedURI::from_path(format!(
                     "/platforms/{}/{}/{}",
                     &params.name,
                     version,
