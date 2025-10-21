@@ -9,6 +9,18 @@
 
 ## description / notes for PR
 
+### goal
+
+- remove duplication and differences in handling the path parameters in rustdoc
+  handlers
+- start generating redirect & canonical in the same param struct
+
+idea is that for the "subdomain-per-crate" topic we then only need to change
+this struct, so it can alternatively parse the subdomain, and generate the
+correct redirect URLs.
+
+### details
+
 - parsing all parts from the request is put into the struct, so when we support
   separate subdomains for the crates, we just have to adapt this struct
 - this means all url generation needs to be put into this param struct, or needs
