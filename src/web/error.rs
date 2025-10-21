@@ -3,30 +3,61 @@ use crate::{
     storage::PathNotFoundError,
     web::{cache::CachePolicy, encode_url_path, releases::Search},
 };
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use axum::{
     Json,
     http::StatusCode,
     response::{IntoResponse, Response as AxumResponse},
 };
-use derive_more::{Deref, Display};
-use http::Uri;
-use std::borrow::{Borrow, Cow};
+use derive_more::Display;
+use http::{Uri, uri::PathAndQuery};
+use std::{
+    borrow::{Borrow, Cow},
+    ops::Deref,
+};
 use tracing::error;
 use url::form_urlencoded;
 
 use super::AxumErrorPage;
 
-#[derive(Debug, Clone, Display, Deref)]
-#[deref(forward)]
-pub struct EscapedURI(String);
+#[derive(Debug, Clone, Display)]
+pub struct EscapedURI(Uri);
 
 impl EscapedURI {
-    pub fn new(path: &str) -> Self {
-        Self::new_with_raw_query(path, None)
+    pub fn from_uri<U>(uri: U) -> Result<Self>
+    where
+        U: TryInto<Uri>,
+        U::Error: std::error::Error + Send + Sync + 'static,
+    {
+        let mut uri: Uri = uri.try_into().context("couldn't parse URL")?;
+
+        let encoded_path = encode_url_path(uri.path());
+        if encoded_path != uri.path() {
+            let mut parts = uri.into_parts();
+
+            let existing_query = if let Some(pq) = parts.path_and_query
+                && let Some(existing_query) = pq.query()
+            {
+                format!("?{}", existing_query)
+            } else {
+                String::new()
+            };
+
+            parts.path_and_query = Some(
+                PathAndQuery::from_maybe_shared(format!("{}{}", encoded_path, existing_query))
+                    .context("couldn't rebuild path & query with encoded path")?,
+            );
+
+            uri = Uri::from_parts(parts).context("couln't recreate URI with new encoded path")?;
+        }
+
+        Ok(Self(uri))
+    }
+    pub fn from_path(path: &str) -> Self {
+        Self::from_path_and_raw_query(path, None)
     }
 
-    pub fn new_with_raw_query(path: &str, raw_query: Option<&str>) -> Self {
+    pub fn from_path_and_raw_query(path: &str, raw_query: Option<&str>) -> Self {
         let mut path = encode_url_path(path);
         if let Some(query) = raw_query
             && !query.is_empty()
@@ -34,7 +65,12 @@ impl EscapedURI {
             path.push('?');
             path.push_str(query);
         }
-        Self(path)
+        Self(
+            Uri::builder()
+                .path_and_query(path)
+                .build()
+                .expect("couldn't parse URL"),
+        )
     }
 
     pub(crate) fn new_with_query<I, K, V>(path: &str, queries: I) -> Self
@@ -55,94 +91,67 @@ impl EscapedURI {
             None
         };
 
-        Self::new_with_raw_query(path, raw_query.as_deref())
+        Self::from_path_and_raw_query(path, raw_query.as_deref())
     }
 
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
+    pub fn path(&self) -> &str {
+        self.0.path()
     }
 
-    /// attach raw query, but only if there wasn't one
-    /// FIXME: add tests
-    /// TODO: or extend query when there is already one?
-    pub fn with_raw_query(self, raw_query: Option<&str>) -> Self {
-        let Some(raw_query) = raw_query else {
-            return self;
+    pub fn append_raw_query(self, raw_query: Option<impl AsRef<str>>) -> Self {
+        let raw_query = match raw_query {
+            Some(ref q) => q.as_ref(),
+            None => return self,
         };
 
-        let uri: Uri = self
-            .0
-            .parse()
-            .expect("EscapedURI always contains valid URI");
-
-        if let Some(existing_query) = uri.query() {
-            let new_query = form_urlencoded::Serializer::new(String::new())
-                .extend_pairs(form_urlencoded::parse(raw_query.as_bytes()))
-                .extend_pairs(form_urlencoded::parse(existing_query.as_bytes()))
-                .finish();
-            EscapedURI::new_with_raw_query(uri.path(), Some(&new_query))
-        } else {
-            EscapedURI::new_with_raw_query(uri.path(), Some(raw_query))
-        }
+        self.append_query_pairs(form_urlencoded::parse(raw_query.as_bytes()))
     }
 
-    pub fn with_query<I, K, V>(self, queries: I) -> Self
+    pub fn append_query_pairs<I, K, V>(self, queries: I) -> Self
     where
         I: IntoIterator,
         I::Item: Borrow<(K, V)>,
         K: AsRef<str>,
         V: AsRef<str>,
     {
-        let uri: Uri = self
-            .0
-            .parse()
-            .expect("EscapedURI always contains valid URI");
-
-        if let Some(existing_query) = uri.query() {
-            let new_query = form_urlencoded::Serializer::new(String::new())
-                .extend_pairs(queries)
-                .extend_pairs(form_urlencoded::parse(existing_query.as_bytes()))
-                .finish();
-
-            EscapedURI::new_with_raw_query(uri.path(), Some(&new_query))
-        } else {
-            let new_query = form_urlencoded::Serializer::new(String::new())
-                .extend_pairs(queries)
-                .finish();
-
-            EscapedURI::new_with_raw_query(uri.path(), Some(&new_query))
+        let mut queries = queries.into_iter().peekable();
+        if queries.peek().is_none() {
+            return self;
         }
+
+        let mut serializer = form_urlencoded::Serializer::new(String::new());
+        serializer.extend_pairs(queries);
+
+        if let Some(existing_query) = self.0.query() {
+            serializer.extend_pairs(form_urlencoded::parse(existing_query.as_bytes()));
+        }
+
+        EscapedURI::from_path_and_raw_query(self.0.path(), Some(&serializer.finish()))
     }
 
     /// extend query part
-    pub fn extend_query(self, key: impl AsRef<str>, value: impl AsRef<str>) -> Self {
-        let uri: Uri = self
-            .0
-            .parse()
-            .expect("EscapedURI always contains valid URI");
-
-        if let Some(raw_query) = uri.query() {
-            let new_query = form_urlencoded::Serializer::new(String::new())
-                .extend_pairs(form_urlencoded::parse(raw_query.as_bytes()))
-                .append_pair(key.as_ref(), value.as_ref())
-                .finish();
-
-            EscapedURI::new_with_raw_query(uri.path(), Some(&new_query))
-        } else {
-            self.with_raw_query(Some(
-                &form_urlencoded::Serializer::new(String::new())
-                    .append_pair(key.as_ref(), value.as_ref())
-                    .finish(),
-            ))
-        }
+    pub fn append_query_pair(self, key: impl AsRef<str>, value: impl AsRef<str>) -> Self {
+        self.append_query_pairs(std::iter::once((key, value)))
     }
 }
 
-impl TryFrom<EscapedURI> for http::Uri {
-    type Error = http::uri::InvalidUri;
+impl Deref for EscapedURI {
+    type Target = Uri;
 
-    fn try_from(value: EscapedURI) -> Result<Self, Self::Error> {
-        value.0.parse::<http::Uri>()
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl From<EscapedURI> for http::Uri {
+    fn from(value: EscapedURI) -> Self {
+        value.0
+    }
+}
+
+impl PartialEq for EscapedURI {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
     }
 }
 
@@ -365,7 +374,7 @@ mod tests {
     #[test]
     fn test_redirect_error_encodes_url_path() {
         let response = AxumNope::Redirect(
-            EscapedURI::new("/something>"),
+            EscapedURI::from_path("/something>"),
             CachePolicy::ForeverInCdnAndBrowser,
         )
         .into_response();

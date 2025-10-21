@@ -145,7 +145,7 @@ pub(crate) async fn build_features_handler(
         .assume_exact_name()?
         .into_canonical_req_version_or_else(|version| {
             AxumNope::Redirect(
-                EscapedURI::new(&format!("/crate/{}/{}/features", &name, version)),
+                EscapedURI::from_path(&format!("/crate/{}/{}/features", &name, version)),
                 CachePolicy::ForeverInCdn,
             )
         })?

@@ -464,14 +464,16 @@ impl_axum_webpage! {
 
 #[tracing::instrument(skip(conn, storage))]
 pub(crate) async fn crate_details_handler(
-    params: RustdocParams,
+    mut params: RustdocParams,
     Extension(storage): Extension<Arc<AsyncStorage>>,
     mut conn: DbConnection,
 ) -> AxumResult<AxumResponse> {
-    let mut params = params.normalize_or_else(|original_path: &str, params: &RustdocParams| {
-        (original_path != params.crate_details_url().as_str())
-            .then(|| AxumNope::Redirect(params.crate_details_url(), CachePolicy::ForeverInCdn))
-    })?;
+    if params.original_path() != params.crate_details_url().path() {
+        return Err(AxumNope::Redirect(
+            params.crate_details_url(),
+            CachePolicy::ForeverInCdn,
+        ));
+    }
 
     let matched_release = match_version(&mut conn, &params.name, &params.version)
         .await?
@@ -648,7 +650,7 @@ pub(crate) async fn get_all_platforms_inner(
         .await?
         .into_exactly_named_or_else(|corrected_name, req_version| {
             AxumNope::Redirect(
-                EscapedURI::new(&format!(
+                EscapedURI::from_path(&format!(
                     "/platforms/{}/{}/{}",
                     corrected_name,
                     req_version,
@@ -659,7 +661,7 @@ pub(crate) async fn get_all_platforms_inner(
         })?
         .into_canonical_req_version_or_else(|version| {
             AxumNope::Redirect(
-                EscapedURI::new(&format!(
+                EscapedURI::from_path(&format!(
                     "/platforms/{}/{}/{}",
                     &params.name,
                     version,

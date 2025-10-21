@@ -98,9 +98,9 @@
         {# The url for the release, `/crate/:name/:version` #}
         {% set release_url %}
         {% if use_target_redirect %}
-            {%- set release_url = release_params.target_redirect_url().as_str().to_owned() -%}
+            {%- set release_url = release_params.target_redirect_url() -%}
         {% else %} {# /crate #}
-            {%- set release_url = release_params.crate_details_url().as_str().to_owned() -%}
+            {%- set release_url = release_params.crate_details_url() -%}
         {% endif %}
         {# The release's name and version, `:name-:version` #}
         {%- set release_name = "{}-{}"|format(params.name, release.version) -%}

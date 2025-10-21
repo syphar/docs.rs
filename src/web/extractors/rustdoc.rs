@@ -298,31 +298,24 @@ impl RustdocParams {
     }
 
     pub(crate) fn crate_details_url(&self) -> EscapedURI {
-        EscapedURI::new(&format!("/crate/{}/{}", self.name, self.version))
+        EscapedURI::from_path(&format!("/crate/{}/{}", self.name, self.version))
     }
 
     fn has_trailing_slash(&self) -> bool {
         self.original_uri.path().ends_with('/')
     }
 
-    pub(crate) fn normalize_or_else<F>(self, f: F) -> Result<Self, AxumNope>
-    where
-        F: FnOnce(&str, &Self) -> Option<AxumNope>,
-    {
-        if let Some(err) = f(&self.original_uri.path(), &self) {
-            Err(err)
-        } else {
-            Ok(self)
-        }
-    }
-
     pub(crate) fn target_redirect_url(&self) -> EscapedURI {
-        EscapedURI::new(&format!(
+        EscapedURI::from_path(&format!(
             "/crate/{}/{}/target-redirect/{}",
             self.name,
             self.version,
             self.path_for_url(),
         ))
+    }
+
+    pub(crate) fn original_path(&self) -> &str {
+        self.original_uri.path()
     }
 }
 
@@ -439,7 +432,7 @@ impl ParsedRustdocParams {
     }
 
     pub(crate) fn target_redirect_url(&self) -> EscapedURI {
-        EscapedURI::new(&format!(
+        EscapedURI::from_path(&format!(
             "/crate/{}/{}/target-redirect/{}",
             self.name(),
             self.version(),
@@ -524,7 +517,7 @@ impl ParsedRustdocParams {
                 &[("search", &search_item)],
             )
         } else {
-            EscapedURI::new(&format!("/{}/{}/{}", self.name(), self.version(), path))
+            EscapedURI::from_path(&format!("/{}/{}/{}", self.name(), self.version(), path))
         }
     }
 
@@ -538,7 +531,7 @@ fn url_decode<'a>(input: &'a str) -> Result<Cow<'a, str>> {
 }
 
 fn generate_rustdoc_url(name: &str, version: &ReqVersion, path: &str) -> EscapedURI {
-    EscapedURI::new(&format!("/{}/{}/{}", name, version, path))
+    EscapedURI::from_path(&format!("/{}/{}/{}", name, version, path))
 }
 
 fn generate_path_for_url(

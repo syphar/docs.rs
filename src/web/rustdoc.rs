@@ -8,7 +8,7 @@ use crate::{
     },
     utils,
     web::{
-        MetaData, ReqVersion, axum_cached_redirect, axum_parse_uri_with_params,
+        MetaData, ReqVersion, axum_cached_redirect,
         cache::CachePolicy,
         crate_details::CrateDetails,
         csp::Csp,
@@ -33,7 +33,7 @@ use axum::{
 use http::{HeaderValue, header};
 use serde::Deserialize;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::HashMap,
     sync::{Arc, LazyLock},
 };
 use tracing::{Instrument, error, info_span, instrument, trace};
@@ -199,25 +199,21 @@ pub(crate) async fn rustdoc_redirector_handler(
     mut params: RustdocParams,
     Extension(storage): Extension<Arc<AsyncStorage>>,
     mut conn: DbConnection,
-    Query(query_pairs): Query<HashMap<String, String>>,
+    RawQuery(original_query): RawQuery,
 ) -> AxumResult<impl IntoResponse> {
-    #[instrument]
     fn redirect_to_doc(
-        query_pairs: &HashMap<String, String>,
-        url_str: String,
+        url: EscapedURI,
         cache_policy: CachePolicy,
         path_in_crate: Option<&str>,
     ) -> AxumResult<AxumResponse> {
-        let mut queries: BTreeMap<String, String> = BTreeMap::new();
-        if let Some(path) = path_in_crate {
-            queries.insert("search".into(), path.into());
-        }
-        queries.extend(query_pairs.to_owned());
+        let url = if let Some(path) = path_in_crate {
+            url.append_query_pair("search", path)
+        } else {
+            url
+        };
+
         trace!("redirect to doc");
-        Ok(axum_cached_redirect(
-            axum_parse_uri_with_params(&url_str, queries)?,
-            cache_policy,
-        )?)
+        Ok(axum_cached_redirect(url, cache_policy)?)
     }
 
     // global static assets for older builds are served from the root, which ends up
@@ -250,9 +246,9 @@ pub(crate) async fn rustdoc_redirector_handler(
     };
 
     if let Some(description) = DOC_RUST_LANG_ORG_REDIRECTS.get(&*crate_name) {
+        let target_uri = EscapedURI::from_uri(description.href)?.append_raw_query(original_query);
         return redirect_to_doc(
-            &query_pairs,
-            description.href.to_string(),
+            target_uri,
             CachePolicy::ForeverInCdnAndStaleInBrowser,
             path_in_crate.as_deref(),
         );
@@ -315,22 +311,19 @@ pub(crate) async fn rustdoc_redirector_handler(
         .await?;
 
     if matched_release.rustdoc_status() {
-        let cache = if matched_release.is_latest_url() {
-            CachePolicy::ForeverInCdn
-        } else {
-            CachePolicy::ForeverInCdnAndStaleInBrowser
-        };
-
         Ok(redirect_to_doc(
-            &query_pairs,
-            params.rustdoc_url().as_str().to_string(),
-            cache,
+            params.rustdoc_url().append_raw_query(original_query),
+            if matched_release.is_latest_url() {
+                CachePolicy::ForeverInCdn
+            } else {
+                CachePolicy::ForeverInCdnAndStaleInBrowser
+            },
             path_in_crate.as_deref(),
         )?
         .into_response())
     } else {
         Ok(axum_cached_redirect(
-            params.crate_details_url().with_query(query_pairs),
+            params.crate_details_url().append_raw_query(original_query),
             CachePolicy::ForeverInCdn,
         )?
         .into_response())
@@ -389,7 +382,7 @@ impl RustdocPage {
     }
 
     pub(crate) fn use_direct_platform_links(&self) -> bool {
-        !&self.latest_path.contains("/target-redirect/")
+        !&self.latest_path.path().contains("/target-redirect/")
     }
 }
 
@@ -430,7 +423,7 @@ pub(crate) async fn rustdoc_html_server_handler(
                     .with_name(corrected_name)
                     .with_version(req_version)
                     .rustdoc_url()
-                    .with_raw_query(raw_query.as_deref()),
+                    .append_raw_query(raw_query.as_deref()),
                 CachePolicy::NoCaching,
             )
         })?
@@ -463,7 +456,7 @@ pub(crate) async fn rustdoc_html_server_handler(
         // if visiting the full path to the default target, remove the target from the path
         // expects a req_path that looks like `[/:target]/.*`
         return Ok(axum_cached_redirect(
-            params.rustdoc_url().with_raw_query(raw_query.as_deref()),
+            params.rustdoc_url().append_raw_query(raw_query.as_deref()),
             CachePolicy::ForeverInCdn,
         )?);
     }
@@ -517,7 +510,7 @@ pub(crate) async fn rustdoc_html_server_handler(
                     .await?
                 {
                     return Ok(axum_cached_redirect(
-                        params.rustdoc_url().with_raw_query(raw_query.as_deref()),
+                        params.rustdoc_url().append_raw_query(raw_query.as_deref()),
                         CachePolicy::ForeverInCdn,
                     )?);
                 }
@@ -578,7 +571,7 @@ pub(crate) async fn rustdoc_html_server_handler(
         .clone()
         .with_version(&ReqVersion::Exact(latest_version))
         .rustdoc_url()
-        .with_raw_query(raw_query.as_deref());
+        .append_raw_query(raw_query.as_deref());
 
     let latest_path = if latest_release.build_status.is_success() {
         params
@@ -591,7 +584,7 @@ pub(crate) async fn rustdoc_html_server_handler(
             .with_version(&ReqVersion::Latest)
             .crate_details_url()
     }
-    .with_raw_query(raw_query.as_deref());
+    .append_raw_query(raw_query.as_deref());
 
     let current_target = params.doc_target_or_default();
 
