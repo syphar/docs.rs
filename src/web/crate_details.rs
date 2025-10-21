@@ -1,17 +1,16 @@
-use super::{MetaData, match_version};
-use crate::db::{BuildId, ReleaseId};
-use crate::registry_api::OwnerKind;
-use crate::utils::{get_correct_docsrs_style_file, report_error};
 use crate::{
     AsyncStorage,
-    db::{CrateId, types::BuildStatus},
+    db::{BuildId, CrateId, ReleaseId, types::BuildStatus},
     impl_axum_webpage,
+    registry_api::OwnerKind,
     storage::PathNotFoundError,
+    utils::{get_correct_docsrs_style_file, report_error},
     web::{
-        MatchedRelease, ReqVersion,
+        MatchedRelease, MetaData, ReqVersion,
         cache::CachePolicy,
         error::{AxumNope, AxumResult, EscapedURI},
-        extractors::{DbConnection, Path, rustdoc::RustdocParams},
+        extractors::{DbConnection, rustdoc::RustdocParams},
+        match_version,
         page::templates::{RenderBrands, RenderRegular, RenderSolid, filters},
     },
 };
@@ -25,7 +24,6 @@ use chrono::{DateTime, Utc};
 use futures_util::stream::TryStreamExt;
 use log::warn;
 use semver::Version;
-use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -449,6 +447,7 @@ struct CrateDetailsPage {
     rustdoc: Option<String>, // this is description_long in database
     source_size: Option<i64>,
     documentation_size: Option<i64>,
+    params: RustdocParams,
 }
 
 impl CrateDetailsPage {
@@ -463,34 +462,29 @@ impl_axum_webpage! {
     cpu_intensive_rendering = true,
 }
 
-#[derive(Deserialize, Clone, Debug)]
-pub(crate) struct CrateDetailHandlerParams {
-    name: String,
-    version: Option<ReqVersion>,
-}
-
 #[tracing::instrument(skip(conn, storage))]
 pub(crate) async fn crate_details_handler(
-    Path(params): Path<CrateDetailHandlerParams>,
+    mut params: RustdocParams,
     Extension(storage): Extension<Arc<AsyncStorage>>,
     mut conn: DbConnection,
 ) -> AxumResult<AxumResponse> {
-    let req_version = params.version.ok_or_else(|| {
-        AxumNope::Redirect(
-            EscapedURI::new(&format!("/crate/{}/{}", &params.name, ReqVersion::Latest)),
+    if !params.path_matches_generated_crate_details() {
+        return Err(AxumNope::Redirect(
+            params.crate_details_url(),
             CachePolicy::ForeverInCdn,
-        )
-    })?;
+        ));
+    }
 
-    let matched_release = match_version(&mut conn, &params.name, &req_version)
+    let matched_release = match_version(&mut conn, &params.name, &params.version)
         .await?
         .assume_exact_name()?
         .into_canonical_req_version_or_else(|version| {
             AxumNope::Redirect(
-                EscapedURI::new(&format!("/crate/{}/{}", &params.name, version)),
+                params.clone().with_version(version).crate_details_url(),
                 CachePolicy::ForeverInCdn,
             )
         })?;
+    matched_release.update_params(&mut params);
 
     let mut details = CrateDetails::from_matched_release(&mut conn, matched_release).await?;
 
@@ -525,6 +519,8 @@ pub(crate) async fn crate_details_handler(
         ..
     } = details;
 
+    let is_latest_version = params.version.is_latest();
+
     let mut res = CrateDetailsPage {
         version,
         name,
@@ -548,15 +544,16 @@ pub(crate) async fn crate_details_handler(
         rustdoc,
         source_size,
         documentation_size,
+        params,
     }
     .into_response();
     res.extensions_mut()
-        .insert::<CachePolicy>(if req_version.is_latest() {
+        .insert::<CachePolicy>(if is_latest_version {
             CachePolicy::ForeverInCdn
         } else {
             CachePolicy::ForeverInCdnAndStaleInBrowser
         });
-    Ok(res.into_response())
+    Ok(res)
 }
 
 #[derive(Template)]
@@ -567,6 +564,7 @@ struct ReleaseList {
     crate_name: String,
     inner_path: String,
     target: String,
+    params: RustdocParams,
 }
 
 impl_axum_webpage! {
@@ -605,7 +603,8 @@ pub(crate) async fn get_all_releases(
         // and redirect to a search.
         target: params.doc_target.as_deref().unwrap_or_default().to_string(),
         inner_path: params.inner_path().to_string(),
-        crate_name: params.name,
+        crate_name: params.name.clone(),
+        params,
     }
     .into_response())
 }

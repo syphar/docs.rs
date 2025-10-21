@@ -88,27 +88,21 @@
           * "failure" for failed build
           * "in_progress" for in progress
         * `is_library` A boolean that's true if the crate is a library and false if it's a binary
-    * `target` The target platform (empty string if the default or a `/crate` page)
     * `inner_path` The current rustdoc page (empty string if a `/crate` page)
 #}
-{% macro releases_list(name, releases, target, inner_path) %}
-    {% set target_for_url %}
-    {% if target.is_empty() %}
-        {%- set target_for_url = "".into() -%}
-    {% else %}
-        {%- set target_for_url = "{}/"|format(target) -%}
-    {% endif %}
+{% macro releases_list(params, releases, use_target_redirect, retain_fragment) %}
     {%- for release in releases -%}
+        {%- set release_params = params.clone().with_version(ReqVersion::Exact(release.version.clone())) -%}
+
         {# The url for the release, `/crate/:name/:version` #}
         {% set release_url %}
-        {%- set retain_fragment = !inner_path.is_empty() -%}
-        {% if inner_path.is_empty() %} {# /crate #}
-            {%- set release_url = "/crate/{}/{}"|format(name, release.version) -%}
-        {% else %}
-            {%- set release_url = "/crate/{}/{}/target-redirect/{}{}"|format(name, release.version, target_for_url, inner_path) -%}
+        {% if use_target_redirect %}
+            {%- set release_url = release_params.target_redirect_url().as_str().to_owned() -%}
+        {% else %} {# /crate #}
+            {%- set release_url = release_params.crate_details_url().as_str().to_owned() -%}
         {% endif %}
         {# The release's name and version, `:name-:version` #}
-        {%- set release_name = "{}-{}"|format(name, release.version) -%}
+        {%- set release_name = "{}-{}"|format(params.name, release.version) -%}
         {%- set warning -%}
         {%- set title -%}
         {%- set yanked = release.yanked.unwrap_or_default() -%}

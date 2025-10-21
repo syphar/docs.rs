@@ -120,6 +120,12 @@ impl FromStr for ReqVersion {
     }
 }
 
+impl From<&ReqVersion> for ReqVersion {
+    fn from(value: &ReqVersion) -> Self {
+        value.clone()
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct MatchedRelease {
     /// crate name

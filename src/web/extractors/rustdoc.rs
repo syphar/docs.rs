@@ -99,9 +99,9 @@ impl RustdocParams {
         }
     }
 
-    pub(crate) fn with_version(self, version: &ReqVersion) -> Self {
+    pub(crate) fn with_version(self, version: impl Into<ReqVersion>) -> Self {
         RustdocParams {
-            version: version.clone(),
+            version: version.into(),
             ..self
         }
     }
@@ -320,9 +320,22 @@ impl RustdocParams {
     pub(crate) fn has_trailing_slash(&self) -> bool {
         self.original_uri.path().ends_with('/')
     }
+
+    pub(crate) fn path_matches_generated_crate_details(&self) -> bool {
+        self.original_uri.path() == self.crate_details_url().as_str()
+    }
+
+    pub(crate) fn target_redirect_url(&self) -> EscapedURI {
+        EscapedURI::new(&format!(
+            "/crate/{}/{}/target-redirect/{}",
+            self.name,
+            self.version,
+            self.path_for_url(),
+        ))
+    }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ParsedRustdocParams {
     inner: RustdocParams,
     doc_targets: Vec<String>,

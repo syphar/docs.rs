@@ -123,7 +123,7 @@
                             <div class="pure-menu pure-menu-scrollable sub-menu">
                                 <ul class="pure-menu-list">
                                     {# Display all releases of this crate #}
-                                    {% call macros::releases_list(name=name, releases=releases, target="", inner_path="") %}
+                                    {% call macros::releases_list(params=params, releases=releases, use_target_redirect = false, retain_fragment = false) %}
                                 </ul>
                             </div>
                         </li>
