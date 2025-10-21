@@ -796,141 +796,134 @@ mod tests {
     }
 
     #[test_case(
-        None, None,
+        None, None, false,
         None, "", "index.html";
         "super empty 1"
     )]
     #[test_case(
-        Some(""), Some(""),
+        Some(""), Some(""), false,
         None, "", "index.html";
         "super empty 2"
     )]
     // test cases when no separate "target" component was present in the params
     #[test_case(
-        None, Some("/"),
+        None, Some("/"), true,
         None, "", "index.html";
         "just slash"
     )]
     #[test_case(
-        None, Some("something"),
+        None, Some("something"), false,
         None, "something", "something";
         "without trailing slash"
     )]
     #[test_case(
-        None, Some("/something"),
+        None, Some("/something"), false,
         None, "something", "something";
         "leading slash is cut"
     )]
     #[test_case(
-        None, Some("something/"),
+        None, Some("something/"), true,
         None, "something/", "something/index.html";
         "with trailing slash"
     )]
     // a target is given, but as first component of the path, for routes without separate
     // "target" component
     #[test_case(
-        None, Some("some-target-name"),
+        None, Some("some-target-name"), false,
         Some("some-target-name"), "", "index.html";
         "just target without trailing slash"
     )]
     #[test_case(
-        None, Some("some-target-name/"),
+        None, Some("some-target-name/"), true,
         Some("some-target-name"), "", "index.html";
         "just default target with trailing slash"
     )]
     #[test_case(
-        None, Some("some-target-name/one"),
+        None, Some("some-target-name/one"), false,
         Some("some-target-name"), "one", "one";
         "target + one without trailing slash"
     )]
     #[test_case(
-        None, Some("some-target-name/one/"),
+        None, Some("some-target-name/one/"), true,
         Some("some-target-name"), "one/", "one/index.html";
         "target + one target with trailing slash"
     )]
     #[test_case(
-        None, Some("unknown-target-name/one/"),
+        None, Some("unknown-target-name/one/"), true,
         None, "unknown-target-name/one/", "unknown-target-name/one/index.html";
         "unknown target stays in path"
     )]
     #[test_case(
-        None, Some("some-target-name/some/inner/path"),
+        None, Some("some-target-name/some/inner/path"), false,
         Some("some-target-name"), "some/inner/path", "some/inner/path";
         "all without trailing slash"
     )]
     #[test_case(
-        None, Some("some-target-name/some/inner/path/"),
+        None, Some("some-target-name/some/inner/path/"), true,
         Some("some-target-name"), "some/inner/path/", "some/inner/path/index.html";
         "all with trailing slash"
     )]
     // here we have a separate target path parameter, we check it and use it accordingly
     #[test_case(
-        Some("some-target-name"), None,
+        Some("some-target-name"), None, false,
         Some("some-target-name"), "", "index.html";
         "actual target, that is default"
     )]
     #[test_case(
-        Some("some-target-name"), Some("inner/path.html"),
+        Some("some-target-name"), Some("inner/path.html"), false,
         Some("some-target-name"), "inner/path.html", "inner/path.html";
         "actual target with path"
     )]
     #[test_case(
-        Some("some-target-name"), Some("inner/path/"),
+        Some("some-target-name"), Some("inner/path/"), true,
         Some("some-target-name"), "inner/path/", "inner/path/index.html";
         "actual target with path slash"
     )]
     #[test_case(
-        Some("unknown-target/"), None,
+        Some("unknown-target"), None, true,
         None, "unknown-target/", "unknown-target/index.html";
         "unknown target"
     )]
     #[test_case(
-        Some("unknown-target"), None,
+        Some("unknown-target"), None, false,
         None, "unknown-target", "unknown-target";
         "unknown target without trailing slash"
     )]
     #[test_case(
-        Some("unknown-target"), Some("inner/path.html"),
+        Some("unknown-target"), Some("inner/path.html"), false,
         None, "unknown-target/inner/path.html", "unknown-target/inner/path.html";
         "unknown target with path"
     )]
     #[test_case(
-        Some("other-target"), Some("inner/path.html"),
+        Some("other-target"), Some("inner/path.html"), false,
         Some("other-target"), "inner/path.html", "other-target/inner/path.html";
         "other target with path"
     )]
     #[test_case(
-        Some("unknown-target"), Some("inner/path/"),
+        Some("unknown-target"), Some("inner/path/"), true,
         None, "unknown-target/inner/path/", "unknown-target/inner/path/index.html";
         "unknown target with path slash"
     )]
     #[test_case(
-        Some("other-target"), Some("inner/path/"),
+        Some("other-target"), Some("inner/path/"), true,
         Some("other-target"), "inner/path/", "other-target/inner/path/index.html";
         "other target with path slash"
     )]
     #[test_case(
-        Some("some-target-name"), None,
+        Some("some-target-name"), None, false,
         Some("some-target-name"), "", "index.html";
         "pure default target, without trailing slash"
     )]
     fn test_parse(
         target: Option<&str>,
         path: Option<&str>,
+        had_trailing_slash: bool,
         expected_target: Option<&str>,
         expected_path: &str,
         expected_storage_path: &str,
     ) {
         static TARGETS: &[&str] = &["some-target-name", "other-target"];
         static DEFAULT_TARGET: &str = "some-target-name";
-
-        let had_trailing_slash = if let Some(path) = path {
-            path.ends_with('/')
-        } else if let Some(target) = target {
-            target.ends_with('/')
-        } else {
-            false
-        };
 
         let parsed = RustdocParams {
             had_trailing_slash,
