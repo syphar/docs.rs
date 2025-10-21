@@ -86,6 +86,34 @@ impl EscapedURI {
         }
     }
 
+    pub fn with_query<I, K, V>(self, queries: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: Borrow<(K, V)>,
+        K: AsRef<str>,
+        V: AsRef<str>,
+    {
+        let uri: Uri = self
+            .0
+            .parse()
+            .expect("EscapedURI always contains valid URI");
+
+        if let Some(existing_query) = uri.query() {
+            let new_query = form_urlencoded::Serializer::new(String::new())
+                .extend_pairs(queries)
+                .extend_pairs(form_urlencoded::parse(existing_query.as_bytes()))
+                .finish();
+
+            EscapedURI::new_with_raw_query(uri.path(), Some(&new_query))
+        } else {
+            let new_query = form_urlencoded::Serializer::new(String::new())
+                .extend_pairs(queries)
+                .finish();
+
+            EscapedURI::new_with_raw_query(uri.path(), Some(&new_query))
+        }
+    }
+
     /// extend query part
     pub fn extend_query(self, key: impl AsRef<str>, value: impl AsRef<str>) -> Self {
         let uri: Uri = self

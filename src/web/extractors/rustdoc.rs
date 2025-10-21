@@ -267,16 +267,15 @@ impl RustdocParams {
     }
 
     pub(crate) fn file_extension(&self) -> Option<&str> {
-        self.inner_path.as_deref().and_then(|p| {
-            p.rsplit_once('.').and_then(|(_, ext)| {
-                if ext.contains('/') {
-                    // to handle cases like `foo.html/bar` where I want `None`
-                    None
-                } else {
-                    Some(ext)
-                }
-            })
-        })
+        for component in &[self.inner_path.as_deref(), self.doc_target.as_deref()] {
+            let Some(component) = component else { continue };
+
+            if let Some(ext) = file_extension(component) {
+                return Some(ext);
+            }
+        }
+
+        None
     }
 
     /// generate the path portion of a URL for these params.
@@ -562,6 +561,17 @@ impl ParsedRustdocParams {
 
 fn url_decode<'a>(input: &'a str) -> Result<Cow<'a, str>> {
     Ok(percent_encoding::percent_decode(input.as_bytes()).decode_utf8()?)
+}
+
+fn file_extension(path: &str) -> Option<&str> {
+    path.rsplit_once('.').and_then(|(_, ext)| {
+        if ext.contains('/') {
+            // to handle cases like `foo.html/bar` where I want `None`
+            None
+        } else {
+            Some(ext)
+        }
+    })
 }
 
 /// we sometimes have routes with a static suffix.

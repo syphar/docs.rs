@@ -200,7 +200,6 @@ pub(crate) async fn rustdoc_redirector_handler(
     Extension(storage): Extension<Arc<AsyncStorage>>,
     mut conn: DbConnection,
     Query(query_pairs): Query<HashMap<String, String>>,
-    uri: Uri,
 ) -> AxumResult<impl IntoResponse> {
     #[instrument]
     fn redirect_to_doc(
@@ -233,7 +232,7 @@ pub(crate) async fn rustdoc_redirector_handler(
             .await;
     }
 
-    if let Some((_, extension)) = uri.path().rsplit_once('.')
+    if let Some(extension) = params.file_extension()
         && extension == "ico"
     {
         // redirect all ico requests
@@ -331,7 +330,7 @@ pub(crate) async fn rustdoc_redirector_handler(
         .into_response())
     } else {
         Ok(axum_cached_redirect(
-            params.crate_details_url().with_raw_query(uri.query()),
+            params.crate_details_url().with_query(query_pairs),
             CachePolicy::ForeverInCdn,
         )?
         .into_response())
