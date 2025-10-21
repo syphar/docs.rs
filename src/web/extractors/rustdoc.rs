@@ -410,8 +410,6 @@ impl ParsedRustdocParams {
     }
 
     pub(crate) fn inner_path(&self) -> &str {
-        // in our logic, when `parse` is done, the path is never `None`.
-        // FIXME: should the inner path default to `/target_name/` when empty?
         self.inner.inner_path.as_deref().unwrap_or_default()
     }
 
@@ -872,9 +870,14 @@ mod tests {
         "actual target with path slash"
     )]
     #[test_case(
-        Some("unknown-target"), None,
+        Some("unknown-target/"), None,
         None, "unknown-target/", "unknown-target/index.html";
         "unknown target"
+    )]
+    #[test_case(
+        Some("unknown-target"), None,
+        None, "unknown-target", "unknown-target";
+        "unknown target without trailing slash"
     )]
     #[test_case(
         Some("unknown-target"), Some("inner/path.html"),
