@@ -451,10 +451,6 @@ impl ParsedRustdocParams {
         self.inner.crate_details_url()
     }
 
-    pub(crate) fn builds_url(&self) -> EscapedURI {
-        self.inner.builds_url()
-    }
-
     /// Generate a possible target path to redirect to, with the information we have.
     ///
     /// Built for the target-redirect view, when we don't find the
