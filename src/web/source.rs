@@ -234,17 +234,17 @@ pub(crate) async fn source_browser_handler(
     .fetch_one(&mut *conn)
     .await?;
 
-    // FIXME: can I use `storage_path` here too instead of `inner_path()`?
+    let inner_path = params.inner_path();
 
     // try to get actual file first
     // skip if request is a directory
-    let (blob, is_file_too_large) = if !params.inner_path().ends_with('/') {
+    let (blob, is_file_too_large) = if !inner_path.ends_with('/') {
         match storage
             .fetch_source_file(
                 &params.name,
                 &version.to_string(),
                 row.latest_build_id,
-                params.inner_path(),
+                &inner_path,
                 row.archive_storage,
             )
             .await
@@ -299,20 +299,23 @@ pub(crate) async fn source_browser_handler(
         (None, None)
     };
 
-    let current_folder = if let Some(last_slash_pos) = params.inner_path().rfind('/') {
-        &params.inner_path()[..last_slash_pos + 1]
+    let current_folder = if let Some(last_slash_pos) = inner_path.rfind('/') {
+        &inner_path[..last_slash_pos + 1]
     } else {
         ""
     };
+    dbg!(&current_folder);
 
-    let file_list = FileList::from_path(
-        &mut conn,
-        &params.name,
-        &version,
-        Some(params.version.clone()),
-        current_folder,
+    let file_list = dbg!(
+        FileList::from_path(
+            &mut conn,
+            &params.name,
+            &version,
+            Some(params.version.clone()),
+            current_folder,
+        )
+        .await?
     )
-    .await?
     .unwrap_or_default();
 
     Ok(SourcePage {

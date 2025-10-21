@@ -58,27 +58,34 @@ where
             .await
             .map_err(|err| AxumNope::BadRequest(err.into()))?;
 
-        // we're extracting the full path since we need to be able to extract static suffixes
-        // that are not in the ``
         let original_uri = parts.extract::<Uri>().await.expect("infallible extractor");
-        let uri_path = url_decode(original_uri.path()).map_err(AxumNope::BadRequest)?;
 
-        let matched_path = parts
-            .extract::<MatchedPath>()
-            .await
-            .map_err(|err| AxumNope::BadRequest(err.into()))?;
-        let matched_route = url_decode(matched_path.as_str()).map_err(AxumNope::BadRequest)?;
+        // we need to be able to extract static suffixes that are not in the route `{*path}`.
+        //
+        // TODO: there is an edge case where for `/crate/{krate}/{version}/source/ we would
+        // previously treat the folder as suffix.
+        // How to solve? Either only for the suffix logic only for non-folders? Or have adapted
+        // parameter logic for the source views?
+        if get_file_extension(original_uri.path()).is_some() {
+            let uri_path = url_decode(original_uri.path()).map_err(AxumNope::BadRequest)?;
 
-        let static_route_suffix = find_static_route_suffix(&matched_route, &uri_path);
+            let matched_path = parts
+                .extract::<MatchedPath>()
+                .await
+                .map_err(|err| AxumNope::BadRequest(err.into()))?;
+            let matched_route = url_decode(matched_path.as_str()).map_err(AxumNope::BadRequest)?;
 
-        if let Some(static_suffix) = static_route_suffix {
-            if let Some(ref mut path) = params.path
-                && !path.is_empty()
-            {
-                path.push('/');
-                path.push_str(&static_suffix);
-            } else {
-                params.path = Some(static_suffix);
+            let static_route_suffix = find_static_route_suffix(&matched_route, &uri_path);
+
+            if let Some(static_suffix) = static_route_suffix {
+                if let Some(ref mut path) = params.path
+                    && !path.is_empty()
+                {
+                    path.push('/');
+                    path.push_str(&static_suffix);
+                } else {
+                    params.path = Some(static_suffix);
+                }
             }
         }
 
@@ -268,16 +275,9 @@ impl RustdocParams {
     }
 
     pub(crate) fn file_extension(&self) -> Option<&str> {
-        self.original_uri.as_ref().and_then(|uri| {
-            uri.path().rsplit_once('.').and_then(|(_, ext)| {
-                if ext.contains('/') {
-                    // to handle cases like `foo.html/bar` where I want `None`
-                    None
-                } else {
-                    Some(ext)
-                }
-            })
-        })
+        self.original_uri
+            .as_ref()
+            .and_then(|uri| get_file_extension(uri.path()))
     }
 
     /// generate the path portion of a URL for these params.
@@ -544,6 +544,17 @@ impl ParsedRustdocParams {
     pub(crate) fn doc_targets(&self) -> &[String] {
         &self.doc_targets
     }
+}
+
+fn get_file_extension(path: &str) -> Option<&str> {
+    path.rsplit_once('.').and_then(|(_, ext)| {
+        if ext.contains('/') {
+            // to handle cases like `foo.html/bar` where I want `None`
+            None
+        } else {
+            Some(ext)
+        }
+    })
 }
 
 impl TryFrom<MatchedRelease> for ParsedRustdocParams {
