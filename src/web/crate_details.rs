@@ -1787,7 +1787,6 @@ mod tests {
             url: &str,
             should_contain_redirect: bool,
         ) {
-            dbg!(&url);
             let response = env.web_app().await.get(url).await.unwrap();
             let status = response.status();
             assert!(
@@ -1801,17 +1800,15 @@ mod tests {
             let list1 = check_links(text.clone(), false, should_contain_redirect);
 
             // Same test with AJAX endpoint.
-            let platform_menu_url = dbg!(
-                kuchikiki::parse_html()
-                    .one(text)
-                    .select_first("#platforms")
-                    .expect("invalid selector")
-                    .attributes
-                    .borrow()
-                    .get("data-url")
-                    .expect("data-url")
-                    .to_string()
-            );
+            let platform_menu_url = kuchikiki::parse_html()
+                .one(text)
+                .select_first("#platforms")
+                .expect("invalid selector")
+                .attributes
+                .borrow()
+                .get("data-url")
+                .expect("data-url")
+                .to_string();
             let response = env.web_app().await.get(&platform_menu_url).await.unwrap();
             assert!(
                 response.status().is_success(),

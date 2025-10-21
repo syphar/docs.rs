@@ -361,8 +361,6 @@ impl RustdocParams {
     }
 
     pub(crate) fn platforms_partial_url(&self) -> EscapedURI {
-        dbg!(&self);
-        dbg!(&self.path_for_rustdoc_url());
         EscapedURI::from_path(format!(
             "/crate/{}/{}/menus/platforms/{}",
             self.name,
