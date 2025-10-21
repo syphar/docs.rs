@@ -22,6 +22,8 @@ use url::form_urlencoded;
 use super::AxumErrorPage;
 
 /// internal wrapper around `http::Uri` with some convenience functions.
+/// TODO: should this perhaps be an extension trait instead?
+/// With the current functionality this could work, not sure if it would also work in the future?
 #[derive(Debug, Clone, Display)]
 pub struct EscapedURI(Uri);
 
