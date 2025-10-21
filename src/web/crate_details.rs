@@ -469,14 +469,8 @@ pub(crate) async fn crate_details_handler(
     mut conn: DbConnection,
 ) -> AxumResult<AxumResponse> {
     let mut params = params.normalize_or_else(|original_path: &str, params: &RustdocParams| {
-        if original_path != params.crate_details_url().as_str() {
-            Some(AxumNope::Redirect(
-                params.crate_details_url(),
-                CachePolicy::ForeverInCdn,
-            ))
-        } else {
-            None
-        }
+        (original_path != params.crate_details_url().as_str())
+            .then(|| AxumNope::Redirect(params.crate_details_url(), CachePolicy::ForeverInCdn))
     })?;
 
     let matched_release = match_version(&mut conn, &params.name, &params.version)
