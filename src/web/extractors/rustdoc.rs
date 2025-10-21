@@ -508,17 +508,17 @@ impl ParsedRustdocParams {
         (path, search_item)
     }
 
-    pub(crate) fn generate_fallback_url(&self) -> EscapedURI {
+    pub(crate) fn generate_fallback_url(&self) -> Result<EscapedURI> {
         let (path, search_item) = self.generate_fallback_path();
 
-        if let Some(search_item) = search_item {
-            EscapedURI::new_with_query(
+        Ok(if let Some(search_item) = search_item {
+            EscapedURI::from_path_and_query(
                 &format!("/{}/{}/{}", self.name(), self.version(), path),
                 &[("search", &search_item)],
-            )
+            )?
         } else {
             EscapedURI::from_path(&format!("/{}/{}/{}", self.name(), self.version(), path))
-        }
+        })
     }
 
     pub(crate) fn doc_targets(&self) -> &[String] {

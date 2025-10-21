@@ -55,9 +55,10 @@ impl EscapedURI {
     }
     pub fn from_path(path: &str) -> Self {
         Self::from_path_and_raw_query(path, None)
+            .expect("this can never fail because we encode the path")
     }
 
-    pub fn from_path_and_raw_query(path: &str, raw_query: Option<&str>) -> Self {
+    pub fn from_path_and_raw_query(path: &str, raw_query: Option<&str>) -> Result<Self> {
         let mut path = encode_url_path(path);
         if let Some(query) = raw_query
             && !query.is_empty()
@@ -65,49 +66,33 @@ impl EscapedURI {
             path.push('?');
             path.push_str(query);
         }
-        Self(
-            Uri::builder()
-                .path_and_query(path)
-                .build()
-                .expect("couldn't parse URL"),
-        )
+        Ok(Self(Uri::builder().path_and_query(path).build()?))
     }
 
-    pub(crate) fn new_with_query<I, K, V>(path: &str, queries: I) -> Self
+    pub(crate) fn from_path_and_query<I, K, V>(path: &str, queries: I) -> Result<Self>
     where
         I: IntoIterator,
         I::Item: Borrow<(K, V)>,
         K: AsRef<str>,
         V: AsRef<str>,
     {
-        let mut queries = queries.into_iter().peekable();
-        let raw_query = if queries.peek().is_some() {
-            Some(
-                form_urlencoded::Serializer::new(String::new())
-                    .extend_pairs(queries)
-                    .finish(),
-            )
-        } else {
-            None
-        };
-
-        Self::from_path_and_raw_query(path, raw_query.as_deref())
+        Self::from_path(path).append_query_pairs(queries)
     }
 
     pub fn path(&self) -> &str {
         self.0.path()
     }
 
-    pub fn append_raw_query(self, raw_query: Option<impl AsRef<str>>) -> Self {
+    pub fn append_raw_query(self, raw_query: Option<impl AsRef<str>>) -> Result<Self> {
         let raw_query = match raw_query {
             Some(ref q) => q.as_ref(),
-            None => return self,
+            None => return Ok(self),
         };
 
         self.append_query_pairs(form_urlencoded::parse(raw_query.as_bytes()))
     }
 
-    pub fn append_query_pairs<I, K, V>(self, queries: I) -> Self
+    pub fn append_query_pairs<I, K, V>(self, queries: I) -> Result<Self>
     where
         I: IntoIterator,
         I::Item: Borrow<(K, V)>,
@@ -116,7 +101,7 @@ impl EscapedURI {
     {
         let mut queries = queries.into_iter().peekable();
         if queries.peek().is_none() {
-            return self;
+            return Ok(self);
         }
 
         let mut serializer = form_urlencoded::Serializer::new(String::new());
@@ -126,11 +111,27 @@ impl EscapedURI {
             serializer.extend_pairs(form_urlencoded::parse(existing_query.as_bytes()));
         }
 
-        EscapedURI::from_path_and_raw_query(self.0.path(), Some(&serializer.finish()))
+        let mut parts = self.0.into_parts();
+
+        parts.path_and_query = Some(
+            PathAndQuery::from_maybe_shared(format!(
+                "{}?{}",
+                parts
+                    .path_and_query
+                    .map(|pg| pg.path().to_owned())
+                    .unwrap_or_default(),
+                serializer.finish(),
+            ))
+            .context("couldn't rebuild path & query with encoded path")?,
+        );
+
+        Self::from_uri(
+            Uri::from_parts(parts).context("couln't recreate URI with new encoded path")?,
+        )
     }
 
     /// extend query part
-    pub fn append_query_pair(self, key: impl AsRef<str>, value: impl AsRef<str>) -> Self {
+    pub fn append_query_pair(self, key: impl AsRef<str>, value: impl AsRef<str>) -> Result<Self> {
         self.append_query_pairs(std::iter::once((key, value)))
     }
 }

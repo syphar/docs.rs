@@ -864,7 +864,7 @@ mod test {
             for (idx, value) in ["60%", "6", "10", "2", "1"].iter().enumerate() {
                 let mut menu_items = foo_crate.select(".pure-menu-item b").unwrap();
                 assert!(
-                    menu_items.any(|e| dbg!(e.text_contents()).contains(value)),
+                    menu_items.any(|e| e.text_contents().contains(value)),
                     "({idx}, {value:?})"
                 );
             }

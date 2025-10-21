@@ -154,7 +154,6 @@ mod tests {
                 .await?;
             response.assert_cache_control(CachePolicy::NoStoreMustRevalidate, &env.config());
             assert_eq!(response.headers()["access-control-allow-origin"], "*");
-            dbg!(&response);
             assert_eq!(response.status(), StatusCode::OK);
             let value: serde_json::Value = serde_json::from_str(&response.text().await?)?;
 

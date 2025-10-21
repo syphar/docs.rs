@@ -207,7 +207,7 @@ pub(crate) async fn rustdoc_redirector_handler(
         path_in_crate: Option<&str>,
     ) -> AxumResult<AxumResponse> {
         let url = if let Some(path) = path_in_crate {
-            url.append_query_pair("search", path)
+            url.append_query_pair("search", path)?
         } else {
             url
         };
@@ -246,7 +246,9 @@ pub(crate) async fn rustdoc_redirector_handler(
     };
 
     if let Some(description) = DOC_RUST_LANG_ORG_REDIRECTS.get(&*crate_name) {
-        let target_uri = EscapedURI::from_uri(description.href)?.append_raw_query(original_query);
+        dbg!(&description.href);
+        let target_uri =
+            EscapedURI::from_uri(description.href)?.append_raw_query(original_query)?;
         return redirect_to_doc(
             target_uri,
             CachePolicy::ForeverInCdnAndStaleInBrowser,
@@ -312,7 +314,7 @@ pub(crate) async fn rustdoc_redirector_handler(
 
     if matched_release.rustdoc_status() {
         Ok(redirect_to_doc(
-            params.rustdoc_url().append_raw_query(original_query),
+            params.rustdoc_url().append_raw_query(original_query)?,
             if matched_release.is_latest_url() {
                 CachePolicy::ForeverInCdn
             } else {
@@ -323,7 +325,9 @@ pub(crate) async fn rustdoc_redirector_handler(
         .into_response())
     } else {
         Ok(axum_cached_redirect(
-            params.crate_details_url().append_raw_query(original_query),
+            params
+                .crate_details_url()
+                .append_raw_query(original_query)?,
             CachePolicy::ForeverInCdn,
         )?
         .into_response())
@@ -423,7 +427,8 @@ pub(crate) async fn rustdoc_html_server_handler(
                     .with_name(corrected_name)
                     .with_version(req_version)
                     .rustdoc_url()
-                    .append_raw_query(raw_query.as_deref()),
+                    .append_raw_query(raw_query.as_deref())
+                    .expect("rustdoc url should be valid, and the raw query via axum is validated by axum"),
                 CachePolicy::NoCaching,
             )
         })?
@@ -456,7 +461,9 @@ pub(crate) async fn rustdoc_html_server_handler(
         // if visiting the full path to the default target, remove the target from the path
         // expects a req_path that looks like `[/:target]/.*`
         return Ok(axum_cached_redirect(
-            params.rustdoc_url().append_raw_query(raw_query.as_deref()),
+            params
+                .rustdoc_url()
+                .append_raw_query(raw_query.as_deref())?,
             CachePolicy::ForeverInCdn,
         )?);
     }
@@ -510,7 +517,9 @@ pub(crate) async fn rustdoc_html_server_handler(
                     .await?
                 {
                     return Ok(axum_cached_redirect(
-                        params.rustdoc_url().append_raw_query(raw_query.as_deref()),
+                        params
+                            .rustdoc_url()
+                            .append_raw_query(raw_query.as_deref())?,
                         CachePolicy::ForeverInCdn,
                     )?);
                 }
@@ -571,7 +580,7 @@ pub(crate) async fn rustdoc_html_server_handler(
         .clone()
         .with_version(&ReqVersion::Exact(latest_version))
         .rustdoc_url()
-        .append_raw_query(raw_query.as_deref());
+        .append_raw_query(raw_query.as_deref())?;
 
     let latest_path = if latest_release.build_status.is_success() {
         params
@@ -584,7 +593,7 @@ pub(crate) async fn rustdoc_html_server_handler(
             .with_version(&ReqVersion::Latest)
             .crate_details_url()
     }
-    .append_raw_query(raw_query.as_deref());
+    .append_raw_query(raw_query.as_deref())?;
 
     let current_target = params.doc_target_or_default();
 
@@ -645,7 +654,7 @@ pub(crate) async fn target_redirect_handler(
             storage_path,
             "path doesn't exist, generating redirect to search"
         );
-        params.generate_fallback_url()
+        params.generate_fallback_url()?
     };
 
     trace!(?redirect_uri, "generate URL");
@@ -1564,7 +1573,9 @@ mod test {
             .await?;
 
             assert_eq!(
-                dbg!(web.get("/crate/dummy_mixed_separators/latest").await?).status(),
+                web.get("/crate/dummy_mixed_separators/latest")
+                    .await?
+                    .status(),
                 StatusCode::NOT_FOUND
             );
 
@@ -2142,7 +2153,7 @@ mod test {
             .await?;
             web.assert_redirect(
                 "/some_random_crate::some::path?go_to_first=true",
-                "/some_random_crate/latest/some_random_crate/?go_to_first=true&search=some%3A%3Apath",
+                "/some_random_crate/latest/some_random_crate/?search=some%3A%3Apath&go_to_first=true",
             ).await?;
 
             web.assert_redirect_unchecked(
@@ -2371,12 +2382,12 @@ mod test {
                 .await?;
             assert_eq!(
                 latest_version_redirect(
-                    "/tungstenite/0.10.0/tungstenite/?search=String%20-%3E%20Message",
+                    "/tungstenite/0.10.0/tungstenite/?search=String+-%3E+Message",
                     &env.web_app().await,
                     &env.config()
                 )
                 .await?,
-                "/crate/tungstenite/latest/target-redirect/tungstenite/?search=String%20-%3E%20Message",
+                "/crate/tungstenite/latest/target-redirect/tungstenite/?search=String+-%3E+Message",
             );
             Ok(())
         });
@@ -2460,8 +2471,10 @@ mod test {
             assert_eq!(
                 parse_release_links_from_menu(&releases_response.text().await?),
                 vec![
-                    "/crate/hexponent/0.3.1/target-redirect/x86_64-unknown-linux-gnu/hexponent/index.html".to_owned(),
-                    "/crate/hexponent/0.3.0/target-redirect/x86_64-unknown-linux-gnu/hexponent/index.html".to_owned(),
+                    "/crate/hexponent/0.3.1/target-redirect/x86_64-unknown-linux-gnu/hexponent/"
+                        .to_owned(),
+                    "/crate/hexponent/0.3.0/target-redirect/x86_64-unknown-linux-gnu/hexponent/"
+                        .to_owned(),
                 ]
             );
 

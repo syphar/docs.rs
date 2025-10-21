@@ -515,7 +515,6 @@ mod tests {
                 .collect();
             let values: Vec<_> = values.iter().map(|v| &**v).collect();
 
-            dbg!(&values);
             assert!(values.contains(&"6.44 GB"));
             assert!(values.contains(&"2 hours"));
             assert!(values.contains(&"102.4 kB"));
