@@ -577,8 +577,8 @@ impl ParsedRustdocParams {
 
         let is_source_view = components.first() == Some(&"src");
 
-        let search_item: Option<String> = if let Some(last_component) = components.last() {
-            if last_component.is_empty() || *last_component == "index.html" {
+        let search_item: Option<&str> = components.last().and_then(|&last_component| {
+            if last_component.is_empty() || last_component == "index.html" {
                 // this is a module, we extract the module name
                 //
                 // path might look like:
@@ -587,23 +587,19 @@ impl ParsedRustdocParams {
                 // `/[krate]/[version]/{target_name}/{module}/` (last_component is empty)
                 //
                 // for the search we want to use the module name.
-                components.iter().rev().nth(1).map(ToString::to_string)
+                components.iter().rev().nth(1).cloned()
             } else if !is_source_view {
                 // this is an item, typically the filename (last component) is something
                 // `trait.SomeAwesomeStruct.html`, where we want `SomeAwesomeStruct` for
                 // the search
-                last_component.split('.').nth(1).map(ToString::to_string)
+                last_component.split('.').nth(1)
             } else {
                 // this is from the rustdoc source view.
                 // Example last component:
                 // `tuple_impl.rs.html` where we want just `tuple_impl` for the search.
-                last_component
-                    .strip_suffix(".rs.html")
-                    .map(ToString::to_string)
+                last_component.strip_suffix(".rs.html")
             }
-        } else {
-            None
-        };
+        });
 
         let mut path = String::new();
 
@@ -622,7 +618,7 @@ impl ParsedRustdocParams {
             path.push_str(&format!("{target_name}/"));
         }
 
-        (path, search_item)
+        (path, search_item.map(ToString::to_string))
     }
 
     pub(crate) fn generate_fallback_url(&self) -> EscapedURI {
@@ -1124,12 +1120,12 @@ mod tests {
         assert_eq!(parsed.storage_path(), expected_storage_path);
     }
 
-    // #[test_case("dummy/struct.WindowsOnly.html", Some("WindowsOnly"))]
-    // #[test_case("dummy/struct.DefaultOnly.html", Some("DefaultOnly"))]
-    // #[test_case("dummy/some_module/struct.SomeItem.html", Some("SomeItem"))]
-    // #[test_case("dummy/some_module/index.html", Some("some_module"))]
+    #[test_case("dummy/struct.WindowsOnly.html", Some("WindowsOnly"))]
+    #[test_case("dummy/struct.DefaultOnly.html", Some("DefaultOnly"))]
+    #[test_case("dummy/some_module/struct.SomeItem.html", Some("SomeItem"))]
+    #[test_case("dummy/some_module/index.html", Some("some_module"))]
     #[test_case("dummy/some_module/", Some("some_module"))]
-    // #[test_case("src/folder1/folder2/logic.rs.html", Some("logic"))]
+    #[test_case("src/folder1/folder2/logic.rs.html", Some("logic"))]
     fn test_generate_fallback_url(path: &str, search: Option<&str>) {
         static TARGETS: &[&str] = &["x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"];
         static DEFAULT_TARGET: &str = "x86_64-unknown-linux-gnu";
