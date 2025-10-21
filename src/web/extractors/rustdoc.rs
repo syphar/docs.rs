@@ -758,8 +758,9 @@ mod tests {
     use semver::Version;
     use test_case::test_case;
 
-    static TARGETS: &[&str] = &["some-target-name", "other-target"];
-    static DEFAULT_TARGET: &str = "some-target-name";
+    static DEFAULT_TARGET: &str = "x86_64-unknown-linux-gnu";
+    static OTHER_TARGET: &str = "x86_64-pc-windows-msvc";
+    static TARGETS: &[&str] = &[DEFAULT_TARGET, OTHER_TARGET];
 
     #[test_case(
         "/{name}/{version}/help/some.html",
@@ -872,10 +873,10 @@ mod tests {
     #[test_case(
         "/{name}/{version}/{target}",
         RustdocParams {
-            original_uri: Some("/krate/1.2.3/some-target".parse().unwrap()),
+            original_uri: Some(format!("/krate/1.2.3/{OTHER_TARGET}").parse().unwrap()),
             name: "krate".into(),
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
-            doc_target: Some("some-target".into()),
+            doc_target: Some(OTHER_TARGET.into()),
             inner_path: None,
             page_kind: PageKind::Rustdoc,
         };
@@ -884,10 +885,10 @@ mod tests {
     #[test_case(
         "/{name}/{version}/{target}/folder/something.html",
         RustdocParams {
-            original_uri: Some("/krate/1.2.3/some-target/folder/something.html".parse().unwrap()),
+            original_uri: Some(format!("/krate/1.2.3/{OTHER_TARGET}/folder/something.html").parse().unwrap()),
             name: "krate".into(),
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
-            doc_target: Some("some-target".into()),
+            doc_target: Some(OTHER_TARGET.into()),
             inner_path: Some("folder/something.html".into()),
             page_kind: PageKind::Rustdoc,
         };
@@ -896,10 +897,10 @@ mod tests {
     #[test_case(
         "/{name}/{version}/{target}/",
         RustdocParams {
-            original_uri: Some("/krate/1.2.3/some-target/".parse().unwrap()),
+            original_uri: Some(format!("/krate/1.2.3/{OTHER_TARGET}/").parse().unwrap()),
             name: "krate".into(),
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
-            doc_target: Some("some-target".into()),
+            doc_target: Some(OTHER_TARGET.into()),
             inner_path: None,
             page_kind: PageKind::Rustdoc,
         };
@@ -908,10 +909,10 @@ mod tests {
     #[test_case(
         "/{name}/{version}/{target}/{*path}",
         RustdocParams {
-            original_uri: Some("/krate/1.2.3/some-target/some/path/to/a/file.html".parse().unwrap()),
+            original_uri: Some(format!("/krate/1.2.3/{OTHER_TARGET}/some/path/to/a/file.html").parse().unwrap()),
             name: "krate".into(),
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
-            doc_target: Some("some-target".into()),
+            doc_target: Some(OTHER_TARGET.into()),
             inner_path: Some("some/path/to/a/file.html".into()),
             page_kind: PageKind::Rustdoc,
         };
@@ -920,10 +921,10 @@ mod tests {
     #[test_case(
         "/{name}/{version}/{target}/{path}/path/to/a/file.html",
         RustdocParams {
-            original_uri: Some("/krate/1.2.3/some-target/path_add/path/to/a/file.html".parse().unwrap()),
+            original_uri: Some(format!("/krate/1.2.3/{OTHER_TARGET}/path_add/path/to/a/file.html").parse().unwrap()),
             name: "krate".into(),
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
-            doc_target: Some("some-target".into()),
+            doc_target: Some(OTHER_TARGET.into()),
             inner_path: Some("path_add/path/to/a/file.html".into()),
             page_kind: PageKind::Rustdoc,
         };
@@ -982,13 +983,13 @@ mod tests {
     // a target is given, but as first component of the path, for routes without separate
     // "target" component
     #[test_case(
-        None, Some("some-target-name"), false,
-        Some("some-target-name"), "", "index.html";
+        None, Some(DEFAULT_TARGET), false,
+        Some(DEFAULT_TARGET), "", "index.html";
         "just target without trailing slash"
     )]
     #[test_case(
-        None, Some("some-target-name/"), true,
-        Some("some-target-name"), "", "index.html";
+        None, Some(&format!("{DEFAULT_TARGET}/")), true,
+        Some(DEFAULT_TARGET), "", "index.html";
         "just default target with trailing slash"
     )]
     #[test_case(
@@ -1207,5 +1208,72 @@ mod tests {
             params.target_redirect_url().to_string(),
             "/crate/dummy/0.4.0/target-redirect/x86_64-pc-windows-msvc/dummy/"
         );
+    }
+
+    #[test_case(
+        None, None, None, None => ""
+    )]
+    #[test_case(
+        Some("target_name"), None, None, None => "target_name/"
+    )]
+    #[test_case(
+        None, None, None, Some("path/index.html") => "path/";
+        "cuts trailing /index.html"
+    )]
+    #[test_case(
+        Some("target_name"), None,
+        Some(DEFAULT_TARGET), Some("inner/path.html")
+        => "x86_64-unknown-linux-gnu/inner/path.html";
+        "default target, but we don't know about it, keeps target"
+    )]
+    #[test_case(
+        Some("target_name"), None,
+        Some(DEFAULT_TARGET), None
+        => "x86_64-unknown-linux-gnu/target_name/";
+        "default target, we don't know about it, without path"
+    )]
+    #[test_case(
+        Some("target_name"), Some(DEFAULT_TARGET),
+        Some(DEFAULT_TARGET), None
+        => "target_name/";
+        "default-target, without path, target_name is used to generate the inner path"
+    )]
+    #[test_case(
+        Some("target_name"), Some(DEFAULT_TARGET),
+        Some(DEFAULT_TARGET), Some("inner/path.html")
+        => "inner/path.html";
+        "default target, with path, target_name is ignored"
+    )]
+    #[test_case(
+        None, Some(DEFAULT_TARGET),
+        Some(DEFAULT_TARGET), Some("inner/path/index.html")
+        => "inner/path/";
+        "default target, with path as folder with index.html"
+    )]
+    #[test_case(
+        None, Some(DEFAULT_TARGET),
+        Some(DEFAULT_TARGET), Some("inner/path/")
+        => "inner/path/";
+        "default target, with path as folder"
+    )]
+    #[test_case(
+        Some("target_name"), Some(DEFAULT_TARGET),
+        Some(OTHER_TARGET), None
+        => "x86_64-pc-windows-msvc/target_name/";
+        "non-default-target, without path, target_name is used to generate the inner path"
+    )]
+    #[test_case(
+        Some("target_name"), Some(DEFAULT_TARGET),
+        Some(OTHER_TARGET), Some("inner/path.html")
+        => "x86_64-pc-windows-msvc/inner/path.html";
+        "non-default target, with path, target_name is ignored"
+    )]
+    fn test_generate_rustdoc_path_for_url(
+        target_name: Option<&str>,
+        default_target: Option<&str>,
+        doc_target: Option<&str>,
+        inner_path: Option<&str>,
+    ) -> String {
+        generate_rustdoc_path_for_url(target_name, default_target, doc_target, inner_path)
     }
 }
