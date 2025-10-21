@@ -84,12 +84,8 @@ pub(crate) async fn build_list_handler(
         .await?,
         builds: get_builds(&mut conn, &params.name, &version).await?,
         limits: Limits::for_crate(&config, &mut conn, &params.name).await?,
-        canonical_url: CanonicalUrl::from_path(
-            params
-                .clone()
-                .with_version(ReqVersion::Latest)
-                .builds_url()
-                .path(),
+        canonical_url: CanonicalUrl::from_uri(
+            params.clone().with_version(ReqVersion::Latest).builds_url(),
         ),
     }
     .into_response())

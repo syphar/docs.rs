@@ -305,6 +305,19 @@ impl RustdocParams {
         EscapedURI::from_path(format!("/crate/{}/{}/builds", self.name, self.version))
     }
 
+    pub(crate) fn features_url(&self) -> EscapedURI {
+        EscapedURI::from_path(format!("/crate/{}/{}/features", self.name, self.version))
+    }
+
+    pub(crate) fn source_url(&self) -> EscapedURI {
+        EscapedURI::from_path(format!(
+            "/crate/{}/{}/source/{}",
+            self.name,
+            self.version,
+            self.inner_path()
+        ))
+    }
+
     fn has_trailing_slash(&self) -> bool {
         self.original_path().ends_with('/')
     }

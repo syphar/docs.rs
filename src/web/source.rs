@@ -1,14 +1,17 @@
-use super::{error::AxumResult, match_version};
+use super::{
+    error::AxumResult,
+    extractors::{DbConnection, rustdoc::RustdocParams},
+    match_version,
+};
 use crate::{
     AsyncStorage,
-    db::{BuildId, Pool},
+    db::BuildId,
     impl_axum_webpage,
     storage::PathNotFoundError,
     web::{
         MetaData, ReqVersion,
         cache::CachePolicy,
-        error::{AxumNope, EscapedURI},
-        extractors::Path,
+        error::AxumNope,
         file::File as DbFile,
         headers::CanonicalUrl,
         page::templates::{RenderBrands, RenderRegular, RenderSolid, filters},
@@ -20,7 +23,6 @@ use axum::{Extension, response::IntoResponse};
 use axum_extra::headers::HeaderMapExt;
 use mime::Mime;
 use semver::Version;
-use serde::Deserialize;
 use std::{cmp::Ordering, sync::Arc};
 use tracing::instrument;
 
@@ -183,39 +185,27 @@ impl SourcePage {
     }
 }
 
-#[derive(Deserialize, Clone, Debug)]
-pub(crate) struct SourceBrowserHandlerParams {
-    name: String,
-    version: ReqVersion,
-    #[serde(default)]
-    path: String,
-}
-
-#[instrument(skip(pool, storage))]
+#[instrument(skip(conn, storage))]
 pub(crate) async fn source_browser_handler(
-    Path(params): Path<SourceBrowserHandlerParams>,
+    params: RustdocParams,
     Extension(storage): Extension<Arc<AsyncStorage>>,
-    Extension(pool): Extension<Pool>,
+    mut conn: DbConnection,
 ) -> AxumResult<impl IntoResponse> {
-    let mut conn = pool.get_async().await?;
-
     let version = match_version(&mut conn, &params.name, &params.version)
         .await?
         .into_exactly_named_or_else(|corrected_name, req_version| {
             AxumNope::Redirect(
-                EscapedURI::from_path(format!(
-                    "/crate/{corrected_name}/{req_version}/source/{}",
-                    params.path
-                )),
+                params
+                    .clone()
+                    .with_name(corrected_name)
+                    .with_version(req_version)
+                    .rustdoc_url(),
                 CachePolicy::NoCaching,
             )
         })?
         .into_canonical_req_version_or_else(|version| {
             AxumNope::Redirect(
-                EscapedURI::from_path(format!(
-                    "/crate/{}/{version}/source/{}",
-                    params.name, params.path
-                )),
+                params.clone().with_version(version).source_url(),
                 CachePolicy::ForeverInCdn,
             )
         })?
@@ -244,15 +234,17 @@ pub(crate) async fn source_browser_handler(
     .fetch_one(&mut *conn)
     .await?;
 
+    // FIXME: can I use `storage_path` here too instead of `inner_path()`?
+
     // try to get actual file first
     // skip if request is a directory
-    let (blob, is_file_too_large) = if !params.path.ends_with('/') {
+    let (blob, is_file_too_large) = if !params.inner_path().ends_with('/') {
         match storage
             .fetch_source_file(
                 &params.name,
                 &version.to_string(),
                 row.latest_build_id,
-                &params.path,
+                params.inner_path(),
                 row.archive_storage,
             )
             .await
@@ -277,10 +269,8 @@ pub(crate) async fn source_browser_handler(
         (None, false)
     };
 
-    let canonical_url = CanonicalUrl::from_path(format!(
-        "/crate/{}/latest/source/{}",
-        params.name, params.path
-    ));
+    let canonical_url =
+        CanonicalUrl::from_uri(params.clone().with_version(ReqVersion::Latest).source_url());
 
     let (file, file_content) = if let Some(blob) = blob {
         let is_text = blob.mime.type_() == mime::TEXT || blob.mime == mime::APPLICATION_JSON;
@@ -309,8 +299,8 @@ pub(crate) async fn source_browser_handler(
         (None, None)
     };
 
-    let current_folder = if let Some(last_slash_pos) = params.path.rfind('/') {
-        &params.path[..last_slash_pos + 1]
+    let current_folder = if let Some(last_slash_pos) = params.inner_path().rfind('/') {
+        &params.inner_path()[..last_slash_pos + 1]
     } else {
         ""
     };

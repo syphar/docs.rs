@@ -22,14 +22,44 @@ use url::form_urlencoded;
 use super::AxumErrorPage;
 
 /// internal wrapper around `http::Uri` with some convenience functions.
-/// TODO: should this perhaps be an extension trait instead?
-/// With the current functionality this could work, not sure if it would also work in the future?
+///
+/// Ensures that the path part is always properly percent-encoded, including some characters
+/// that http::Uri would allow, but we still want to encode, like umlauts.
 #[derive(Debug, Clone, Display)]
 pub struct EscapedURI(Uri);
 
 impl EscapedURI {
     pub fn from_uri(uri: Uri) -> Self {
-        Self(uri)
+        if uri.path_and_query().is_some() {
+            if uri.path() == encode_url_path(uri.path()) {
+                Self(uri)
+            } else {
+                let mut parts = uri.into_parts();
+
+                parts.path_and_query = Some(
+                    PathAndQuery::from_maybe_shared(format!(
+                        "{}{}",
+                        parts
+                            .path_and_query
+                            .as_ref()
+                            .map(|pq| encode_url_path(pq.path()))
+                            .unwrap_or_default(),
+                        parts
+                            .path_and_query
+                            .and_then(|pq| pq.query().map(|q| format!("?{}", q)))
+                            .unwrap_or_default(),
+                    ))
+                    .expect("can't fail since we encode the path ourselves"),
+                );
+
+                Self(
+                    Uri::from_parts(parts)
+                        .expect("everything is coming from a previous Uri, or encoded here"),
+                )
+            }
+        } else {
+            Self(uri)
+        }
     }
 
     pub fn from_path(path: impl AsRef<str>) -> Self {
@@ -119,6 +149,10 @@ impl EscapedURI {
     /// extend query part
     pub fn append_query_pair(self, key: impl AsRef<str>, value: impl AsRef<str>) -> Self {
         self.append_query_pairs(iter::once((key, value)))
+    }
+
+    pub fn into_inner(self) -> Uri {
+        self.0
     }
 }
 
@@ -385,11 +419,12 @@ mod tests {
         escaped.path().to_owned()
     }
 
-    #[test]
-    fn test_escaped_uri_encodes_path_from_uri() {
-        let uri: Uri = "/something".parse().unwrap();
+    #[test_case("/something" => "/something"; "plain path")]
+    #[test_case("/somethingäöü" => "/something%C3%A4%C3%B6%C3%BC"; "path with umlauts")]
+    fn test_escaped_uri_encodes_path_from_uri(path: &str) -> String {
+        let uri: Uri = path.parse().unwrap();
         let escaped = EscapedURI::from_uri(uri);
-        assert_eq!(escaped.path(), "/something");
+        escaped.path().to_string()
     }
 
     #[test]

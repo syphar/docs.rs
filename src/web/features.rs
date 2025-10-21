@@ -4,8 +4,8 @@ use crate::{
     web::{
         MetaData, ReqVersion,
         cache::CachePolicy,
-        error::{AxumNope, AxumResult, EscapedURI},
-        extractors::{DbConnection, Path},
+        error::{AxumNope, AxumResult},
+        extractors::DbConnection,
         filters,
         headers::CanonicalUrl,
         match_version,
@@ -17,6 +17,8 @@ use askama::Template;
 use axum::response::IntoResponse;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+
+use super::extractors::rustdoc::RustdocParams;
 
 const DEFAULT_NAME: &str = "default";
 
@@ -137,22 +139,27 @@ impl FeaturesPage {
 }
 
 pub(crate) async fn build_features_handler(
-    Path((name, req_version)): Path<(String, ReqVersion)>,
+    params: RustdocParams,
     mut conn: DbConnection,
 ) -> AxumResult<impl IntoResponse> {
-    let version = match_version(&mut conn, &name, &req_version)
+    let version = match_version(&mut conn, &params.name, &params.version)
         .await?
         .assume_exact_name()?
         .into_canonical_req_version_or_else(|version| {
             AxumNope::Redirect(
-                EscapedURI::from_path(format!("/crate/{}/{}/features", &name, version)),
+                params.clone().with_version(version).features_url(),
                 CachePolicy::ForeverInCdn,
             )
         })?
         .into_version();
 
-    let metadata =
-        MetaData::from_crate(&mut conn, &name, &version, Some(req_version.clone())).await?;
+    let metadata = MetaData::from_crate(
+        &mut conn,
+        &params.name,
+        &version,
+        Some(params.version.clone()),
+    )
+    .await?;
 
     let row = sqlx::query!(
         r#"
@@ -162,7 +169,7 @@ pub(crate) async fn build_features_handler(
         FROM releases
         INNER JOIN crates ON crates.id = releases.crate_id
         WHERE crates.name = $1 AND releases.version = $2"#,
-        name,
+        params.name,
         version.to_string(),
     )
     .fetch_optional(&mut *conn)
@@ -182,8 +189,13 @@ pub(crate) async fn build_features_handler(
         dependencies,
         sorted_features,
         default_features,
-        is_latest_url: req_version.is_latest(),
-        canonical_url: CanonicalUrl::from_path(format!("/crate/{}/latest/features", &name)),
+        is_latest_url: params.version.is_latest(),
+        canonical_url: CanonicalUrl::from_uri(
+            params
+                .clone()
+                .with_version(ReqVersion::Latest)
+                .features_url(),
+        ),
     }
     .into_response())
 }
