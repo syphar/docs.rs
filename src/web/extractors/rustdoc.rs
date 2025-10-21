@@ -615,20 +615,22 @@ impl ParsedRustdocParams {
             None
         };
 
-        let target_name_folder = self
-            .target_name
-            .as_deref()
-            .map(|t| format!("{t}/"))
-            .unwrap_or_default();
+        let mut path = String::new();
 
-        let path = if let Some(doc_target) = self.doc_target()
-            && let Some(ref default_target) = self.default_target
-            && doc_target != default_target
-        {
-            format!("{doc_target}/{target_name_folder}")
-        } else {
-            target_name_folder
+        if let Some(doc_target) = self.doc_target() {
+            let is_default_target = self
+                .default_target
+                .as_ref()
+                .map_or(false, |t| t == doc_target);
+
+            if !is_default_target {
+                path = format!("{}/", doc_target);
+            }
         };
+
+        if let Some(ref target_name) = self.target_name {
+            path.push_str(&format!("{target_name}/"));
+        }
 
         (path, search_item)
     }
