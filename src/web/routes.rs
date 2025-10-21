@@ -1,4 +1,4 @@
-use super::{
+use crate::web::{
     cache::CachePolicy, error::AxumNope, metrics::request_recorder, statics::build_static_router,
 };
 use askama::Template;
