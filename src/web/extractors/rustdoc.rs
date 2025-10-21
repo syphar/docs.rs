@@ -344,8 +344,8 @@ impl RustdocParams {
         &self.page_kind
     }
 
-    pub(crate) fn rustdoc_url(&self) -> EscapedURI {
-        let inner_path = if matches!(self.page_kind, PageKind::Rustdoc) {
+    fn path_for_rustdoc_url(&self) -> String {
+        if matches!(self.page_kind, PageKind::Rustdoc) {
             generate_path_for_url(
                 None,
                 None,
@@ -354,9 +354,11 @@ impl RustdocParams {
             )
         } else {
             generate_path_for_url(None, None, self.doc_target.as_deref(), None)
-        };
+        }
+    }
 
-        generate_rustdoc_url(&self.name, &self.version, &inner_path)
+    pub(crate) fn rustdoc_url(&self) -> EscapedURI {
+        generate_rustdoc_url(&self.name, &self.version, &self.path_for_rustdoc_url())
     }
 
     pub(crate) fn crate_details_url(&self) -> EscapedURI {
@@ -391,26 +393,11 @@ impl RustdocParams {
     }
 
     pub(crate) fn target_redirect_url(&self) -> EscapedURI {
-        let inner_path = if matches!(self.page_kind(), PageKind::Rustdoc) {
-            generate_path_for_url(
-                None,
-                None,
-                self.doc_target.as_deref(),
-                self.inner_path.as_deref(),
-            )
-        } else {
-            generate_path_for_url(
-                None,
-                None,
-                self.doc_target.as_deref(),
-                // without path when we have a source page
-                None,
-            )
-        };
-
         EscapedURI::from_path(format!(
             "/crate/{}/{}/target-redirect/{}",
-            self.name, self.version, inner_path,
+            self.name,
+            self.version,
+            &self.path_for_rustdoc_url(),
         ))
     }
 
@@ -529,24 +516,7 @@ impl ParsedRustdocParams {
 
     /// generate rustdoc URL to show the rustdoc page for the given params
     pub(crate) fn rustdoc_url(&self) -> EscapedURI {
-        let inner_path = if matches!(self.page_kind(), PageKind::Rustdoc) {
-            generate_path_for_url(
-                self.target_name.as_deref(),
-                self.default_target.as_deref(),
-                self.doc_target().as_deref(),
-                self.inner.inner_path.as_deref(),
-            )
-        } else {
-            generate_path_for_url(
-                self.target_name.as_deref(),
-                self.default_target.as_deref(),
-                self.doc_target().as_deref(),
-                // ignore the path when we have a rustdoc page in the params.
-                None,
-            )
-        };
-
-        generate_rustdoc_url(self.name(), self.version(), &inner_path)
+        generate_rustdoc_url(self.name(), self.version(), &self.path_for_rustdoc_url())
     }
 
     pub(crate) fn source_url(&self) -> EscapedURI {
@@ -561,8 +531,8 @@ impl ParsedRustdocParams {
         self.inner.features_url()
     }
 
-    pub(crate) fn target_redirect_url(&self) -> EscapedURI {
-        let inner_path = if matches!(self.page_kind(), PageKind::Rustdoc) {
+    fn path_for_rustdoc_url(&self) -> String {
+        if matches!(self.page_kind(), PageKind::Rustdoc) {
             generate_path_for_url(
                 self.target_name.as_deref(),
                 self.default_target.as_deref(),
@@ -576,12 +546,15 @@ impl ParsedRustdocParams {
                 self.inner.doc_target.as_deref(),
                 None,
             )
-        };
+        }
+    }
+
+    pub(crate) fn target_redirect_url(&self) -> EscapedURI {
         EscapedURI::from_path(format!(
             "/crate/{}/{}/target-redirect/{}",
             self.name(),
             self.version(),
-            inner_path,
+            &self.path_for_rustdoc_url(),
         ))
     }
 
