@@ -141,17 +141,11 @@ impl RustdocParams {
     }
 
     pub(crate) fn with_doc_target(self, doc_target: impl Into<String>) -> Self {
-        RustdocParams {
-            doc_target: Some(doc_target.into()),
-            ..self
-        }
+        self.with_maybe_doc_target(Some(doc_target))
     }
 
     pub(crate) fn with_inner_path(self, inner_path: impl Into<String>) -> Self {
-        RustdocParams {
-            inner_path: Some(inner_path.into()),
-            ..self
-        }
+        self.with_maybe_inner_path(Some(inner_path))
     }
 
     pub(crate) fn with_maybe_inner_path(self, inner_path: Option<impl Into<String>>) -> Self {
@@ -431,9 +425,10 @@ impl ParsedRustdocParams {
         self
     }
 
-    pub(crate) fn with_doc_target(mut self, doc_target: impl Into<String>) -> Self {
-        self.inner.doc_target = Some(doc_target.into());
-        self
+    pub(crate) fn with_doc_target(self, doc_target: impl Into<String>) -> Self {
+        self.update(|inner| {
+            inner.doc_target = Some(doc_target.into());
+        })
     }
 
     /// generate a potential storage path where to find the file that is described by these params.
@@ -571,12 +566,9 @@ impl ParsedRustdocParams {
     ///
     /// This method is typically only used when we already know the target file doesn't exist,
     /// and we just need to redirect to a search or something similar.
-    ///
-    /// FIXME: add tests! :)
     fn generate_fallback_path(&self) -> (String, Option<String>) {
         // we already split out the potentially leading target information in `Self::parse`.
         // So we have an optional target, and then the path.
-        // FIXME: perhaps move this somewhere else? Taking `ParsedRustdocParams` as parameter?
         let components: Vec<_> = self
             .inner_path()
             .trim_start_matches('/')
@@ -586,18 +578,16 @@ impl ParsedRustdocParams {
         let is_source_view = components.first() == Some(&"src");
 
         let search_item: Option<String> = if let Some(last_component) = components.last() {
-            if *last_component == "index.html" {
+            if last_component.is_empty() || *last_component == "index.html" {
                 // this is a module, we extract the module name
-                if components.len() >= 2 {
-                    // path might look like:
-                    // `/[krate]/[version]/{target_name}/{module}/index.html`
-                    // for the search we want to use the module name.
-                    components
-                        .get(components.len() - 2)
-                        .map(ToString::to_string)
-                } else {
-                    None
-                }
+                //
+                // path might look like:
+                // `/[krate]/[version]/{target_name}/{module}/index.html` (last_component is index)
+                // or
+                // `/[krate]/[version]/{target_name}/{module}/` (last_component is empty)
+                //
+                // for the search we want to use the module name.
+                components.iter().rev().nth(1).map(ToString::to_string)
             } else if !is_source_view {
                 // this is an item, typically the filename (last component) is something
                 // `trait.SomeAwesomeStruct.html`, where we want `SomeAwesomeStruct` for
@@ -635,17 +625,17 @@ impl ParsedRustdocParams {
         (path, search_item)
     }
 
-    pub(crate) fn generate_fallback_url(&self) -> Result<EscapedURI> {
+    pub(crate) fn generate_fallback_url(&self) -> EscapedURI {
         let (path, search_item) = self.generate_fallback_path();
 
-        Ok(if let Some(search_item) = search_item {
+        if let Some(search_item) = search_item {
             EscapedURI::from_path_and_query(
                 &format!("/{}/{}/{}", self.name(), self.version(), path),
                 &[("search", &search_item)],
             )
         } else {
             EscapedURI::from_path(format!("/{}/{}/{}", self.name(), self.version(), path))
-        })
+        }
     }
 
     pub(crate) fn doc_targets(&self) -> &[String] {
@@ -1132,6 +1122,58 @@ mod tests {
         assert_eq!(parsed.doc_target(), expected_target);
         assert_eq!(parsed.inner_path(), expected_path);
         assert_eq!(parsed.storage_path(), expected_storage_path);
+    }
+
+    // #[test_case("dummy/struct.WindowsOnly.html", Some("WindowsOnly"))]
+    // #[test_case("dummy/struct.DefaultOnly.html", Some("DefaultOnly"))]
+    // #[test_case("dummy/some_module/struct.SomeItem.html", Some("SomeItem"))]
+    // #[test_case("dummy/some_module/index.html", Some("some_module"))]
+    #[test_case("dummy/some_module/", Some("some_module"))]
+    // #[test_case("src/folder1/folder2/logic.rs.html", Some("logic"))]
+    fn test_generate_fallback_url(path: &str, search: Option<&str>) {
+        static TARGETS: &[&str] = &["x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"];
+        static DEFAULT_TARGET: &str = "x86_64-unknown-linux-gnu";
+
+        // non-default target, target stays in the url
+        let mut params = RustdocParams::new("dummy")
+            .with_version(ReqVersion::Exact(Version::new(0, 4, 0)))
+            .with_doc_target(TARGETS[1])
+            .with_inner_path(path)
+            .parse(
+                DEFAULT_TARGET.into(),
+                "dummy".into(),
+                TARGETS.iter().cloned(),
+            );
+
+        assert_eq!(
+            params.generate_fallback_path(),
+            (
+                "x86_64-pc-windows-msvc/dummy/".into(),
+                search.map(ToOwned::to_owned)
+            )
+        );
+        assert_eq!(
+            params.generate_fallback_url().to_string(),
+            format!(
+                "/dummy/0.4.0/x86_64-pc-windows-msvc/dummy/{}",
+                search.map(|s| format!("?search={}", s)).unwrap_or_default()
+            )
+        );
+
+        // change to default target, check url again
+        params = params.with_doc_target(DEFAULT_TARGET);
+
+        assert_eq!(
+            params.generate_fallback_path(),
+            ("dummy/".into(), search.map(ToOwned::to_owned))
+        );
+        assert_eq!(
+            params.generate_fallback_url().to_string(),
+            format!(
+                "/dummy/0.4.0/dummy/{}",
+                search.map(|s| format!("?search={}", s)).unwrap_or_default()
+            )
+        );
     }
 
     #[test]

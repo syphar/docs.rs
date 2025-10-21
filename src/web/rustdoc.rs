@@ -662,7 +662,7 @@ pub(crate) async fn target_redirect_handler(
             storage_path,
             "path doesn't exist, generating redirect to search"
         );
-        params.generate_fallback_url()?
+        params.generate_fallback_url()
     };
 
     trace!(?redirect_uri, "generate URL");
