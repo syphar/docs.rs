@@ -509,10 +509,10 @@ pub(crate) async fn rustdoc_html_server_handler(
                 // * the path doesn't already ends with `/`, because then we already tried this path
                 // * the path doesn't contain a file extension. in this case, we won't ever find
                 //   a file with another `/index.html` attached.
-                let params = params.clone().update(|params| {
+                let params = params.clone().with_inner_path({
                     let mut path = params.inner_path().trim_end_matches('/').to_owned();
                     path.push_str("/index.html");
-                    params.inner_path = Some(path)
+                    path
                 });
 
                 if storage

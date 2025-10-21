@@ -193,19 +193,16 @@ impl RustdocParams {
         )
         .fetch_optional(&mut *conn)
         .await?
-        .ok_or(AxumNope::CrateNotFound)?;
-
-        let doc_targets: Vec<String> = krate
-            .doc_targets
-            .map(MetaData::parse_doc_targets)
-            .into_iter()
-            .flatten()
-            .collect();
+        .ok_or(AxumNope::VersionNotFound)?;
 
         Ok(self.parse(
             krate.default_target.as_deref(),
             krate.target_name.as_deref(),
-            doc_targets.iter(),
+            krate
+                .doc_targets
+                .map(MetaData::parse_doc_targets)
+                .into_iter()
+                .flatten(),
         ))
     }
 
@@ -340,14 +337,14 @@ impl RustdocParams {
 
     fn path_for_rustdoc_url(&self) -> String {
         if matches!(self.page_kind, PageKind::Rustdoc) {
-            generate_path_for_url(
+            generate_rustdoc_path_for_url(
                 None,
                 None,
                 self.doc_target.as_deref(),
                 self.inner_path.as_deref(),
             )
         } else {
-            generate_path_for_url(None, None, self.doc_target.as_deref(), None)
+            generate_rustdoc_path_for_url(None, None, self.doc_target.as_deref(), None)
         }
     }
 
@@ -420,9 +417,10 @@ impl ParsedRustdocParams {
         &self.inner.version
     }
 
-    pub(crate) fn with_version(mut self, version: impl Into<ReqVersion>) -> Self {
-        self.inner.version = version.into();
-        self
+    pub(crate) fn with_version(self, version: impl Into<ReqVersion>) -> Self {
+        self.update(|inner| {
+            inner.version = version.into();
+        })
     }
 
     pub(crate) fn with_doc_target(self, doc_target: impl Into<String>) -> Self {
@@ -498,11 +496,10 @@ impl ParsedRustdocParams {
     pub(crate) fn target_is_default(&self) -> bool {
         self.default_target
             .as_deref()
-            .map(|t| self.doc_target() == Some(t))
-            .unwrap_or(false)
+            .map_or(false, |t| self.doc_target() == Some(t))
     }
 
-    pub(crate) fn update<F>(mut self, f: F) -> Self
+    fn update<F>(mut self, f: F) -> Self
     where
         F: FnOnce(&mut RustdocParams),
     {
@@ -534,14 +531,14 @@ impl ParsedRustdocParams {
 
     fn path_for_rustdoc_url(&self) -> String {
         if matches!(self.page_kind(), PageKind::Rustdoc) {
-            generate_path_for_url(
+            generate_rustdoc_path_for_url(
                 self.target_name.as_deref(),
                 self.default_target.as_deref(),
                 self.inner.doc_target.as_deref(),
                 self.inner.inner_path.as_deref(),
             )
         } else {
-            generate_path_for_url(
+            generate_rustdoc_path_for_url(
                 self.target_name.as_deref(),
                 self.default_target.as_deref(),
                 self.inner.doc_target.as_deref(),
@@ -664,7 +661,7 @@ fn generate_rustdoc_url(name: &str, version: &ReqVersion, path: &str) -> Escaped
     EscapedURI::from_path(format!("/{}/{}/{}", name, version, path))
 }
 
-fn generate_path_for_url(
+fn generate_rustdoc_path_for_url(
     target_name: Option<&str>,
     default_target: Option<&str>,
     doc_target: Option<&str>,
@@ -760,6 +757,9 @@ mod tests {
     use axum::{Router, routing::get};
     use semver::Version;
     use test_case::test_case;
+
+    static TARGETS: &[&str] = &["some-target-name", "other-target"];
+    static DEFAULT_TARGET: &str = "some-target-name";
 
     #[test_case(
         "/{name}/{version}/help/some.html",
@@ -1075,9 +1075,6 @@ mod tests {
         expected_path: &str,
         expected_storage_path: &str,
     ) {
-        static TARGETS: &[&str] = &["some-target-name", "other-target"];
-        static DEFAULT_TARGET: &str = "some-target-name";
-
         let mut dummy_path = match (target, path) {
             (Some(target), Some(path)) => format!("{}/{}", target, path),
             (Some(target), None) => target.to_string(),
@@ -1116,9 +1113,6 @@ mod tests {
     #[test_case("html", None; "plan file without extension")]
     #[test_case("", None)]
     fn test_generate_fallback_url(path: &str, search: Option<&str>) {
-        static TARGETS: &[&str] = &["x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"];
-        static DEFAULT_TARGET: &str = "x86_64-unknown-linux-gnu";
-
         // non-default target, target stays in the url
         let mut params = RustdocParams::new("dummy")
             .with_version(ReqVersion::Exact(Version::new(0, 4, 0)))
