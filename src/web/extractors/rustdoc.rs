@@ -308,13 +308,6 @@ impl RustdocParams {
         self.doc_target.as_deref()
     }
 
-    pub(crate) fn path_is_folder(&self) -> bool {
-        self.inner_path
-            .as_deref()
-            .map(|p| p.is_empty() || p.ends_with('/'))
-            .unwrap_or(true)
-    }
-
     pub(crate) fn file_extension(&self) -> Option<&str> {
         self.original_uri
             .as_ref()
@@ -448,32 +441,13 @@ impl ParsedRustdocParams {
     ///
     /// This is the path _inside_ the ZIP file we create in the build process.
     pub(crate) fn storage_path(&'_ self) -> String {
-        let mut storage_path = if let Some(ref target) = self.inner.doc_target {
-            if let Some(ref default_target) = self.default_target
-                && target == default_target
-            {
-                // when we have a target url param and it matches the default target
-                // we don't include it in the storage path.
-                // Files for the default target are placed at the root of the archive.
-                self.inner.inner_path.clone().unwrap_or_default()
-            } else {
-                // all non-default targets are in subfolders named after that target.
-                format!(
-                    "{}/{}",
-                    target,
-                    self.inner.inner_path.as_deref().unwrap_or_default()
-                )
-            }
-        } else {
-            // without target in the url params, we can just use the path.
-            self.inner.inner_path.clone().unwrap_or_default()
-        };
+        let mut path = self.path_for_rustdoc_url();
 
         if self.path_is_folder() {
-            storage_path.push_str("index.html");
+            path.push_str("index.html");
         }
 
-        storage_path
+        path
     }
 
     pub(crate) fn doc_target(&self) -> Option<&str> {
@@ -488,7 +462,9 @@ impl ParsedRustdocParams {
     }
 
     pub(crate) fn path_is_folder(&self) -> bool {
-        self.inner.path_is_folder()
+        // FIXME: optimize, to we don't generate the path so often
+        let path = self.path_for_rustdoc_url();
+        path.is_empty() || path.ends_with('/')
     }
 
     pub(crate) fn file_extension(&self) -> Option<&str> {
