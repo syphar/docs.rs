@@ -29,3 +29,5 @@ correct redirect URLs.
 - changes some generated URLs. instead of always pointing to `/index.html` on
   folders, we use the folder itself.
 - also changes some target-redirect URLs, don't include the default target
+- not all url-generation in templates & handlers is migrated in this PR, but we
+  have some examples how I would imagine it.
