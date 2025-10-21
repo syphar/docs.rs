@@ -660,7 +660,8 @@ mod tests {
     #[test_case(
         "/{name}/{version}",
         "/krate/latest",
-        RustdocParams {had_trailing_slash: false,
+        RustdocParams {
+            had_trailing_slash: false,
             name: "krate".into(),
             version: ReqVersion::Latest,
             doc_target: None,
@@ -671,7 +672,8 @@ mod tests {
     #[test_case(
         "/{name}/{version}/{*path}",
         "/krate/latest/static.html",
-        RustdocParams {had_trailing_slash: false,
+        RustdocParams {
+            had_trailing_slash: false,
             name: "krate".into(),
             version: ReqVersion::Latest,
             doc_target: None,
@@ -682,7 +684,8 @@ mod tests {
     #[test_case(
         "/{name}/{version}/{path}/static.html",
         "/krate/latest/path_add/static.html",
-        RustdocParams {had_trailing_slash: false,
+        RustdocParams {
+            had_trailing_slash: false,
             name: "krate".into(),
             version: ReqVersion::Latest,
             doc_target: None,
@@ -693,7 +696,8 @@ mod tests {
     #[test_case(
         "/{name}/{version}/clapproc%20%60macro.html",
         "/clap/latest/clapproc%20%60macro.html",
-        RustdocParams {had_trailing_slash: false,
+        RustdocParams {
+            had_trailing_slash: false,
             name: "clap".into(),
             version: ReqVersion::Latest,
             doc_target: None,
@@ -704,7 +708,8 @@ mod tests {
     #[test_case(
         "/{name}/{version}/static.html",
         "/krate/latest/static.html",
-        RustdocParams {had_trailing_slash: false,
+        RustdocParams {
+            had_trailing_slash: false,
             name: "krate".into(),
             version: ReqVersion::Latest,
             doc_target: None,
@@ -715,7 +720,8 @@ mod tests {
     #[test_case(
         "/{name}/{version}/{target}",
         "/krate/1.2.3/some-target",
-        RustdocParams {had_trailing_slash: false,
+        RustdocParams {
+            had_trailing_slash: false,
             name: "krate".into(),
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
             doc_target: Some("some-target".into()),
@@ -726,7 +732,8 @@ mod tests {
     #[test_case(
         "/{name}/{version}/{target}/folder/something.html",
         "/krate/1.2.3/some-target/folder/something.html",
-        RustdocParams {had_trailing_slash: false,
+        RustdocParams {
+            had_trailing_slash: false,
             name: "krate".into(),
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
             doc_target: Some("some-target".into()),
@@ -737,7 +744,8 @@ mod tests {
     #[test_case(
         "/{name}/{version}/{target}/",
         "/krate/1.2.3/some-target/",
-        RustdocParams {had_trailing_slash: false,
+        RustdocParams {
+            had_trailing_slash: true,
             name: "krate".into(),
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
             doc_target: Some("some-target".into()),
@@ -748,7 +756,8 @@ mod tests {
     #[test_case(
         "/{name}/{version}/{target}/{*path}",
         "/krate/1.2.3/some-target/some/path/to/a/file.html",
-        RustdocParams {had_trailing_slash: false,
+        RustdocParams {
+            had_trailing_slash: false,
             name: "krate".into(),
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
             doc_target: Some("some-target".into()),
@@ -759,7 +768,8 @@ mod tests {
     #[test_case(
         "/{name}/{version}/{target}/{path}/path/to/a/file.html",
         "/krate/1.2.3/some-target/path_add/path/to/a/file.html",
-        RustdocParams {had_trailing_slash: false,
+        RustdocParams {
+            had_trailing_slash: false,
             name: "krate".into(),
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
             doc_target: Some("some-target".into()),
@@ -914,8 +924,16 @@ mod tests {
         static TARGETS: &[&str] = &["some-target-name", "other-target"];
         static DEFAULT_TARGET: &str = "some-target-name";
 
+        let had_trailing_slash = if let Some(path) = path {
+            path.ends_with('/')
+        } else if let Some(target) = target {
+            target.ends_with('/')
+        } else {
+            false
+        };
+
         let parsed = RustdocParams {
-            had_trailing_slash: false,
+            had_trailing_slash,
             name: "krate".into(),
             version: ReqVersion::Latest,
             doc_target: target.map(|s| s.into()),
