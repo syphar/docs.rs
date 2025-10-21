@@ -431,6 +431,12 @@ impl ParsedRustdocParams {
         })
     }
 
+    pub(crate) fn with_inner_path(self, inner_path: impl Into<String>) -> Self {
+        self.update(|inner| {
+            inner.inner_path = Some(inner_path.into());
+        })
+    }
+
     /// generate a potential storage path where to find the file that is described by these params.
     ///
     /// This is the path _inside_ the ZIP file we create in the build process.
@@ -566,7 +572,7 @@ impl ParsedRustdocParams {
     ///
     /// This method is typically only used when we already know the target file doesn't exist,
     /// and we just need to redirect to a search or something similar.
-    fn generate_fallback_path(&self) -> (String, Option<String>) {
+    fn generate_fallback_search(&self) -> Option<String> {
         // we already split out the potentially leading target information in `Self::parse`.
         // So we have an optional target, and then the path.
         let components: Vec<_> = self
@@ -577,60 +583,41 @@ impl ParsedRustdocParams {
 
         let is_source_view = components.first() == Some(&"src");
 
-        let search_item: Option<&str> = components.last().and_then(|&last_component| {
-            if last_component.is_empty() || last_component == "index.html" {
-                // this is a module, we extract the module name
-                //
-                // path might look like:
-                // `/[krate]/[version]/{target_name}/{module}/index.html` (last_component is index)
-                // or
-                // `/[krate]/[version]/{target_name}/{module}/` (last_component is empty)
-                //
-                // for the search we want to use the module name.
-                components.iter().rev().nth(1).cloned()
-            } else if !is_source_view {
-                // this is an item, typically the filename (last component) is something
-                // `trait.SomeAwesomeStruct.html`, where we want `SomeAwesomeStruct` for
-                // the search
-                last_component.split('.').nth(1)
-            } else {
-                // this is from the rustdoc source view.
-                // Example last component:
-                // `tuple_impl.rs.html` where we want just `tuple_impl` for the search.
-                last_component.strip_suffix(".rs.html")
-            }
-        });
-
-        let mut path = String::new();
-
-        if let Some(doc_target) = self.doc_target() {
-            let is_default_target = self
-                .default_target
-                .as_ref()
-                .map_or(false, |t| t == doc_target);
-
-            if !is_default_target {
-                path = format!("{}/", doc_target);
-            }
-        };
-
-        if let Some(ref target_name) = self.target_name {
-            path.push_str(&format!("{target_name}/"));
-        }
-
-        (path, search_item.map(ToString::to_string))
+        components
+            .last()
+            .and_then(|&last_component| {
+                if last_component.is_empty() || last_component == "index.html" {
+                    // this is a module, we extract the module name
+                    //
+                    // path might look like:
+                    // `/[krate]/[version]/{target_name}/{module}/index.html` (last_component is index)
+                    // or
+                    // `/[krate]/[version]/{target_name}/{module}/` (last_component is empty)
+                    //
+                    // for the search we want to use the module name.
+                    components.iter().rev().nth(1).cloned()
+                } else if !is_source_view {
+                    // this is an item, typically the filename (last component) is something
+                    // `trait.SomeAwesomeStruct.html`, where we want `SomeAwesomeStruct` for
+                    // the search
+                    last_component.split('.').nth(1)
+                } else {
+                    // this is from the rustdoc source view.
+                    // Example last component:
+                    // `tuple_impl.rs.html` where we want just `tuple_impl` for the search.
+                    last_component.strip_suffix(".rs.html")
+                }
+            })
+            .map(ToString::to_string)
     }
 
     pub(crate) fn generate_fallback_url(&self) -> EscapedURI {
-        let (path, search_item) = self.generate_fallback_path();
+        let rustdoc_url = self.clone().with_inner_path("").rustdoc_url();
 
-        if let Some(search_item) = search_item {
-            EscapedURI::from_path_and_query(
-                &format!("/{}/{}/{}", self.name(), self.version(), path),
-                &[("search", &search_item)],
-            )
+        if let Some(search_item) = self.generate_fallback_search() {
+            rustdoc_url.append_query_pair("search", search_item)
         } else {
-            EscapedURI::from_path(format!("/{}/{}/{}", self.name(), self.version(), path))
+            rustdoc_url
         }
     }
 
@@ -1121,11 +1108,13 @@ mod tests {
     }
 
     #[test_case("dummy/struct.WindowsOnly.html", Some("WindowsOnly"))]
-    #[test_case("dummy/struct.DefaultOnly.html", Some("DefaultOnly"))]
     #[test_case("dummy/some_module/struct.SomeItem.html", Some("SomeItem"))]
     #[test_case("dummy/some_module/index.html", Some("some_module"))]
     #[test_case("dummy/some_module/", Some("some_module"))]
     #[test_case("src/folder1/folder2/logic.rs.html", Some("logic"))]
+    #[test_case("src/non_source_file.rs", None)]
+    #[test_case("html", None; "plan file without extension")]
+    #[test_case("", None)]
     fn test_generate_fallback_url(path: &str, search: Option<&str>) {
         static TARGETS: &[&str] = &["x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"];
         static DEFAULT_TARGET: &str = "x86_64-unknown-linux-gnu";
@@ -1141,13 +1130,7 @@ mod tests {
                 TARGETS.iter().cloned(),
             );
 
-        assert_eq!(
-            params.generate_fallback_path(),
-            (
-                "x86_64-pc-windows-msvc/dummy/".into(),
-                search.map(ToOwned::to_owned)
-            )
-        );
+        assert_eq!(params.generate_fallback_search().as_deref(), search);
         assert_eq!(
             params.generate_fallback_url().to_string(),
             format!(
@@ -1159,10 +1142,7 @@ mod tests {
         // change to default target, check url again
         params = params.with_doc_target(DEFAULT_TARGET);
 
-        assert_eq!(
-            params.generate_fallback_path(),
-            ("dummy/".into(), search.map(ToOwned::to_owned))
-        );
+        assert_eq!(params.generate_fallback_search().as_deref(), search);
         assert_eq!(
             params.generate_fallback_url().to_string(),
             format!(
