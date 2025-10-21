@@ -1,7 +1,7 @@
 use crate::{
     db::PoolError,
     storage::PathNotFoundError,
-    web::{cache::CachePolicy, encode_url_path, releases::Search},
+    web::{AxumErrorPage, cache::CachePolicy, escaped_uri::EscapedURI, releases::Search},
 };
 use anyhow::{Result, anyhow};
 use axum::{
@@ -9,179 +9,8 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response as AxumResponse},
 };
-use derive_more::Display;
-use http::{Uri, uri::PathAndQuery};
-use std::{
-    borrow::{Borrow, Cow},
-    iter,
-    ops::Deref,
-};
+use std::borrow::Cow;
 use tracing::error;
-use url::form_urlencoded;
-
-use super::AxumErrorPage;
-
-/// internal wrapper around `http::Uri` with some convenience functions.
-///
-/// Ensures that the path part is always properly percent-encoded, including some characters
-/// that http::Uri would allow, but we still want to encode, like umlauts.
-#[derive(Debug, Clone, Display)]
-pub struct EscapedURI(Uri);
-
-impl EscapedURI {
-    pub fn from_uri(uri: Uri) -> Self {
-        if uri.path_and_query().is_some() {
-            if uri.path() == encode_url_path(uri.path()) {
-                Self(uri)
-            } else {
-                let mut parts = uri.into_parts();
-
-                parts.path_and_query = Some(
-                    PathAndQuery::from_maybe_shared(
-                        parts
-                            .path_and_query
-                            .take()
-                            .map(|pq| {
-                                format!(
-                                    "{}{}",
-                                    encode_url_path(pq.path()),
-                                    pq.query().map(|q| format!("?{}", q)).unwrap_or_default(),
-                                )
-                            })
-                            .unwrap_or_default(),
-                    )
-                    .expect("can't fail since we encode the path ourselves"),
-                );
-
-                Self(
-                    Uri::from_parts(parts)
-                        .expect("everything is coming from a previous Uri, or encoded here"),
-                )
-            }
-        } else {
-            Self(uri)
-        }
-    }
-
-    pub fn from_path(path: impl AsRef<str>) -> Self {
-        Self(
-            Uri::builder()
-                .path_and_query(encode_url_path(path.as_ref()))
-                .build()
-                .expect("this can never fail because we encode the path"),
-        )
-    }
-
-    pub fn from_path_and_raw_query(
-        path: impl AsRef<str>,
-        raw_query: Option<impl AsRef<str>>,
-    ) -> Self {
-        Self::from_path(path).append_raw_query(raw_query)
-    }
-
-    pub(crate) fn from_path_and_query<P, I, K, V>(path: P, queries: I) -> Self
-    where
-        P: AsRef<str>,
-        I: IntoIterator,
-        I::Item: Borrow<(K, V)>,
-        K: AsRef<str>,
-        V: AsRef<str>,
-    {
-        Self::from_path(path).append_query_pairs(queries)
-    }
-
-    pub fn path(&self) -> &str {
-        self.0.path()
-    }
-
-    /// extend the query part of the Uri with the given raw query string.
-    ///
-    /// Will parse & re-encode the string, which is why the method is infallible (I think)
-    pub fn append_raw_query(self, raw_query: Option<impl AsRef<str>>) -> Self {
-        let raw_query = match raw_query {
-            Some(ref q) => q.as_ref(),
-            None => return self,
-        };
-
-        self.append_query_pairs(form_urlencoded::parse(raw_query.as_bytes()))
-    }
-
-    pub fn append_query_pairs<I, K, V>(self, new_query_args: I) -> Self
-    where
-        I: IntoIterator,
-        I::Item: Borrow<(K, V)>,
-        K: AsRef<str>,
-        V: AsRef<str>,
-    {
-        let mut new_query_args = new_query_args.into_iter().peekable();
-        if new_query_args.peek().is_none() {
-            return self;
-        }
-
-        let mut serializer = form_urlencoded::Serializer::new(String::new());
-
-        if let Some(existing_query_args) = self.0.query() {
-            serializer.extend_pairs(form_urlencoded::parse(existing_query_args.as_bytes()));
-        }
-
-        serializer.extend_pairs(new_query_args);
-
-        let mut parts = self.0.into_parts();
-
-        parts.path_and_query = Some(
-            PathAndQuery::from_maybe_shared(format!(
-                "{}?{}",
-                parts
-                    .path_and_query
-                    .map(|pg| pg.path().to_owned())
-                    .unwrap_or_default(),
-                serializer.finish(),
-            ))
-            .expect("can't fail since all the data is either coming from a previous Uri, or we encode it ourselves")
-        );
-
-        Self::from_uri(
-            Uri::from_parts(parts).expect(
-                "can't fail since data is either coming from an Uri, or encoded by ourselves.",
-            ),
-        )
-    }
-
-    /// extend query part
-    pub fn append_query_pair(self, key: impl AsRef<str>, value: impl AsRef<str>) -> Self {
-        self.append_query_pairs(iter::once((key, value)))
-    }
-
-    pub fn into_inner(self) -> Uri {
-        self.0
-    }
-}
-
-impl Deref for EscapedURI {
-    type Target = Uri;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl From<EscapedURI> for http::Uri {
-    fn from(value: EscapedURI) -> Self {
-        value.0
-    }
-}
-
-impl From<Uri> for EscapedURI {
-    fn from(value: Uri) -> Self {
-        Self::from_uri(value)
-    }
-}
-
-impl PartialEq for EscapedURI {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum AxumNope {
@@ -298,7 +127,7 @@ struct ErrorInfo {
 }
 
 fn redirect_with_policy(target: EscapedURI, cache_policy: CachePolicy) -> AxumResponse {
-    match super::axum_cached_redirect(target.0, cache_policy) {
+    match super::axum_cached_redirect(target, cache_policy) {
         Ok(response) => response.into_response(),
         Err(err) => AxumNope::InternalError(err).into_response(),
     }

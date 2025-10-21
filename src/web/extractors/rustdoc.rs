@@ -15,8 +15,7 @@ use serde::Deserialize;
 use crate::{
     db::ReleaseId,
     web::{
-        MatchedRelease, MetaData, ReqVersion,
-        error::{AxumNope, EscapedURI},
+        MatchedRelease, MetaData, ReqVersion, error::AxumNope, escaped_uri::EscapedURI,
         extractors::Path,
     },
 };

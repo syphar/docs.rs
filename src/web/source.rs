@@ -244,7 +244,7 @@ pub(crate) async fn source_browser_handler(
                 &params.name,
                 &version.to_string(),
                 row.latest_build_id,
-                &inner_path,
+                inner_path,
                 row.archive_storage,
             )
             .await

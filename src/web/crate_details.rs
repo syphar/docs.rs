@@ -8,7 +8,8 @@ use crate::{
     web::{
         MatchedRelease, MetaData, ReqVersion,
         cache::CachePolicy,
-        error::{AxumNope, AxumResult, EscapedURI},
+        error::{AxumNope, AxumResult},
+        escaped_uri::EscapedURI,
         extractors::{DbConnection, rustdoc::RustdocParams},
         match_version,
         page::templates::{RenderBrands, RenderRegular, RenderSolid, filters},

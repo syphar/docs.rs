@@ -1,4 +1,4 @@
-use super::error::EscapedURI;
+use super::escaped_uri::EscapedURI;
 use anyhow::Result;
 use axum::http::uri::Uri;
 use axum_extra::headers::{Header, HeaderName, HeaderValue};
