@@ -746,44 +746,42 @@ fn generate_rustdoc_path_for_url(
     // special case:
     // when we find an empty `inner_path` or when it's just "index.html", we assume we have to
     // default to `target_name/`.
-    let inner_path = if let Some(target_name) = target_name {
-        if let Some(inner_path) = inner_path
-            && !inner_path.is_empty()
-            && inner_path != INDEX_HTML
-        {
-            inner_path.to_owned()
-        } else {
-            format!("{}/", target_name)
-        }
-    } else {
-        inner_path.unwrap_or_default().to_string()
+    let inner_path = match (target_name, inner_path) {
+        // when the given path is useable, use that one.
+        (Some(_), Some(path)) if !path.is_empty() && path != INDEX_HTML => path.to_owned(),
+        // otherwise use the target_name as folder.
+        (Some(target_name), _) => format!("{}/", target_name),
+        // fallback to just using the initial path.
+        // Can only happen when:
+        // * the path is just "index.html" or
+        // * the path is empty
+        (None, path) => path.unwrap_or("").to_string(),
     };
 
-    let path = if let Some(doc_target) = doc_target {
-        if let Some(default_target) = default_target
-            && doc_target == default_target
-        {
-            // when we have a target url param and it matches the default target
-            // we don't include it in the storage path.
-            // Files for the default target are placed at the root of the archive.
-            inner_path
-        } else {
-            // all non-default targets are in subfolders named after that target.
+    let inner_path = match (doc_target, default_target) {
+        // Use a subfolder for any non-default target.
+        (Some(doc_target), Some(default_target)) if doc_target != default_target => {
             format!("{}/{}", doc_target, inner_path)
         }
-    } else {
-        // without target in the url params, we can just use the path.
-        inner_path
+        // when we don't know which the default target is, always add the target.
+        (Some(doc_target), None) => {
+            format!("{}/{}", doc_target, inner_path)
+        }
+
+        // other cases: just use the path.
+        // * no doc_target, but default target -> no target in url
+        // * no doc_target, no default target -> no target in url
+        _ => inner_path,
     };
 
     // for folders we might have `index.html` at the end.
     // We want to normalize the requests here, so a trailing `/index.html` will be cut off.
-    if path == INDEX_HTML {
+    if inner_path == INDEX_HTML {
         "".into()
-    } else if path.ends_with(FOLDER_AND_INDEX_HTML) {
-        path.trim_end_matches(INDEX_HTML).to_string()
+    } else if inner_path.ends_with(FOLDER_AND_INDEX_HTML) {
+        inner_path.trim_end_matches(INDEX_HTML).to_string()
     } else {
-        path
+        inner_path
     }
 }
 
