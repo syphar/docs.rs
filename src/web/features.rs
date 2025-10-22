@@ -214,10 +214,7 @@ fn get_dependency_versions(raw_dependencies: Option<Value>) -> HashMap<String, R
             let name = value.get(0).and_then(Value::as_str);
             let version = value.get(1).and_then(Value::as_str);
             if let (Some(name), Some(version)) = (name, version) {
-                let req_version = version
-                    .parse()
-                    .map(|v| ReqVersion::Exact(v))
-                    .unwrap_or(ReqVersion::Latest);
+                let req_version = version.parse().unwrap_or(ReqVersion::Latest);
                 map.insert(name.into(), req_version);
             }
         }
