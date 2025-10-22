@@ -13,6 +13,7 @@ use crate::{
             DbConnection,
             rustdoc::{PageKind, ParsedRustdocParams, RustdocParams},
         },
+        headers::CanonicalUrl,
         match_version,
         page::templates::{RenderBrands, RenderRegular, RenderSolid, filters},
     },
@@ -426,7 +427,7 @@ pub(crate) async fn releases_for_crate(
 
 #[derive(Template)]
 #[template(path = "crate/details.html")]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 struct CrateDetailsPage {
     version: Version,
     name: String,
@@ -450,6 +451,7 @@ struct CrateDetailsPage {
     rustdoc: Option<String>, // this is description_long in database
     source_size: Option<i64>,
     documentation_size: Option<i64>,
+    canonical_url: CanonicalUrl,
     params: ParsedRustdocParams,
 }
 
@@ -549,6 +551,12 @@ pub(crate) async fn crate_details_handler(
         rustdoc,
         source_size,
         documentation_size,
+        canonical_url: CanonicalUrl::from_uri(
+            params
+                .clone()
+                .with_version(ReqVersion::Latest)
+                .crate_details_url(),
+        ),
         params,
     }
     .into_response();
