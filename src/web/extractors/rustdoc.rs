@@ -205,8 +205,6 @@ impl RustdocParams {
         I: IntoIterator<Item = V>,
         V: Into<String>,
     {
-        // TODO: optimization: less owned variables, more references
-        // TODO: nicer target logic
         let default_target = default_target.map(Into::into);
         debug_assert!(
             default_target
@@ -220,10 +218,21 @@ impl RustdocParams {
             .map(|s| s.into())
             .collect::<Vec<_>>();
 
-        let mut new_path = if let Some(ref path) = self.inner_path {
+        let mut merged_inner_path = if let Some(ref path) = self.inner_path {
             path.trim_start_matches('/').trim().to_string()
         } else {
             String::new()
+        };
+
+        if let Some(ref static_route_suffix) = self.static_route_suffix
+            && !static_route_suffix.is_empty()
+        {
+            if !merged_inner_path.is_empty() {
+                merged_inner_path.push('/');
+                merged_inner_path.push_str(&static_route_suffix);
+            } else {
+                merged_inner_path = static_route_suffix.clone()
+            }
         };
 
         let mut new_target: Option<String> = None;
@@ -238,36 +247,35 @@ impl RustdocParams {
                 new_target = Some(given_target.into());
             } else {
                 new_target = None;
-                if !new_path.is_empty() {
-                    new_path = format!("{}/{}", given_target, new_path);
+                if !merged_inner_path.is_empty() {
+                    merged_inner_path = format!("{}/{}", given_target, merged_inner_path);
                 } else if self.has_trailing_slash() {
-                    new_path = format!("{}/", given_target);
+                    merged_inner_path = format!("{}/", given_target);
                 } else {
-                    new_path = given_target.into();
+                    merged_inner_path = given_target.into();
                 }
             }
         } else {
             // there is no separate target component given in the route parameters.
             // We look at the first component of the path and see if it matches a target.
 
-            if let Some(pos) = new_path.find('/') {
-                let potential_target = &new_path[..pos];
+            if let Some(pos) = merged_inner_path.find('/') {
+                let potential_target = &merged_inner_path[..pos];
 
                 if doc_targets.iter().any(|s| s == potential_target) {
                     new_target = Some(potential_target.to_owned());
-                    new_path = new_path
+                    merged_inner_path = merged_inner_path
                         .get((pos + 1)..)
                         .map(ToOwned::to_owned)
                         .unwrap_or_default();
                 }
             } else {
                 // no slash in the path, can be target or inner path
-                if doc_targets.iter().any(|s| s == &new_path) {
-                    new_target = Some(new_path.to_owned());
-                    new_path.clear();
+                if doc_targets.iter().any(|s| s == &merged_inner_path) {
+                    new_target = Some(merged_inner_path.to_owned());
+                    merged_inner_path.clear();
                 } else {
                     new_target = None;
-                    // new_path stays the same
                 }
             };
         }
@@ -278,8 +286,7 @@ impl RustdocParams {
         }
         self.doc_target = new_target;
 
-        debug_assert!(!new_path.starts_with('/')); // we should trim leading slashes
-        self.inner_path = Some(new_path);
+        debug_assert!(!merged_inner_path.starts_with('/')); // we should trim leading slashes
 
         let target_name = target_name.map(Into::into);
         debug_assert!(target_name.as_ref().map(|s| !s.is_empty()).unwrap_or(true));
@@ -288,6 +295,7 @@ impl RustdocParams {
             doc_targets,
             default_target,
             target_name,
+            merged_inner_path,
             inner: self,
         }
     }
@@ -325,10 +333,9 @@ impl RustdocParams {
                 None,
                 self.doc_target.as_deref(),
                 self.inner_path.as_deref(),
-                self.static_route_suffix.as_deref(),
             )
         } else {
-            generate_rustdoc_path_for_url(None, None, self.doc_target.as_deref(), None, None)
+            generate_rustdoc_path_for_url(None, None, self.doc_target.as_deref(), None)
         }
     }
 
@@ -408,6 +415,7 @@ pub(crate) struct ParsedRustdocParams {
     doc_targets: Vec<String>,
     default_target: Option<String>,
     target_name: Option<String>,
+    merged_inner_path: String,
 }
 
 impl ParsedRustdocParams {
@@ -440,14 +448,29 @@ impl ParsedRustdocParams {
     /// generate a potential storage path where to find the file that is described by these params.
     ///
     /// This is the path _inside_ the ZIP file we create in the build process.
-    pub(crate) fn storage_path(&'_ self) -> String {
-        let mut path = self.path_for_rustdoc_url();
+    pub(crate) fn storage_path(&self) -> String {
+        let mut storage_path = if let Some(ref target) = self.inner.doc_target {
+            if let Some(ref default_target) = self.default_target
+                && target == default_target
+            {
+                // when we have a target url param and it matches the default target
+                // we don't include it in the storage path.
+                // Files for the default target are placed at the root of the archive.
+                self.inner_path().to_owned()
+            } else {
+                // all non-default targets are in subfolders named after that target.
+                format!("{}/{}", target, self.inner_path())
+            }
+        } else {
+            // without target in the url params, we can just use the path.
+            self.inner_path().to_owned()
+        };
 
         if self.path_is_folder() {
-            path.push_str("index.html");
+            storage_path.push_str("index.html");
         }
 
-        path
+        storage_path
     }
 
     pub(crate) fn doc_target(&self) -> Option<&str> {
@@ -462,8 +485,7 @@ impl ParsedRustdocParams {
     }
 
     pub(crate) fn path_is_folder(&self) -> bool {
-        // FIXME: optimize, to we don't generate the path so often
-        let path = self.path_for_rustdoc_url();
+        let path = self.inner_path();
         path.is_empty() || path.ends_with('/')
     }
 
@@ -472,7 +494,7 @@ impl ParsedRustdocParams {
     }
 
     pub(crate) fn inner_path(&self) -> &str {
-        self.inner.inner_path.as_deref().unwrap_or_default()
+        &self.merged_inner_path
     }
 
     /// check if we have a target component in the path, that matches the default
@@ -528,15 +550,13 @@ impl ParsedRustdocParams {
                 self.target_name.as_deref(),
                 self.default_target.as_deref(),
                 self.inner.doc_target.as_deref(),
-                self.inner.inner_path.as_deref(),
-                self.inner.static_route_suffix.as_deref(),
+                Some(self.inner_path()),
             )
         } else {
             generate_rustdoc_path_for_url(
                 self.target_name.as_deref(),
                 self.default_target.as_deref(),
                 self.inner.doc_target.as_deref(),
-                None,
                 None,
             )
         }
@@ -661,25 +681,7 @@ fn generate_rustdoc_path_for_url(
     default_target: Option<&str>,
     doc_target: Option<&str>,
     inner_path: Option<&str>,
-    static_route_suffix: Option<&str>,
 ) -> String {
-    let inner_path = if let Some(static_route_suffix) =
-        static_route_suffix.map(ToOwned::to_owned).take()
-        && !static_route_suffix.is_empty()
-    {
-        if let Some(mut inner_path) = inner_path.map(ToOwned::to_owned).take()
-            && !inner_path.is_empty()
-        {
-            inner_path.push('/');
-            inner_path.push_str(&static_route_suffix);
-            Some(inner_path)
-        } else {
-            Some(static_route_suffix)
-        }
-    } else {
-        inner_path.map(ToOwned::to_owned).take()
-    };
-
     let inner_path = if let Some(target_name) = target_name {
         if let Some(inner_path) = inner_path
                 && !inner_path.is_empty()
@@ -692,7 +694,7 @@ fn generate_rustdoc_path_for_url(
             format!("{}/", target_name)
         }
     } else {
-        inner_path.unwrap_or_default()
+        inner_path.unwrap_or_default().to_string()
     };
 
     let path = if let Some(target) = doc_target {
@@ -1128,12 +1130,17 @@ mod tests {
             TARGETS.iter().cloned(),
         );
         dbg!(&parsed);
+        dbg!(&parsed.path_for_rustdoc_url());
 
         assert_eq!(parsed.name(), "krate");
         assert_eq!(parsed.version(), &ReqVersion::Latest);
         assert_eq!(parsed.doc_target(), expected_target);
         assert_eq!(parsed.inner_path(), expected_path);
         assert_eq!(parsed.storage_path(), expected_storage_path);
+        // assert_eq!(
+        //     parsed.path_is_folder(),
+        //     had_trailing_slash || dummy_path.ends_with('/') || dummy_path.is_empty()
+        // );
     }
 
     #[test_case("dummy/struct.WindowsOnly.html", Some("WindowsOnly"))]
@@ -1196,6 +1203,7 @@ mod tests {
             ],
             default_target: Some("x86_64-unknown-linux-gnu".into()),
             target_name: Some("dummy".into()),
+            merged_inner_path: "README.md".into(),
         };
 
         assert_eq!(params.rustdoc_url().to_string(), "/dummy/0.4.0/dummy/");
@@ -1227,6 +1235,7 @@ mod tests {
             ],
             default_target: Some("x86_64-unknown-linux-gnu".into()),
             target_name: Some("dummy".into()),
+            merged_inner_path: "README.md".into(),
         };
 
         assert_eq!(
@@ -1307,6 +1316,6 @@ mod tests {
         doc_target: Option<&str>,
         inner_path: Option<&str>,
     ) -> String {
-        generate_rustdoc_path_for_url(target_name, default_target, doc_target, inner_path, None)
+        generate_rustdoc_path_for_url(target_name, default_target, doc_target, inner_path)
     }
 }

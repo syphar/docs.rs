@@ -465,6 +465,7 @@ pub(crate) async fn rustdoc_html_server_handler(
         ?params,
         doc_targets=?krate.metadata.doc_targets,
         default_target=?krate.metadata.default_target,
+
         "parsed params"
     );
 
