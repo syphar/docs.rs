@@ -390,6 +390,15 @@ mod tests {
     }
 
     #[test]
+    fn test_escaped_uri_append_fragment_encode() {
+        let uri = EscapedURI::from_path("/something").with_fragment("some-äö-fragment");
+
+        assert_eq!(uri.path(), "/something");
+        assert_eq!(uri.query(), None);
+        assert_eq!(uri.fragment(), Some("some-%C3%A4%C3%B6-fragment"));
+    }
+
+    #[test]
     fn test_escaped_uri_replace_fragment() {
         let uri = EscapedURI::from_path("/something")
             .with_fragment("some-fragment")
