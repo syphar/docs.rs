@@ -1,12 +1,15 @@
 use crate::web::encode_url_path;
 use http::{Uri, uri::PathAndQuery};
-use std::{borrow::Borrow, fmt::Display, iter, ops::Deref};
+use std::{borrow::Borrow, fmt::Display, iter, ops::Deref, str::FromStr};
 use url::form_urlencoded;
 
 /// internal wrapper around `http::Uri` with some convenience functions.
 ///
 /// Ensures that the path part is always properly percent-encoded, including some characters
 /// that http::Uri would allow, but we still want to encode, like umlauts.
+///
+/// Also we support fragments, with http::Uri doesn't support yet.
+/// See https://github.com/hyperium/http/issues/775
 #[derive(Debug, Clone)]
 pub struct EscapedURI {
     uri: Uri,
@@ -87,6 +90,10 @@ impl EscapedURI {
         self.uri.path()
     }
 
+    pub fn fragment(&self) -> Option<&str> {
+        self.fragment.as_deref()
+    }
+
     /// extend the query part of the Uri with the given raw query string.
     ///
     /// Will parse & re-encode the string, which is why the method is infallible (I think)
@@ -150,14 +157,32 @@ impl EscapedURI {
     }
 
     pub(crate) fn with_fragment(mut self, fragment: impl Into<String>) -> Self {
-        self.fragment = Some(fragment.into());
+        self.fragment = Some(encode_url_path(&fragment.into()));
         self
+    }
+}
+
+impl FromStr for EscapedURI {
+    type Err = http::uri::InvalidUri;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Some((base, fragment)) = s.split_once('#') {
+            Ok(Self {
+                uri: base.parse()?,
+                fragment: Some(encode_url_path(fragment)),
+            })
+        } else {
+            Ok(Self {
+                uri: s.parse()?,
+                fragment: None,
+            })
+        }
     }
 }
 
 impl Display for EscapedURI {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if let Some(fragment) = &self.fragment {
+        if let Some(ref fragment) = self.fragment {
             write!(f, "{}#{}", self.uri, fragment)
         } else {
             write!(f, "{}", self.uri)
@@ -261,6 +286,29 @@ mod tests {
         assert_eq!(escaped.query(), Some("key=value&foo=bar"));
     }
 
+    #[test]
+    fn test_escaped_uri_from_uri_with_query_args_and_fragment() {
+        let input = "/something?key=value&foo=bar#frag";
+        let escaped: EscapedURI = input.parse().unwrap();
+        assert_eq!(escaped.path(), "/something");
+        assert_eq!(escaped.query(), Some("key=value&foo=bar"));
+        assert_eq!(escaped.fragment(), Some("frag"));
+        assert_eq!(escaped.to_string(), input);
+    }
+
+    #[test]
+    fn test_escaped_uri_from_uri_with_query_args_and_fragment_to_encode() {
+        let input = "/something?key=value&foo=bar#fräöag";
+        let escaped: EscapedURI = input.parse().unwrap();
+        assert_eq!(escaped.path(), "/something");
+        assert_eq!(escaped.query(), Some("key=value&foo=bar"));
+        assert_eq!(escaped.fragment(), Some("fr%C3%A4%C3%B6ag"));
+        assert_eq!(
+            escaped.to_string(),
+            "/something?key=value&foo=bar#fr%C3%A4%C3%B6ag"
+        );
+    }
+
     #[test_case("/something>")]
     #[test_case("/something?key=<value&foo=\rbar")]
     fn test_escaped_uri_encodes_path_from_uri_invalid(input: &str) {
@@ -330,5 +378,25 @@ mod tests {
 
         assert_eq!(uri.path(), "/something");
         assert_eq!(uri.query(), Some("key=value&foo=bar&bar=baz&last=one"));
+    }
+
+    #[test]
+    fn test_escaped_uri_append_fragment() {
+        let uri = EscapedURI::from_path("/something").with_fragment("some-fragment");
+
+        assert_eq!(uri.path(), "/something");
+        assert_eq!(uri.query(), None);
+        assert_eq!(uri.fragment(), Some("some-fragment"));
+    }
+
+    #[test]
+    fn test_escaped_uri_replace_fragment() {
+        let uri = EscapedURI::from_path("/something")
+            .with_fragment("some-fragment")
+            .with_fragment("other-fragment");
+
+        assert_eq!(uri.path(), "/something");
+        assert_eq!(uri.query(), None);
+        assert_eq!(uri.fragment(), Some("other-fragment"));
     }
 }
