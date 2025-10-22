@@ -254,7 +254,7 @@ impl RustdocParams {
         debug_assert!(default_target.as_ref().map_or(true, |s| !s.is_empty()));
 
         let doc_targets: Vec<String> = doc_targets.into_iter().map(Into::into).collect();
-        let is_valid_target = |t: &str| doc_targets.iter().any(|s| s == t);
+        let is_valid_target = |target: &str| doc_targets.iter().any(|t| t == target);
 
         let inner_path = self
             .inner_path
