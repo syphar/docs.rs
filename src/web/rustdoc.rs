@@ -42,6 +42,7 @@ use std::{
 };
 use tracing::{Instrument, error, info_span, instrument, trace};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OfficialCrateDescription {
     pub(crate) name: &'static str,
     pub(crate) href: Uri,

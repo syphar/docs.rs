@@ -8,9 +8,14 @@ use crate::{
     web::{
         ReqVersion, axum_redirect, encode_url_path,
         error::{AxumNope, AxumResult},
-        extractors::{DbConnection, Path, rustdoc::ParsedRustdocParams},
+        escaped_uri::EscapedURI,
+        extractors::{
+            DbConnection, Path,
+            rustdoc::{ParsedRustdocParams, RustdocParams},
+        },
         match_version,
         page::templates::{RenderBrands, RenderRegular, RenderSolid, filters},
+        rustdoc::OfficialCrateDescription,
     },
 };
 use anyhow::{Context as _, Result, anyhow};
@@ -21,7 +26,7 @@ use axum::{
 };
 use base64::{Engine, engine::general_purpose::STANDARD as b64};
 use chrono::{DateTime, Utc};
-use futures_util::stream::TryStreamExt;
+use futures_util::{StreamExt as _, stream::TryStreamExt};
 use http::Uri;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
@@ -44,7 +49,7 @@ const RELEASES_IN_FEED: i64 = 150;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Release {
     pub(crate) name: String,
-    pub(crate) version: String,
+    pub(crate) version: semver::Version,
     pub(crate) description: Option<String>,
     pub(crate) target_name: Option<String>,
     pub(crate) rustdoc_status: bool,
@@ -118,16 +123,21 @@ pub(crate) async fn get_releases(
         .bind(offset)
         .bind(filter_failed)
         .fetch(conn)
-        .map_ok(|row| Release {
-            name: row.get(0),
-            version: row.get(1),
-            description: row.get(2),
-            target_name: row.get(3),
-            rustdoc_status: row.get::<Option<bool>, _>(4).unwrap_or(false),
-            build_time: row.get(5),
-            stars: row.get::<Option<i32>, _>(6).unwrap_or(0),
-            has_unyanked_releases: None,
-            href: None,
+        .err_into::<anyhow::Error>()
+        .and_then(|row| async move {
+            let version: semver::Version = row.get::<String, _>(1).parse()?;
+
+            Ok(Release {
+                name: row.get(0),
+                version,
+                description: row.get(2),
+                target_name: row.get(3),
+                rustdoc_status: row.get::<Option<bool>, _>(4).unwrap_or(false),
+                build_time: row.get(5),
+                stars: row.get::<Option<i32>, _>(6).unwrap_or(0),
+                has_unyanked_releases: None,
+                href: None,
+            })
         })
         .try_collect()
         .await?)
@@ -136,6 +146,7 @@ pub(crate) async fn get_releases(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ReleaseStatus {
     Available(Release),
+    External(&'static OfficialCrateDescription),
     /// Only contains the crate name.
     NotAvailable(String),
 }
@@ -144,20 +155,6 @@ struct SearchResult {
     pub results: Vec<ReleaseStatus>,
     pub prev_page: Option<String>,
     pub next_page: Option<String>,
-}
-
-fn rust_lib_release(name: &str, description: &str, href: &Uri) -> ReleaseStatus {
-    ReleaseStatus::Available(Release {
-        name: name.to_string(),
-        version: String::new(),
-        description: Some(description.to_string()),
-        build_time: None,
-        target_name: None,
-        rustdoc_status: false,
-        stars: 0,
-        has_unyanked_releases: None,
-        href: Some(href.clone()),
-    })
 }
 
 /// Get the search results for a crate search query
@@ -213,12 +210,14 @@ async fn get_search_results(
         &names[..],
     )
     .fetch(&mut *conn)
-    .map_ok(|row| {
-        (
+    .err_into::<anyhow::Error>()
+    .and_then(|row| async move {
+        let version: semver::Version = row.version.parse()?;
+        Ok((
             row.name.clone(),
             Release {
                 name: row.name,
-                version: row.version,
+                version,
                 description: row.description,
                 build_time: row.last_build_time,
                 target_name: row.target_name,
@@ -227,7 +226,7 @@ async fn get_search_results(
                 has_unyanked_releases: row.has_unyanked_releases,
                 href: None,
             },
-        )
+        ))
     })
     .try_collect()
     .await?;
@@ -236,13 +235,8 @@ async fn get_search_results(
     // extend with the release/build information from docs.rs
     // Crates that are not on docs.rs yet will not be returned.
     let mut results = Vec::new();
-    if let Some(super::rustdoc::OfficialCrateDescription {
-        name,
-        href,
-        description,
-    }) = super::rustdoc::DOC_RUST_LANG_ORG_REDIRECTS.get(query)
-    {
-        results.push(rust_lib_release(name, description, href))
+    if let Some(desc) = super::rustdoc::DOC_RUST_LANG_ORG_REDIRECTS.get(query) {
+        results.push(ReleaseStatus::External(desc));
     }
 
     let names: Vec<String> =
