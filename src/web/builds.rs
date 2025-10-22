@@ -64,7 +64,7 @@ pub(crate) async fn build_list_handler(
     mut conn: DbConnection,
     Extension(config): Extension<Arc<Config>>,
 ) -> AxumResult<impl IntoResponse> {
-    let version = match_version(&mut conn, &params.name(), &params.version())
+    let version = match_version(&mut conn, params.name(), params.version())
         .await?
         .assume_exact_name()?
         .into_canonical_req_version_or_else(|version| {
@@ -77,7 +77,7 @@ pub(crate) async fn build_list_handler(
 
     let metadata = MetaData::from_crate(
         &mut conn,
-        &params.name(),
+        params.name(),
         &version,
         Some(params.version().clone()),
     )
@@ -86,8 +86,8 @@ pub(crate) async fn build_list_handler(
 
     Ok(BuildsPage {
         metadata,
-        builds: get_builds(&mut conn, &params.name(), &version).await?,
-        limits: Limits::for_crate(&config, &mut conn, &params.name()).await?,
+        builds: get_builds(&mut conn, params.name(), &version).await?,
+        limits: Limits::for_crate(&config, &mut conn, params.name()).await?,
         canonical_url: CanonicalUrl::from_uri(
             params
                 .clone()

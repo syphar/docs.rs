@@ -251,7 +251,7 @@ impl RustdocParams {
         V: Into<String>,
     {
         let default_target = default_target.map(Into::into);
-        debug_assert!(default_target.as_ref().map_or(true, |s| !s.is_empty()));
+        debug_assert!(default_target.as_ref().is_none_or(|s| !s.is_empty()));
 
         let doc_targets: Vec<String> = doc_targets.into_iter().map(Into::into).collect();
         let is_valid_target = |t: &str| doc_targets.iter().any(|s| s == t);
@@ -548,7 +548,7 @@ impl ParsedRustdocParams {
     pub(crate) fn target_is_default(&self) -> bool {
         self.default_target
             .as_deref()
-            .map_or(false, |t| self.doc_target() == Some(t))
+            .is_some_and(|t| self.doc_target() == Some(t))
     }
 
     pub(crate) fn update<F>(self, f: F) -> Self

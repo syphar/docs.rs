@@ -435,7 +435,7 @@ pub(crate) async fn rustdoc_html_server_handler(
     // * If both the name and the version are an exact match, return the version of the crate.
     // * If there is an exact match, but the requested crate name was corrected (dashes vs. underscores), redirect to the corrected name.
     // * If there is a semver (but not exact) match, redirect to the exact version.
-    let matched_release = match_version(&mut conn, &params.name(), &params.version())
+    let matched_release = match_version(&mut conn, params.name(), params.version())
         .await?
         .into_exactly_named_or_else(|corrected_name, req_version| {
             AxumNope::Redirect(
@@ -641,7 +641,7 @@ pub(crate) async fn target_redirect_handler(
 
     trace!(params=?params, "target redirect endpoint with params");
 
-    let matched_release = match_version(&mut conn, &params.name(), &params.version())
+    let matched_release = match_version(&mut conn, params.name(), params.version())
         .await?
         .into_canonical_req_version_or_else(|_| AxumNope::VersionNotFound)?;
     let params = matched_release.update_params(params);

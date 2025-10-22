@@ -118,7 +118,7 @@ pub(crate) async fn get_releases(
         }
     );
 
-    Ok(sqlx::query(query.as_str())
+    sqlx::query(query.as_str())
         .bind(limit)
         .bind(offset)
         .bind(filter_failed)
@@ -140,7 +140,7 @@ pub(crate) async fn get_releases(
             })
         })
         .try_collect()
-        .await?)
+        .await
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

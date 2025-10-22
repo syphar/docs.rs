@@ -478,7 +478,7 @@ pub(crate) async fn crate_details_handler(
         ));
     }
 
-    let matched_release = match_version(&mut conn, &params.name(), &params.version())
+    let matched_release = match_version(&mut conn, params.name(), params.version())
         .await?
         .assume_exact_name()?
         .into_canonical_req_version_or_else(|version| {
@@ -582,7 +582,7 @@ pub(crate) async fn get_all_releases(
 ) -> AxumResult<AxumResponse> {
     let params = params.with_page_kind(PageKind::Rustdoc);
     // NOTE: we're getting RustDocParams here, where both target and path are optional.
-    let matched_release = match_version(&mut conn, &params.name(), &params.version())
+    let matched_release = match_version(&mut conn, params.name(), params.version())
         .await?
         .into_canonical_req_version_or_else(|_| AxumNope::VersionNotFound)?;
     let params = matched_release.update_params(params);
@@ -624,7 +624,7 @@ pub(crate) async fn get_all_platforms_inner(
     is_crate_root: bool,
 ) -> AxumResult<AxumResponse> {
     let params = params.with_page_kind(PageKind::Rustdoc);
-    let matched_release = match_version(&mut conn, &params.name(), &params.version())
+    let matched_release = match_version(&mut conn, params.name(), params.version())
         .await?
         .into_exactly_named_or_else(|corrected_name, req_version| {
             AxumNope::Redirect(

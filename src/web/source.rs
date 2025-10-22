@@ -193,7 +193,7 @@ pub(crate) async fn source_browser_handler(
     mut conn: DbConnection,
 ) -> AxumResult<impl IntoResponse> {
     let params = params.with_page_kind(PageKind::Source);
-    let matched_release = match_version(&mut conn, &params.name(), &params.version())
+    let matched_release = match_version(&mut conn, params.name(), params.version())
         .await?
         .into_exactly_named_or_else(|corrected_name, req_version| {
             AxumNope::Redirect(
@@ -244,7 +244,7 @@ pub(crate) async fn source_browser_handler(
     let (blob, is_file_too_large) = if !inner_path.ends_with('/') {
         match storage
             .fetch_source_file(
-                &params.name(),
+                params.name(),
                 &version.to_string(),
                 row.latest_build_id,
                 inner_path,
@@ -311,7 +311,7 @@ pub(crate) async fn source_browser_handler(
 
     let file_list = FileList::from_path(
         &mut conn,
-        &params.name(),
+        params.name(),
         &version,
         Some(params.version().clone()),
         current_folder,
@@ -321,7 +321,7 @@ pub(crate) async fn source_browser_handler(
 
     let metadata = MetaData::from_crate(
         &mut conn,
-        &params.name(),
+        params.name(),
         &version,
         Some(params.version().clone()),
     )

@@ -233,7 +233,7 @@ impl PartialEq<Uri> for EscapedURI {
 
 impl PartialEq<&str> for EscapedURI {
     fn eq(&self, other: &&str) -> bool {
-        &self.uri.to_string() == *other && self.fragment.is_none()
+        self.uri.to_string() == *other && self.fragment.is_none()
     }
 }
 
