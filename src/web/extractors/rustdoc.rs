@@ -1452,4 +1452,85 @@ mod tests {
     ) -> String {
         generate_rustdoc_path_for_url(target_name, default_target, doc_target, inner_path)
     }
+
+    #[test]
+    fn test_override_page_kind() {
+        let params = RustdocParams::new(KRATE)
+            .try_with_original_uri("/krate/latest/path_add/static.html")
+            .unwrap()
+            .with_inner_path("path_add")
+            .with_static_route_suffix("static.html")
+            .remove_page_kind()
+            .parse(DEFAULT_TARGET.into(), KRATE.into(), TARGETS.iter().cloned());
+
+        // without page kind, rustdoc path doesn' thave a path, and static suffix ignored
+        assert_eq!(params.rustdoc_url(), "/krate/latest/krate/");
+        assert_eq!(params.source_url(), "/crate/krate/latest/source/");
+        assert_eq!(
+            params.target_redirect_url(),
+            "/crate/krate/latest/target-redirect/krate/"
+        );
+
+        let params = params.with_page_kind(PageKind::Rustdoc);
+        assert_eq!(params.rustdoc_url(), "/krate/latest/path_add/static.html");
+        assert_eq!(params.source_url(), "/crate/krate/latest/source/");
+        assert_eq!(
+            params.target_redirect_url(),
+            "/crate/krate/latest/target-redirect/path_add/static.html"
+        );
+
+        let params = params.with_page_kind(PageKind::Source);
+        assert_eq!(params.rustdoc_url(), "/krate/latest/krate/");
+        // just path added, not static suffix
+        assert_eq!(params.source_url(), "/crate/krate/latest/source/path_add");
+        assert_eq!(
+            params.target_redirect_url(),
+            "/crate/krate/latest/target-redirect/krate/"
+        );
+    }
+
+    #[test]
+    fn test_override_page_kind_with_target() {
+        let params = RustdocParams::new(KRATE)
+            .try_with_original_uri(format!("/krate/latest/{OTHER_TARGET}/path_add/static.html"))
+            .unwrap()
+            .with_inner_path("path_add")
+            .with_static_route_suffix("static.html")
+            .with_doc_target(OTHER_TARGET)
+            .remove_page_kind()
+            .parse(DEFAULT_TARGET.into(), KRATE.into(), TARGETS.iter().cloned());
+
+        // without page kind, rustdoc path doesn' thave a path, and static suffix ignored
+        assert_eq!(
+            params.rustdoc_url(),
+            format!("/krate/latest/{OTHER_TARGET}/krate/")
+        );
+        assert_eq!(params.source_url(), "/crate/krate/latest/source/");
+        assert_eq!(
+            params.target_redirect_url(),
+            format!("/crate/krate/latest/target-redirect/{OTHER_TARGET}/krate/")
+        );
+
+        let params = params.with_page_kind(PageKind::Rustdoc);
+        assert_eq!(
+            params.rustdoc_url(),
+            format!("/krate/latest/{OTHER_TARGET}/path_add/static.html")
+        );
+        assert_eq!(params.source_url(), format!("/crate/krate/latest/source/"));
+        assert_eq!(
+            params.target_redirect_url(),
+            format!("/crate/krate/latest/target-redirect/{OTHER_TARGET}/path_add/static.html")
+        );
+
+        let params = params.with_page_kind(PageKind::Source);
+        assert_eq!(
+            params.rustdoc_url(),
+            format!("/krate/latest/{OTHER_TARGET}/krate/")
+        );
+        assert_eq!(params.source_url(), "/crate/krate/latest/source/path_add");
+        assert_eq!(
+            params.target_redirect_url(),
+            format!("/crate/krate/latest/target-redirect/{OTHER_TARGET}/krate/")
+        );
+    }
 }
