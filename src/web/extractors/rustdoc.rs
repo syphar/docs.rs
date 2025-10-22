@@ -11,7 +11,7 @@
 //! * write test, initial params with unknown target, gets moved to inner_path?
 
 use crate::{
-    db::ReleaseId,
+    db::{BuildId, ReleaseId},
     web::{
         MatchedRelease, MetaData, ReqVersion, error::AxumNope, escaped_uri::EscapedURI,
         extractors::Path,
@@ -424,6 +424,17 @@ impl RustdocParams {
         EscapedURI::from_path(format!("/crate/{}/{}/builds", self.name, self.version))
     }
 
+    pub(crate) fn build_details_url(&self, id: BuildId, filename: Option<&str>) -> EscapedURI {
+        let mut path = format!("/crate/{}/{}/builds/{}", self.name, self.version, id);
+
+        if let Some(filename) = filename {
+            path.push('/');
+            path.push_str(filename);
+        }
+
+        EscapedURI::from_path(path)
+    }
+
     pub(crate) fn features_url(&self) -> EscapedURI {
         EscapedURI::from_path(format!("/crate/{}/{}/features", self.name, self.version))
     }
@@ -578,6 +589,10 @@ impl ParsedRustdocParams {
 
     pub(crate) fn builds_url(&self) -> EscapedURI {
         self.inner.builds_url()
+    }
+
+    pub(crate) fn build_details_url(&self, id: BuildId, filename: Option<&str>) -> EscapedURI {
+        self.inner.build_details_url(id, filename)
     }
 
     pub(crate) fn platforms_partial_url(&self) -> EscapedURI {

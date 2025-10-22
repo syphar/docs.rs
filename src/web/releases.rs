@@ -26,7 +26,7 @@ use axum::{
 };
 use base64::{Engine, engine::general_purpose::STANDARD as b64};
 use chrono::{DateTime, Utc};
-use futures_util::{StreamExt as _, stream::TryStreamExt};
+use futures_util::stream::TryStreamExt;
 use http::Uri;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
