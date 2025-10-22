@@ -447,7 +447,7 @@ struct CrateDetailsPage {
     build_status: BuildStatus,
     rustdoc_status: Option<bool>,
     is_library: Option<bool>,
-    last_successful_build: Option<String>,
+    last_successful_build: Option<Version>,
     rustdoc: Option<String>, // this is description_long in database
     source_size: Option<i64>,
     documentation_size: Option<i64>,
@@ -547,7 +547,7 @@ pub(crate) async fn crate_details_handler(
         build_status,
         rustdoc_status,
         is_library,
-        last_successful_build,
+        last_successful_build: last_successful_build.map(|v| v.parse().unwrap()),
         rustdoc,
         source_size,
         documentation_size,

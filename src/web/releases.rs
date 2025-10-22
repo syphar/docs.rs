@@ -29,11 +29,14 @@ use chrono::{DateTime, Utc};
 use futures_util::stream::TryStreamExt;
 use http::Uri;
 use itertools::Itertools;
+use semver::Version;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::str;
-use std::sync::Arc;
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    str,
+    sync::Arc,
+};
 use tracing::warn;
 use url::form_urlencoded;
 
@@ -714,7 +717,7 @@ struct BuildQueuePage {
     queue: Vec<QueuedCrate>,
     rebuild_queue: Vec<QueuedCrate>,
     active_cdn_deployments: Vec<String>,
-    in_progress_builds: Vec<(String, String)>,
+    in_progress_builds: Vec<(String, Version)>,
     expand_rebuild_queue: bool,
 }
 
@@ -743,7 +746,7 @@ pub(crate) async fn build_queue_handler(
     // reverse the list, so the oldest comes first
     active_cdn_deployments.reverse();
 
-    let in_progress_builds: Vec<(String, String)> = sqlx::query!(
+    let in_progress_builds: Vec<(String, Version)> = sqlx::query!(
         r#"SELECT
             crates.name,
             releases.version
@@ -757,7 +760,14 @@ pub(crate) async fn build_queue_handler(
     .fetch_all(&mut *conn)
     .await?
     .into_iter()
-    .map(|rec| (rec.name, rec.version))
+    .map(|rec| {
+        (
+            rec.name,
+            rec.version
+                .parse()
+                .expect("all versions in the db are valid"),
+        )
+    })
     .collect();
 
     let mut rebuild_queue = Vec::new();
@@ -767,8 +777,11 @@ pub(crate) async fn build_queue_handler(
         .into_iter()
         .filter(|krate| {
             !in_progress_builds.iter().any(|(name, version)| {
+                // temporary, until I migrated the other version occurences to semver::Version
+                // We know that in the DB we only have semver
+                let krate_version: Version = krate.version.parse().unwrap();
                 // use `.any` instead of `.contains` to avoid cloning name& version for the match
-                *name == krate.name && *version == krate.version
+                *name == krate.name && *version == krate_version
             })
         })
         .collect_vec();

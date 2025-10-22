@@ -2,13 +2,6 @@
 {%- import "macros.html" as macros -%}
 
 {%- include "header/topbar_begin.html" -%}
-{%- set crate_url = "/crate/{}/{}"|format(metadata.name, metadata.req_version) -%}
-{%- set rest_menu_url -%}
-{%- if current_target is defined && !current_target.is_empty() -%}
-    {%- set rest_menu_url = format!("/{}/{}", self.current_target, self.inner_path) -%}
-{%- else -%}
-    {%- set rest_menu_url = String::new() -%}
-{%- endif -%}
 <ul class="pure-menu-list">
     <script id="crate-metadata" type="application/json">
         {# the only text that needs escaping in a <script> is `</`, none of the
@@ -43,7 +36,7 @@
                     {%- endif -%}
 
                     <li class="pure-menu-item">
-                        <a href="{{ crate_url|safe }}" class="pure-menu-link description" title="See {{ krate.name }} in docs.rs">
+                        <a href="{{ params.crate_details_url() }}" class="pure-menu-link description" title="See {{ krate.name }} in docs.rs">
                             {{ crate::icons::IconCube.render_solid(false, false, "") }} Docs.rs crate page
                         </a>
                     </li>
@@ -107,7 +100,7 @@
 
                             {# A link to the release's source view #}
                             <li class="pure-menu-item">
-                                <a href="{{ crate_url|safe }}/source/" title="Browse source of {{ metadata.name }}-{{ metadata.version }}" class="pure-menu-link">
+                                <a href="{{ params.source_url() }}" title="Browse source of {{ metadata.name }}-{{ metadata.version }}" class="pure-menu-link">
                                     {{ crate::icons::IconFolderOpen.render_solid(false, false, "") }} Source
                                 </a>
                             </li>
@@ -166,7 +159,7 @@
                         <div class="pure-u-1">
                             <ul class="pure-menu-list">
                                 <li>
-                                    <a href="{{ crate_url|safe }}" class="pure-menu-link">
+                                    <a href="{{ params.crate_details_url() }}" class="pure-menu-link">
                                         <b>{{ percent|round(2) }}%</b>
                                         of the crate is documented
                                     </a>
@@ -179,7 +172,7 @@
         </li>
     {%- else -%}
         <li class="pure-menu-item">
-            <a href="{{ crate_url|safe }}" class="pure-menu-link crate-name" {% if let Some(description) = metadata.description %}title="{{description}}"{% endif %}>
+            <a href="{{ params.crate_details_url() }}" class="pure-menu-link crate-name" {% if let Some(description) = metadata.description %}title="{{description}}"{% endif %}>
                 {{ crate::icons::IconCube.render_solid(false, false, "") }}
                 <span class="title">{{ metadata.name }}-{{ metadata.version }}</span>
             </a>
@@ -242,7 +235,7 @@
             </li>
             {#- Display the features available in current build -#}
             <li class="pure-menu-item">
-                <a href="{{ crate_url|safe }}/features" title="Browse available feature flags of {{ metadata.name }}-{{ metadata.version }}" class="pure-menu-link">
+                <a href="{{ params.features_url() }}" title="Browse available feature flags of {{ metadata.name }}-{{ metadata.version }}" class="pure-menu-link">
                     {{ crate::icons::IconFlag.render_solid(false, false, "") }}
                     <span class="title">Feature flags</span>
                 </a>
