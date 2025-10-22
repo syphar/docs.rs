@@ -1685,53 +1685,53 @@ mod test {
                 .create()
                 .await?;
 
-            // assert_platform_links(
-            //     &web,
-            //     "/dummy/0.1.0/dummy/",
-            //     &[("x86_64-unknown-linux-gnu", "/dummy/0.1.0/dummy/")],
-            // )
-            // .await?;
+            assert_platform_links(
+                &web,
+                "/dummy/0.1.0/dummy/",
+                &[("x86_64-unknown-linux-gnu", "/dummy/0.1.0/dummy/")],
+            )
+            .await?;
 
-            // assert_platform_links(
-            //     &web,
-            //     "/dummy/0.1.0/dummy/",
-            //     &[("x86_64-unknown-linux-gnu", "/dummy/0.1.0/dummy/")],
-            // )
-            // .await?;
+            assert_platform_links(
+                &web,
+                "/dummy/0.1.0/dummy/",
+                &[("x86_64-unknown-linux-gnu", "/dummy/0.1.0/dummy/")],
+            )
+            .await?;
 
-            // assert_platform_links(
-            //     &web,
-            //     "/dummy/0.1.0/dummy/struct.Dummy.html",
-            //     &[(
-            //         "x86_64-unknown-linux-gnu",
-            //         "/dummy/0.1.0/dummy/struct.Dummy.html",
-            //     )],
-            // )
-            // .await?;
+            assert_platform_links(
+                &web,
+                "/dummy/0.1.0/dummy/struct.Dummy.html",
+                &[(
+                    "x86_64-unknown-linux-gnu",
+                    "/dummy/0.1.0/dummy/struct.Dummy.html",
+                )],
+            )
+            .await?;
 
-            // assert_platform_links(
-            //     &web,
-            //     "/dummy/latest/dummy/",
-            //     &[("x86_64-unknown-linux-gnu", "/dummy/latest/dummy/")],
-            // )
-            // .await?;
+            assert_platform_links(
+                &web,
+                "/dummy/latest/dummy/",
+                &[("x86_64-unknown-linux-gnu", "/dummy/latest/dummy/")],
+            )
+            .await?;
 
-            // assert_platform_links(
-            //     &web,
-            //     "/dummy/latest/dummy/index.html",
-            //     &[("x86_64-unknown-linux-gnu", "/dummy/latest/dummy/")],
-            // )
-            // .await?;
+            assert_platform_links(
+                &web,
+                "/dummy/latest/dummy/index.html",
+                &[("x86_64-unknown-linux-gnu", "/dummy/latest/dummy/")],
+            )
+            .await?;
 
-            // assert_platform_links(
-            //     &web,
-            //     "/dummy/latest/dummy/struct.Dummy.html",
-            //     &[(
-            //         "x86_64-unknown-linux-gnu",
-            //         "/dummy/latest/dummy/struct.Dummy.html",
-            //     )],
-            // )
-            // .await?;
+            assert_platform_links(
+                &web,
+                "/dummy/latest/dummy/struct.Dummy.html",
+                &[(
+                    "x86_64-unknown-linux-gnu",
+                    "/dummy/latest/dummy/struct.Dummy.html",
+                )],
+            )
+            .await?;
 
             // set an explicit target that requires cross-compile
             env.fake_release()
@@ -1745,19 +1745,19 @@ mod test {
                 .create()
                 .await?;
 
-            // assert_platform_links(
-            //     &web,
-            //     "/dummy/0.2.0/dummy/",
-            //     &[("x86_64-pc-windows-msvc", "/dummy/0.2.0/dummy/")],
-            // )
-            // .await?;
+            assert_platform_links(
+                &web,
+                "/dummy/0.2.0/dummy/",
+                &[("x86_64-pc-windows-msvc", "/dummy/0.2.0/dummy/")],
+            )
+            .await?;
 
-            // assert_platform_links(
-            //     &web,
-            //     "/dummy/0.2.0/dummy/index.html",
-            //     &[("x86_64-pc-windows-msvc", "/dummy/0.2.0/dummy/")],
-            // )
-            // .await?;
+            assert_platform_links(
+                &web,
+                "/dummy/0.2.0/dummy/index.html",
+                &[("x86_64-pc-windows-msvc", "/dummy/0.2.0/dummy/")],
+            )
+            .await?;
 
             assert_platform_links(
                 &web,
