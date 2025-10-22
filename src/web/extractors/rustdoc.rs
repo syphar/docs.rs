@@ -383,7 +383,7 @@ impl RustdocParams {
     }
 
     fn path_for_rustdoc_url(&self) -> String {
-        if matches!(self.page_kind, Some(PageKind::Rustdoc)) {
+        if self.page_kind == Some(PageKind::Rustdoc) {
             generate_rustdoc_path_for_url(
                 None,
                 None,
@@ -433,7 +433,7 @@ impl RustdocParams {
         // if the params were created for a rustdoc page,
         // the inner path is a source file path, so is not usable for
         // source urls.
-        let inner_path = if matches!(self.page_kind, Some(PageKind::Source)) {
+        let inner_path = if self.page_kind == Some(PageKind::Source) {
             self.inner_path()
         } else {
             ""
@@ -594,7 +594,7 @@ impl ParsedRustdocParams {
     }
 
     fn path_for_rustdoc_url(&self) -> String {
-        if matches!(self.page_kind(), Some(PageKind::Rustdoc)) {
+        if self.page_kind() == Some(&PageKind::Rustdoc) {
             generate_rustdoc_path_for_url(
                 self.target_name.as_deref(),
                 self.default_target.as_deref(),
