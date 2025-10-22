@@ -9,6 +9,7 @@ use crate::{Config, Index, InstanceMetrics, RustwideBuilder};
 use anyhow::Context as _;
 use fn_error_context::context;
 use futures_util::{StreamExt, stream::TryStreamExt};
+use semver::Version;
 use sqlx::Connection as _;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -26,7 +27,7 @@ pub(crate) struct QueuedCrate {
     #[serde(skip)]
     id: i32,
     pub(crate) name: String,
-    pub(crate) version: String,
+    pub(crate) version: Version,
     pub(crate) priority: i32,
     pub(crate) registry: Option<String>,
     pub(crate) attempt: i32,
@@ -87,7 +88,7 @@ impl AsyncBuildQueue {
     pub async fn add_crate(
         &self,
         name: &str,
-        version: &str,
+        version: &Version,
         priority: i32,
         registry: Option<&str>,
     ) -> Result<()> {
@@ -176,7 +177,7 @@ impl AsyncBuildQueue {
         .await?)
     }
 
-    pub(crate) async fn has_build_queued(&self, name: &str, version: &str) -> Result<bool> {
+    pub(crate) async fn has_build_queued(&self, name: &str, version: &Version) -> Result<bool> {
         let mut conn = self.db.get_async().await?;
         Ok(sqlx::query_scalar!(
             "SELECT id
@@ -352,7 +353,7 @@ impl AsyncBuildQueue {
         Ok(crates_added)
     }
 
-    pub async fn set_yanked(&self, name: &str, version: &str, yanked: bool) -> Result<()> {
+    pub async fn set_yanked(&self, name: &str, version: &Version, yanked: bool) -> Result<()> {
         let mut conn = self.db.get_async().await?;
         self.set_yanked_inner(&mut conn, name, version, yanked)
             .await
@@ -363,7 +364,7 @@ impl AsyncBuildQueue {
         &self,
         conn: &mut sqlx::PgConnection,
         name: &str,
-        version: &str,
+        version: &Version,
         yanked: bool,
     ) -> Result<()> {
         let activity = if yanked { "yanked" } else { "unyanked" };
@@ -424,7 +425,7 @@ impl BuildQueue {
     pub fn add_crate(
         &self,
         name: &str,
-        version: &str,
+        version: &Version,
         priority: i32,
         registry: Option<&str>,
     ) -> Result<()> {
@@ -432,7 +433,7 @@ impl BuildQueue {
             .block_on(self.inner.add_crate(name, version, priority, registry))
     }
 
-    pub fn set_yanked(&self, name: &str, version: &str, yanked: bool) -> Result<()> {
+    pub fn set_yanked(&self, name: &str, version: &Version, yanked: bool) -> Result<()> {
         self.runtime
             .block_on(self.inner.set_yanked(name, version, yanked))
     }

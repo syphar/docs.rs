@@ -351,7 +351,7 @@ pub(crate) async fn initialize_crate(conn: &mut sqlx::PgConnection, name: &str) 
 pub(crate) async fn initialize_release(
     conn: &mut sqlx::PgConnection,
     crate_id: CrateId,
-    version: &str,
+    version: &Version,
 ) -> Result<ReleaseId> {
     let release_id = sqlx::query_scalar!(
         r#"INSERT INTO releases (crate_id, version, archive_storage)
@@ -1302,7 +1302,7 @@ mod test {
             let mut conn = env.async_db().await.async_conn().await;
 
             let crate_id = initialize_crate(&mut conn, "krate").await?;
-            let version: String = "version".repeat(100);
+            let version: Version = "version".repeat(100);
             let release_id = initialize_release(&mut conn, crate_id, &version).await?;
 
             let db_version =

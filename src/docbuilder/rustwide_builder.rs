@@ -30,6 +30,7 @@ use rustwide::cmd::{Command, CommandError, SandboxBuilder, SandboxImage};
 use rustwide::logging::{self, LogStorage};
 use rustwide::toolchain::ToolchainError;
 use rustwide::{AlternativeRegistry, Build, Crate, Toolchain, Workspace, WorkspaceBuilder};
+use semver::Version;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
@@ -43,7 +44,7 @@ use tracing::{debug, error, info, info_span, instrument, warn};
 const USER_AGENT: &str = "docs.rs builder (https://github.com/rust-lang/docs.rs)";
 const COMPONENTS: &[&str] = &["llvm-tools-preview", "rustc-dev", "rustfmt"];
 const DUMMY_CRATE_NAME: &str = "empty-library";
-const DUMMY_CRATE_VERSION: &str = "1.0.0";
+const DUMMY_CRATE_VERSION: &Version = &Version::new(1, 0, 0);
 
 pub const RUSTDOC_JSON_COMPRESSION_ALGORITHMS: &[CompressionAlgorithm] =
     &[CompressionAlgorithm::Zstd, CompressionAlgorithm::Gzip];
@@ -401,7 +402,7 @@ impl RustwideBuilder {
     pub fn build_package(
         &mut self,
         name: &str,
-        version: &str,
+        version: &Version,
         kind: PackageKind<'_>,
         collect_metrics: bool,
     ) -> Result<BuildPackageSummary> {
@@ -447,7 +448,7 @@ impl RustwideBuilder {
     fn build_package_inner(
         &mut self,
         name: &str,
-        version: &str,
+        version: &Version,
         kind: PackageKind<'_>,
         crate_id: CrateId,
         release_id: ReleaseId,
@@ -792,7 +793,7 @@ impl RustwideBuilder {
         &self,
         build_id: BuildId,
         name: &str,
-        version: &str,
+        version: &Version,
         target: &str,
         build: &Build,
         limits: &Limits,
@@ -837,7 +838,7 @@ impl RustwideBuilder {
         &self,
         build_id: BuildId,
         name: &str,
-        version: &str,
+        version: &Version,
         target: &str,
         is_default_target: bool,
         build: &Build,
@@ -996,7 +997,7 @@ impl RustwideBuilder {
         &self,
         build_id: BuildId,
         name: &str,
-        version: &str,
+        version: &Version,
         target: &str,
         is_default_target: bool,
         build: &Build,
@@ -1301,7 +1302,7 @@ mod tests {
     fn get_features(
         env: &TestEnvironment,
         name: &str,
-        version: &str,
+        version: &Version,
     ) -> Result<Option<Vec<Feature>>, sqlx::Error> {
         env.runtime().block_on(async {
             let mut conn = env.async_db().await.async_conn().await;
@@ -1319,7 +1320,7 @@ mod tests {
         })
     }
 
-    fn remove_cache_files(env: &TestEnvironment, crate_: &str, version: &str) -> Result<()> {
+    fn remove_cache_files(env: &TestEnvironment, crate_: &str, version: &Version) -> Result<()> {
         let paths = [
             format!("cache/index.crates.io-6f17d22bba15001f/{crate_}-{version}.crate"),
             format!("src/index.crates.io-6f17d22bba15001f/{crate_}-{version}"),
@@ -1728,7 +1729,7 @@ mod tests {
     #[test_case("scsys-derive", "0.2.6")]
     #[test_case("thiserror-impl", "1.0.26")]
     #[ignore]
-    fn test_proc_macro(crate_: &str, version: &str) {
+    fn test_proc_macro(crate_: &str, version: &Version) {
         wrapper(|env| {
             let mut builder = RustwideBuilder::init(env).unwrap();
             builder.update_toolchain()?;

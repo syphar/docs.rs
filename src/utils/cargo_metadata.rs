@@ -1,6 +1,7 @@
 use crate::error::Result;
 use anyhow::{Context, bail};
 use rustwide::{Toolchain, Workspace, cmd::Command};
+use semver::VersionReq;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -61,7 +62,7 @@ impl CargoMetadata {
 pub(crate) struct Package {
     pub(crate) id: String,
     pub(crate) name: String,
-    pub(crate) version: String,
+    pub(crate) version: Version,
     pub(crate) license: Option<String>,
     pub(crate) repository: Option<String>,
     pub(crate) homepage: Option<String>,
@@ -128,7 +129,7 @@ impl Target {
 #[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct Dependency {
     pub(crate) name: String,
-    pub(crate) req: String,
+    pub(crate) req: VersionReq,
     pub(crate) kind: Option<String>,
     pub(crate) rename: Option<String>,
     pub(crate) optional: bool,

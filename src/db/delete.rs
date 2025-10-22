@@ -65,7 +65,7 @@ pub async fn delete_version(
     storage: &AsyncStorage,
     config: &Config,
     name: &str,
-    version: &str,
+    version: &Version,
 ) -> Result<()> {
     let is_library = delete_version_from_database(conn, name, version).await?;
     let paths = if is_library {
@@ -131,7 +131,7 @@ const METADATA: &[(&str, &str)] = &[
 async fn delete_version_from_database(
     conn: &mut sqlx::PgConnection,
     name: &str,
-    version: &str,
+    version: &Version,
 ) -> Result<bool> {
     let crate_id = get_id(conn, name).await?;
     let mut transaction = conn.begin().await?;
@@ -406,7 +406,7 @@ mod tests {
                 .collect())
             }
 
-            async fn json_exists(storage: &AsyncStorage, version: &str) -> Result<bool> {
+            async fn json_exists(storage: &AsyncStorage, version: &Version) -> Result<bool> {
                 storage
                     .exists(&rustdoc_json_path(
                         "a",

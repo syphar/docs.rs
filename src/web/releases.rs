@@ -43,7 +43,7 @@ const RELEASES_IN_FEED: i64 = 150;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Release {
     pub(crate) name: String,
-    pub(crate) version: String,
+    pub(crate) version: Version,
     pub(crate) description: Option<String>,
     pub(crate) target_name: Option<String>,
     pub(crate) rustdoc_status: bool,

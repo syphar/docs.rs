@@ -777,7 +777,7 @@ mod test {
     use serde_json::json;
     use test_case::test_case;
 
-    async fn release(version: &str, env: &TestEnvironment) -> ReleaseId {
+    async fn release(version: &Version, env: &TestEnvironment) -> ReleaseId {
         env.fake_release()
             .await
             .name("foo")

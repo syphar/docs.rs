@@ -81,7 +81,7 @@ struct RepositoryMetadata {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(crate) struct Release {
     pub id: ReleaseId,
-    pub version: semver::Version,
+    pub version: Version,
     #[allow(clippy::doc_overindented_list_items)]
     /// Aggregated build status of the release.
     /// * no builds -> build In progress
@@ -811,7 +811,7 @@ mod tests {
     async fn release_build_status(
         conn: &mut sqlx::PgConnection,
         name: &str,
-        version: &str,
+        version: &Version,
     ) -> BuildStatus {
         let status = sqlx::query_scalar!(
             r#"
@@ -840,7 +840,7 @@ mod tests {
     async fn crate_details(
         conn: &mut sqlx::PgConnection,
         name: &str,
-        version: &str,
+        version: &Version,
         req_version: Option<ReqVersion>,
     ) -> CrateDetails {
         let crate_id = sqlx::query_scalar!(
@@ -871,7 +871,7 @@ mod tests {
     async fn assert_last_successful_build_equals(
         db: &TestDatabase,
         package: &str,
-        version: &str,
+        version: &Version,
         expected_last_successful_build: Option<&str>,
     ) -> Result<(), Error> {
         let mut conn = db.async_conn().await;

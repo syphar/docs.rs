@@ -16,6 +16,7 @@ use crate::utils::{Dependency, MetadataPackage, Target};
 use anyhow::{Context, bail};
 use base64::{Engine, engine::general_purpose::STANDARD as b64};
 use chrono::{DateTime, Utc};
+use semver::Version;
 use std::collections::HashMap;
 use std::iter;
 use std::sync::Arc;
@@ -27,7 +28,7 @@ use tracing::debug;
 pub(crate) async fn fake_release_that_failed_before_build(
     conn: &mut sqlx::PgConnection,
     name: &str,
-    version: &str,
+    version: &Version,
     errors: &str,
 ) -> Result<(ReleaseId, BuildId)> {
     let crate_id = initialize_crate(&mut *conn, name).await?;
@@ -164,7 +165,7 @@ impl<'a> FakeRelease<'a> {
         self
     }
 
-    pub(crate) fn version(mut self, new: &str) -> Self {
+    pub(crate) fn version(mut self, new: &Version) -> Self {
         self.package.version = new.into();
         self
     }

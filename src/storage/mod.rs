@@ -244,7 +244,7 @@ impl AsyncStorage {
     pub(crate) async fn stream_rustdoc_file(
         &self,
         name: &str,
-        version: &str,
+        version: &Version,
         latest_build_id: Option<BuildId>,
         path: &str,
         archive_storage: bool,
@@ -264,7 +264,7 @@ impl AsyncStorage {
     pub(crate) async fn fetch_source_file(
         &self,
         name: &str,
-        version: &str,
+        version: &Version,
         latest_build_id: Option<BuildId>,
         path: &str,
         archive_storage: bool,
@@ -287,7 +287,7 @@ impl AsyncStorage {
     pub(crate) async fn rustdoc_file_exists(
         &self,
         name: &str,
-        version: &str,
+        version: &Version,
         latest_build_id: Option<BuildId>,
         path: &str,
         archive_storage: bool,
@@ -781,7 +781,7 @@ impl Storage {
     pub(crate) fn fetch_source_file(
         &self,
         name: &str,
-        version: &str,
+        version: &Version,
         latest_build_id: Option<BuildId>,
         path: &str,
         archive_storage: bool,
@@ -798,7 +798,7 @@ impl Storage {
     pub(crate) fn rustdoc_file_exists(
         &self,
         name: &str,
-        version: &str,
+        version: &Version,
         latest_build_id: Option<BuildId>,
         path: &str,
         archive_storage: bool,
@@ -959,7 +959,7 @@ impl std::fmt::Debug for Storage {
     }
 }
 
-pub(crate) fn rustdoc_archive_path(name: &str, version: &str) -> String {
+pub(crate) fn rustdoc_archive_path(name: &str, version: &Version) -> String {
     format!("rustdoc/{name}/{version}.zip")
 }
 
@@ -984,7 +984,7 @@ impl FromStr for RustdocJsonFormatVersion {
 
 pub(crate) fn rustdoc_json_path(
     name: &str,
-    version: &str,
+    version: &Version,
     target: &str,
     format_version: RustdocJsonFormatVersion,
     compression_algorithm: Option<CompressionAlgorithm>,
@@ -1001,7 +1001,7 @@ pub(crate) fn rustdoc_json_path(
     path
 }
 
-pub(crate) fn source_archive_path(name: &str, version: &str) -> String {
+pub(crate) fn source_archive_path(name: &str, version: &Version) -> String {
     format!("sources/{name}/{version}.zip")
 }
 

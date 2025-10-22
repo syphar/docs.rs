@@ -10,6 +10,6 @@ pub(super) type Releases = Vec<Release>;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Release {
-    pub(super) version: String,
+    pub(super) version: Version,,
     pub(super) yanked: Option<bool>,
 }

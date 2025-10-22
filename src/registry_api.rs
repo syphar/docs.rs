@@ -119,7 +119,11 @@ impl RegistryApi {
     }
 
     #[instrument(skip(self))]
-    pub(crate) async fn get_release_data(&self, name: &str, version: &str) -> Result<ReleaseData> {
+    pub(crate) async fn get_release_data(
+        &self,
+        name: &str,
+        version: &Version,
+    ) -> Result<ReleaseData> {
         let (release_time, yanked, downloads) = self
             .get_release_time_yanked_downloads(name, version)
             .await
@@ -136,7 +140,7 @@ impl RegistryApi {
     async fn get_release_time_yanked_downloads(
         &self,
         name: &str,
-        version: &str,
+        version: &Version,
     ) -> Result<(DateTime<Utc>, bool, i32)> {
         let url = {
             let mut url = self.api_base.clone();

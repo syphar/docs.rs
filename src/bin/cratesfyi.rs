@@ -252,7 +252,7 @@ enum QueueSubcommand {
         crate_name: String,
         /// Version of crate to build
         #[arg(name = "CRATE_VERSION")]
-        crate_version: String,
+        crate_version: Version,
         /// Priority of build (new crate builds get priority 0)
         #[arg(
             name = "BUILD_PRIORITY",
@@ -412,7 +412,7 @@ enum BuildSubcommand {
 
         /// Version of crate
         #[arg(name = "CRATE_VERSION")]
-        crate_version: Option<String>,
+        crate_version: Option<Version>,
 
         /// Build a crate at a specific path
         #[arg(short = 'l', long = "local", conflicts_with_all(&["CRATE_NAME", "CRATE_VERSION"]))]
@@ -829,7 +829,7 @@ enum DeleteSubcommand {
 
         /// The version of the crate to delete
         #[arg(name = "VERSION")]
-        version: String,
+        version: Version,
     },
 }
 

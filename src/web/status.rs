@@ -50,13 +50,14 @@ mod tests {
     use crate::test::{AxumResponseTestExt, AxumRouterTestExt, async_wrapper};
     use crate::web::cache::CachePolicy;
     use reqwest::StatusCode;
+    use semver::Version;
     use test_case::test_case;
 
     #[test_case("latest")]
     #[test_case("0.1")]
     #[test_case("0.1.0")]
     #[test_case("=0.1.0"; "exact_version")]
-    fn status(version: &str) {
+    fn status(version: &Version) {
         async_wrapper(|env| async move {
             env.fake_release()
                 .await
@@ -110,7 +111,7 @@ mod tests {
 
     #[test_case("0.1")]
     #[test_case("~0.1"; "semver")]
-    fn redirect(version: &str) {
+    fn redirect(version: &Version) {
         async_wrapper(|env| async move {
             env.fake_release()
                 .await
@@ -137,7 +138,7 @@ mod tests {
     #[test_case("0.1")]
     #[test_case("0.1.0")]
     #[test_case("=0.1.0"; "exact_version")]
-    fn failure(version: &str) {
+    fn failure(version: &Version) {
         async_wrapper(|env| async move {
             env.fake_release()
                 .await
@@ -180,7 +181,7 @@ mod tests {
     // invalid semver
     #[test_case("foo", "0,1")]
     #[test_case("foo", "0,1,0")]
-    fn not_found(krate: &str, version: &str) {
+    fn not_found(krate: &str, version: &Version) {
         async_wrapper(|env| async move {
             env.fake_release()
                 .await
