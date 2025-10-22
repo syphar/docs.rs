@@ -1,4 +1,14 @@
 //! special rustdoc extractors
+//! missing things / questions
+//!
+//! ## better page_kind
+//!
+//! I have:
+//! - endpoints where the inner path should be used, some endpoints not
+//! - if used, then some pages need the static-suffix logic, and some do not.
+//!
+//! TODO:
+//! * write test, initial params with unknown target, gets moved to inner_path?
 
 use crate::{
     db::ReleaseId,
@@ -19,16 +29,8 @@ use serde::Deserialize;
 use std::{borrow::Cow, iter};
 use tracing::trace;
 
-/// missing things / questions
-///
-/// ## better page_kind
-///
-/// I have:
-/// - endpoints where the inner path should be used, some endpoints not
-/// - if used, then some pages need the static-suffix logic, and some do not.
-///
-/// TODO:
-/// * write test, initial params with unknown target, gets moved to inner_path?
+static INDEX_HTML: &str = "index.html";
+static FOLDER_AND_INDEX_HTML: &str = "/index.html";
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum PageKind {
@@ -526,7 +528,7 @@ impl ParsedRustdocParams {
         let mut storage_path = self.path_for_rustdoc_url();
 
         if path_is_folder(&storage_path) {
-            storage_path.push_str("index.html");
+            storage_path.push_str(INDEX_HTML);
         }
 
         storage_path
@@ -657,7 +659,7 @@ impl ParsedRustdocParams {
         components
             .last()
             .and_then(|&last_component| {
-                if last_component.is_empty() || last_component == "index.html" {
+                if last_component.is_empty() || last_component == INDEX_HTML {
                     // this is a module, we extract the module name
                     //
                     // path might look like:
@@ -741,12 +743,13 @@ fn generate_rustdoc_path_for_url(
     doc_target: Option<&str>,
     inner_path: Option<&str>,
 ) -> String {
+    // special case:
+    // when we find an empty `inner_path` or when it's just "index.html", we assume we have to
+    // default to `target_name/`.
     let inner_path = if let Some(target_name) = target_name {
         if let Some(inner_path) = inner_path
-                && !inner_path.is_empty()
-                // special case: if the inner path is just "index.html", we assume we have to attach
-                // the `target_name`
-                && inner_path != "index.html"
+            && !inner_path.is_empty()
+            && inner_path != INDEX_HTML
         {
             inner_path.to_owned()
         } else {
@@ -756,9 +759,9 @@ fn generate_rustdoc_path_for_url(
         inner_path.unwrap_or_default().to_string()
     };
 
-    let path = if let Some(target) = doc_target {
+    let path = if let Some(doc_target) = doc_target {
         if let Some(default_target) = default_target
-            && target == default_target
+            && doc_target == default_target
         {
             // when we have a target url param and it matches the default target
             // we don't include it in the storage path.
@@ -766,7 +769,7 @@ fn generate_rustdoc_path_for_url(
             inner_path
         } else {
             // all non-default targets are in subfolders named after that target.
-            format!("{}/{}", target, inner_path)
+            format!("{}/{}", doc_target, inner_path)
         }
     } else {
         // without target in the url params, we can just use the path.
@@ -775,8 +778,10 @@ fn generate_rustdoc_path_for_url(
 
     // for folders we might have `index.html` at the end.
     // We want to normalize the requests here, so a trailing `/index.html` will be cut off.
-    if path.ends_with("/index.html") {
-        path.trim_end_matches("index.html").to_string()
+    if path == INDEX_HTML {
+        "".into()
+    } else if path.ends_with(FOLDER_AND_INDEX_HTML) {
+        path.trim_end_matches(INDEX_HTML).to_string()
     } else {
         path
     }
@@ -1397,5 +1402,68 @@ mod tests {
         // when we then overwrite the now empty target with a new, valid target,
         // the path is still there.
         assert_eq!(params.inner_path(), format!("{UNKNOWN_TARGET}/"));
+    }
+
+    #[test_case(
+        None, None,
+        None, None
+        => "";
+        "empty"
+    )]
+    #[test_case(
+        None, None,
+        None, Some("folder/index.html")
+        => "folder/";
+        "just folder index.html will be removed"
+    )]
+    #[test_case(
+        None, None,
+        None, Some(INDEX_HTML)
+        => "";
+        "just root index.html will be removed"
+    )]
+    #[test_case(
+        None, Some(DEFAULT_TARGET),
+        Some(DEFAULT_TARGET), None
+        => "";
+        "just default target"
+    )]
+    #[test_case(
+        None, Some(DEFAULT_TARGET),
+        Some(OTHER_TARGET), None
+        => format!("{OTHER_TARGET}/");
+        "just other target"
+    )]
+    #[test_case(
+        Some(KRATE), Some(DEFAULT_TARGET),
+        Some(DEFAULT_TARGET), None
+        => format!("{KRATE}/");
+        "full with default target, target name is used"
+    )]
+    #[test_case(
+        Some(KRATE), Some(DEFAULT_TARGET),
+        Some(OTHER_TARGET), None
+        => format!("{OTHER_TARGET}/{KRATE}/");
+        "full with other target, target name is used"
+    )]
+    #[test_case(
+        Some(KRATE), Some(DEFAULT_TARGET),
+        Some(DEFAULT_TARGET), Some("inner/something.html")
+        => "inner/something.html";
+        "full with default target, target name is ignored"
+    )]
+    #[test_case(
+        Some(KRATE), Some(DEFAULT_TARGET),
+        Some(OTHER_TARGET), Some("inner/something.html")
+        => format!("{OTHER_TARGET}/inner/something.html");
+        "full with other target, target name is ignored"
+    )]
+    fn test_rustdoc_path_for_url(
+        target_name: Option<&str>,
+        default_target: Option<&str>,
+        doc_target: Option<&str>,
+        inner_path: Option<&str>,
+    ) -> String {
+        generate_rustdoc_path_for_url(target_name, default_target, doc_target, inner_path)
     }
 }
