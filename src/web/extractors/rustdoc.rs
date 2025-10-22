@@ -192,9 +192,8 @@ impl RustdocParams {
         ))
     }
 
-    /// TODO: nice docstring
     pub(crate) fn parse<D, T, I, V>(
-        mut self,
+        self,
         default_target: Option<D>,
         target_name: Option<T>,
         doc_targets: I,
@@ -235,18 +234,18 @@ impl RustdocParams {
             }
         };
 
-        let mut new_target: Option<String> = None;
+        let mut merged_doc_target: Option<String> = None;
 
-        if let Some(given_target) = self.doc_target.take()
+        if let Some(ref given_target) = self.doc_target
             && !given_target.trim().is_empty()
         {
             let given_target = given_target.trim();
             // if a target is given in a separate url parameter, check if it's a target we
             // know about. If yes, keep it, if not, make it part of the path.
             if doc_targets.iter().any(|s| s == given_target) {
-                new_target = Some(given_target.into());
+                merged_doc_target = Some(given_target.into());
             } else {
-                new_target = None;
+                merged_doc_target = None;
                 if !merged_inner_path.is_empty() {
                     merged_inner_path = format!("{}/{}", given_target, merged_inner_path);
                 } else if self.has_trailing_slash() {
@@ -263,7 +262,7 @@ impl RustdocParams {
                 let potential_target = &merged_inner_path[..pos];
 
                 if doc_targets.iter().any(|s| s == potential_target) {
-                    new_target = Some(potential_target.to_owned());
+                    merged_doc_target = Some(potential_target.to_owned());
                     merged_inner_path = merged_inner_path
                         .get((pos + 1)..)
                         .map(ToOwned::to_owned)
@@ -272,30 +271,32 @@ impl RustdocParams {
             } else {
                 // no slash in the path, can be target or inner path
                 if doc_targets.iter().any(|s| s == &merged_inner_path) {
-                    new_target = Some(merged_inner_path.to_owned());
+                    merged_doc_target = Some(merged_inner_path.to_owned());
                     merged_inner_path.clear();
                 } else {
-                    new_target = None;
+                    merged_doc_target = None;
                 }
             };
         }
 
-        if let Some(ref new_target) = new_target {
+        if let Some(ref new_target) = merged_doc_target {
             debug_assert!(!new_target.contains('/'));
             debug_assert!(new_target.contains('-'));
         }
-        self.doc_target = new_target;
 
         debug_assert!(!merged_inner_path.starts_with('/')); // we should trim leading slashes
 
         let target_name = target_name.map(Into::into);
         debug_assert!(target_name.as_ref().map(|s| !s.is_empty()).unwrap_or(true));
 
+        dbg!(&merged_inner_path);
+
         ParsedRustdocParams {
             doc_targets,
             default_target,
             target_name,
             merged_inner_path,
+            merged_doc_target,
             inner: self,
         }
     }
@@ -416,6 +417,7 @@ pub(crate) struct ParsedRustdocParams {
     default_target: Option<String>,
     target_name: Option<String>,
     merged_inner_path: String,
+    merged_doc_target: Option<String>,
 }
 
 impl ParsedRustdocParams {
@@ -449,24 +451,27 @@ impl ParsedRustdocParams {
     ///
     /// This is the path _inside_ the ZIP file we create in the build process.
     pub(crate) fn storage_path(&self) -> String {
-        let mut storage_path = if let Some(ref target) = self.inner.doc_target {
-            if let Some(ref default_target) = self.default_target
-                && target == default_target
-            {
-                // when we have a target url param and it matches the default target
-                // we don't include it in the storage path.
-                // Files for the default target are placed at the root of the archive.
-                self.inner_path().to_owned()
-            } else {
-                // all non-default targets are in subfolders named after that target.
-                format!("{}/{}", target, self.inner_path())
-            }
-        } else {
-            // without target in the url params, we can just use the path.
-            self.inner_path().to_owned()
-        };
+        let mut storage_path = self.path_for_rustdoc_url();
 
-        if self.path_is_folder() {
+        // let mut storage_path = if let Some(ref target) = self.doc_target() {
+        //     if let Some(ref default_target) = self.default_target
+        //         && target == default_target
+        //     {
+        //         // when we have a target url param and it matches the default target
+        //         // we don't include it in the storage path.
+        //         // Files for the default target are placed at the root of the archive.
+        //         self.inner_path().to_owned()
+        //     } else {
+        //         // all non-default targets are in subfolders named after that target.
+        //         format!("{}/{}", target, self.inner_path())
+        //     }
+        // } else {
+        //     // without target in the url params, we can just use the path.
+        //     self.inner_path().to_owned()
+        // };
+        // dbg!(&storage_path);
+
+        if path_is_folder(&storage_path) {
             storage_path.push_str("index.html");
         }
 
@@ -474,19 +479,16 @@ impl ParsedRustdocParams {
     }
 
     pub(crate) fn doc_target(&self) -> Option<&str> {
-        self.inner.doc_target.as_deref()
+        self.merged_doc_target.as_deref()
     }
 
     pub(crate) fn doc_target_or_default(&self) -> Option<&str> {
-        self.inner
-            .doc_target
-            .as_deref()
-            .or(self.default_target.as_deref())
+        self.doc_target().or(self.default_target.as_deref())
     }
 
     pub(crate) fn path_is_folder(&self) -> bool {
-        let path = self.inner_path();
-        path.is_empty() || path.ends_with('/')
+        // TODO: not sure if this works all the time?
+        path_is_folder(self.inner.original_path())
     }
 
     pub(crate) fn file_extension(&self) -> Option<&str> {
@@ -549,14 +551,14 @@ impl ParsedRustdocParams {
             generate_rustdoc_path_for_url(
                 self.target_name.as_deref(),
                 self.default_target.as_deref(),
-                self.inner.doc_target.as_deref(),
+                self.doc_target(),
                 Some(self.inner_path()),
             )
         } else {
             generate_rustdoc_path_for_url(
                 self.target_name.as_deref(),
                 self.default_target.as_deref(),
-                self.inner.doc_target.as_deref(),
+                self.doc_target(),
                 None,
             )
         }
@@ -723,6 +725,11 @@ fn generate_rustdoc_path_for_url(
     }
 }
 
+fn path_is_folder(path: impl AsRef<str>) -> bool {
+    let path = path.as_ref();
+    path.is_empty() || path.ends_with('/')
+}
+
 /// we sometimes have routes with a static suffix.
 ///
 /// For example: `/{name}/{version}/help.html`
@@ -773,6 +780,7 @@ mod tests {
     use semver::Version;
     use test_case::test_case;
 
+    static KRATE: &str = "krate";
     static DEFAULT_TARGET: &str = "x86_64-unknown-linux-gnu";
     static OTHER_TARGET: &str = "x86_64-pc-windows-msvc";
     static UNKNOWN_TARGET: &str = "some-unknown-target";
@@ -806,7 +814,7 @@ mod tests {
         "/{name}",
         RustdocParams {
             original_uri: Some("/krate".parse().unwrap()),
-            name: "krate".into(),
+            name: KRATE.into(),
             version: ReqVersion::Latest,
             doc_target: None,
             inner_path: None,
@@ -819,7 +827,7 @@ mod tests {
         "/{name}/",
         RustdocParams {
             original_uri: Some("/krate/".parse().unwrap()),
-            name: "krate".into(),
+            name: KRATE.into(),
             version: ReqVersion::Latest,
             doc_target: None,
             inner_path: None,
@@ -832,7 +840,7 @@ mod tests {
         "/{name}/{version}",
         RustdocParams {
             original_uri: Some("/krate/latest".parse().unwrap()),
-            name: "krate".into(),
+            name: KRATE.into(),
             version: ReqVersion::Latest,
             doc_target: None,
             inner_path: None,
@@ -845,7 +853,7 @@ mod tests {
         "/{name}/{version}/{*path}",
         RustdocParams {
             original_uri: Some("/krate/latest/static.html".parse().unwrap()),
-            name: "krate".into(),
+            name: KRATE.into(),
             version: ReqVersion::Latest,
             doc_target: None,
             inner_path: Some("static.html".into()),
@@ -858,7 +866,7 @@ mod tests {
         "/{name}/{version}/{path}/static.html",
         RustdocParams {
             original_uri: Some("/krate/latest/path_add/static.html".parse().unwrap()),
-            name: "krate".into(),
+            name: KRATE.into(),
             version: ReqVersion::Latest,
             doc_target: None,
             inner_path: Some("path_add".into()),
@@ -884,7 +892,7 @@ mod tests {
         "/{name}/{version}/static.html",
         RustdocParams {
             original_uri: Some("/krate/latest/static.html".parse().unwrap()),
-            name: "krate".into(),
+            name: KRATE.into(),
             version: ReqVersion::Latest,
             doc_target: None,
             inner_path: None,
@@ -897,7 +905,7 @@ mod tests {
         "/{name}/{version}/{target}",
         RustdocParams {
             original_uri: Some(format!("/krate/1.2.3/{OTHER_TARGET}").parse().unwrap()),
-            name: "krate".into(),
+            name: KRATE.into(),
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
             doc_target: Some(OTHER_TARGET.into()),
             inner_path: None,
@@ -910,7 +918,7 @@ mod tests {
         "/{name}/{version}/{target}/folder/something.html",
         RustdocParams {
             original_uri: Some(format!("/krate/1.2.3/{OTHER_TARGET}/folder/something.html").parse().unwrap()),
-            name: "krate".into(),
+            name: KRATE.into(),
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
             doc_target: Some(OTHER_TARGET.into()),
             inner_path: None,
@@ -923,7 +931,7 @@ mod tests {
         "/{name}/{version}/{target}/",
         RustdocParams {
             original_uri: Some(format!("/krate/1.2.3/{OTHER_TARGET}/").parse().unwrap()),
-            name: "krate".into(),
+            name: KRATE.into(),
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
             doc_target: Some(OTHER_TARGET.into()),
             inner_path: None,
@@ -936,7 +944,7 @@ mod tests {
         "/{name}/{version}/{target}/{*path}",
         RustdocParams {
             original_uri: Some(format!("/krate/1.2.3/{OTHER_TARGET}/some/path/to/a/file.html").parse().unwrap()),
-            name: "krate".into(),
+            name: KRATE.into(),
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
             doc_target: Some(OTHER_TARGET.into()),
             inner_path: Some("some/path/to/a/file.html".into()),
@@ -949,7 +957,7 @@ mod tests {
         "/{name}/{version}/{target}/{path}/path/to/a/file.html",
         RustdocParams {
             original_uri: Some(format!("/krate/1.2.3/{OTHER_TARGET}/path_add/path/to/a/file.html").parse().unwrap()),
-            name: "krate".into(),
+            name: KRATE.into(),
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
             doc_target: Some(OTHER_TARGET.into()),
             inner_path: Some("path_add".into()),
@@ -979,18 +987,18 @@ mod tests {
 
     #[test_case(
         None, None, false,
-        None, "", "index.html";
+        None, "", "krate/index.html";
         "super empty 1"
     )]
     #[test_case(
         Some(""), Some(""), false,
-        None, "", "index.html";
+        None, "", "krate/index.html";
         "super empty 2"
     )]
     // test cases when no separate "target" component was present in the params
     #[test_case(
         None, Some("/"), true,
-        None, "", "index.html";
+        None, "", "krate/index.html";
         "just slash"
     )]
     #[test_case(
@@ -1012,12 +1020,12 @@ mod tests {
     // "target" component
     #[test_case(
         None, Some(DEFAULT_TARGET), false,
-        Some(DEFAULT_TARGET), "", "index.html";
+        Some(DEFAULT_TARGET), "", "krate/index.html";
         "just target without trailing slash"
     )]
     #[test_case(
         None, Some(&format!("{DEFAULT_TARGET}/")), true,
-        Some(DEFAULT_TARGET), "", "index.html";
+        Some(DEFAULT_TARGET), "", "krate/index.html";
         "just default target with trailing slash"
     )]
     #[test_case(
@@ -1048,7 +1056,7 @@ mod tests {
     // here we have a separate target path parameter, we check it and use it accordingly
     #[test_case(
         Some(DEFAULT_TARGET), None, false,
-        Some(DEFAULT_TARGET), "", "index.html";
+        Some(DEFAULT_TARGET), "", "krate/index.html";
         "actual target, that is default"
     )]
     #[test_case(
@@ -1093,7 +1101,7 @@ mod tests {
     )]
     #[test_case(
         Some(DEFAULT_TARGET), None, false,
-        Some(DEFAULT_TARGET), "", "index.html";
+        Some(DEFAULT_TARGET), "", "krate/index.html";
         "pure default target, without trailing slash"
     )]
     fn test_parse(
@@ -1118,29 +1126,27 @@ mod tests {
         dbg!(&dummy_path);
 
         let parsed = dbg!(
-            RustdocParams::new("krate")
+            RustdocParams::new(KRATE)
                 .with_version(ReqVersion::Latest)
                 .with_maybe_doc_target(target)
                 .with_maybe_inner_path(path)
                 .with_original_uri(dummy_path.parse::<Uri>().unwrap())
         )
-        .parse(
-            DEFAULT_TARGET.into(),
-            "krate".into(),
-            TARGETS.iter().cloned(),
-        );
+        .parse(DEFAULT_TARGET.into(), KRATE.into(), TARGETS.iter().cloned());
         dbg!(&parsed);
         dbg!(&parsed.path_for_rustdoc_url());
+        dbg!(&parsed.storage_path());
+        dbg!(&parsed.path_is_folder());
 
-        assert_eq!(parsed.name(), "krate");
+        assert_eq!(parsed.name(), KRATE);
         assert_eq!(parsed.version(), &ReqVersion::Latest);
         assert_eq!(parsed.doc_target(), expected_target);
         assert_eq!(parsed.inner_path(), expected_path);
         assert_eq!(parsed.storage_path(), expected_storage_path);
-        // assert_eq!(
-        //     parsed.path_is_folder(),
-        //     had_trailing_slash || dummy_path.ends_with('/') || dummy_path.is_empty()
-        // );
+        assert_eq!(
+            parsed.path_is_folder(),
+            had_trailing_slash || dummy_path.ends_with('/') || dummy_path.is_empty()
+        );
     }
 
     #[test_case("dummy/struct.WindowsOnly.html", Some("WindowsOnly"))]
@@ -1204,6 +1210,7 @@ mod tests {
             default_target: Some("x86_64-unknown-linux-gnu".into()),
             target_name: Some("dummy".into()),
             merged_inner_path: "README.md".into(),
+            merged_doc_target: None,
         };
 
         assert_eq!(params.rustdoc_url().to_string(), "/dummy/0.4.0/dummy/");
@@ -1236,6 +1243,7 @@ mod tests {
             default_target: Some("x86_64-unknown-linux-gnu".into()),
             target_name: Some("dummy".into()),
             merged_inner_path: "README.md".into(),
+            merged_doc_target: Some("x86_64-pc-windows-msvc".into()),
         };
 
         assert_eq!(
