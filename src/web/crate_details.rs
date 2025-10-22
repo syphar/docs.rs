@@ -11,7 +11,7 @@ use crate::{
         error::{AxumNope, AxumResult},
         extractors::{
             DbConnection,
-            rustdoc::{ParsedRustdocParams, RustdocParams},
+            rustdoc::{PageKind, ParsedRustdocParams, RustdocParams},
         },
         match_version,
         page::templates::{RenderBrands, RenderRegular, RenderSolid, filters},
@@ -471,6 +471,7 @@ pub(crate) async fn crate_details_handler(
     Extension(storage): Extension<Arc<AsyncStorage>>,
     mut conn: DbConnection,
 ) -> AxumResult<AxumResponse> {
+    let params = params.remove_page_kind();
     if params.original_path() != params.crate_details_url().path() {
         return Err(AxumNope::Redirect(
             params.crate_details_url(),
@@ -623,6 +624,7 @@ pub(crate) async fn get_all_platforms_inner(
     mut conn: DbConnection,
     is_crate_root: bool,
 ) -> AxumResult<AxumResponse> {
+    let params = params.with_page_kind(PageKind::Rustdoc);
     let matched_release = match_version(&mut conn, &params.name(), &params.version())
         .await?
         .into_exactly_named_or_else(|corrected_name, req_version| {
@@ -646,6 +648,9 @@ pub(crate) async fn get_all_platforms_inner(
     let params = params
         .load_and_parse(&mut conn, matched_release.id())
         .await?;
+
+    dbg!(&params);
+    dbg!(&params.platforms_partial_url());
 
     if !matched_release.build_status().is_success() {
         // when the build wasn't finished, we don't have any target platforms
@@ -1798,7 +1803,7 @@ mod tests {
                 response.redirect_target().unwrap_or_default(),
             );
             let text = response.text().await.unwrap();
-            let list1 = check_links(text.clone(), false, should_contain_redirect);
+            let list1 = dbg!(check_links(text.clone(), false, should_contain_redirect));
 
             // Same test with AJAX endpoint.
             let platform_menu_url = kuchikiki::parse_html()
@@ -1822,6 +1827,7 @@ mod tests {
                 true,
                 should_contain_redirect,
             );
+            dbg!(&list2);
             assert_eq!(list1, list2);
         }
 
@@ -1839,7 +1845,7 @@ mod tests {
                 .create()
                 .await?;
 
-            run_check_links_redir(&env, "/crate/dummy/0.4.0/features", false).await;
+            // run_check_links_redir(&env, "/crate/dummy/0.4.0/features", false).await;
             // run_check_links_redir(&env, "/crate/dummy/0.4.0/builds", false).await;
             // run_check_links_redir(&env, "/crate/dummy/0.4.0/source/", false).await;
             // run_check_links_redir(&env, "/crate/dummy/0.4.0/source/README.md", false).await;
@@ -1847,12 +1853,12 @@ mod tests {
 
             // run_check_links_redir(&env, "/dummy/latest/dummy/", true).await;
             // run_check_links_redir(&env, "/dummy/0.4.0/x86_64-pc-windows-msvc/dummy/", true).await;
-            // run_check_links_redir(
-            //     &env,
-            //     "/dummy/0.4.0/x86_64-pc-windows-msvc/dummy/struct.A.html",
-            //     true,
-            // )
-            // .await;
+            run_check_links_redir(
+                &env,
+                "/dummy/0.4.0/x86_64-pc-windows-msvc/dummy/struct.A.html",
+                true,
+            )
+            .await;
 
             Ok(())
         });

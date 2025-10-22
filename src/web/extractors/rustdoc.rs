@@ -19,6 +19,14 @@ use serde::Deserialize;
 use std::{borrow::Cow, iter};
 use tracing::trace;
 
+/// missing things / questions
+///
+/// ## better page_kind
+///
+/// I have:
+/// - endpoints where the inner path should be used, some endpoints not
+/// - if used, then some pages need the static-suffix logic, and some do not.
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum PageKind {
     Rustdoc,

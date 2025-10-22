@@ -144,6 +144,7 @@ pub(crate) async fn build_features_handler(
     params: RustdocParams,
     mut conn: DbConnection,
 ) -> AxumResult<impl IntoResponse> {
+    let params = params.remove_page_kind();
     let version = match_version(&mut conn, &params.name(), &params.version())
         .await?
         .assume_exact_name()?
