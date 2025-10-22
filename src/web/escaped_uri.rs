@@ -1,21 +1,26 @@
 use crate::web::encode_url_path;
-use derive_more::Display;
 use http::{Uri, uri::PathAndQuery};
-use std::{borrow::Borrow, iter, ops::Deref};
+use std::{borrow::Borrow, fmt::Display, iter, ops::Deref};
 use url::form_urlencoded;
 
 /// internal wrapper around `http::Uri` with some convenience functions.
 ///
 /// Ensures that the path part is always properly percent-encoded, including some characters
 /// that http::Uri would allow, but we still want to encode, like umlauts.
-#[derive(Debug, Clone, Display)]
-pub struct EscapedURI(Uri);
+#[derive(Debug, Clone)]
+pub struct EscapedURI {
+    uri: Uri,
+    fragment: Option<String>,
+}
 
 impl EscapedURI {
     pub fn from_uri(uri: Uri) -> Self {
         if uri.path_and_query().is_some() {
             if uri.path() == encode_url_path(uri.path()) {
-                Self(uri)
+                Self {
+                    uri,
+                    fragment: None,
+                }
             } else {
                 let mut parts = uri.into_parts();
 
@@ -36,23 +41,28 @@ impl EscapedURI {
                     .expect("can't fail since we encode the path ourselves"),
                 );
 
-                Self(
-                    Uri::from_parts(parts)
+                Self {
+                    uri: Uri::from_parts(parts)
                         .expect("everything is coming from a previous Uri, or encoded here"),
-                )
+                    fragment: None,
+                }
             }
         } else {
-            Self(uri)
+            Self {
+                uri,
+                fragment: None,
+            }
         }
     }
 
     pub fn from_path(path: impl AsRef<str>) -> Self {
-        Self(
-            Uri::builder()
+        Self {
+            uri: Uri::builder()
                 .path_and_query(encode_url_path(path.as_ref()))
                 .build()
                 .expect("this can never fail because we encode the path"),
-        )
+            fragment: None,
+        }
     }
 
     pub fn from_path_and_raw_query(
@@ -74,7 +84,7 @@ impl EscapedURI {
     }
 
     pub fn path(&self) -> &str {
-        self.0.path()
+        self.uri.path()
     }
 
     /// extend the query part of the Uri with the given raw query string.
@@ -103,13 +113,13 @@ impl EscapedURI {
 
         let mut serializer = form_urlencoded::Serializer::new(String::new());
 
-        if let Some(existing_query_args) = self.0.query() {
+        if let Some(existing_query_args) = self.uri.query() {
             serializer.extend_pairs(form_urlencoded::parse(existing_query_args.as_bytes()));
         }
 
         serializer.extend_pairs(new_query_args);
 
-        let mut parts = self.0.into_parts();
+        let mut parts = self.uri.into_parts();
 
         parts.path_and_query = Some(
             PathAndQuery::from_maybe_shared(format!(
@@ -136,7 +146,37 @@ impl EscapedURI {
     }
 
     pub fn into_inner(self) -> Uri {
-        self.0
+        self.uri
+    }
+
+    pub(crate) fn with_fragment(mut self, fragment: impl Into<String>) -> Self {
+        self.fragment = Some(fragment.into());
+        self
+    }
+}
+
+impl Display for EscapedURI {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(fragment) = &self.fragment {
+            write!(f, "{}#{}", self.uri, fragment)
+        } else {
+            write!(f, "{}", self.uri)
+        }
+    }
+}
+
+impl TryFrom<EscapedURI> for Uri {
+    type Error = anyhow::Error;
+
+    fn try_from(value: EscapedURI) -> Result<Self, Self::Error> {
+        if let Some(fragment) = value.fragment {
+            Err(anyhow::anyhow!(
+                "can't convert EscapedURI with fragment '{}' into Uri",
+                fragment
+            ))
+        } else {
+            Ok(value.uri)
+        }
     }
 }
 
@@ -144,13 +184,7 @@ impl Deref for EscapedURI {
     type Target = Uri;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl From<EscapedURI> for http::Uri {
-    fn from(value: EscapedURI) -> Self {
-        value.0
+        &self.uri
     }
 }
 
@@ -162,25 +196,25 @@ impl From<Uri> for EscapedURI {
 
 impl PartialEq for EscapedURI {
     fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
+        self.uri == other.uri && self.fragment == other.fragment
     }
 }
 
 impl PartialEq<Uri> for EscapedURI {
     fn eq(&self, other: &Uri) -> bool {
-        &self.0 == other
+        &self.uri == other && self.fragment.is_none()
     }
 }
 
 impl PartialEq<&str> for EscapedURI {
     fn eq(&self, other: &&str) -> bool {
-        &self.0.to_string() == *other
+        &self.uri.to_string() == *other && self.fragment.is_none()
     }
 }
 
 impl PartialEq<String> for EscapedURI {
     fn eq(&self, other: &String) -> bool {
-        &self.0.to_string() == other
+        &self.uri.to_string() == other && self.fragment.is_none()
     }
 }
 

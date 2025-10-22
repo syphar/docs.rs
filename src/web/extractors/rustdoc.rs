@@ -124,6 +124,17 @@ impl RustdocParams {
         }
     }
 
+    pub(crate) fn try_with_version<V>(self, version: V) -> Result<Self>
+    where
+        V: TryInto<ReqVersion>,
+        V::Error: std::error::Error + Send + Sync + 'static,
+    {
+        Ok(RustdocParams {
+            version: version.try_into().context("couldn't parse version")?,
+            ..self
+        })
+    }
+
     pub(crate) fn with_static_route_suffix(self, static_route_suffix: impl Into<String>) -> Self {
         self.with_maybe_static_route_suffix(Some(static_route_suffix))
     }
@@ -136,17 +147,6 @@ impl RustdocParams {
             static_route_suffix: static_route_suffix.map(Into::into),
             ..self
         }
-    }
-
-    pub(crate) fn try_with_version<V>(self, version: V) -> Result<Self>
-    where
-        V: TryInto<ReqVersion>,
-        V::Error: std::error::Error + Send + Sync + 'static,
-    {
-        Ok(RustdocParams {
-            version: version.try_into().context("couldn't parse version")?,
-            ..self
-        })
     }
 
     pub(crate) fn with_doc_target(self, doc_target: impl Into<String>) -> Self {

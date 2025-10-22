@@ -7,6 +7,7 @@ use crate::{
         error::{AxumNope, AxumResult},
         extractors::{
             DbConnection,
+            rustdoc::PageKind,
             rustdoc::{ParsedRustdocParams, RustdocParams},
         },
         filters,
@@ -87,7 +88,7 @@ impl SubFeature {
 #[derive(Debug, Clone)]
 struct FeaturesPage {
     metadata: MetaData,
-    dependencies: HashMap<String, String>,
+    dependencies: HashMap<String, ReqVersion>,
     sorted_features: Option<Vec<Feature>>,
     default_features: HashSet<String>,
     canonical_url: CanonicalUrl,
@@ -99,11 +100,10 @@ impl FeaturesPage {
     fn is_default_feature(&self, feature: &str) -> bool {
         self.default_features.contains(feature)
     }
-    fn dependency_version(&self, dependency: &str) -> &str {
+    fn dependency_version(&self, dependency: &str) -> &ReqVersion {
         self.dependencies
             .get(dependency)
-            .map(|s| s.as_str())
-            .unwrap_or("latest")
+            .unwrap_or(&ReqVersion::Latest)
     }
 }
 
@@ -206,7 +206,7 @@ pub(crate) async fn build_features_handler(
 }
 
 /// Turns the raw JSON `dependencies` into a [`HashMap`] of dependencies and their versions.
-fn get_dependency_versions(raw_dependencies: Option<Value>) -> HashMap<String, String> {
+fn get_dependency_versions(raw_dependencies: Option<Value>) -> HashMap<String, ReqVersion> {
     let mut map = HashMap::new();
 
     if let Some(deps) = raw_dependencies.as_ref().and_then(Value::as_array) {
@@ -214,7 +214,11 @@ fn get_dependency_versions(raw_dependencies: Option<Value>) -> HashMap<String, S
             let name = value.get(0).and_then(Value::as_str);
             let version = value.get(1).and_then(Value::as_str);
             if let (Some(name), Some(version)) = (name, version) {
-                map.insert(name.into(), version.into());
+                let req_version = version
+                    .parse()
+                    .map(|v| ReqVersion::Exact(v))
+                    .unwrap_or(ReqVersion::Latest);
+                map.insert(name.into(), req_version);
             }
         }
     }
