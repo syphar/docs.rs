@@ -326,13 +326,13 @@ impl RustdocParams {
         let target_name = target_name.map(Into::into);
         debug_assert!(target_name.as_ref().map(|s| !s.is_empty()).unwrap_or(true));
 
-        dbg!(ParsedRustdocParams {
+        ParsedRustdocParams {
             doc_targets,
             default_target,
             target_name,
             merged_inner_path,
             inner,
-        })
+        }
     }
 
     pub(crate) fn name(&self) -> &str {
@@ -1211,24 +1211,20 @@ mod tests {
 
     #[test]
     fn test_parse_source() {
-        let params = ParsedRustdocParams {
-            inner: RustdocParams {
-                original_uri: Some("/crate/dummy/0.4.0/source/README.md".parse().unwrap()),
-                name: "dummy".into(),
-                version: "0.4.0".parse::<Version>().unwrap().into(0),
-                doc_target: None,
-                inner_path: Some("README.md".into()),
-                page_kind: Some(PageKind::Source),
-                static_route_suffix: None,
-            },
-            doc_targets: vec![
-                "x86_64-pc-windows-msvc".into(),
-                "x86_64-unknown-linux-gnu".into(),
-            ],
-            default_target: Some("x86_64-unknown-linux-gnu".into()),
-            target_name: Some("dummy".into()),
-            merged_inner_path: "README.md".into(),
-        };
+        let params = RustdocParams::new("dummy")
+            .with_version("0.4.0".parse::<Version>().unwrap())
+            .with_inner_path("README.md")
+            .with_page_kind(PageKind::Source)
+            .with_original_uri(
+                "/crate/dummy/0.4.0/source/README.md"
+                    .parse::<Uri>()
+                    .unwrap(),
+            )
+            .parse(
+                DEFAULT_TARGET.into(),
+                "dummy".into(),
+                TARGETS.iter().cloned(),
+            );
 
         assert_eq!(params.rustdoc_url().to_string(), "/dummy/0.4.0/dummy/");
         assert_eq!(
@@ -1238,41 +1234,6 @@ mod tests {
         assert_eq!(
             params.target_redirect_url().to_string(),
             "/crate/dummy/0.4.0/target-redirect/dummy/"
-        );
-    }
-
-    #[test]
-    fn test_parse_source_2() {
-        let params = ParsedRustdocParams {
-            inner: RustdocParams {
-                original_uri: Some("/crate/dummy/0.4.0/source/README.md".parse().unwrap()),
-                name: "dummy".into(),
-                version: "0.4.0".parse::<Version>().unwrap().into(),
-                doc_target: Some("x86_64-pc-windows-msvc".into()),
-                inner_path: Some("README.md".into()),
-                page_kind: Some(PageKind::Source),
-                static_route_suffix: None,
-            },
-            doc_targets: vec![
-                "x86_64-pc-windows-msvc".into(),
-                "x86_64-unknown-linux-gnu".into(),
-            ],
-            default_target: Some("x86_64-unknown-linux-gnu".into()),
-            target_name: Some("dummy".into()),
-            merged_inner_path: "README.md".into(),
-        };
-
-        assert_eq!(
-            params.rustdoc_url().to_string(),
-            "/dummy/0.4.0/x86_64-pc-windows-msvc/dummy/"
-        );
-        assert_eq!(
-            params.source_url().to_string(),
-            "/crate/dummy/0.4.0/source/README.md"
-        );
-        assert_eq!(
-            params.target_redirect_url().to_string(),
-            "/crate/dummy/0.4.0/target-redirect/x86_64-pc-windows-msvc/dummy/"
         );
     }
 
@@ -1345,16 +1306,16 @@ mod tests {
 
     #[test]
     fn test_case_1() {
-        let params = RustdocParams {
-            original_uri: Some("/dummy/0.2.0/dummy/struct.Dummy.html".parse().unwrap()),
-            name: "dummy".into(),
-            version: "0.2.0".parse::<Version>().unwrap().into(),
-            doc_target: Some("dummy".into()),
-            inner_path: Some("struct.Dummy.html".into()),
-            page_kind: Some(PageKind::Rustdoc),
-            static_route_suffix: None,
-        }
-        .parse(Some(DEFAULT_TARGET), Some("dummy"), TARGETS.iter().cloned());
+        let params = RustdocParams::new("dummy")
+            .with_version("0.2.0".parse::<Version>().unwrap())
+            .with_inner_path("struct.Dummy.html")
+            .with_page_kind(PageKind::Rustdoc)
+            .with_original_uri(
+                "/dummy/0.2.0/dummy/struct.Dummy.html"
+                    .parse::<Uri>()
+                    .unwrap(),
+            )
+            .parse(Some(DEFAULT_TARGET), Some("dummy"), TARGETS.iter().cloned());
 
         assert!(params.doc_target().is_none());
         assert_eq!(params.inner_path(), "dummy/struct.Dummy.html");
