@@ -5,7 +5,7 @@
         because the documentation root page is guaranteed to exist for all targets.
     #}
 
-    {%- set target_params = params.clone().with_doc_target(doc_target.clone()) -%}
+    {%- set target_params = params.clone().with_doc_target(doc_target.clone())? -%}
 
     {%- set target_no_follow -%}
     {%- set target_url -%}

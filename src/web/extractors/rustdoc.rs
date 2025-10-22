@@ -1,8 +1,13 @@
 //! special rustdoc extractors
 
-use std::{borrow::Cow, iter};
-
-use anyhow::{Result, anyhow};
+use crate::{
+    db::ReleaseId,
+    web::{
+        MatchedRelease, MetaData, ReqVersion, error::AxumNope, escaped_uri::EscapedURI,
+        extractors::Path,
+    },
+};
+use anyhow::{Result, anyhow, bail};
 use axum::{
     RequestPartsExt,
     extract::{FromRequestParts, MatchedPath},
@@ -11,18 +16,11 @@ use axum::{
 use docsrs_metadata::HOST_TARGET;
 use itertools::Itertools as _;
 use serde::Deserialize;
+use std::{borrow::Cow, iter};
+use tracing::trace;
 
-use crate::{
-    db::ReleaseId,
-    web::{
-        MatchedRelease, MetaData, ReqVersion, error::AxumNope, escaped_uri::EscapedURI,
-        extractors::Path,
-    },
-};
-
-#[derive(Clone, Debug, PartialEq, Default)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum PageKind {
-    #[default]
     Rustdoc,
     Source,
 }
@@ -40,7 +38,7 @@ pub(crate) struct RustdocParams {
     version: ReqVersion,
     doc_target: Option<String>,
     inner_path: Option<String>,
-    page_kind: PageKind,
+    page_kind: Option<PageKind>,
     static_route_suffix: Option<String>,
 }
 
@@ -86,7 +84,7 @@ where
             doc_target: params.target.map(|t| t.trim().to_owned()),
             inner_path: params.path.map(|p| p.trim().to_owned()),
             original_uri: Some(original_uri),
-            page_kind: PageKind::default(),
+            page_kind: Some(PageKind::Rustdoc),
             static_route_suffix,
         })
     }
@@ -100,7 +98,7 @@ impl RustdocParams {
             original_uri: None,
             doc_target: None,
             inner_path: None,
-            page_kind: PageKind::default(),
+            page_kind: Some(PageKind::Rustdoc),
             static_route_suffix: None,
         }
     }
@@ -150,7 +148,14 @@ impl RustdocParams {
 
     pub(crate) fn with_page_kind(self, page_kind: impl Into<PageKind>) -> Self {
         RustdocParams {
-            page_kind: page_kind.into(),
+            page_kind: Some(page_kind.into()),
+            ..self
+        }
+    }
+
+    pub(crate) fn remove_page_kind(self) -> Self {
+        RustdocParams {
+            page_kind: None,
             ..self
         }
     }
@@ -192,15 +197,13 @@ impl RustdocParams {
         ))
     }
 
-    pub(crate) fn parse<D, T, I, V>(
-        self,
+    fn with_fixed_target_and_path<D, I, V>(
+        mut self,
         default_target: Option<D>,
-        target_name: Option<T>,
         doc_targets: I,
-    ) -> ParsedRustdocParams
+    ) -> RustdocParams
     where
         D: Into<String>,
-        T: Into<String>,
         I: IntoIterator<Item = V>,
         V: Into<String>,
     {
@@ -217,24 +220,13 @@ impl RustdocParams {
             .map(|s| s.into())
             .collect::<Vec<_>>();
 
-        let mut merged_inner_path = if let Some(ref path) = self.inner_path {
+        let mut inner_path = if let Some(ref path) = self.inner_path {
             path.trim_start_matches('/').trim().to_string()
         } else {
             String::new()
         };
 
-        if let Some(ref static_route_suffix) = self.static_route_suffix
-            && !static_route_suffix.is_empty()
-        {
-            if !merged_inner_path.is_empty() {
-                merged_inner_path.push('/');
-                merged_inner_path.push_str(&static_route_suffix);
-            } else {
-                merged_inner_path = static_route_suffix.clone()
-            }
-        };
-
-        let mut merged_doc_target: Option<String> = None;
+        let mut doc_target: Option<String> = None;
 
         if let Some(ref given_target) = self.doc_target
             && !given_target.trim().is_empty()
@@ -243,62 +235,99 @@ impl RustdocParams {
             // if a target is given in a separate url parameter, check if it's a target we
             // know about. If yes, keep it, if not, make it part of the path.
             if doc_targets.iter().any(|s| s == given_target) {
-                merged_doc_target = Some(given_target.into());
+                doc_target = Some(given_target.into());
             } else {
-                merged_doc_target = None;
-                if !merged_inner_path.is_empty() {
-                    merged_inner_path = format!("{}/{}", given_target, merged_inner_path);
+                doc_target = None;
+                if !inner_path.is_empty() {
+                    inner_path = format!("{}/{}", given_target, inner_path);
                 } else if self.has_trailing_slash() {
-                    merged_inner_path = format!("{}/", given_target);
+                    inner_path = format!("{}/", given_target);
                 } else {
-                    merged_inner_path = given_target.into();
+                    inner_path = given_target.into();
                 }
             }
         } else {
             // there is no separate target component given in the route parameters.
             // We look at the first component of the path and see if it matches a target.
 
-            if let Some(pos) = merged_inner_path.find('/') {
-                let potential_target = &merged_inner_path[..pos];
+            if let Some(pos) = inner_path.find('/') {
+                let potential_target = &inner_path[..pos];
 
                 if doc_targets.iter().any(|s| s == potential_target) {
-                    merged_doc_target = Some(potential_target.to_owned());
-                    merged_inner_path = merged_inner_path
+                    doc_target = Some(potential_target.to_owned());
+                    inner_path = inner_path
                         .get((pos + 1)..)
                         .map(ToOwned::to_owned)
                         .unwrap_or_default();
                 }
             } else {
                 // no slash in the path, can be target or inner path
-                if doc_targets.iter().any(|s| s == &merged_inner_path) {
-                    merged_doc_target = Some(merged_inner_path.to_owned());
-                    merged_inner_path.clear();
+                if doc_targets.iter().any(|s| s == &inner_path) {
+                    doc_target = Some(inner_path.to_owned());
+                    inner_path.clear();
                 } else {
-                    merged_doc_target = None;
+                    doc_target = None;
                 }
             };
         }
 
-        if let Some(ref new_target) = merged_doc_target {
+        if let Some(ref new_target) = doc_target {
             debug_assert!(!new_target.contains('/'));
             debug_assert!(new_target.contains('-'));
         }
 
-        debug_assert!(!merged_inner_path.starts_with('/')); // we should trim leading slashes
+        debug_assert!(!inner_path.starts_with('/')); // we should trim leading slashes
+
+        dbg!(&inner_path);
+
+        self.inner_path = Some(inner_path);
+        self.doc_target = doc_target;
+
+        self
+    }
+
+    pub(crate) fn parse<D, T, I, V>(
+        self,
+        default_target: Option<D>,
+        target_name: Option<T>,
+        doc_targets: I,
+    ) -> ParsedRustdocParams
+    where
+        D: Into<String>,
+        T: Into<String>,
+        I: IntoIterator<Item = V>,
+        V: Into<String>,
+    {
+        dbg!(&self);
+        let doc_targets: Vec<_> = doc_targets.into_iter().map(Into::into).collect();
+        let default_target = default_target.map(Into::into);
+        let inner = self.with_fixed_target_and_path(default_target.as_deref(), doc_targets.iter());
+        dbg!(&inner);
+
+        let mut merged_inner_path = inner.inner_path().to_owned();
+        if matches!(inner.page_kind, Some(PageKind::Rustdoc)) {
+            if let Some(ref static_route_suffix) = inner.static_route_suffix
+                && !static_route_suffix.is_empty()
+            {
+                if !merged_inner_path.is_empty() {
+                    merged_inner_path.push('/');
+                }
+                merged_inner_path.push_str(&static_route_suffix);
+            }
+        };
 
         let target_name = target_name.map(Into::into);
         debug_assert!(target_name.as_ref().map(|s| !s.is_empty()).unwrap_or(true));
 
         dbg!(&merged_inner_path);
 
-        ParsedRustdocParams {
+        dbg!(ParsedRustdocParams {
             doc_targets,
             default_target,
             target_name,
             merged_inner_path,
-            merged_doc_target,
-            inner: self,
-        }
+            inner,
+        })
     }
 
     pub(crate) fn name(&self) -> &str {
@@ -323,12 +352,12 @@ impl RustdocParams {
             .and_then(|uri| get_file_extension(uri.path()))
     }
 
-    pub(crate) fn page_kind(&self) -> &PageKind {
-        &self.page_kind
+    pub(crate) fn page_kind(&self) -> Option<&PageKind> {
+        self.page_kind.as_ref()
     }
 
     fn path_for_rustdoc_url(&self) -> String {
-        if matches!(self.page_kind, PageKind::Rustdoc) {
+        if matches!(self.page_kind, Some(PageKind::Rustdoc)) {
             generate_rustdoc_path_for_url(
                 None,
                 None,
@@ -378,7 +407,7 @@ impl RustdocParams {
         // if the params were created for a rustdoc page,
         // the inner path is a source file path, so is not usable for
         // source urls.
-        let inner_path = if matches!(self.page_kind, PageKind::Source) {
+        let inner_path = if matches!(self.page_kind, Some(PageKind::Source)) {
             self.inner_path()
         } else {
             ""
@@ -417,7 +446,6 @@ pub(crate) struct ParsedRustdocParams {
     default_target: Option<String>,
     target_name: Option<String>,
     merged_inner_path: String,
-    merged_doc_target: Option<String>,
 }
 
 impl ParsedRustdocParams {
@@ -430,21 +458,29 @@ impl ParsedRustdocParams {
     }
 
     pub(crate) fn with_version(self, version: impl Into<ReqVersion>) -> Self {
-        self.update(|inner| {
-            inner.version = version.into();
-        })
+        self.update(|inner| inner.with_version(version))
     }
 
-    pub(crate) fn with_doc_target(self, doc_target: impl Into<String>) -> Self {
-        self.update(|inner| {
-            inner.doc_target = Some(doc_target.into());
-        })
+    pub(crate) fn with_doc_target(self, doc_target: impl Into<String>) -> Result<Self> {
+        let doc_target = doc_target.into();
+
+        if !self.doc_targets.iter().any(|s| s == &doc_target) {
+            bail!("unknown doc target: {}", doc_target);
+        }
+
+        Ok(self.update(|inner| inner.with_doc_target(doc_target)))
     }
 
     pub(crate) fn with_inner_path(self, inner_path: impl Into<String>) -> Self {
-        self.update(|inner| {
-            inner.inner_path = Some(inner_path.into());
-        })
+        self.update(|inner| inner.with_inner_path(inner_path))
+    }
+
+    pub(crate) fn with_page_kind(self, page_kind: impl Into<PageKind>) -> Self {
+        self.update(|inner| inner.with_page_kind(page_kind))
+    }
+
+    pub(crate) fn remove_page_kind(self) -> Self {
+        self.update(|inner| inner.remove_page_kind())
     }
 
     /// generate a potential storage path where to find the file that is described by these params.
@@ -452,24 +488,6 @@ impl ParsedRustdocParams {
     /// This is the path _inside_ the ZIP file we create in the build process.
     pub(crate) fn storage_path(&self) -> String {
         let mut storage_path = self.path_for_rustdoc_url();
-
-        // let mut storage_path = if let Some(ref target) = self.doc_target() {
-        //     if let Some(ref default_target) = self.default_target
-        //         && target == default_target
-        //     {
-        //         // when we have a target url param and it matches the default target
-        //         // we don't include it in the storage path.
-        //         // Files for the default target are placed at the root of the archive.
-        //         self.inner_path().to_owned()
-        //     } else {
-        //         // all non-default targets are in subfolders named after that target.
-        //         format!("{}/{}", target, self.inner_path())
-        //     }
-        // } else {
-        //     // without target in the url params, we can just use the path.
-        //     self.inner_path().to_owned()
-        // };
-        // dbg!(&storage_path);
 
         if path_is_folder(&storage_path) {
             storage_path.push_str("index.html");
@@ -479,7 +497,7 @@ impl ParsedRustdocParams {
     }
 
     pub(crate) fn doc_target(&self) -> Option<&str> {
-        self.merged_doc_target.as_deref()
+        self.inner.doc_target()
     }
 
     pub(crate) fn doc_target_or_default(&self) -> Option<&str> {
@@ -508,16 +526,19 @@ impl ParsedRustdocParams {
             .map_or(false, |t| self.doc_target() == Some(t))
     }
 
-    fn update<F>(mut self, f: F) -> Self
+    pub(crate) fn update<F>(self, f: F) -> Self
     where
-        F: FnOnce(&mut RustdocParams),
+        F: FnOnce(RustdocParams) -> RustdocParams,
     {
-        f(&mut self.inner);
-        self.inner
-            .parse(self.default_target, self.target_name, self.doc_targets)
+        trace!(?self, "update: before");
+        let new_inner = f(self.inner);
+        trace!(?new_inner, "update: data set");
+        let result = new_inner.parse(self.default_target, self.target_name, self.doc_targets);
+        trace!(?result, "update: parse");
+        result
     }
 
-    pub(crate) fn page_kind(&self) -> &PageKind {
+    pub(crate) fn page_kind(&self) -> Option<&PageKind> {
         self.inner.page_kind()
     }
 
@@ -547,7 +568,7 @@ impl ParsedRustdocParams {
     }
 
     fn path_for_rustdoc_url(&self) -> String {
-        if matches!(self.page_kind(), PageKind::Rustdoc) {
+        if matches!(self.page_kind(), Some(PageKind::Rustdoc)) {
             generate_rustdoc_path_for_url(
                 self.target_name.as_deref(),
                 self.default_target.as_deref(),
@@ -818,7 +839,7 @@ mod tests {
             version: ReqVersion::Latest,
             doc_target: None,
             inner_path: None,
-            page_kind: PageKind::Rustdoc,
+            page_kind: Some(PageKind::Rustdoc),
             static_route_suffix: None,
         };
         "just name"
@@ -831,7 +852,7 @@ mod tests {
             version: ReqVersion::Latest,
             doc_target: None,
             inner_path: None,
-            page_kind: PageKind::Rustdoc,
+            page_kind: Some(PageKind::Rustdoc),
             static_route_suffix: None,
         };
         "just name with trailing slash"
@@ -844,7 +865,7 @@ mod tests {
             version: ReqVersion::Latest,
             doc_target: None,
             inner_path: None,
-            page_kind: PageKind::Rustdoc,
+            page_kind: Some(PageKind::Rustdoc),
             static_route_suffix: None,
         };
         "just name and version"
@@ -857,7 +878,7 @@ mod tests {
             version: ReqVersion::Latest,
             doc_target: None,
             inner_path: Some("static.html".into()),
-            page_kind: PageKind::Rustdoc,
+            page_kind: Some(PageKind::Rustdoc),
             static_route_suffix: None,
         };
         "name, version, path extract"
@@ -870,7 +891,7 @@ mod tests {
             version: ReqVersion::Latest,
             doc_target: None,
             inner_path: Some("path_add".into()),
-            page_kind: PageKind::Rustdoc,
+            page_kind: Some(PageKind::Rustdoc),
             static_route_suffix: Some("static.html".into()),
         };
         "name, version, path extract, static suffix"
@@ -883,7 +904,7 @@ mod tests {
             version: ReqVersion::Latest,
             doc_target: None,
             inner_path: None,
-            page_kind: PageKind::Rustdoc,
+            page_kind: Some(PageKind::Rustdoc),
             static_route_suffix: Some("clapproc `macro.html".into()),
         };
         "name, version, static suffix with some urlencoding"
@@ -896,7 +917,7 @@ mod tests {
             version: ReqVersion::Latest,
             doc_target: None,
             inner_path: None,
-            page_kind: PageKind::Rustdoc,
+            page_kind: Some(PageKind::Rustdoc),
             static_route_suffix: Some("static.html".into()),
         };
         "name, version, static suffix"
@@ -909,7 +930,7 @@ mod tests {
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
             doc_target: Some(OTHER_TARGET.into()),
             inner_path: None,
-            page_kind: PageKind::Rustdoc,
+            page_kind: Some(PageKind::Rustdoc),
             static_route_suffix: None,
         };
         "name, version, target"
@@ -922,7 +943,7 @@ mod tests {
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
             doc_target: Some(OTHER_TARGET.into()),
             inner_path: None,
-            page_kind: PageKind::Rustdoc,
+            page_kind: Some(PageKind::Rustdoc),
             static_route_suffix: Some("folder/something.html".into()),
         };
         "name, version, target, static suffix"
@@ -935,7 +956,7 @@ mod tests {
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
             doc_target: Some(OTHER_TARGET.into()),
             inner_path: None,
-            page_kind: PageKind::Rustdoc,
+            page_kind: Some(PageKind::Rustdoc),
             static_route_suffix: None,
         };
         "name, version, target trailing slash"
@@ -948,7 +969,7 @@ mod tests {
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
             doc_target: Some(OTHER_TARGET.into()),
             inner_path: Some("some/path/to/a/file.html".into()),
-            page_kind: PageKind::Rustdoc,
+            page_kind: Some(PageKind::Rustdoc),
             static_route_suffix: None,
         };
         "name, version, target, path"
@@ -961,7 +982,7 @@ mod tests {
             version: ReqVersion::Exact("1.2.3".parse().unwrap()),
             doc_target: Some(OTHER_TARGET.into()),
             inner_path: Some("path_add".into()),
-            page_kind: PageKind::Rustdoc,
+            page_kind: Some(PageKind::Rustdoc),
             static_route_suffix:  Some("path/to/a/file.html".into()),
         };
         "name, version, target, path, static suffix"
@@ -1179,7 +1200,7 @@ mod tests {
         );
 
         // change to default target, check url again
-        params = params.with_doc_target(DEFAULT_TARGET);
+        params = params.with_doc_target(DEFAULT_TARGET).unwrap();
 
         assert_eq!(params.generate_fallback_search().as_deref(), search);
         assert_eq!(
@@ -1200,7 +1221,7 @@ mod tests {
                 version: ReqVersion::Exact(Version::new(0, 4, 0)),
                 doc_target: None,
                 inner_path: Some("README.md".into()),
-                page_kind: PageKind::Source,
+                page_kind: Some(PageKind::Source),
                 static_route_suffix: None,
             },
             doc_targets: vec![
@@ -1210,7 +1231,6 @@ mod tests {
             default_target: Some("x86_64-unknown-linux-gnu".into()),
             target_name: Some("dummy".into()),
             merged_inner_path: "README.md".into(),
-            merged_doc_target: None,
         };
 
         assert_eq!(params.rustdoc_url().to_string(), "/dummy/0.4.0/dummy/");
@@ -1233,7 +1253,7 @@ mod tests {
                 version: ReqVersion::Exact(Version::new(0, 4, 0)),
                 doc_target: Some("x86_64-pc-windows-msvc".into()),
                 inner_path: Some("README.md".into()),
-                page_kind: PageKind::Source,
+                page_kind: Some(PageKind::Source),
                 static_route_suffix: None,
             },
             doc_targets: vec![
@@ -1243,7 +1263,6 @@ mod tests {
             default_target: Some("x86_64-unknown-linux-gnu".into()),
             target_name: Some("dummy".into()),
             merged_inner_path: "README.md".into(),
-            merged_doc_target: Some("x86_64-pc-windows-msvc".into()),
         };
 
         assert_eq!(
@@ -1325,5 +1344,41 @@ mod tests {
         inner_path: Option<&str>,
     ) -> String {
         generate_rustdoc_path_for_url(target_name, default_target, doc_target, inner_path)
+    }
+
+    #[test]
+    fn test_case_1() {
+        let params = RustdocParams {
+            original_uri: Some("/dummy/0.2.0/dummy/struct.Dummy.html".parse().unwrap()),
+            name: "dummy".into(),
+            version: ReqVersion::Exact(Version::new(0, 2, 0)),
+            doc_target: Some("dummy".into()),
+            inner_path: Some("struct.Dummy.html".into()),
+            page_kind: Some(PageKind::Rustdoc),
+            static_route_suffix: None,
+        }
+        .parse(Some(DEFAULT_TARGET), Some("dummy"), TARGETS.iter().cloned());
+
+        assert!(params.doc_target().is_none());
+        assert_eq!(params.inner_path(), "dummy/struct.Dummy.html");
+        assert_eq!(params.storage_path(), "dummy/struct.Dummy.html");
+
+        let params = params.with_doc_target(DEFAULT_TARGET).unwrap();
+        dbg!(&params);
+        assert_eq!(params.doc_target(), Some(DEFAULT_TARGET));
+        assert_eq!(params.inner_path(), "dummy/struct.Dummy.html");
+        assert_eq!(params.storage_path(), "dummy/struct.Dummy.html");
+
+        let params = params.with_doc_target(OTHER_TARGET).unwrap();
+        dbg!(&params);
+        assert_eq!(params.doc_target(), Some(OTHER_TARGET));
+        assert_eq!(
+            params.storage_path(),
+            format!("{OTHER_TARGET}/dummy/struct.Dummy.html")
+        );
+        assert_eq!(
+            params.storage_path(),
+            format!("{OTHER_TARGET}/dummy/struct.Dummy.html")
+        );
     }
 }
