@@ -148,15 +148,15 @@ impl RustdocParams {
         })
     }
 
+    pub(crate) fn with_doc_target(self, doc_target: impl Into<String>) -> Self {
+        self.with_maybe_doc_target(Some(doc_target))
+    }
+
     pub(crate) fn with_maybe_doc_target(self, doc_target: Option<impl Into<String>>) -> Self {
         RustdocParams {
             doc_target: doc_target.map(|t| t.into().trim().to_owned()),
             ..self
         }
-    }
-
-    pub(crate) fn with_doc_target(self, doc_target: impl Into<String>) -> Self {
-        self.with_maybe_doc_target(Some(doc_target))
     }
 
     pub(crate) fn with_inner_path(self, inner_path: impl Into<String>) -> Self {
@@ -202,12 +202,12 @@ impl RustdocParams {
         }
     }
 
-    pub(crate) fn parse_with_metadata(self, metadata: &MetaData) -> Result<ParsedRustdocParams> {
-        Ok(self.parse(
+    pub(crate) fn parse_with_metadata(self, metadata: &MetaData) -> ParsedRustdocParams {
+        self.parse(
             metadata.default_target.as_deref(),
             metadata.target_name.as_deref(),
             metadata.doc_targets.iter().flatten(),
-        ))
+        )
     }
 
     pub(crate) async fn load_and_parse(
@@ -1283,6 +1283,7 @@ mod tests {
             .try_with_version("0.2.0")
             .unwrap()
             .with_inner_path("struct.Dummy.html")
+            .with_doc_target("dummy")
             .with_page_kind(PageKind::Rustdoc)
             .try_with_original_uri("/dummy/0.2.0/dummy/struct.Dummy.html")
             .unwrap()

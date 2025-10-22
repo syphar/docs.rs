@@ -164,7 +164,7 @@ pub(crate) async fn build_features_handler(
     )
     .await?;
 
-    let params = params.parse_with_metadata(&metadata)?;
+    let params = params.parse_with_metadata(&metadata);
 
     let row = sqlx::query!(
         r#"

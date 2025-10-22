@@ -525,7 +525,7 @@ pub(crate) async fn crate_details_handler(
 
     let is_latest_version = params.version().is_latest();
 
-    let params = params.parse_with_metadata(&metadata)?;
+    let params = params.parse_with_metadata(&metadata);
 
     let mut res = CrateDetailsPage {
         version,

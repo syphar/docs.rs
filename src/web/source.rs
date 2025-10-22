@@ -327,7 +327,7 @@ pub(crate) async fn source_browser_handler(
     )
     .await?;
 
-    let params = params.parse_with_metadata(&metadata)?;
+    let params = params.parse_with_metadata(&metadata);
 
     Ok(SourcePage {
         file_list,

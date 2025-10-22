@@ -149,7 +149,7 @@ pub(crate) async fn build_details_handler(
     let params = RustdocParams::new(&params.name)
         .with_version(params.version)
         .remove_page_kind()
-        .parse_with_metadata(&metadata)?;
+        .parse_with_metadata(&metadata);
 
     Ok(BuildDetailsPage {
         metadata,

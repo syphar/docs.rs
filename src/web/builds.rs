@@ -83,7 +83,7 @@ pub(crate) async fn build_list_handler(
         Some(params.version().clone()),
     )
     .await?;
-    let params = params.parse_with_metadata(&metadata)?;
+    let params = params.parse_with_metadata(&metadata);
 
     Ok(BuildsPage {
         metadata,
