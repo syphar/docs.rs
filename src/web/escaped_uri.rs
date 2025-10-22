@@ -1,4 +1,5 @@
 use crate::web::encode_url_path;
+use askama::filters::HtmlSafe;
 use http::{Uri, uri::PathAndQuery};
 use std::{borrow::Borrow, fmt::Display, iter, ops::Deref, str::FromStr};
 use url::form_urlencoded;
@@ -189,6 +190,8 @@ impl Display for EscapedURI {
         }
     }
 }
+
+impl HtmlSafe for EscapedURI {}
 
 impl TryFrom<EscapedURI> for Uri {
     type Error = anyhow::Error;
