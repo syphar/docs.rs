@@ -1361,23 +1361,41 @@ mod tests {
         assert_eq!(params.doc_target(), expected_target);
         assert_eq!(params.inner_path(), expected_path);
     }
-}
 
-// #[test_case(
-//     "/{name}/{version}/{target}/",
-//     RustdocParams::new(KRATE)
-//         .try_with_version("1.2.3").unwrap()
-//         .try_with_original_uri(format!("/{KRATE}/1.2.3/{UNKNOWN_TARGET}/")).unwrap()
-//         .with_doc_target(UNKNOWN_TARGET)
-//         .with_page_kind(PageKind::Rustdoc);
-//     "name, version, unknown target, with trailing slash"
-// )]
-// #[test_case(
-//     "/{name}/{version}/{target}",
-//     RustdocParams::new(KRATE)
-//         .try_with_version("1.2.3").unwrap()
-//         .try_with_original_uri(format!("/{KRATE}/1.2.3/{UNKNOWN_TARGET}")).unwrap()
-//         .with_doc_target(UNKNOWN_TARGET)
-//         .with_page_kind(PageKind::Rustdoc);
-//     "name, version, unknown target, no trailing slash"
-// )]
+    #[test]
+    fn test_validate_unknown_doc_target() {
+        let params = RustdocParams::new(KRATE)
+            .try_with_version("0.4.0")
+            .unwrap()
+            // this works, because we don't have the doc-target list here
+            .try_with_original_uri(format!("/{UNKNOWN_TARGET}/"))
+            .unwrap()
+            .with_doc_target(UNKNOWN_TARGET);
+
+        assert_eq!(params.doc_target(), Some(UNKNOWN_TARGET));
+
+        // now, parsing the params into parsed-params
+        // also works with the unknown target, but it's moved to the path
+        let params = params.parse(DEFAULT_TARGET.into(), KRATE.into(), TARGETS.iter().cloned());
+
+        assert!(params.doc_target().is_none());
+        assert_eq!(params.inner_path(), &format!("{UNKNOWN_TARGET}/"));
+
+        // this breaks!
+        assert!(params.clone().with_doc_target(UNKNOWN_TARGET).is_err());
+
+        dbg!(&params);
+        let params = params
+            .with_doc_target(OTHER_TARGET)
+            .expect("should succeed");
+        dbg!(&params);
+
+        assert_eq!(params.doc_target(), Some(OTHER_TARGET));
+
+        // reason is:
+        // when we see an unknown target in the params, we move it to the inner_path
+        // when we then overwrite the now empty target with a new, valid target,
+        // the path is still there.
+        assert_eq!(params.inner_path(), format!("{UNKNOWN_TARGET}/"));
+    }
+}
