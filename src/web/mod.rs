@@ -126,6 +126,34 @@ impl From<&ReqVersion> for ReqVersion {
     }
 }
 
+impl From<Version> for ReqVersion {
+    fn from(value: Version) -> Self {
+        ReqVersion::Exact(value)
+    }
+}
+
+impl From<&Version> for ReqVersion {
+    fn from(value: &Version) -> Self {
+        ReqVersion::Exact(value.clone())
+    }
+}
+
+impl TryFrom<String> for ReqVersion {
+    type Error = semver::Error;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        value.parse()
+    }
+}
+
+impl TryFrom<&str> for ReqVersion {
+    type Error = semver::Error;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        value.parse()
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct MatchedRelease {
     /// crate name

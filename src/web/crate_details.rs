@@ -205,7 +205,7 @@ impl CrateDetails {
         let metadata = MetaData {
             name: krate.name.clone(),
             version: version.clone(),
-            req_version: req_version.unwrap_or_else(|| ReqVersion::Exact(version.clone())),
+            req_version: req_version.unwrap_or_else(|| version.into()),
             description: krate.description.clone(),
             rustdoc_status: krate.rustdoc_status,
             target_name: krate.target_name.clone(),

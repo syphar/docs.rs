@@ -26,6 +26,9 @@ use tracing::trace;
 /// I have:
 /// - endpoints where the inner path should be used, some endpoints not
 /// - if used, then some pages need the static-suffix logic, and some do not.
+///
+/// TODO:
+/// * write test, initial params with unknown target, gets moved to inner_path?
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum PageKind {
@@ -929,7 +932,7 @@ mod tests {
         RustdocParams {
             original_uri: Some(format!("/krate/1.2.3/{OTHER_TARGET}").parse().unwrap()),
             name: KRATE.into(),
-            version: ReqVersion::Exact("1.2.3".parse().unwrap()),
+            version: "1.2.3".try_into().unwrap(),
             doc_target: Some(OTHER_TARGET.into()),
             inner_path: None,
             page_kind: Some(PageKind::Rustdoc),
@@ -942,7 +945,7 @@ mod tests {
         RustdocParams {
             original_uri: Some(format!("/krate/1.2.3/{OTHER_TARGET}/folder/something.html").parse().unwrap()),
             name: KRATE.into(),
-            version: ReqVersion::Exact("1.2.3".parse().unwrap()),
+            version: "1.2.3".try_into().unwrap(),
             doc_target: Some(OTHER_TARGET.into()),
             inner_path: None,
             page_kind: Some(PageKind::Rustdoc),
@@ -955,7 +958,7 @@ mod tests {
         RustdocParams {
             original_uri: Some(format!("/krate/1.2.3/{OTHER_TARGET}/").parse().unwrap()),
             name: KRATE.into(),
-            version: ReqVersion::Exact("1.2.3".parse().unwrap()),
+            version: "1.2.3".try_into().unwrap(),
             doc_target: Some(OTHER_TARGET.into()),
             inner_path: None,
             page_kind: Some(PageKind::Rustdoc),
@@ -968,7 +971,7 @@ mod tests {
         RustdocParams {
             original_uri: Some(format!("/krate/1.2.3/{OTHER_TARGET}/some/path/to/a/file.html").parse().unwrap()),
             name: KRATE.into(),
-            version: ReqVersion::Exact("1.2.3".parse().unwrap()),
+            version: "1.2.3".try_into().unwrap(),
             doc_target: Some(OTHER_TARGET.into()),
             inner_path: Some("some/path/to/a/file.html".into()),
             page_kind: Some(PageKind::Rustdoc),
@@ -981,7 +984,7 @@ mod tests {
         RustdocParams {
             original_uri: Some(format!("/krate/1.2.3/{OTHER_TARGET}/path_add/path/to/a/file.html").parse().unwrap()),
             name: KRATE.into(),
-            version: ReqVersion::Exact("1.2.3".parse().unwrap()),
+            version: "1.2.3".try_into().unwrap(),
             doc_target: Some(OTHER_TARGET.into()),
             inner_path: Some("path_add".into()),
             page_kind: Some(PageKind::Rustdoc),
@@ -1175,7 +1178,7 @@ mod tests {
     fn test_generate_fallback_url(path: &str, search: Option<&str>) {
         // non-default target, target stays in the url
         let mut params = RustdocParams::new("dummy")
-            .with_version(ReqVersion::Exact(Version::new(0, 4, 0)))
+            .with_version("0.4.0".parse::<Version>().unwrap())
             .with_doc_target(TARGETS[1])
             .with_inner_path(path)
             .parse(
@@ -1212,7 +1215,7 @@ mod tests {
             inner: RustdocParams {
                 original_uri: Some("/crate/dummy/0.4.0/source/README.md".parse().unwrap()),
                 name: "dummy".into(),
-                version: ReqVersion::Exact(Version::new(0, 4, 0)),
+                version: "0.4.0".parse::<Version>().unwrap().into(0),
                 doc_target: None,
                 inner_path: Some("README.md".into()),
                 page_kind: Some(PageKind::Source),
@@ -1244,7 +1247,7 @@ mod tests {
             inner: RustdocParams {
                 original_uri: Some("/crate/dummy/0.4.0/source/README.md".parse().unwrap()),
                 name: "dummy".into(),
-                version: ReqVersion::Exact(Version::new(0, 4, 0)),
+                version: "0.4.0".parse::<Version>().unwrap().into(),
                 doc_target: Some("x86_64-pc-windows-msvc".into()),
                 inner_path: Some("README.md".into()),
                 page_kind: Some(PageKind::Source),
@@ -1345,7 +1348,7 @@ mod tests {
         let params = RustdocParams {
             original_uri: Some("/dummy/0.2.0/dummy/struct.Dummy.html".parse().unwrap()),
             name: "dummy".into(),
-            version: ReqVersion::Exact(Version::new(0, 2, 0)),
+            version: "0.2.0".parse::<Version>().unwrap().into(),
             doc_target: Some("dummy".into()),
             inner_path: Some("struct.Dummy.html".into()),
             page_kind: Some(PageKind::Rustdoc),

@@ -3,7 +3,7 @@ use crate::{
     db::{BuildId, types::BuildStatus},
     impl_axum_webpage,
     web::{
-        MetaData, ReqVersion,
+        MetaData,
         error::{AxumNope, AxumResult},
         extractors::{
             DbConnection, Path,
@@ -147,7 +147,7 @@ pub(crate) async fn build_details_handler(
 
     let metadata = MetaData::from_crate(&mut conn, &params.name, &params.version, None).await?;
     let params = RustdocParams::new(&params.name)
-        .with_version(ReqVersion::Exact(params.version))
+        .with_version(params.version)
         .remove_page_kind()
         .parse_with_metadata(&metadata)?;
 

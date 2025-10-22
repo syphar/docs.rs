@@ -93,7 +93,7 @@
 #}
 {% macro releases_list(params, releases, use_target_redirect, retain_fragment) %}
     {%- for release in releases -%}
-        {%- set release_params = params.clone().with_version(ReqVersion::Exact(release.version.clone())) -%}
+        {%- set release_params = params.clone().with_version(release.version.clone()) -%}
 
         {# The url for the release, `/crate/:name/:version` #}
         {% set release_url %}

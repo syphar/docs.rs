@@ -590,7 +590,7 @@ pub(crate) async fn rustdoc_html_server_handler(
     // Find the path of the latest version for the `Go to latest` and `Permalink` links
     let permalink_path = params
         .clone()
-        .with_version(&ReqVersion::Exact(latest_version))
+        .with_version(&latest_version)
         .rustdoc_url()
         .append_raw_query(raw_query.as_deref());
 
