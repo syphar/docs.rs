@@ -39,9 +39,6 @@ pub(crate) enum PageKind {
 /// can extract rustdoc parameters from path and uri.
 ///
 /// includes parsing / interpretation logic using the crate metadata.
-///
-/// TODO: features to add?
-/// * generate standard URLs for these params? Same for the parsed version?
 #[derive(Clone, PartialEq, Debug)]
 pub(crate) struct RustdocParams {
     original_uri: Option<Uri>,
@@ -265,66 +262,66 @@ impl RustdocParams {
             .map(|s| s.into())
             .collect::<Vec<_>>();
 
-        let mut inner_path = if let Some(ref path) = self.inner_path {
+        let mut new_inner_path = if let Some(ref path) = self.inner_path {
             path.trim_start_matches('/').trim().to_string()
         } else {
             String::new()
         };
 
-        let mut doc_target: Option<String> = None;
+        let mut new_doc_target: Option<String> = None;
 
-        if let Some(ref given_target) = self.doc_target
-            && !given_target.trim().is_empty()
+        if let Some(ref given_doc_target) = self.doc_target
+            && !given_doc_target.trim().is_empty()
         {
-            let given_target = given_target.trim();
+            let given_target = given_doc_target.trim();
             // if a target is given in a separate url parameter, check if it's a target we
             // know about. If yes, keep it, if not, make it part of the path.
             if doc_targets.iter().any(|s| s == given_target) {
-                doc_target = Some(given_target.into());
+                new_doc_target = Some(given_target.into());
             } else {
-                doc_target = None;
-                if !inner_path.is_empty() {
-                    inner_path = format!("{}/{}", given_target, inner_path);
+                new_doc_target = None;
+                if !new_inner_path.is_empty() {
+                    new_inner_path = format!("{}/{}", given_target, new_inner_path);
                 } else if self.has_trailing_slash() {
-                    inner_path = format!("{}/", given_target);
+                    new_inner_path = format!("{}/", given_target);
                 } else {
-                    inner_path = given_target.into();
+                    new_inner_path = given_target.into();
                 }
             }
         } else {
             // there is no separate target component given in the route parameters.
             // We look at the first component of the path and see if it matches a target.
 
-            if let Some(pos) = inner_path.find('/') {
-                let potential_target = &inner_path[..pos];
+            if let Some(pos) = new_inner_path.find('/') {
+                let potential_target = &new_inner_path[..pos];
 
                 if doc_targets.iter().any(|s| s == potential_target) {
-                    doc_target = Some(potential_target.to_owned());
-                    inner_path = inner_path
+                    new_doc_target = Some(potential_target.to_owned());
+                    new_inner_path = new_inner_path
                         .get((pos + 1)..)
                         .map(ToOwned::to_owned)
                         .unwrap_or_default();
                 }
             } else {
                 // no slash in the path, can be target or inner path
-                if doc_targets.iter().any(|s| s == &inner_path) {
-                    doc_target = Some(inner_path.to_owned());
-                    inner_path.clear();
+                if doc_targets.iter().any(|s| s == &new_inner_path) {
+                    new_doc_target = Some(new_inner_path.to_owned());
+                    new_inner_path.clear();
                 } else {
-                    doc_target = None;
+                    new_doc_target = None;
                 }
             };
         }
 
-        if let Some(ref new_target) = doc_target {
+        if let Some(ref new_target) = new_doc_target {
             debug_assert!(!new_target.contains('/'));
             debug_assert!(new_target.contains('-'));
         }
 
-        debug_assert!(!inner_path.starts_with('/')); // we should trim leading slashes
+        debug_assert!(!new_inner_path.starts_with('/')); // we should trim leading slashes
 
-        self.inner_path = Some(inner_path);
-        self.doc_target = doc_target;
+        self.inner_path = Some(new_inner_path);
+        self.doc_target = new_doc_target;
 
         self
     }
@@ -799,11 +796,6 @@ fn path_is_folder(path: impl AsRef<str>) -> bool {
 /// We're working around that by re-attaching the static suffix. This function is to find the
 /// shared suffix between the route and the actual path.
 fn find_static_route_suffix<'a, 'b>(route: &'a str, path: &'b str) -> Option<String> {
-    // TODO: optimization: return Option<'a str> directly, avoiding allocation
-
-    // TODO: compare component count. if it doesn't match, return None. But only if there is no
-    // `{*path}` component.
-
     let mut suffix: Vec<&'a str> = Vec::new();
 
     for (route_component, path_component) in route.rsplit('/').zip(path.rsplit('/')) {
@@ -1316,4 +1308,75 @@ mod tests {
             format!("{OTHER_TARGET}/dummy/struct.Dummy.html")
         );
     }
+
+    #[test_case(
+        "/",
+        None, None,
+        None, ""
+        ; "no target, no path"
+    )]
+    #[test_case(
+        &format!("/{DEFAULT_TARGET}"),
+        Some(DEFAULT_TARGET), None,
+        Some(DEFAULT_TARGET), "";
+        "existing target, no path"
+    )]
+    #[test_case(
+        &format!("/{UNKNOWN_TARGET}"),
+        Some(UNKNOWN_TARGET), None,
+        None, UNKNOWN_TARGET;
+        "unknown target, no path"
+    )]
+    #[test_case(
+        &format!("/{UNKNOWN_TARGET}/"),
+        Some(UNKNOWN_TARGET), Some("something/file.html"),
+        None, &format!("{UNKNOWN_TARGET}/something/file.html");
+        "unknown target, with path, trailling slash is kept"
+    )]
+    #[test_case(
+        &format!("/{UNKNOWN_TARGET}/"),
+        Some(UNKNOWN_TARGET), None,
+        None, &format!("{UNKNOWN_TARGET}/");
+        "unknown target, no path, trailling slash is kept"
+    )]
+    fn test_with_fixed_target_and_path(
+        original_uri: &str,
+        target: Option<&str>,
+        path: Option<&str>,
+        expected_target: Option<&str>,
+        expected_path: &str,
+    ) {
+        let params = RustdocParams::new(KRATE)
+            .try_with_version("0.4.0")
+            .unwrap()
+            .try_with_original_uri(original_uri)
+            .unwrap()
+            .with_maybe_doc_target(target)
+            .with_maybe_inner_path(path)
+            .with_fixed_target_and_path(DEFAULT_TARGET.into(), TARGETS.iter().cloned());
+
+        dbg!(&params);
+
+        assert_eq!(params.doc_target(), expected_target);
+        assert_eq!(params.inner_path(), expected_path);
+    }
 }
+
+// #[test_case(
+//     "/{name}/{version}/{target}/",
+//     RustdocParams::new(KRATE)
+//         .try_with_version("1.2.3").unwrap()
+//         .try_with_original_uri(format!("/{KRATE}/1.2.3/{UNKNOWN_TARGET}/")).unwrap()
+//         .with_doc_target(UNKNOWN_TARGET)
+//         .with_page_kind(PageKind::Rustdoc);
+//     "name, version, unknown target, with trailing slash"
+// )]
+// #[test_case(
+//     "/{name}/{version}/{target}",
+//     RustdocParams::new(KRATE)
+//         .try_with_version("1.2.3").unwrap()
+//         .try_with_original_uri(format!("/{KRATE}/1.2.3/{UNKNOWN_TARGET}")).unwrap()
+//         .with_doc_target(UNKNOWN_TARGET)
+//         .with_page_kind(PageKind::Rustdoc);
+//     "name, version, unknown target, no trailing slash"
+// )]
