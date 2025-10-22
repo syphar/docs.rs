@@ -64,7 +64,6 @@ pub(crate) async fn build_list_handler(
     mut conn: DbConnection,
     Extension(config): Extension<Arc<Config>>,
 ) -> AxumResult<impl IntoResponse> {
-    let params = params.remove_page_kind();
     let version = match_version(&mut conn, &params.name(), &params.version())
         .await?
         .assume_exact_name()?

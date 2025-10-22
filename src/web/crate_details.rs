@@ -471,7 +471,6 @@ pub(crate) async fn crate_details_handler(
     Extension(storage): Extension<Arc<AsyncStorage>>,
     mut conn: DbConnection,
 ) -> AxumResult<AxumResponse> {
-    let params = params.remove_page_kind();
     if params.original_path() != params.crate_details_url().path() {
         return Err(AxumNope::Redirect(
             params.crate_details_url(),
