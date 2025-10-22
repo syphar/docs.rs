@@ -1,5 +1,5 @@
 use crate::{
-    db::types::{BuildStatus, Feature},
+    db::types::{BuildStatus, Feature, version::Version},
     docbuilder::DocCoverage,
     error::Result,
     registry_api::{CrateData, CrateOwner, ReleaseData},

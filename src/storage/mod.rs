@@ -4,9 +4,11 @@ mod database;
 mod s3;
 
 pub use self::compression::{CompressionAlgorithm, CompressionAlgorithms, compress, decompress};
-use self::compression::{wrap_reader_for_decompression, wrap_writer_for_compression};
-use self::database::DatabaseBackend;
-use self::s3::S3Backend;
+use self::{
+    compression::{wrap_reader_for_decompression, wrap_writer_for_compression},
+    database::DatabaseBackend,
+    s3::S3Backend,
+};
 use crate::{
     Config, InstanceMetrics,
     db::{
@@ -23,6 +25,7 @@ use fn_error_context::context;
 use futures_util::stream::BoxStream;
 use mime::Mime;
 use path_slash::PathExt;
+use semver::Version;
 use std::{
     fmt,
     fs::{self, File},

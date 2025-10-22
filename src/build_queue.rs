@@ -1,5 +1,7 @@
 use crate::Context;
-use crate::db::{CrateId, Pool, delete_crate, delete_version, update_latest_version_id};
+use crate::db::{
+    CrateId, Pool, delete_crate, delete_version, types::version::Version, update_latest_version_id,
+};
 use crate::docbuilder::PackageKind;
 use crate::error::Result;
 use crate::storage::AsyncStorage;
@@ -9,7 +11,6 @@ use crate::{Config, Index, InstanceMetrics, RustwideBuilder};
 use anyhow::Context as _;
 use fn_error_context::context;
 use futures_util::{StreamExt, stream::TryStreamExt};
-use semver::Version;
 use sqlx::Connection as _;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -96,15 +97,15 @@ impl AsyncBuildQueue {
 
         sqlx::query!(
             "INSERT INTO queue (name, version, priority, registry)
-                 VALUES ($1, $2, $3, $4)
-                 ON CONFLICT (name, version) DO UPDATE
-                    SET priority = EXCLUDED.priority,
-                        registry = EXCLUDED.registry,
-                        attempt = 0,
-                        last_attempt = NULL
-                ;",
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (name, version) DO UPDATE
+                SET priority = EXCLUDED.priority,
+                    registry = EXCLUDED.registry,
+                    attempt = 0,
+                    last_attempt = NULL
+            ;",
             name,
-            version,
+            version.to_string(),
             priority,
             registry,
         )
@@ -165,15 +166,30 @@ impl AsyncBuildQueue {
     pub(crate) async fn queued_crates(&self) -> Result<Vec<QueuedCrate>> {
         let mut conn = self.db.get_async().await?;
 
-        Ok(sqlx::query_as!(
-            QueuedCrate,
-            "SELECT id, name, version, priority, registry, attempt
-                 FROM queue
-                 WHERE attempt < $1
-                 ORDER BY priority ASC, attempt ASC, id ASC",
+        // QueuedCrate,
+        Ok(sqlx::query!(
+            r#"SELECT
+                id,
+                name,
+                version as "version: Version",
+                priority,
+                registry,
+                attempt
+             FROM queue
+             WHERE attempt < $1
+             ORDER BY priority ASC, attempt ASC, id ASC"#,
             self.max_attempts
         )
-        .fetch_all(&mut *conn)
+        .fetch(&mut *conn)
+        .map_ok(|row| QueuedCrate {
+            id: row.id,
+            name: row.name,
+            version: row.version,
+            priority: row.priority,
+            registry: row.registry,
+            attempt: row.attempt,
+        })
+        .try_collect()
         .await?)
     }
 
@@ -189,7 +205,7 @@ impl AsyncBuildQueue {
              ",
             self.max_attempts,
             name,
-            version,
+            version as Version,
         )
         .fetch_optional(&mut *conn)
         .await?
@@ -268,7 +284,7 @@ impl AsyncBuildQueue {
                     &self.storage,
                     &self.config,
                     &release.name,
-                    &release.version,
+                    &release.version.parse().unwrap(),
                 )
                 .await
                 .with_context(|| {
@@ -297,7 +313,7 @@ impl AsyncBuildQueue {
                 match self
                     .add_crate(
                         &release.name,
-                        &release.version,
+                        &release.version.parse().unwrap(),
                         priority,
                         index.repository_url(),
                     )
@@ -329,7 +345,7 @@ impl AsyncBuildQueue {
                     .set_yanked_inner(
                         &mut conn,
                         release.name.as_str(),
-                        release.version.as_str(),
+                        release.version.parse().unwrap(),
                         yanked.is_some(),
                     )
                     .await
@@ -691,10 +707,10 @@ pub async fn queue_rebuilds(
     }
 
     let mut results = sqlx::query!(
-        "SELECT i.* FROM (
+        r#"SELECT i.* FROM (
              SELECT
                  c.name,
-                 r.version,
+                 r.version as "version: Version",
                  (
                     SELECT MAX(COALESCE(b.build_finished, b.build_started))
                     FROM builds AS b
@@ -707,7 +723,7 @@ pub async fn queue_rebuilds(
                  r.rustdoc_status = TRUE
          ) as i
          ORDER BY i.last_build_attempt ASC
-         LIMIT $1",
+         LIMIT $1"#,
         rebuilds_to_queue,
     )
     .fetch(&mut *conn);

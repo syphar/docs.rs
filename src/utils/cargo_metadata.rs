@@ -1,7 +1,7 @@
 use crate::error::Result;
 use anyhow::{Context, bail};
 use rustwide::{Toolchain, Workspace, cmd::Command};
-use semver::VersionReq;
+use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;

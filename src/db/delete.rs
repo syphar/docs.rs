@@ -1,5 +1,6 @@
 use crate::{
     Config,
+    db::types::version::Version,
     error::Result,
     storage::{AsyncStorage, rustdoc_archive_path, source_archive_path},
 };
