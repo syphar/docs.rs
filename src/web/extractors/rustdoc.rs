@@ -7,7 +7,7 @@ use crate::{
         extractors::Path,
     },
 };
-use anyhow::{Result, anyhow, bail};
+use anyhow::{Context as _, Result, anyhow, bail};
 use axum::{
     RequestPartsExt,
     extract::{FromRequestParts, MatchedPath},
@@ -89,22 +89,20 @@ where
             find_static_route_suffix(&matched_route, &uri_path)
         };
 
-        Ok(RustdocParams {
-            name: params.name.trim().to_owned(),
-            version: params.version,
-            doc_target: params.target.map(|t| t.trim().to_owned()),
-            inner_path: params.path.map(|p| p.trim().to_owned()),
-            original_uri: Some(original_uri),
-            page_kind: Some(PageKind::Rustdoc),
-            static_route_suffix,
-        })
+        Ok(RustdocParams::new(params.name)
+            .with_version(params.version)
+            .with_maybe_doc_target(params.target)
+            .with_maybe_inner_path(params.path)
+            .with_original_uri(original_uri)
+            .with_page_kind(PageKind::Rustdoc)
+            .with_maybe_static_route_suffix(static_route_suffix))
     }
 }
 
 impl RustdocParams {
     pub(crate) fn new(name: impl Into<String>) -> Self {
         Self {
-            name: name.into(),
+            name: name.into().trim().into(),
             version: ReqVersion::default(),
             original_uri: None,
             doc_target: None,
@@ -116,7 +114,7 @@ impl RustdocParams {
 
     pub(crate) fn with_name(self, name: impl Into<String>) -> Self {
         RustdocParams {
-            name: name.into(),
+            name: name.into().trim().into(),
             ..self
         }
     }
@@ -128,9 +126,34 @@ impl RustdocParams {
         }
     }
 
+    pub(crate) fn with_static_route_suffix(self, static_route_suffix: impl Into<String>) -> Self {
+        self.with_maybe_static_route_suffix(Some(static_route_suffix))
+    }
+
+    pub(crate) fn with_maybe_static_route_suffix(
+        self,
+        static_route_suffix: Option<impl Into<String>>,
+    ) -> Self {
+        RustdocParams {
+            static_route_suffix: static_route_suffix.map(Into::into),
+            ..self
+        }
+    }
+
+    pub(crate) fn try_with_version<V>(self, version: V) -> Result<Self>
+    where
+        V: TryInto<ReqVersion>,
+        V::Error: std::error::Error + Send + Sync + 'static,
+    {
+        Ok(RustdocParams {
+            version: version.try_into().context("couldn't parse version")?,
+            ..self
+        })
+    }
+
     pub(crate) fn with_maybe_doc_target(self, doc_target: Option<impl Into<String>>) -> Self {
         RustdocParams {
-            doc_target: doc_target.map(Into::into),
+            doc_target: doc_target.map(|t| t.into().trim().to_owned()),
             ..self
         }
     }
@@ -145,7 +168,7 @@ impl RustdocParams {
 
     pub(crate) fn with_maybe_inner_path(self, inner_path: Option<impl Into<String>>) -> Self {
         RustdocParams {
-            inner_path: inner_path.map(Into::into),
+            inner_path: inner_path.map(|t| t.into().trim().to_owned()),
             ..self
         }
     }
@@ -155,6 +178,17 @@ impl RustdocParams {
             original_uri: Some(original_uri.into()),
             ..self
         }
+    }
+
+    pub(crate) fn try_with_original_uri<V>(self, original_uri: V) -> Result<Self>
+    where
+        V: TryInto<Uri>,
+        V::Error: std::error::Error + Send + Sync + 'static,
+    {
+        Ok(RustdocParams {
+            original_uri: Some(original_uri.try_into().context("couldn't parse uri")?),
+            ..self
+        })
     }
 
     pub(crate) fn with_page_kind(self, page_kind: impl Into<PageKind>) -> Self {
@@ -803,7 +837,6 @@ mod tests {
     use super::*;
     use crate::test::{AxumResponseTestExt, AxumRouterTestExt};
     use axum::{Router, routing::get};
-    use semver::Version;
     use test_case::test_case;
 
     static KRATE: &str = "krate";
@@ -838,158 +871,105 @@ mod tests {
 
     #[test_case(
         "/{name}",
-        RustdocParams {
-            original_uri: Some("/krate".parse().unwrap()),
-            name: KRATE.into(),
-            version: ReqVersion::Latest,
-            doc_target: None,
-            inner_path: None,
-            page_kind: Some(PageKind::Rustdoc),
-            static_route_suffix: None,
-        };
+        RustdocParams::new(KRATE)
+            .try_with_original_uri("/krate").unwrap()
+            .with_page_kind(PageKind::Rustdoc);
         "just name"
     )]
     #[test_case(
         "/{name}/",
-        RustdocParams {
-            original_uri: Some("/krate/".parse().unwrap()),
-            name: KRATE.into(),
-            version: ReqVersion::Latest,
-            doc_target: None,
-            inner_path: None,
-            page_kind: Some(PageKind::Rustdoc),
-            static_route_suffix: None,
-        };
+        RustdocParams::new(KRATE)
+            .try_with_original_uri("/krate/").unwrap()
+            .with_page_kind(PageKind::Rustdoc);
         "just name with trailing slash"
     )]
     #[test_case(
         "/{name}/{version}",
-        RustdocParams {
-            original_uri: Some("/krate/latest".parse().unwrap()),
-            name: KRATE.into(),
-            version: ReqVersion::Latest,
-            doc_target: None,
-            inner_path: None,
-            page_kind: Some(PageKind::Rustdoc),
-            static_route_suffix: None,
-        };
+        RustdocParams::new(KRATE)
+            .try_with_original_uri("/krate/latest").unwrap()
+            .with_page_kind(PageKind::Rustdoc);
         "just name and version"
     )]
     #[test_case(
         "/{name}/{version}/{*path}",
-        RustdocParams {
-            original_uri: Some("/krate/latest/static.html".parse().unwrap()),
-            name: KRATE.into(),
-            version: ReqVersion::Latest,
-            doc_target: None,
-            inner_path: Some("static.html".into()),
-            page_kind: Some(PageKind::Rustdoc),
-            static_route_suffix: None,
-        };
+        RustdocParams::new(KRATE)
+            .try_with_original_uri("/krate/latest/static.html").unwrap()
+            .with_inner_path("static.html")
+            .with_page_kind(PageKind::Rustdoc);
         "name, version, path extract"
     )]
     #[test_case(
         "/{name}/{version}/{path}/static.html",
-        RustdocParams {
-            original_uri: Some("/krate/latest/path_add/static.html".parse().unwrap()),
-            name: KRATE.into(),
-            version: ReqVersion::Latest,
-            doc_target: None,
-            inner_path: Some("path_add".into()),
-            page_kind: Some(PageKind::Rustdoc),
-            static_route_suffix: Some("static.html".into()),
-        };
+        RustdocParams::new(KRATE)
+            .try_with_original_uri("/krate/latest/path_add/static.html").unwrap()
+            .with_inner_path("path_add")
+            .with_static_route_suffix("static.html")
+            .with_page_kind(PageKind::Rustdoc);
         "name, version, path extract, static suffix"
     )]
     #[test_case(
         "/{name}/{version}/clapproc%20%60macro.html",
-        RustdocParams {
-            original_uri: Some("/clap/latest/clapproc%20%60macro.html".parse().unwrap()),
-            name: "clap".into(),
-            version: ReqVersion::Latest,
-            doc_target: None,
-            inner_path: None,
-            page_kind: Some(PageKind::Rustdoc),
-            static_route_suffix: Some("clapproc `macro.html".into()),
-        };
+        RustdocParams::new("clap")
+            .try_with_original_uri("/clap/latest/clapproc%20%60macro.html").unwrap()
+            .with_static_route_suffix("clapproc `macro.html")
+            .with_page_kind(PageKind::Rustdoc);
         "name, version, static suffix with some urlencoding"
     )]
     #[test_case(
         "/{name}/{version}/static.html",
-        RustdocParams {
-            original_uri: Some("/krate/latest/static.html".parse().unwrap()),
-            name: KRATE.into(),
-            version: ReqVersion::Latest,
-            doc_target: None,
-            inner_path: None,
-            page_kind: Some(PageKind::Rustdoc),
-            static_route_suffix: Some("static.html".into()),
-        };
+        RustdocParams::new(KRATE)
+            .try_with_original_uri("/krate/latest/static.html").unwrap()
+            .with_static_route_suffix("static.html")
+            .with_page_kind(PageKind::Rustdoc);
         "name, version, static suffix"
     )]
     #[test_case(
         "/{name}/{version}/{target}",
-        RustdocParams {
-            original_uri: Some(format!("/krate/1.2.3/{OTHER_TARGET}").parse().unwrap()),
-            name: KRATE.into(),
-            version: "1.2.3".try_into().unwrap(),
-            doc_target: Some(OTHER_TARGET.into()),
-            inner_path: None,
-            page_kind: Some(PageKind::Rustdoc),
-            static_route_suffix: None,
-        };
+        RustdocParams::new(KRATE)
+            .try_with_version("1.2.3").unwrap()
+            .try_with_original_uri(format!("/krate/1.2.3/{OTHER_TARGET}")).unwrap()
+            .with_doc_target(OTHER_TARGET)
+            .with_page_kind(PageKind::Rustdoc);
         "name, version, target"
     )]
     #[test_case(
         "/{name}/{version}/{target}/folder/something.html",
-        RustdocParams {
-            original_uri: Some(format!("/krate/1.2.3/{OTHER_TARGET}/folder/something.html").parse().unwrap()),
-            name: KRATE.into(),
-            version: "1.2.3".try_into().unwrap(),
-            doc_target: Some(OTHER_TARGET.into()),
-            inner_path: None,
-            page_kind: Some(PageKind::Rustdoc),
-            static_route_suffix: Some("folder/something.html".into()),
-        };
+        RustdocParams::new(KRATE)
+            .try_with_version("1.2.3").unwrap()
+            .try_with_original_uri(format!("/krate/1.2.3/{OTHER_TARGET}/folder/something.html")).unwrap()
+            .with_doc_target(OTHER_TARGET)
+            .with_static_route_suffix("folder/something.html")
+            .with_page_kind(PageKind::Rustdoc);
         "name, version, target, static suffix"
     )]
     #[test_case(
         "/{name}/{version}/{target}/",
-        RustdocParams {
-            original_uri: Some(format!("/krate/1.2.3/{OTHER_TARGET}/").parse().unwrap()),
-            name: KRATE.into(),
-            version: "1.2.3".try_into().unwrap(),
-            doc_target: Some(OTHER_TARGET.into()),
-            inner_path: None,
-            page_kind: Some(PageKind::Rustdoc),
-            static_route_suffix: None,
-        };
+        RustdocParams::new(KRATE)
+            .try_with_version("1.2.3").unwrap()
+            .try_with_original_uri(format!("/krate/1.2.3/{OTHER_TARGET}/")).unwrap()
+            .with_doc_target(OTHER_TARGET)
+            .with_page_kind(PageKind::Rustdoc);
         "name, version, target trailing slash"
     )]
     #[test_case(
         "/{name}/{version}/{target}/{*path}",
-        RustdocParams {
-            original_uri: Some(format!("/krate/1.2.3/{OTHER_TARGET}/some/path/to/a/file.html").parse().unwrap()),
-            name: KRATE.into(),
-            version: "1.2.3".try_into().unwrap(),
-            doc_target: Some(OTHER_TARGET.into()),
-            inner_path: Some("some/path/to/a/file.html".into()),
-            page_kind: Some(PageKind::Rustdoc),
-            static_route_suffix: None,
-        };
+        RustdocParams::new(KRATE)
+            .try_with_version("1.2.3").unwrap()
+            .try_with_original_uri(format!("/krate/1.2.3/{OTHER_TARGET}/some/path/to/a/file.html")).unwrap()
+            .with_doc_target(OTHER_TARGET)
+            .with_inner_path("some/path/to/a/file.html")
+            .with_page_kind(PageKind::Rustdoc);
         "name, version, target, path"
     )]
     #[test_case(
         "/{name}/{version}/{target}/{path}/path/to/a/file.html",
-        RustdocParams {
-            original_uri: Some(format!("/krate/1.2.3/{OTHER_TARGET}/path_add/path/to/a/file.html").parse().unwrap()),
-            name: KRATE.into(),
-            version: "1.2.3".try_into().unwrap(),
-            doc_target: Some(OTHER_TARGET.into()),
-            inner_path: Some("path_add".into()),
-            page_kind: Some(PageKind::Rustdoc),
-            static_route_suffix:  Some("path/to/a/file.html".into()),
-        };
+        RustdocParams::new(KRATE)
+            .try_with_version("1.2.3").unwrap()
+            .try_with_original_uri(format!("/krate/1.2.3/{OTHER_TARGET}/path_add/path/to/a/file.html")).unwrap()
+            .with_doc_target(OTHER_TARGET)
+            .with_inner_path("path_add")
+            .with_static_route_suffix("path/to/a/file.html")
+            .with_page_kind(PageKind::Rustdoc);
         "name, version, target, path, static suffix"
     )]
     #[tokio::test]
@@ -1153,7 +1133,8 @@ mod tests {
             .with_version(ReqVersion::Latest)
             .with_maybe_doc_target(target)
             .with_maybe_inner_path(path)
-            .with_original_uri(dummy_path.parse::<Uri>().unwrap())
+            .try_with_original_uri(&dummy_path)
+            .unwrap()
             .parse(DEFAULT_TARGET.into(), KRATE.into(), TARGETS.iter().cloned());
 
         assert_eq!(parsed.name(), KRATE);
@@ -1173,13 +1154,15 @@ mod tests {
     #[test_case("dummy/some_module/", Some("some_module"))]
     #[test_case("src/folder1/folder2/logic.rs.html", Some("logic"))]
     #[test_case("src/non_source_file.rs", None)]
-    #[test_case("html", None; "plan file without extension")]
+    #[test_case("html", None; "plain file without extension")]
+    #[test_case("something.html", Some("html"); "plain file")]
     #[test_case("", None)]
-    fn test_generate_fallback_url(path: &str, search: Option<&str>) {
-        // non-default target, target stays in the url
+    fn test_generate_fallback_search(path: &str, search: Option<&str>) {
         let mut params = RustdocParams::new("dummy")
-            .with_version("0.4.0".parse::<Version>().unwrap())
-            .with_doc_target(TARGETS[1])
+            .try_with_version("0.4.0")
+            .unwrap()
+            // non-default target, target stays in the url
+            .with_doc_target(OTHER_TARGET)
             .with_inner_path(path)
             .parse(
                 DEFAULT_TARGET.into(),
@@ -1212,14 +1195,12 @@ mod tests {
     #[test]
     fn test_parse_source() {
         let params = RustdocParams::new("dummy")
-            .with_version("0.4.0".parse::<Version>().unwrap())
+            .try_with_version("0.4.0")
+            .unwrap()
             .with_inner_path("README.md")
             .with_page_kind(PageKind::Source)
-            .with_original_uri(
-                "/crate/dummy/0.4.0/source/README.md"
-                    .parse::<Uri>()
-                    .unwrap(),
-            )
+            .try_with_original_uri("/crate/dummy/0.4.0/source/README.md")
+            .unwrap()
             .parse(
                 DEFAULT_TARGET.into(),
                 "dummy".into(),
@@ -1307,14 +1288,12 @@ mod tests {
     #[test]
     fn test_case_1() {
         let params = RustdocParams::new("dummy")
-            .with_version("0.2.0".parse::<Version>().unwrap())
+            .try_with_version("0.2.0")
+            .unwrap()
             .with_inner_path("struct.Dummy.html")
             .with_page_kind(PageKind::Rustdoc)
-            .with_original_uri(
-                "/dummy/0.2.0/dummy/struct.Dummy.html"
-                    .parse::<Uri>()
-                    .unwrap(),
-            )
+            .try_with_original_uri("/dummy/0.2.0/dummy/struct.Dummy.html")
+            .unwrap()
             .parse(Some(DEFAULT_TARGET), Some("dummy"), TARGETS.iter().cloned());
 
         assert!(params.doc_target().is_none());
