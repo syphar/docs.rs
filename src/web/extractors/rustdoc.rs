@@ -252,112 +252,100 @@ impl RustdocParams {
         V: Into<String>,
     {
         let default_target = default_target.map(Into::into);
-        debug_assert!(
-            default_target
-                .as_ref()
-                .map(|s| !s.is_empty())
-                .unwrap_or(true)
-        );
+        debug_assert!(default_target.as_ref().map_or(true, |s| !s.is_empty()));
 
-        let doc_targets = doc_targets
-            .into_iter()
-            .map(|s| s.into())
-            .collect::<Vec<_>>();
+        let doc_targets: Vec<String> = doc_targets.into_iter().map(Into::into).collect();
+        let is_valid_target = |t: &str| doc_targets.iter().any(|s| s == t);
 
-        let mut new_inner_path = if let Some(ref path) = self.inner_path {
-            path.trim_start_matches('/').trim().to_string()
-        } else {
-            String::new()
-        };
+        let inner_path = self
+            .inner_path
+            .as_deref()
+            .unwrap_or("")
+            .trim_start_matches('/')
+            .trim()
+            .to_string();
 
-        let mut new_doc_target: Option<String> = None;
-
-        if let Some(ref given_doc_target) = self.doc_target
-            && !given_doc_target.trim().is_empty()
+        let (doc_target, inner_path) = if let Some(given_target) = self
+            .doc_target
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
         {
-            let given_target = given_doc_target.trim();
-            // if a target is given in a separate url parameter, check if it's a target we
-            // know about. If yes, keep it, if not, make it part of the path.
-            if doc_targets.iter().any(|s| s == given_target) {
-                new_doc_target = Some(given_target.into());
+            if is_valid_target(given_target) {
+                (Some(given_target.to_string()), inner_path)
             } else {
-                new_doc_target = None;
-                if !new_inner_path.is_empty() {
-                    new_inner_path = format!("{}/{}", given_target, new_inner_path);
-                } else if self.has_trailing_slash() {
-                    new_inner_path = format!("{}/", given_target);
+                // The given `doc_target` is not in the list of valid targets,
+                // so we assume it's part of the path.
+                let path = if inner_path.is_empty() {
+                    if self.has_trailing_slash() {
+                        format!("{}/", given_target)
+                    } else {
+                        given_target.to_string()
+                    }
                 } else {
-                    new_inner_path = given_target.into();
-                }
+                    format!("{}/{}", given_target, inner_path)
+                };
+                (None, path)
             }
         } else {
-            // there is no separate target component given in the route parameters.
-            // We look at the first component of the path and see if it matches a target.
-
-            if let Some(pos) = new_inner_path.find('/') {
-                let potential_target = &new_inner_path[..pos];
-
-                if doc_targets.iter().any(|s| s == potential_target) {
-                    new_doc_target = Some(potential_target.to_owned());
-                    new_inner_path = new_inner_path
-                        .get((pos + 1)..)
-                        .map(ToOwned::to_owned)
-                        .unwrap_or_default();
+            // No `doc_target` was given, so we try to extract it from the path.
+            if let Some((potential_target, rest)) = inner_path.split_once('/') {
+                if is_valid_target(potential_target) {
+                    (Some(potential_target.to_string()), rest.to_string())
+                } else {
+                    // The first path component is not a valid target.
+                    (None, inner_path)
                 }
             } else {
-                // no slash in the path, can be target or inner path
-                if doc_targets.iter().any(|s| s == &new_inner_path) {
-                    new_doc_target = Some(new_inner_path.to_owned());
-                    new_inner_path.clear();
+                // The path has no slashes, so the whole path could be a target.
+                if is_valid_target(&inner_path) {
+                    (Some(inner_path), String::new())
                 } else {
-                    new_doc_target = None;
+                    (None, inner_path)
                 }
-            };
-        }
+            }
+        };
 
-        if let Some(ref new_target) = new_doc_target {
+        if let Some(ref new_target) = doc_target {
             debug_assert!(!new_target.contains('/'));
             debug_assert!(new_target.contains('-'));
         }
 
-        debug_assert!(!new_inner_path.starts_with('/')); // we should trim leading slashes
+        debug_assert!(!inner_path.starts_with('/')); // we should trim leading slashes
 
-        self.inner_path = Some(new_inner_path);
-        self.doc_target = new_doc_target;
+        self.inner_path = Some(inner_path);
+        self.doc_target = doc_target;
 
         self
     }
 
-    pub(crate) fn parse<D, T, I, V>(
+    pub(crate) fn parse(
         self,
-        default_target: Option<D>,
-        target_name: Option<T>,
-        doc_targets: I,
-    ) -> ParsedRustdocParams
-    where
-        D: Into<String>,
-        T: Into<String>,
-        I: IntoIterator<Item = V>,
-        V: Into<String>,
-    {
+        default_target: Option<impl Into<String>>,
+        target_name: Option<impl Into<String>>,
+        doc_targets: impl IntoIterator<Item = impl Into<String>>,
+    ) -> ParsedRustdocParams {
         let doc_targets: Vec<_> = doc_targets.into_iter().map(Into::into).collect();
         let default_target = default_target.map(Into::into);
         let inner = self.with_fixed_target_and_path(default_target.as_deref(), doc_targets.iter());
 
         let mut merged_inner_path = inner.inner_path().to_owned();
-        if matches!(inner.page_kind, Some(PageKind::Rustdoc)) {
-            if let Some(ref static_route_suffix) = inner.static_route_suffix
-                && !static_route_suffix.is_empty()
-            {
-                if !merged_inner_path.is_empty() {
-                    merged_inner_path.push('/');
-                }
-                merged_inner_path.push_str(&static_route_suffix);
+        if inner.page_kind == Some(PageKind::Rustdoc)
+            && let Some(suffix) = inner
+                .static_route_suffix
+                .as_deref()
+                .filter(|s| !s.is_empty())
+        {
+            if !merged_inner_path.is_empty() {
+                merged_inner_path.push('/');
             }
-        };
+            merged_inner_path.push_str(suffix);
+        }
 
         let target_name = target_name.map(Into::into);
-        debug_assert!(target_name.as_ref().map(|s| !s.is_empty()).unwrap_or(true));
+        if let Some(name) = target_name.as_ref() {
+            debug_assert!(!name.is_empty());
+        }
 
         ParsedRustdocParams {
             doc_targets,
