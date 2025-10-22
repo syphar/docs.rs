@@ -649,9 +649,6 @@ pub(crate) async fn get_all_platforms_inner(
         .load_and_parse(&mut conn, matched_release.id())
         .await?;
 
-    dbg!(&params);
-    dbg!(&params.platforms_partial_url());
-
     if !matched_release.build_status().is_success() {
         // when the build wasn't finished, we don't have any target platforms
         // we could read from.
@@ -1803,7 +1800,7 @@ mod tests {
                 response.redirect_target().unwrap_or_default(),
             );
             let text = response.text().await.unwrap();
-            let list1 = dbg!(check_links(text.clone(), false, should_contain_redirect));
+            let list1 = check_links(text.clone(), false, should_contain_redirect);
 
             // Same test with AJAX endpoint.
             let platform_menu_url = kuchikiki::parse_html()
@@ -1827,7 +1824,6 @@ mod tests {
                 true,
                 should_contain_redirect,
             );
-            dbg!(&list2);
             assert_eq!(list1, list2);
         }
 

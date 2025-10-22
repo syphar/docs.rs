@@ -286,8 +286,6 @@ impl RustdocParams {
 
         debug_assert!(!inner_path.starts_with('/')); // we should trim leading slashes
 
-        dbg!(&inner_path);
-
         self.inner_path = Some(inner_path);
         self.doc_target = doc_target;
 
@@ -306,11 +304,9 @@ impl RustdocParams {
         I: IntoIterator<Item = V>,
         V: Into<String>,
     {
-        dbg!(&self);
         let doc_targets: Vec<_> = doc_targets.into_iter().map(Into::into).collect();
         let default_target = default_target.map(Into::into);
         let inner = self.with_fixed_target_and_path(default_target.as_deref(), doc_targets.iter());
-        dbg!(&inner);
 
         let mut merged_inner_path = inner.inner_path().to_owned();
         if matches!(inner.page_kind, Some(PageKind::Rustdoc)) {
@@ -326,8 +322,6 @@ impl RustdocParams {
 
         let target_name = target_name.map(Into::into);
         debug_assert!(target_name.as_ref().map(|s| !s.is_empty()).unwrap_or(true));
-
-        dbg!(&merged_inner_path);
 
         dbg!(ParsedRustdocParams {
             doc_targets,
@@ -1152,20 +1146,12 @@ mod tests {
             dummy_path.push('/');
         }
 
-        dbg!(&dummy_path);
-
-        let parsed = dbg!(
-            RustdocParams::new(KRATE)
-                .with_version(ReqVersion::Latest)
-                .with_maybe_doc_target(target)
-                .with_maybe_inner_path(path)
-                .with_original_uri(dummy_path.parse::<Uri>().unwrap())
-        )
-        .parse(DEFAULT_TARGET.into(), KRATE.into(), TARGETS.iter().cloned());
-        dbg!(&parsed);
-        dbg!(&parsed.path_for_rustdoc_url());
-        dbg!(&parsed.storage_path());
-        dbg!(&parsed.path_is_folder());
+        let parsed = RustdocParams::new(KRATE)
+            .with_version(ReqVersion::Latest)
+            .with_maybe_doc_target(target)
+            .with_maybe_inner_path(path)
+            .with_original_uri(dummy_path.parse::<Uri>().unwrap())
+            .parse(DEFAULT_TARGET.into(), KRATE.into(), TARGETS.iter().cloned());
 
         assert_eq!(parsed.name(), KRATE);
         assert_eq!(parsed.version(), &ReqVersion::Latest);
@@ -1372,13 +1358,11 @@ mod tests {
         assert_eq!(params.storage_path(), "dummy/struct.Dummy.html");
 
         let params = params.with_doc_target(DEFAULT_TARGET).unwrap();
-        dbg!(&params);
         assert_eq!(params.doc_target(), Some(DEFAULT_TARGET));
         assert_eq!(params.inner_path(), "dummy/struct.Dummy.html");
         assert_eq!(params.storage_path(), "dummy/struct.Dummy.html");
 
         let params = params.with_doc_target(OTHER_TARGET).unwrap();
-        dbg!(&params);
         assert_eq!(params.doc_target(), Some(OTHER_TARGET));
         assert_eq!(
             params.storage_path(),
