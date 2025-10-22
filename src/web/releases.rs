@@ -940,7 +940,7 @@ mod tests {
 
             web.assert_redirect(
                 "/releases/search?query=some_random_crate&i-am-feeling-lucky=1",
-                "/crate/some_random_crate/1.0.0",
+                "/crate/some_random_crate/latest",
             )
             .await?;
             Ok(())
@@ -964,7 +964,7 @@ mod tests {
 
             web.assert_redirect(
                 "/releases/search?query=some_random_crate&i-am-feeling-lucky=1",
-                "/some_random_crate/1.0.0/some_random_crate/",
+                "/some_random_crate/latest/some_random_crate/",
             )
             .await?;
             Ok(())
@@ -1019,12 +1019,12 @@ mod tests {
 
             web.assert_redirect(
                 "/releases/search?query=some_random_crate::somepath",
-                "/some_random_crate/1.0.0/some_random_crate/?search=somepath",
+                "/some_random_crate/latest/some_random_crate/?search=somepath",
             )
             .await?;
             web.assert_redirect(
                 "/releases/search?query=some_random_crate::some::path",
-                "/some_random_crate/1.0.0/some_random_crate/?search=some%3A%3Apath",
+                "/some_random_crate/latest/some_random_crate/?search=some%3A%3Apath",
             )
             .await?;
             Ok(())
@@ -1043,7 +1043,7 @@ mod tests {
 
             web.assert_redirect(
                 "/releases/search?query=some_random_crate::somepath&go_to_first=true",
-                "/some_random_crate/1.0.0/some_random_crate/?go_to_first=true&search=somepath",
+                "/some_random_crate/latest/some_random_crate/?go_to_first=true&search=somepath",
             )
             .await?;
             Ok(())

@@ -581,7 +581,7 @@ pub(crate) async fn get_all_releases(
     params: RustdocParams,
     mut conn: DbConnection,
 ) -> AxumResult<AxumResponse> {
-    // let params = params.with_page_kind(PageKind::Rustdoc); // FIXME: nicer way?
+    let params = params.with_page_kind(PageKind::Rustdoc);
     // NOTE: we're getting RustDocParams here, where both target and path are optional.
     let matched_release = match_version(&mut conn, &params.name(), &params.version())
         .await?
