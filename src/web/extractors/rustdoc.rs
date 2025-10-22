@@ -93,7 +93,6 @@ where
             .with_maybe_doc_target(params.target)
             .with_maybe_inner_path(params.path)
             .with_original_uri(original_uri)
-            .with_page_kind(PageKind::Rustdoc)
             .with_maybe_static_route_suffix(static_route_suffix))
     }
 }
@@ -106,7 +105,7 @@ impl RustdocParams {
             original_uri: None,
             doc_target: None,
             inner_path: None,
-            page_kind: Some(PageKind::Rustdoc),
+            page_kind: None,
             static_route_suffix: None,
         }
     }
@@ -962,7 +961,9 @@ mod tests {
     ) -> anyhow::Result<()> {
         let app = Router::new().route(
             route,
-            get(|params: RustdocParams| async move { format!("{:?}", params) }),
+            get(|params: RustdocParams| async move {
+                format!("{:?}", params.with_page_kind(PageKind::Rustdoc))
+            }),
         );
 
         let path = expected.original_uri.as_ref().unwrap().path().to_owned();
@@ -1113,6 +1114,7 @@ mod tests {
         }
 
         let parsed = RustdocParams::new(KRATE)
+            .with_page_kind(PageKind::Rustdoc)
             .with_version(ReqVersion::Latest)
             .with_maybe_doc_target(target)
             .with_maybe_inner_path(path)
