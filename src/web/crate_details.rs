@@ -1,10 +1,13 @@
 use super::{MetaData, match_version};
 use crate::db::{BuildId, ReleaseId};
 use crate::registry_api::OwnerKind;
-use crate::utils::{get_correct_docsrs_style_file, report_error};
+use crate::utils::get_correct_docsrs_style_file;
 use crate::{
     AsyncStorage,
-    db::{CrateId, types::BuildStatus},
+    db::{
+        CrateId,
+        types::{BuildStatus, version::Version},
+    },
     impl_axum_webpage,
     storage::PathNotFoundError,
     web::{
@@ -25,7 +28,6 @@ use axum::{
 use chrono::{DateTime, Utc};
 use futures_util::stream::TryStreamExt;
 use log::warn;
-use semver::Version;
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -297,7 +299,7 @@ impl CrateDetails {
         let manifest = match storage
             .fetch_source_file(
                 &self.name,
-                &self.version.to_string(),
+                &self.version,
                 self.latest_build_id,
                 "Cargo.toml",
                 self.archive_storage,
@@ -326,7 +328,7 @@ impl CrateDetails {
             match storage
                 .fetch_source_file(
                     &self.name,
-                    &self.version.to_string(),
+                    &self.version,
                     self.latest_build_id,
                     path,
                     self.archive_storage,
@@ -378,7 +380,7 @@ pub(crate) async fn releases_for_crate(
     let mut releases: Vec<Release> = sqlx::query!(
         r#"SELECT
              releases.id as "id: ReleaseId",
-             releases.version,
+             releases.version as "version: Version",
              release_build_status.build_status as "build_status!: BuildStatus",
              releases.yanked,
              releases.is_library,
@@ -393,22 +395,9 @@ pub(crate) async fn releases_for_crate(
     )
     .fetch(&mut *conn)
     .try_filter_map(|row| async move {
-        let semversion = match semver::Version::parse(&row.version).with_context(|| {
-            format!(
-                "invalid semver in database for crate {crate_id}: {}",
-                row.version
-            )
-        }) {
-            Ok(semver) => semver,
-            Err(err) => {
-                report_error(&err);
-                return Ok(None);
-            }
-        };
-
         Ok(Some(Release {
             id: row.id,
-            version: semversion,
+            version: row.version,
             build_status: row.build_status,
             yanked: row.yanked,
             is_library: row.is_library,

@@ -58,7 +58,7 @@ impl CargoMetadata {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Default)]
+#[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct Package {
     pub(crate) id: String,
     pub(crate) name: String,
@@ -137,7 +137,7 @@ pub(crate) struct Dependency {
 
 impl Dependency {
     #[cfg(test)]
-    pub fn new(name: String, req: String) -> Dependency {
+    pub fn new(name: String, req: VersionReq) -> Dependency {
         Dependency {
             name,
             req,

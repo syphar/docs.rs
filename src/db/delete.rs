@@ -144,7 +144,7 @@ async fn delete_version_from_database(
     let is_library: bool = sqlx::query_scalar!(
         "DELETE FROM releases WHERE crate_id = $1 AND version = $2 RETURNING is_library",
         crate_id.0,
-        version,
+        version as _,
     )
     .fetch_one(&mut *transaction)
     .await?

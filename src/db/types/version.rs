@@ -1,7 +1,6 @@
 use crate::error::Result;
-use derive_more::Deref;
-use derive_more::Display;
-use serde::Serialize;
+use derive_more::{Deref, Display};
+use serde_with::{DeserializeFromStr, SerializeDisplay};
 use sqlx::{
     Postgres,
     encode::IsNull,
@@ -9,14 +8,31 @@ use sqlx::{
     postgres::{PgArgumentBuffer, PgTypeInfo, PgValueRef},
     prelude::*,
 };
-use std::io::Write;
-use std::str::FromStr;
+use std::{io::Write, str::FromStr};
 
 /// NewType around semver::Version to be able to use it with sqlx.
 ///
 /// Represented as string in the database.
-#[derive(Debug, Clone, Display, PartialEq, Eq, Hash, Serialize, Deref)]
+#[derive(
+    Clone, Debug, Deref, DeserializeFromStr, Display, Eq, Hash, PartialEq, SerializeDisplay,
+)]
 pub struct Version(pub semver::Version);
+
+impl Version {
+    pub const fn new(major: u64, minor: u64, patch: u64) -> Self {
+        Self(semver::Version {
+            major,
+            minor,
+            patch,
+            pre: semver::Prerelease::EMPTY,
+            build: semver::BuildMetadata::EMPTY,
+        })
+    }
+
+    pub fn parse(text: &str) -> Result<Self, semver::Error> {
+        Version::from_str(text)
+    }
+}
 
 impl Type<Postgres> for Version {
     fn type_info() -> PgTypeInfo {
@@ -50,10 +66,14 @@ impl FromStr for Version {
     }
 }
 
-impl FromStr for &Version {
-    type Err = semver::Error;
+impl From<semver::Version> for Version {
+    fn from(v: semver::Version) -> Self {
+        Version(v)
+    }
+}
 
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        Ok(&Version(semver::Version::from_str(s)?))
+impl From<Version> for semver::Version {
+    fn from(v: Version) -> Self {
+        v.0
     }
 }

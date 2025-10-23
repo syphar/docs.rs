@@ -5,7 +5,7 @@ pub mod page;
 
 use crate::db::CrateId;
 use crate::db::ReleaseId;
-use crate::db::types::BuildStatus;
+use crate::db::types::{BuildStatus, version::Version};
 use crate::utils::get_correct_docsrs_style_file;
 use crate::utils::report_error;
 use crate::web::page::templates::{RenderBrands, RenderSolid, filters};
@@ -51,7 +51,7 @@ use chrono::{DateTime, Utc};
 use error::AxumNope;
 use page::TemplateData;
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
-use semver::{Version, VersionReq};
+use semver::VersionReq;
 use sentry::integrations::tower as sentry_tower;
 use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::{

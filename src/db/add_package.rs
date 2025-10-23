@@ -10,6 +10,7 @@ use crate::{
 use anyhow::{Context, anyhow};
 use derive_more::Display;
 use futures_util::stream::TryStreamExt;
+use semver::VersionReq;
 use serde::Serialize;
 use serde_json::Value;
 use slug::slugify;
@@ -361,7 +362,7 @@ pub(crate) async fn initialize_release(
             version = EXCLUDED.version
          RETURNING id as "id: ReleaseId" "#,
         crate_id.0,
-        version
+        version as _,
     )
     .fetch_one(&mut *conn)
     .await?;
@@ -393,8 +394,8 @@ pub(crate) async fn initialize_build(
     Ok(build_id)
 }
 
-/// Convert dependencies into Vec<(String, String, String, bool)>
-fn convert_dependencies(pkg: &MetadataPackage) -> Vec<(String, String, String, bool)> {
+/// Convert dependencies into Vec<(String, VersionReq, String, bool)>
+fn convert_dependencies(pkg: &MetadataPackage) -> Vec<(String, VersionReq, String, bool)> {
     pkg.dependencies
         .iter()
         .map(|dependency| {

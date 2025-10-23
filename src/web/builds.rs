@@ -5,7 +5,10 @@ use super::{
 };
 use crate::{
     AsyncBuildQueue, Config,
-    db::{BuildId, types::BuildStatus},
+    db::{
+        BuildId,
+        types::{BuildStatus, version::Version},
+    },
     docbuilder::Limits,
     impl_axum_webpage,
     web::{
@@ -26,7 +29,6 @@ use axum_extra::{
 use chrono::{DateTime, Utc};
 use constant_time_eq::constant_time_eq;
 use http::StatusCode;
-use semver::Version;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -112,9 +114,7 @@ async fn build_trigger_check(
         return Err(AxumNope::VersionNotFound);
     }
 
-    let crate_version_is_in_queue = build_queue
-        .has_build_queued(name, &version.to_string())
-        .await?;
+    let crate_version_is_in_queue = build_queue.has_build_queued(name, version).await?;
 
     if crate_version_is_in_queue {
         return Err(AxumNope::BadRequest(anyhow!(
@@ -161,7 +161,7 @@ pub(crate) async fn build_trigger_rebuild_handler(
     build_queue
         .add_crate(
             &name,
-            &version.to_string(),
+            &version,
             TRIGGERED_REBUILD_PRIORITY,
             None, /* because crates.io is the only service that calls this endpoint */
         )

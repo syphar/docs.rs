@@ -1,43 +1,45 @@
-use crate::RUSTDOC_STATIC_STORAGE_PREFIX;
-use crate::db::{
-    BuildId,
-    file::{add_path_into_database, file_list_to_json},
+use crate::{
+    AsyncStorage, Config, Context, InstanceMetrics, RUSTDOC_STATIC_STORAGE_PREFIX, RegistryApi,
+    Storage,
+    db::{
+        BuildId, CrateId, Pool, ReleaseId, add_doc_coverage, add_path_into_remote_archive,
+        blacklist::is_blacklisted,
+        file::{add_path_into_database, file_list_to_json},
+        finish_build, finish_release, initialize_build, initialize_crate, initialize_release,
+        types::{BuildStatus, version::Version},
+        update_build_with_error, update_crate_data_in_database,
+    },
+    docbuilder::Limits,
+    error::Result,
+    repositories::RepositoryStatsUpdater,
+    storage::{
+        CompressionAlgorithm, RustdocJsonFormatVersion, compress, get_file_list,
+        rustdoc_archive_path, rustdoc_json_path, source_archive_path,
+    },
+    utils::{
+        CargoMetadata, ConfigName, MetadataPackage, copy_dir_all, get_config, parse_rustc_version,
+        report_error, set_config,
+    },
 };
-use crate::db::{CrateId, ReleaseId};
-use crate::db::{
-    Pool, add_doc_coverage, add_path_into_remote_archive, finish_build, finish_release,
-    initialize_build, initialize_crate, initialize_release, types::BuildStatus,
-    update_build_with_error, update_crate_data_in_database,
-};
-use crate::docbuilder::Limits;
-use crate::error::Result;
-use crate::repositories::RepositoryStatsUpdater;
-use crate::storage::{
-    CompressionAlgorithm, RustdocJsonFormatVersion, compress, get_file_list, rustdoc_archive_path,
-    rustdoc_json_path, source_archive_path,
-};
-use crate::utils::{
-    CargoMetadata, ConfigName, copy_dir_all, get_config, parse_rustc_version, report_error,
-    set_config,
-};
-use crate::{AsyncStorage, Config, Context, InstanceMetrics, RegistryApi, Storage};
-use crate::{db::blacklist::is_blacklisted, utils::MetadataPackage};
 use anyhow::{Context as _, Error, anyhow, bail};
 use docsrs_metadata::{BuildTargets, DEFAULT_TARGETS, HOST_TARGET, Metadata};
 use itertools::Itertools as _;
 use regex::Regex;
-use rustwide::cmd::{Command, CommandError, SandboxBuilder, SandboxImage};
-use rustwide::logging::{self, LogStorage};
-use rustwide::toolchain::ToolchainError;
-use rustwide::{AlternativeRegistry, Build, Crate, Toolchain, Workspace, WorkspaceBuilder};
-use semver::Version;
+use rustwide::{
+    AlternativeRegistry, Build, Crate, Toolchain, Workspace, WorkspaceBuilder,
+    cmd::{Command, CommandError, SandboxBuilder, SandboxImage},
+    logging::{self, LogStorage},
+    toolchain::ToolchainError,
+};
 use serde::Deserialize;
-use std::collections::{HashMap, HashSet};
-use std::fs::{self, File};
-use std::io::BufReader;
-use std::path::Path;
-use std::sync::Arc;
-use std::time::Instant;
+use std::{
+    collections::{HashMap, HashSet},
+    fs::{self, File},
+    io::BufReader,
+    path::Path,
+    sync::Arc,
+    time::Instant,
+};
 use tokio::runtime::Runtime;
 use tracing::{debug, error, info, info_span, instrument, warn};
 
@@ -323,7 +325,7 @@ impl RustwideBuilder {
             .build_dir(&format!("essential-files-{parsed_rustc_version}"));
 
         // This is an empty library crate that is supposed to always build.
-        let krate = Crate::crates_io(DUMMY_CRATE_NAME, DUMMY_CRATE_VERSION);
+        let krate = Crate::crates_io(DUMMY_CRATE_NAME, &DUMMY_CRATE_VERSION.to_string());
         krate.fetch(&self.workspace)?;
 
         build_dir
@@ -334,7 +336,7 @@ impl RustwideBuilder {
                 let res = self.execute_build(
                     BuildId(0),
                     DUMMY_CRATE_NAME,
-                    DUMMY_CRATE_VERSION,
+                    &DUMMY_CRATE_VERSION,
                     HOST_TARGET,
                     true,
                     build,
@@ -392,7 +394,7 @@ impl RustwideBuilder {
         let package = metadata.root();
         self.build_package(
             &package.name,
-            &package.version,
+            &package.version.clone().into(),
             PackageKind::Local(path),
             false,
         )
@@ -509,11 +511,12 @@ impl RustwideBuilder {
         let krate = {
             let _span = info_span!("krate.fetch").entered();
 
+            let version = version.to_string();
             let krate = match kind {
                 PackageKind::Local(path) => Crate::local(path),
-                PackageKind::CratesIo => Crate::crates_io(name, version),
+                PackageKind::CratesIo => Crate::crates_io(name, &version),
                 PackageKind::Registry(registry) => {
-                    Crate::registry(AlternativeRegistry::new(registry), name, version)
+                    Crate::registry(AlternativeRegistry::new(registry), name, &version)
                 }
             };
             krate.fetch(&self.workspace)?;

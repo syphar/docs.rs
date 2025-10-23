@@ -3,7 +3,9 @@
 use crate::{
     AsyncBuildQueue, Config, InstanceMetrics, RegistryApi,
     build_queue::{QueuedCrate, REBUILD_PRIORITY},
-    cdn, impl_axum_webpage,
+    cdn,
+    db::types::version::Version,
+    impl_axum_webpage,
     utils::report_error,
     web::{
         ReqVersion, axum_parse_uri_with_params, axum_redirect, encode_url_path,
@@ -23,12 +25,13 @@ use base64::{Engine, engine::general_purpose::STANDARD as b64};
 use chrono::{DateTime, Utc};
 use futures_util::stream::TryStreamExt;
 use itertools::Itertools;
-use semver::Version;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::str;
-use std::sync::Arc;
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    str,
+    sync::Arc,
+};
 use tracing::warn;
 use url::form_urlencoded;
 
@@ -148,7 +151,8 @@ struct SearchResult {
 fn rust_lib_release(name: &str, description: &str, href: &'static str) -> ReleaseStatus {
     ReleaseStatus::Available(Release {
         name: name.to_string(),
-        version: String::new(),
+        // FIXME: chagne to not need the version?
+        version: Version::new(0, 0, 1),
         description: Some(description.to_string()),
         build_time: None,
         target_name: None,
@@ -187,7 +191,7 @@ async fn get_search_results(
     let mut crates: HashMap<String, Release> = sqlx::query!(
         r#"SELECT
                crates.name,
-               releases.version,
+               releases.version as "version: Version",
                releases.description,
                release_build_status.last_build_time,
                releases.target_name,
@@ -726,7 +730,7 @@ struct BuildQueuePage {
     queue: Vec<QueuedCrate>,
     rebuild_queue: Vec<QueuedCrate>,
     active_cdn_deployments: Vec<String>,
-    in_progress_builds: Vec<(String, String)>,
+    in_progress_builds: Vec<(String, Version)>,
     expand_rebuild_queue: bool,
 }
 
@@ -755,10 +759,10 @@ pub(crate) async fn build_queue_handler(
     // reverse the list, so the oldest comes first
     active_cdn_deployments.reverse();
 
-    let in_progress_builds: Vec<(String, String)> = sqlx::query!(
+    let in_progress_builds: Vec<(String, Version)> = sqlx::query!(
         r#"SELECT
             crates.name,
-            releases.version
+            releases.version as "version: Version"
          FROM builds
          INNER JOIN releases ON releases.id = builds.rid
          INNER JOIN crates ON releases.crate_id = crates.id

@@ -1,5 +1,5 @@
 use super::data::{Crate, Crates, Release, Releases};
-use crate::Config;
+use crate::{Config, db::types::version::Version};
 use anyhow::Result;
 use itertools::Itertools;
 
@@ -7,7 +7,7 @@ pub(super) async fn load(conn: &mut sqlx::PgConnection, config: &Config) -> Resu
     let rows = sqlx::query!(
         r#"SELECT
             name as "name!",
-            version as "version!",
+            version as "version!: Version",
             yanked
          FROM (
              SELECT

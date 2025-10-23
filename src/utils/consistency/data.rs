@@ -1,4 +1,4 @@
-use semver::Version;
+use crate::db::types::version::Version;
 
 #[derive(Clone, PartialEq, Debug)]
 pub(super) struct Crate {

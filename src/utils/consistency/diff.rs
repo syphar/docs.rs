@@ -1,18 +1,18 @@
-use std::fmt::Display;
-
 use super::data::Crate;
+use crate::db::types::version::Version;
 use itertools::{
     EitherOrBoth::{Both, Left, Right},
     Itertools,
 };
+use std::fmt::Display;
 
 #[derive(Debug, PartialEq)]
 pub(super) enum Difference {
     CrateNotInIndex(String),
-    CrateNotInDb(String, Vec<String>),
-    ReleaseNotInIndex(String, String),
-    ReleaseNotInDb(String, String),
-    ReleaseYank(String, String, bool),
+    CrateNotInDb(String, Vec<Version>),
+    ReleaseNotInIndex(String, Version),
+    ReleaseNotInDb(String, Version),
+    ReleaseYank(String, Version, bool),
 }
 
 impl Display for Difference {

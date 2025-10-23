@@ -1,19 +1,19 @@
-use crate::Context;
-use crate::db::{
-    CrateId, Pool, delete_crate, delete_version, types::version::Version, update_latest_version_id,
+use crate::{
+    BuildPackageSummary, Config, Context, Index, InstanceMetrics, RustwideBuilder, cdn,
+    db::{
+        CrateId, Pool, delete_crate, delete_version, types::version::Version,
+        update_latest_version_id,
+    },
+    docbuilder::PackageKind,
+    error::Result,
+    storage::AsyncStorage,
+    utils::{ConfigName, get_config, get_crate_priority, report_error, retry, set_config},
 };
-use crate::docbuilder::PackageKind;
-use crate::error::Result;
-use crate::storage::AsyncStorage;
-use crate::utils::{ConfigName, get_config, get_crate_priority, report_error, retry, set_config};
-use crate::{BuildPackageSummary, cdn};
-use crate::{Config, Index, InstanceMetrics, RustwideBuilder};
 use anyhow::Context as _;
 use fn_error_context::context;
 use futures_util::{StreamExt, stream::TryStreamExt};
 use sqlx::Connection as _;
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 use tokio::runtime::Runtime;
 use tracing::{debug, error, info, instrument};
 
@@ -105,7 +105,7 @@ impl AsyncBuildQueue {
                     last_attempt = NULL
             ;",
             name,
-            version.to_string(),
+            version as _,
             priority,
             registry,
         )
@@ -166,8 +166,8 @@ impl AsyncBuildQueue {
     pub(crate) async fn queued_crates(&self) -> Result<Vec<QueuedCrate>> {
         let mut conn = self.db.get_async().await?;
 
-        // QueuedCrate,
-        Ok(sqlx::query!(
+        Ok(sqlx::query_as!(
+            QueuedCrate,
             r#"SELECT
                 id,
                 name,
@@ -180,16 +180,7 @@ impl AsyncBuildQueue {
              ORDER BY priority ASC, attempt ASC, id ASC"#,
             self.max_attempts
         )
-        .fetch(&mut *conn)
-        .map_ok(|row| QueuedCrate {
-            id: row.id,
-            name: row.name,
-            version: row.version,
-            priority: row.priority,
-            registry: row.registry,
-            attempt: row.attempt,
-        })
-        .try_collect()
+        .fetch_all(&mut *conn)
         .await?)
     }
 
@@ -205,7 +196,7 @@ impl AsyncBuildQueue {
              ",
             self.max_attempts,
             name,
-            version as Version,
+            version as _,
         )
         .fetch_optional(&mut *conn)
         .await?
@@ -345,7 +336,7 @@ impl AsyncBuildQueue {
                     .set_yanked_inner(
                         &mut conn,
                         release.name.as_str(),
-                        release.version.parse().unwrap(),
+                        &release.version.parse().unwrap(),
                         yanked.is_some(),
                     )
                     .await
@@ -395,7 +386,7 @@ impl AsyncBuildQueue {
             RETURNING crates.id as "id: CrateId"
             "#,
             name,
-            version,
+            version as _,
             yanked,
         )
         .fetch_optional(&mut *conn)
@@ -513,14 +504,20 @@ impl BuildQueue {
         let to_process = match self.runtime.block_on(
             sqlx::query_as!(
                 QueuedCrate,
-                "SELECT id, name, version, priority, registry, attempt
+                r#"SELECT
+                    id,
+                    name,
+                    version as "version: Version",
+                    priority,
+                    registry,
+                    attempt
                  FROM queue
                  WHERE
                     attempt < $1 AND
                     (last_attempt IS NULL OR last_attempt < NOW() - make_interval(secs => $2))
                  ORDER BY priority ASC, attempt ASC, id ASC
                  LIMIT 1
-                 FOR UPDATE SKIP LOCKED",
+                 FOR UPDATE SKIP LOCKED"#,
                 self.inner.max_attempts,
                 self.inner.config.delay_between_build_attempts.as_secs_f64(),
             )

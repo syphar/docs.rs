@@ -294,7 +294,7 @@ pub(crate) async fn rustdoc_redirector_handler(
             match storage
                 .stream_rustdoc_file(
                     &crate_name,
-                    &krate.version.to_string(),
+                    &krate.version,
                     krate.latest_build_id,
                     target,
                     krate.archive_storage,
@@ -565,7 +565,7 @@ pub(crate) async fn rustdoc_html_server_handler(
     let blob = match storage
         .stream_rustdoc_file(
             &params.name,
-            &krate.version.to_string(),
+            &krate.version,
             krate.latest_build_id,
             &storage_path,
             krate.archive_storage,
@@ -591,7 +591,7 @@ pub(crate) async fn rustdoc_html_server_handler(
                 if storage
                     .rustdoc_file_exists(
                         &params.name,
-                        &krate.version.to_string(),
+                        &krate.version,
                         krate.latest_build_id,
                         &storage_path,
                         krate.archive_storage,
@@ -633,7 +633,7 @@ pub(crate) async fn rustdoc_html_server_handler(
             {
                 error!(
                     krate = params.name,
-                    version = krate.version.to_string(),
+                    version = %krate.version,
                     original_path = original_path.as_ref(),
                     storage_path,
                     "Couldn't find crate documentation root on storage.
@@ -857,7 +857,7 @@ pub(crate) async fn target_redirect_handler(
     let (redirect_path, query_args) = if storage
         .rustdoc_file_exists(
             &name,
-            &crate_details.version.to_string(),
+            &crate_details.version,
             crate_details.latest_build_id,
             &storage_location_for_path,
             crate_details.archive_storage,
@@ -997,7 +997,7 @@ pub(crate) async fn json_download_handler(
 
     let storage_path = rustdoc_json_path(
         &krate.name,
-        &krate.version.to_string(),
+        &krate.version,
         &target,
         wanted_format_version,
         Some(wanted_compression),
@@ -1019,7 +1019,7 @@ pub(crate) async fn json_download_handler(
         if wanted_compression == CompressionAlgorithm::Zstd {
             let storage_path = rustdoc_json_path(
                 &krate.name,
-                &krate.version.to_string(),
+                &krate.version,
                 &target,
                 wanted_format_version,
                 None,
@@ -1048,7 +1048,7 @@ pub(crate) async fn download_handler(
         .assume_exact_name()?
         .into_version();
 
-    let archive_path = rustdoc_archive_path(&name, &version.to_string());
+    let archive_path = rustdoc_archive_path(&name, &version);
 
     // not all archives are set for public access yet, so we check if
     // the access is set and fix it if needed.

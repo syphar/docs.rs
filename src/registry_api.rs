@@ -181,11 +181,10 @@ impl RegistryApi {
         .json()
         .await?;
 
-        let version = Version::parse(version)?;
         let version = response
             .versions
             .into_iter()
-            .find(|data| data.num == version)
+            .find(|data| data.num == *version)
             .with_context(|| anyhow!("Could not find version in response"))?;
 
         Ok((version.created_at, version.yanked, version.downloads))
