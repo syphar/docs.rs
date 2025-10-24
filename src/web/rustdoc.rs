@@ -350,11 +350,9 @@ pub(crate) async fn rustdoc_redirector_handler(
 
 #[derive(Template)]
 #[template(path = "rustdoc/topbar.html")]
-#[derive(Debug, Clone)]
 pub struct RustdocPage {
     pub latest_path: EscapedURI,
     pub permalink_path: EscapedURI,
-    pub inner_path: String,
     // true if we are displaying the latest version of the crate, regardless
     // of whether the URL specifies a version number or the string "latest."
     pub is_latest_version: bool,
@@ -618,7 +616,6 @@ pub(crate) async fn rustdoc_html_server_handler(
     let page = Arc::new(RustdocPage {
         latest_path,
         permalink_path,
-        inner_path: params.inner_path().to_string(),
         is_latest_version,
         is_latest_url: params.version().is_latest(),
         is_prerelease,

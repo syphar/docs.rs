@@ -83,7 +83,7 @@ impl From<EscapedURI> for CanonicalUrl {
 }
 
 impl Deref for CanonicalUrl {
-    type Target = Uri;
+    type Target = EscapedURI;
 
     fn deref(&self) -> &Self::Target {
         &self.0

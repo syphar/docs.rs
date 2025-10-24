@@ -1,7 +1,7 @@
 use crate::web::encode_url_path;
 use askama::filters::HtmlSafe;
 use http::{Uri, uri::PathAndQuery};
-use std::{borrow::Borrow, fmt::Display, iter, ops::Deref, str::FromStr};
+use std::{borrow::Borrow, fmt::Display, iter, str::FromStr};
 use url::form_urlencoded;
 
 /// internal wrapper around `http::Uri` with some convenience functions.
@@ -20,12 +20,14 @@ pub struct EscapedURI {
 impl EscapedURI {
     pub fn from_uri(uri: Uri) -> Self {
         if uri.path_and_query().is_some() {
-            if uri.path() == encode_url_path(uri.path()) {
+            let encoded_path = encode_url_path(uri.path());
+            if uri.path() == encoded_path {
                 Self {
                     uri,
                     fragment: None,
                 }
             } else {
+                // path needs additional encoding
                 let mut parts = uri.into_parts();
 
                 parts.path_and_query = Some(
@@ -36,7 +38,7 @@ impl EscapedURI {
                             .map(|pq| {
                                 format!(
                                     "{}{}",
-                                    encode_url_path(pq.path()),
+                                    encoded_path,
                                     pq.query().map(|q| format!("?{}", q)).unwrap_or_default(),
                                 )
                             })
@@ -85,6 +87,14 @@ impl EscapedURI {
         V: AsRef<str>,
     {
         Self::from_path(path).append_query_pairs(queries)
+    }
+
+    pub fn scheme(&self) -> Option<&http::uri::Scheme> {
+        self.uri.scheme()
+    }
+
+    pub fn authority(&self) -> Option<&http::uri::Authority> {
+        self.uri.authority()
     }
 
     pub fn path(&self) -> &str {
@@ -157,8 +167,8 @@ impl EscapedURI {
         self.uri
     }
 
-    pub(crate) fn with_fragment(mut self, fragment: impl Into<String>) -> Self {
-        self.fragment = Some(encode_url_path(&fragment.into()));
+    pub(crate) fn with_fragment(mut self, fragment: impl AsRef<str>) -> Self {
+        self.fragment = Some(encode_url_path(fragment.as_ref()));
         self
     }
 }
@@ -168,26 +178,20 @@ impl FromStr for EscapedURI {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if let Some((base, fragment)) = s.split_once('#') {
-            Ok(Self {
-                uri: base.parse()?,
-                fragment: Some(encode_url_path(fragment)),
-            })
+            Ok(Self::from_uri(base.parse()?).with_fragment(fragment))
         } else {
-            Ok(Self {
-                uri: s.parse()?,
-                fragment: None,
-            })
+            Ok(Self::from_uri(s.parse()?))
         }
     }
 }
 
 impl Display for EscapedURI {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.uri)?;
         if let Some(ref fragment) = self.fragment {
-            write!(f, "{}#{}", self.uri, fragment)
-        } else {
-            write!(f, "{}", self.uri)
+            write!(f, "#{}", fragment)?;
         }
+        Ok(())
     }
 }
 
@@ -208,13 +212,13 @@ impl TryFrom<EscapedURI> for Uri {
     }
 }
 
-impl Deref for EscapedURI {
-    type Target = Uri;
+// impl Deref for EscapedURI {
+//     type Target = Uri;
 
-    fn deref(&self) -> &Self::Target {
-        &self.uri
-    }
-}
+//     fn deref(&self) -> &Self::Target {
+//         &self.uri
+//     }
+// }
 
 impl From<Uri> for EscapedURI {
     fn from(value: Uri) -> Self {

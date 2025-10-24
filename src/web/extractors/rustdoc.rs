@@ -485,6 +485,12 @@ pub(crate) struct ParsedRustdocParams {
 }
 
 impl ParsedRustdocParams {
+    pub(crate) fn from_metadata(metadata: &MetaData) -> Self {
+        RustdocParams::new(&metadata.name)
+            .with_version(&metadata.version)
+            .parse_with_metadata(&metadata)
+    }
+
     pub(crate) fn name(&self) -> &str {
         &self.inner.name
     }
