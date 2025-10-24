@@ -144,7 +144,7 @@ pub(crate) async fn build_features_handler(
     params: RustdocParams,
     mut conn: DbConnection,
 ) -> AxumResult<impl IntoResponse> {
-    let version = match_version(&mut conn, params.name(), params.version())
+    let matched_release = match_version(&mut conn, params.name(), params.version())
         .await?
         .assume_exact_name()?
         .into_canonical_req_version_or_else(|version| {
@@ -152,8 +152,10 @@ pub(crate) async fn build_features_handler(
                 params.clone().with_version(version).features_url(),
                 CachePolicy::ForeverInCdn,
             )
-        })?
-        .into_version();
+        })?;
+    let params = matched_release.update_params(params);
+
+    let version = matched_release.into_version();
 
     let metadata = MetaData::from_crate(
         &mut conn,

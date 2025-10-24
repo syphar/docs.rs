@@ -718,24 +718,24 @@ fn get_file_extension(path: &str) -> Option<&str> {
     })
 }
 
-impl TryFrom<MatchedRelease> for ParsedRustdocParams {
-    type Error = anyhow::Error;
+// impl TryFrom<MatchedRelease> for ParsedRustdocParams {
+//     type Error = anyhow::Error;
 
-    fn try_from(release: MatchedRelease) -> Result<Self> {
-        let target_name = release
-            .target_name()
-            .ok_or_else(|| anyhow!("default target missing in release"))?
-            .to_owned();
+//     fn try_from(release: MatchedRelease) -> Result<Self> {
+//         let target_name = release
+//             .target_name()
+//             .ok_or_else(|| anyhow!("default target missing in release"))?
+//             .to_owned();
 
-        Ok(RustdocParams::new(&release.name)
-            .with_version(release.req_version)
-            .parse(
-                HOST_TARGET.into(),
-                target_name.into(),
-                iter::once(HOST_TARGET),
-            ))
-    }
-}
+//         Ok(RustdocParams::new(&release.name)
+//             .with_version(release.req_version)
+//             .parse(
+//                 HOST_TARGET.into(),
+//                 target_name.into(),
+//                 iter::once(HOST_TARGET),
+//             ))
+//     }
+// }
 
 fn url_decode<'a>(input: &'a str) -> Result<Cow<'a, str>> {
     Ok(percent_encoding::percent_decode(input.as_bytes()).decode_utf8()?)

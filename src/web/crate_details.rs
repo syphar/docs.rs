@@ -1848,14 +1848,14 @@ mod tests {
                 .create()
                 .await?;
 
-            // run_check_links_redir(&env, "/crate/dummy/0.4.0/features", false).await;
-            // run_check_links_redir(&env, "/crate/dummy/0.4.0/builds", false).await;
-            // run_check_links_redir(&env, "/crate/dummy/0.4.0/source/", false).await;
-            // run_check_links_redir(&env, "/crate/dummy/0.4.0/source/README.md", false).await;
-            // run_check_links_redir(&env, "/crate/dummy/0.4.0", false).await;
+            run_check_links_redir(&env, "/crate/dummy/0.4.0/features", false).await;
+            run_check_links_redir(&env, "/crate/dummy/0.4.0/builds", false).await;
+            run_check_links_redir(&env, "/crate/dummy/0.4.0/source/", false).await;
+            run_check_links_redir(&env, "/crate/dummy/0.4.0/source/README.md", false).await;
+            run_check_links_redir(&env, "/crate/dummy/0.4.0", false).await;
 
-            // run_check_links_redir(&env, "/dummy/latest/dummy/", true).await;
-            // run_check_links_redir(&env, "/dummy/0.4.0/x86_64-pc-windows-msvc/dummy/", true).await;
+            run_check_links_redir(&env, "/dummy/latest/dummy/", true).await;
+            run_check_links_redir(&env, "/dummy/0.4.0/x86_64-pc-windows-msvc/dummy/", true).await;
             run_check_links_redir(
                 &env,
                 "/dummy/0.4.0/x86_64-pc-windows-msvc/dummy/struct.A.html",
