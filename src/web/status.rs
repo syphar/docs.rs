@@ -190,7 +190,6 @@ mod tests {
     #[test_case("foo", "0,1,0")]
     fn not_found(krate: &str, req_version: &str) {
         async_wrapper(|env| async move {
-            let req_version: ReqVersion = req_version.parse()?;
             env.fake_release()
                 .await
                 .name("foo")
