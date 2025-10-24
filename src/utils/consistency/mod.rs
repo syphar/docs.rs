@@ -153,7 +153,10 @@ where
 mod tests {
     use super::diff::Difference;
     use super::*;
-    use crate::test::{TestEnvironment, async_wrapper};
+    use crate::{
+        db::types::version::Version,
+        test::{TestEnvironment, async_wrapper},
+    };
     use sqlx::Row as _;
 
     async fn count(env: &TestEnvironment, sql: &str) -> Result<i64> {
@@ -227,7 +230,7 @@ mod tests {
 
             let diff = [Difference::ReleaseNotInIndex(
                 "krate".into(),
-                "0.1.1".into(),
+                Version::new(0, 1, 1),
             )];
 
             assert_eq!(count(&env, "SELECT count(*) FROM releases").await?, 2);
@@ -260,7 +263,7 @@ mod tests {
 
             let diff = [Difference::ReleaseYank(
                 "krate".into(),
-                "0.1.1".into(),
+                Version::new(0, 1, 1),
                 false,
             )];
 
@@ -285,7 +288,9 @@ mod tests {
     #[test]
     fn test_missing_release_in_db() {
         async_wrapper(|env| async move {
-            let diff = [Difference::ReleaseNotInDb("krate".into(), "0.1.1".into())];
+            const VERSION: Version = Version::new(0, 1, 1);
+
+            let diff = [Difference::ReleaseNotInDb("krate".into(), VERSION)];
 
             handle_diff(&*env, diff.iter(), true).await?;
 
@@ -299,10 +304,10 @@ mod tests {
                 build_queue
                     .queued_crates()
                     .await?
-                    .iter()
-                    .map(|c| (c.name.as_str(), c.version.as_str(), c.priority))
+                    .into_iter()
+                    .map(|c| (c.name, VERSION, c.priority))
                     .collect::<Vec<_>>(),
-                vec![("krate", "0.1.1", 15)]
+                vec![("krate".into(), VERSION, 15)]
             );
             Ok(())
         })
@@ -313,7 +318,7 @@ mod tests {
         async_wrapper(|env| async move {
             let diff = [Difference::CrateNotInDb(
                 "krate".into(),
-                vec!["0.1.1".into(), "0.1.2".into()],
+                vec![Version::new(0, 1, 1), Version::new(0, 1, 2)],
             )];
 
             handle_diff(&*env, diff.iter(), true).await?;
@@ -328,10 +333,13 @@ mod tests {
                 build_queue
                     .queued_crates()
                     .await?
-                    .iter()
-                    .map(|c| (c.name.as_str(), c.version.as_str(), c.priority))
+                    .into_iter()
+                    .map(|c| (c.name, c.version, c.priority))
                     .collect::<Vec<_>>(),
-                vec![("krate", "0.1.1", 15), ("krate", "0.1.2", 15)]
+                vec![
+                    ("krate".into(), Version::new(0, 1, 1), 15),
+                    ("krate".into(), Version::new(0, 1, 2), 15)
+                ]
             );
             Ok(())
         })

@@ -2,7 +2,7 @@
 
 use crate::{
     AsyncStorage, Config, InstanceMetrics, RUSTDOC_STATIC_STORAGE_PREFIX,
-    db::Pool,
+    db::{Pool, types::version::Version},
     storage::{
         CompressionAlgorithm, RustdocJsonFormatVersion, StreamingBlob,
         compression::compression_from_file_extension, rustdoc_archive_path, rustdoc_json_path,
@@ -33,7 +33,6 @@ use axum::{
     response::{IntoResponse, Response as AxumResponse},
 };
 use http::{HeaderValue, header};
-use semver::Version;
 use serde::Deserialize;
 use std::{
     collections::{BTreeMap, HashMap},
@@ -1703,7 +1702,7 @@ mod test {
                 ("dummy_mixed-separators", "0.2.0"),
             ];
 
-            for (name, version) in &rels {
+            for (name, version) in rels {
                 env.fake_release()
                     .await
                     .name(name)
@@ -2867,7 +2866,7 @@ mod test {
                 .version("0.1.0")
                 .rustdoc_file("testing/index.html")
                 .add_dependency(
-                    Dependency::new("optional-dep".to_string(), "1.2.3".to_string())
+                    Dependency::new("optional-dep".to_string(), "1.2.3".parse().unwrap())
                         .set_optional(true),
                 )
                 .create()
@@ -3427,7 +3426,7 @@ mod test {
             });
 
             const NAME: &str = "dummy";
-            const VERSION: &str = "0.1.0";
+            const VERSION: Version = Version::new(0, 1, 0);
             const TARGET: &str = "x86_64-unknown-linux-gnu";
             const FORMAT_VERSION: RustdocJsonFormatVersion = RustdocJsonFormatVersion::Latest;
 
@@ -3446,7 +3445,7 @@ mod test {
                 .get(
                     &rustdoc_json_path(
                         NAME,
-                        VERSION,
+                        &VERSION,
                         TARGET,
                         FORMAT_VERSION,
                         Some(CompressionAlgorithm::Zstd),
@@ -3457,13 +3456,13 @@ mod test {
 
             for compression in RUSTDOC_JSON_COMPRESSION_ALGORITHMS {
                 let path =
-                    rustdoc_json_path(NAME, VERSION, TARGET, FORMAT_VERSION, Some(*compression));
+                    rustdoc_json_path(NAME, &VERSION, TARGET, FORMAT_VERSION, Some(*compression));
                 storage.delete_prefix(&path).await?;
                 assert!(!storage.exists(&path).await?);
             }
             storage
                 .store_one(
-                    &rustdoc_json_path(NAME, VERSION, TARGET, FORMAT_VERSION, None),
+                    &rustdoc_json_path(NAME, &VERSION, TARGET, FORMAT_VERSION, None),
                     zstd_blob.content,
                 )
                 .await?;

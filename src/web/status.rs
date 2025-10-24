@@ -47,18 +47,21 @@ pub(crate) async fn status_handler(
 
 #[cfg(test)]
 mod tests {
-    use crate::test::{AxumResponseTestExt, AxumRouterTestExt, async_wrapper};
-    use crate::web::cache::CachePolicy;
+    use crate::{
+        test::{AxumResponseTestExt, AxumRouterTestExt, async_wrapper},
+        web::{ReqVersion, cache::CachePolicy},
+    };
     use reqwest::StatusCode;
-    use semver::Version;
     use test_case::test_case;
 
     #[test_case("latest")]
     #[test_case("0.1")]
     #[test_case("0.1.0")]
     #[test_case("=0.1.0"; "exact_version")]
-    fn status(version: &Version) {
+    fn status(req_version: &str) {
         async_wrapper(|env| async move {
+            let req_version: ReqVersion = req_version.parse()?;
+
             env.fake_release()
                 .await
                 .name("foo")
@@ -69,7 +72,7 @@ mod tests {
             let response = env
                 .web_app()
                 .await
-                .get_and_follow_redirects(&format!("/crate/foo/{version}/status.json"))
+                .get_and_follow_redirects(&format!("/crate/foo/{req_version}/status.json"))
                 .await?;
             response.assert_cache_control(CachePolicy::NoStoreMustRevalidate, &env.config());
             assert_eq!(response.headers()["access-control-allow-origin"], "*");
@@ -111,8 +114,10 @@ mod tests {
 
     #[test_case("0.1")]
     #[test_case("~0.1"; "semver")]
-    fn redirect(version: &Version) {
+    fn redirect(req_version: &str) {
         async_wrapper(|env| async move {
+            let req_version: ReqVersion = req_version.parse()?;
+
             env.fake_release()
                 .await
                 .name("foo")
@@ -123,7 +128,7 @@ mod tests {
             let web = env.web_app().await;
             let redirect = web
                 .assert_redirect(
-                    &format!("/crate/foo/{version}/status.json"),
+                    &format!("/crate/foo/{req_version}/status.json"),
                     "/crate/foo/0.1.0/status.json",
                 )
                 .await?;
@@ -138,8 +143,10 @@ mod tests {
     #[test_case("0.1")]
     #[test_case("0.1.0")]
     #[test_case("=0.1.0"; "exact_version")]
-    fn failure(version: &Version) {
+    fn failure(req_version: &str) {
         async_wrapper(|env| async move {
+            let req_version: ReqVersion = req_version.parse()?;
+
             env.fake_release()
                 .await
                 .name("foo")
@@ -151,7 +158,7 @@ mod tests {
             let response = env
                 .web_app()
                 .await
-                .get_and_follow_redirects(&format!("/crate/foo/{version}/status.json"))
+                .get_and_follow_redirects(&format!("/crate/foo/{req_version}/status.json"))
                 .await?;
             response.assert_cache_control(CachePolicy::NoStoreMustRevalidate, &env.config());
             assert_eq!(response.headers()["access-control-allow-origin"], "*");
@@ -181,8 +188,9 @@ mod tests {
     // invalid semver
     #[test_case("foo", "0,1")]
     #[test_case("foo", "0,1,0")]
-    fn not_found(krate: &str, version: &Version) {
+    fn not_found(krate: &str, req_version: &str) {
         async_wrapper(|env| async move {
+            let req_version: ReqVersion = req_version.parse()?;
             env.fake_release()
                 .await
                 .name("foo")
@@ -193,7 +201,7 @@ mod tests {
             let response = env
                 .web_app()
                 .await
-                .get_and_follow_redirects(&format!("/crate/{krate}/{version}/status.json"))
+                .get_and_follow_redirects(&format!("/crate/{krate}/{req_version}/status.json"))
                 .await?;
             response.assert_cache_control(CachePolicy::NoStoreMustRevalidate, &env.config());
             assert_eq!(response.headers()["access-control-allow-origin"], "*");

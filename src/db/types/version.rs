@@ -66,6 +66,12 @@ impl FromStr for Version {
     }
 }
 
+impl From<&semver::Version> for Version {
+    fn from(v: &semver::Version) -> Self {
+        Version(v.clone())
+    }
+}
+
 impl From<semver::Version> for Version {
     fn from(v: semver::Version) -> Self {
         Version(v)
@@ -75,5 +81,35 @@ impl From<semver::Version> for Version {
 impl From<Version> for semver::Version {
     fn from(v: Version) -> Self {
         v.0
+    }
+}
+
+impl From<&Version> for Version {
+    fn from(v: &Version) -> Self {
+        v.clone()
+    }
+}
+
+impl TryFrom<&str> for Version {
+    type Error = semver::Error;
+
+    fn try_from(value: &str) -> std::result::Result<Self, Self::Error> {
+        Ok(Version(semver::Version::from_str(value)?))
+    }
+}
+
+impl TryFrom<&String> for Version {
+    type Error = semver::Error;
+
+    fn try_from(value: &String) -> std::result::Result<Self, Self::Error> {
+        Ok(Version(semver::Version::from_str(value)?))
+    }
+}
+
+impl TryFrom<String> for Version {
+    type Error = semver::Error;
+
+    fn try_from(value: String) -> std::result::Result<Self, Self::Error> {
+        Ok(Version(semver::Version::from_str(&value)?))
     }
 }

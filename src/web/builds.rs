@@ -203,7 +203,7 @@ async fn get_builds(
 mod tests {
     use super::BuildStatus;
     use crate::{
-        db::Overrides,
+        db::{Overrides, types::version::Version},
         test::{
             AxumResponseTestExt, AxumRouterTestExt, FakeBuild, async_wrapper,
             fake_release_that_failed_before_build,
@@ -339,10 +339,12 @@ mod tests {
             let correct_token = "foo137";
             env.override_config(|config| config.cratesio_token = Some(correct_token.into()));
 
+            const VERSION: Version = Version::new(0, 1, 0);
+
             env.fake_release()
                 .await
                 .name("foo")
-                .version("0.1.0")
+                .version(VERSION)
                 .create()
                 .await?;
 
@@ -389,7 +391,7 @@ mod tests {
             let build_queue = env.async_build_queue().await;
 
             assert_eq!(build_queue.pending_count().await?, 0);
-            assert!(!build_queue.has_build_queued("foo", "0.1.0").await?);
+            assert!(!build_queue.has_build_queued("foo", &VERSION).await?);
 
             {
                 let app = env.web_app().await;
@@ -409,14 +411,14 @@ mod tests {
             }
 
             assert_eq!(build_queue.pending_count().await?, 1);
-            assert!(build_queue.has_build_queued("foo", "0.1.0").await?);
+            assert!(build_queue.has_build_queued("foo", &VERSION).await?);
 
             {
                 let app = env.web_app().await;
                 let response = app
                     .oneshot(
                         Request::builder()
-                            .uri("/crate/foo/0.1.0/rebuild")
+                            .uri(format!("/crate/foo/{VERSION}/rebuild"))
                             .method("POST")
                             .header("Authorization", &format!("Bearer {correct_token}"))
                             .body(Body::empty())
@@ -435,7 +437,7 @@ mod tests {
             }
 
             assert_eq!(build_queue.pending_count().await?, 1);
-            assert!(build_queue.has_build_queued("foo", "0.1.0").await?);
+            assert!(build_queue.has_build_queued("foo", &VERSION).await?);
 
             Ok(())
         });

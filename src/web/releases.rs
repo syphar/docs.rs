@@ -820,7 +820,7 @@ mod tests {
     use crate::registry_api::{CrateOwner, OwnerKind};
     use crate::test::{
         AxumResponseTestExt, AxumRouterTestExt, FakeBuild, async_wrapper,
-        fake_release_that_failed_before_build,
+        fake_release_that_failed_before_build, version,
     };
     use anyhow::Error;
     use chrono::{Duration, TimeZone};
@@ -837,7 +837,7 @@ mod tests {
             let mut conn = db.async_conn().await;
 
             let crate_id = initialize_crate(&mut conn, "foo").await?;
-            let release_id = initialize_release(&mut conn, crate_id, "0.1.0").await?;
+            let release_id = initialize_release(&mut conn, crate_id, &version("0.1.0")).await?;
             let build_id = initialize_build(&mut conn, release_id).await?;
 
             finish_build(
@@ -1855,9 +1855,9 @@ mod tests {
             );
 
             let queue = env.async_build_queue().await;
-            queue.add_crate("foo", "1.0.0", 0, None).await?;
-            queue.add_crate("bar", "0.1.0", -10, None).await?;
-            queue.add_crate("baz", "0.0.1", 10, None).await?;
+            queue.add_crate("foo", &version("1.0.0"), 0, None).await?;
+            queue.add_crate("bar", &version("0.1.0"), -10, None).await?;
+            queue.add_crate("baz", &version("0.0.1"), 10, None).await?;
 
             let full = kuchikiki::parse_html().one(web.get("/releases/queue").await?.text().await?);
             let items = full
@@ -1895,8 +1895,8 @@ mod tests {
 
             // we have two queued releases, where the build for one is already in progress
             let queue = env.async_build_queue().await;
-            queue.add_crate("foo", "1.0.0", 0, None).await?;
-            queue.add_crate("bar", "0.1.0", 0, None).await?;
+            queue.add_crate("foo", &version("1.0.0"), 0, None).await?;
+            queue.add_crate("bar", &version("0.1.0"), 0, None).await?;
 
             env.fake_release()
                 .await
@@ -1971,13 +1971,13 @@ mod tests {
             let web = env.web_app().await;
             let queue = env.async_build_queue().await;
             queue
-                .add_crate("foo", "1.0.0", REBUILD_PRIORITY, None)
+                .add_crate("foo", &version("1.0.0"), REBUILD_PRIORITY, None)
                 .await?;
             queue
-                .add_crate("bar", "0.1.0", REBUILD_PRIORITY + 1, None)
+                .add_crate("bar", &version("0.1.0"), REBUILD_PRIORITY + 1, None)
                 .await?;
             queue
-                .add_crate("baz", "0.0.1", REBUILD_PRIORITY - 1, None)
+                .add_crate("baz", &version("0.0.1"), REBUILD_PRIORITY - 1, None)
                 .await?;
 
             let full = kuchikiki::parse_html().one(web.get("/releases/queue").await?.text().await?);
@@ -2206,7 +2206,7 @@ mod tests {
                 env.fake_release()
                     .await
                     .name("failed")
-                    .version(&format!("0.0.{i}"))
+                    .version(format!("0.0.{i}"))
                     .build_result_failed()
                     .create()
                     .await?;

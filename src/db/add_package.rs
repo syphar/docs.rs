@@ -658,7 +658,7 @@ mod test {
         async_wrapper(|env| async move {
             let mut conn = env.async_db().await.async_conn().await;
             let crate_id = initialize_crate(&mut conn, "krate").await?;
-            let release_id = initialize_release(&mut conn, crate_id, "0.1.0").await?;
+            let release_id = initialize_release(&mut conn, crate_id, &version("0.1.0")).await?;
             let build_id = initialize_build(&mut conn, release_id).await?;
 
             update_build_with_error(&mut conn, build_id, Some("error message")).await?;
@@ -692,7 +692,7 @@ mod test {
         async_wrapper(|env| async move {
             let mut conn = env.async_db().await.async_conn().await;
             let crate_id = initialize_crate(&mut conn, "krate").await?;
-            let release_id = initialize_release(&mut conn, crate_id, "0.1.0").await?;
+            let release_id = initialize_release(&mut conn, crate_id, &version("0.1.0")).await?;
             let build_id = initialize_build(&mut conn, release_id).await?;
 
             finish_build(
@@ -741,7 +741,7 @@ mod test {
         async_wrapper(|env| async move {
             let mut conn = env.async_db().await.async_conn().await;
             let crate_id = initialize_crate(&mut conn, "krate").await?;
-            let release_id = initialize_release(&mut conn, crate_id, "0.1.0").await?;
+            let release_id = initialize_release(&mut conn, crate_id, &version("0.1.0")).await?;
             let build_id = initialize_build(&mut conn, release_id).await?;
 
             finish_build(
@@ -786,7 +786,7 @@ mod test {
         async_wrapper(|env| async move {
             let mut conn = env.async_db().await.async_conn().await;
             let crate_id = initialize_crate(&mut conn, "krate").await?;
-            let release_id = initialize_release(&mut conn, crate_id, "0.1.0").await?;
+            let release_id = initialize_release(&mut conn, crate_id, &version("0.1.0")).await?;
             let build_id = initialize_build(&mut conn, release_id).await?;
 
             finish_build(
@@ -1230,22 +1230,22 @@ mod test {
         async_wrapper(|env| async move {
             let mut conn = env.async_db().await.async_conn().await;
             let name = "krate";
-            let version = "0.1.0";
+            let version = Version::new(0, 1, 0);
             let crate_id = initialize_crate(&mut conn, name).await?;
 
-            let release_id = initialize_release(&mut conn, crate_id, version).await?;
+            let release_id = initialize_release(&mut conn, crate_id, &version).await?;
 
             let id = sqlx::query_scalar!(
                 r#"SELECT id as "id: ReleaseId" FROM releases WHERE crate_id = $1 and version = $2"#,
                 crate_id.0,
-                version
+                version as _,
             )
             .fetch_one(&mut *conn)
             .await?;
 
             assert_eq!(release_id, id);
 
-            let same_release_id = initialize_release(&mut conn, crate_id, version).await?;
+            let same_release_id = initialize_release(&mut conn, crate_id, &version).await?;
             assert_eq!(release_id, same_release_id);
 
             Ok(())
@@ -1257,9 +1257,9 @@ mod test {
         async_wrapper(|env| async move {
             let mut conn = env.async_db().await.async_conn().await;
             let name = "krate";
-            let version = "0.1.0";
+            let version = Version::new(0, 1, 0);
             let crate_id = initialize_crate(&mut conn, name).await?;
-            let release_id = initialize_release(&mut conn, crate_id, version).await?;
+            let release_id = initialize_release(&mut conn, crate_id, &version).await?;
 
             let build_id = initialize_build(&mut conn, release_id).await?;
 
@@ -1303,13 +1303,23 @@ mod test {
             let mut conn = env.async_db().await.async_conn().await;
 
             let crate_id = initialize_crate(&mut conn, "krate").await?;
-            let version: Version = "version".repeat(100);
+            let version = Version::parse(&format!(
+                "1.2.3-{}+{}",
+                "prerelease".repeat(100),
+                "build".repeat(100)
+            ))?;
             let release_id = initialize_release(&mut conn, crate_id, &version).await?;
 
-            let db_version =
-                sqlx::query_scalar!("SELECT version FROM releases WHERE id = $1", release_id.0)
-                    .fetch_one(&mut *conn)
-                    .await?;
+            let db_version = sqlx::query_scalar!(
+                r#"
+                SELECT
+                    version as "version: Version"
+                FROM releases
+                WHERE id = $1"#,
+                release_id.0
+            )
+            .fetch_one(&mut *conn)
+            .await?;
 
             assert_eq!(db_version, version);
 

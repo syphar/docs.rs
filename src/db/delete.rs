@@ -224,7 +224,7 @@ mod tests {
     use crate::db::ReleaseId;
     use crate::registry_api::{CrateOwner, OwnerKind};
     use crate::storage::{CompressionAlgorithm, rustdoc_json_path};
-    use crate::test::{async_wrapper, fake_release_that_failed_before_build};
+    use crate::test::{async_wrapper, fake_release_that_failed_before_build, version};
     use test_case::test_case;
 
     async fn crate_exists(conn: &mut sqlx::PgConnection, name: &str) -> Result<bool> {
@@ -295,9 +295,9 @@ mod tests {
             assert!(release_exists(&mut conn, pkg1_v2_id).await?);
             assert!(release_exists(&mut conn, pkg2_id).await?);
             for (pkg, version) in &[
-                ("package-1", "1.0.0"),
-                ("package-1", "2.0.0"),
-                ("package-2", "1.0.0"),
+                ("package-1", Version::new(1, 0, 0)),
+                ("package-1", Version::new(2, 0, 0)),
+                ("package-2", Version::new(1, 0, 0)),
             ] {
                 assert!(
                     env.async_storage()
@@ -333,7 +333,7 @@ mod tests {
                     .await
                     .rustdoc_file_exists(
                         "package-2",
-                        "1.0.0",
+                        &version("1.0.0"),
                         None,
                         "package-2/index.html",
                         archive_storage
@@ -346,13 +346,13 @@ mod tests {
                 assert!(
                     !env.async_storage()
                         .await
-                        .exists(&rustdoc_archive_path("package-1", "1.0.0"))
+                        .exists(&rustdoc_archive_path("package-1", &version("1.0.0")))
                         .await?
                 );
                 assert!(
                     !env.async_storage()
                         .await
-                        .exists(&rustdoc_archive_path("package-1", "2.0.0"))
+                        .exists(&rustdoc_archive_path("package-1", &version("2.0.0")))
                         .await?
                 );
             } else {
@@ -361,7 +361,7 @@ mod tests {
                         .await
                         .rustdoc_file_exists(
                             "package-1",
-                            "1.0.0",
+                            &version("1.0.0"),
                             None,
                             "package-1/index.html",
                             archive_storage
@@ -373,7 +373,7 @@ mod tests {
                         .await
                         .rustdoc_file_exists(
                             "package-1",
-                            "2.0.0",
+                            &version("2.0.0"),
                             None,
                             "package-1/index.html",
                             archive_storage
@@ -407,11 +407,13 @@ mod tests {
                 .collect())
             }
 
-            async fn json_exists(storage: &AsyncStorage, version: &Version) -> Result<bool> {
+            async fn json_exists(storage: &AsyncStorage, version: &str) -> Result<bool> {
+                let version: Version = version.parse().expect("invalid version");
+
                 storage
                     .exists(&rustdoc_json_path(
                         "a",
-                        version,
+                        &version,
                         "x86_64-unknown-linux-gnu",
                         crate::storage::RustdocJsonFormatVersion::Latest,
                         Some(CompressionAlgorithm::Zstd),
@@ -437,7 +439,13 @@ mod tests {
             assert!(
                 env.async_storage()
                     .await
-                    .rustdoc_file_exists("a", "1.0.0", None, "a/index.html", archive_storage)
+                    .rustdoc_file_exists(
+                        "a",
+                        &version("1.0.0"),
+                        None,
+                        "a/index.html",
+                        archive_storage
+                    )
                     .await?
             );
             assert!(json_exists(&*env.async_storage().await, "1.0.0").await?);
@@ -469,7 +477,13 @@ mod tests {
             assert!(
                 env.async_storage()
                     .await
-                    .rustdoc_file_exists("a", "2.0.0", None, "a/index.html", archive_storage)
+                    .rustdoc_file_exists(
+                        "a",
+                        &version("2.0.0"),
+                        None,
+                        "a/index.html",
+                        archive_storage
+                    )
                     .await?
             );
             assert!(json_exists(&*env.async_storage().await, "2.0.0").await?);
@@ -483,14 +497,14 @@ mod tests {
                 &*env.async_storage().await,
                 &env.config(),
                 "a",
-                "1.0.0",
+                &version("1.0.0"),
             )
             .await?;
             assert!(!release_exists(&mut conn, v1).await?);
             if archive_storage {
                 // for archive storage the archive and index files
                 // need to be cleaned up.
-                let rustdoc_archive = rustdoc_archive_path("a", "1.0.0");
+                let rustdoc_archive = rustdoc_archive_path("a", &version("1.0.0"));
                 assert!(!env.async_storage().await.exists(&rustdoc_archive).await?);
 
                 // local and remote index are gone too
@@ -506,7 +520,13 @@ mod tests {
                 assert!(
                     !env.async_storage()
                         .await
-                        .rustdoc_file_exists("a", "1.0.0", None, "a/index.html", archive_storage)
+                        .rustdoc_file_exists(
+                            "a",
+                            &version("1.0.0"),
+                            None,
+                            "a/index.html",
+                            archive_storage
+                        )
                         .await?
                 );
             }
@@ -516,7 +536,13 @@ mod tests {
             assert!(
                 env.async_storage()
                     .await
-                    .rustdoc_file_exists("a", "2.0.0", None, "a/index.html", archive_storage)
+                    .rustdoc_file_exists(
+                        "a",
+                        &version("2.0.0"),
+                        None,
+                        "a/index.html",
+                        archive_storage
+                    )
                     .await?
             );
             assert!(json_exists(&*env.async_storage().await, "2.0.0").await?);
@@ -549,7 +575,7 @@ mod tests {
                 &*env.async_storage().await,
                 &env.config(),
                 "a",
-                "1.0.0",
+                &version("1.0.0"),
             )
             .await?;
 

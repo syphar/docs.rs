@@ -1,8 +1,7 @@
-use crate::{error::Result, utils::retry_async};
+use crate::{db::types::version::Version, error::Result, utils::retry_async};
 use anyhow::{Context, anyhow, bail};
 use chrono::{DateTime, Utc};
 use reqwest::header::{ACCEPT, HeaderValue, USER_AGENT};
-use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use tracing::instrument;

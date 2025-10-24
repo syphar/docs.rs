@@ -336,7 +336,7 @@ impl RustwideBuilder {
                 let res = self.execute_build(
                     BuildId(0),
                     DUMMY_CRATE_NAME,
-                    &DUMMY_CRATE_VERSION,
+                    DUMMY_CRATE_VERSION,
                     HOST_TARGET,
                     true,
                     build,
@@ -1305,8 +1305,10 @@ mod tests {
     fn get_features(
         env: &TestEnvironment,
         name: &str,
-        version: &Version,
+        version: &str,
     ) -> Result<Option<Vec<Feature>>, sqlx::Error> {
+        let version: Version = version.parse().unwrap();
+
         env.runtime().block_on(async {
             let mut conn = env.async_db().await.async_conn().await;
             sqlx::query_scalar!(
@@ -1316,14 +1318,16 @@ mod tests {
                      INNER JOIN crates ON crates.id = releases.crate_id
                      WHERE crates.name = $1 AND releases.version = $2"#,
                 name,
-                version,
+                version as _,
             )
             .fetch_one(&mut *conn)
             .await
         })
     }
 
-    fn remove_cache_files(env: &TestEnvironment, crate_: &str, version: &Version) -> Result<()> {
+    fn remove_cache_files(env: &TestEnvironment, crate_: &str, version: &str) -> Result<()> {
+        let version: Version = version.parse().unwrap();
+
         let paths = [
             format!("cache/index.crates.io-6f17d22bba15001f/{crate_}-{version}.crate"),
             format!("src/index.crates.io-6f17d22bba15001f/{crate_}-{version}"),
@@ -1401,7 +1405,7 @@ mod tests {
                         c.name = $1 AND
                         r.version = $2"#,
                     crate_,
-                    version,
+                    version as _,
                 )
                 .fetch_one(&mut *conn)
                 .await
@@ -1587,7 +1591,7 @@ mod tests {
         wrapper(|env| {
             // some binary crate
             let crate_ = "heater";
-            let version = "0.2.3";
+            let version = Version::new(0, 2, 3);
 
             let storage = env.storage();
             let old_rustdoc_file = format!("rustdoc/{crate_}/{version}/some_doc_file");
@@ -1599,7 +1603,7 @@ mod tests {
             builder.update_toolchain()?;
             assert!(
                 !builder
-                    .build_package(crate_, version, PackageKind::CratesIo, false)?
+                    .build_package(crate_, &version, PackageKind::CratesIo, false)?
                     .successful
             );
 
@@ -1618,7 +1622,7 @@ mod tests {
                         c.name = $1 AND
                         r.version = $2",
                     crate_,
-                    version
+                    version as _
                 )
                 .fetch_one(&mut *conn)
                 .await
@@ -1628,11 +1632,11 @@ mod tests {
             assert_eq!(row.is_library, Some(false));
 
             // doc archive exists
-            let doc_archive = rustdoc_archive_path(crate_, version);
+            let doc_archive = rustdoc_archive_path(crate_, &version);
             assert!(!storage.exists(&doc_archive)?);
 
             // source archive exists
-            let source_archive = source_archive_path(crate_, version);
+            let source_archive = source_archive_path(crate_, &version);
             assert!(storage.exists(&source_archive)?);
 
             // old rustdoc & source files still exist
@@ -1650,13 +1654,13 @@ mod tests {
             // rand 0.8.5 fails to build with recent nightly versions
             // https://github.com/rust-lang/docs.rs/issues/26750
             let crate_ = "rand";
-            let version = "0.8.5";
+            let version = Version::new(0, 8, 5);
 
             // create a successful release & build in the database
             let release_id = env.runtime().block_on(async {
                 let mut conn = env.async_db().await.async_conn().await;
                 let crate_id = initialize_crate(&mut conn, crate_).await?;
-                let release_id = initialize_release(&mut conn, crate_id, version).await?;
+                let release_id = initialize_release(&mut conn, crate_id, &version).await?;
                 let build_id = initialize_build(&mut conn, release_id).await?;
                 finish_build(
                     &mut conn,
@@ -1672,7 +1676,21 @@ mod tests {
                     &mut conn,
                     crate_id,
                     release_id,
-                    &MetadataPackage::default(),
+                    &MetadataPackage {
+                        name: crate_.into(),
+                        version: version.clone().into(),
+                        id: "".into(),
+                        license: None,
+                        repository: None,
+                        homepage: None,
+                        description: None,
+                        documentation: None,
+                        dependencies: vec![],
+                        targets: vec![],
+                        readme: None,
+                        keywords: vec![],
+                        features: HashMap::new(),
+                    },
                     Path::new("/unknown/"),
                     "x86_64-unknown-linux-gnu",
                     serde_json::Value::Array(vec![]),
@@ -1719,7 +1737,7 @@ mod tests {
             assert!(
                 // not successful build
                 !builder
-                    .build_package(crate_, version, PackageKind::CratesIo, false)?
+                    .build_package(crate_, &version, PackageKind::CratesIo, false)?
                     .successful
             );
 
@@ -1728,28 +1746,28 @@ mod tests {
         });
     }
 
-    #[test_case("scsys-macros", "0.2.6")]
-    #[test_case("scsys-derive", "0.2.6")]
-    #[test_case("thiserror-impl", "1.0.26")]
+    #[test_case("scsys-macros", Version::new(0, 2, 6))]
+    #[test_case("scsys-derive", Version::new(0, 2, 6))]
+    #[test_case("thiserror-impl", Version::new(1, 0, 26))]
     #[ignore]
-    fn test_proc_macro(crate_: &str, version: &Version) {
+    fn test_proc_macro(crate_: &str, version: Version) {
         wrapper(|env| {
             let mut builder = RustwideBuilder::init(env).unwrap();
             builder.update_toolchain()?;
             assert!(
                 builder
-                    .build_package(crate_, version, PackageKind::CratesIo, false)?
+                    .build_package(crate_, &version, PackageKind::CratesIo, false)?
                     .successful
             );
 
             let storage = env.storage();
 
             // doc archive exists
-            let doc_archive = rustdoc_archive_path(crate_, version);
+            let doc_archive = rustdoc_archive_path(crate_, &version);
             assert!(storage.exists(&doc_archive)?);
 
             // source archive exists
-            let source_archive = source_archive_path(crate_, version);
+            let source_archive = source_archive_path(crate_, &version);
             assert!(storage.exists(&source_archive)?);
 
             Ok(())
@@ -1761,7 +1779,7 @@ mod tests {
     fn test_cross_compile_non_host_default() {
         wrapper(|env| {
             let crate_ = "windows-win";
-            let version = "2.4.1";
+            let version = Version::new(2, 4, 1);
             let mut builder = RustwideBuilder::init(env).unwrap();
             builder.update_toolchain()?;
             if builder.toolchain.as_ci().is_some() {
@@ -1769,18 +1787,18 @@ mod tests {
             }
             assert!(
                 builder
-                    .build_package(crate_, version, PackageKind::CratesIo, false)?
+                    .build_package(crate_, &version, PackageKind::CratesIo, false)?
                     .successful
             );
 
             let storage = env.storage();
 
             // doc archive exists
-            let doc_archive = rustdoc_archive_path(crate_, version);
+            let doc_archive = rustdoc_archive_path(crate_, &version);
             assert!(storage.exists(&doc_archive)?, "{}", doc_archive);
 
             // source archive exists
-            let source_archive = source_archive_path(crate_, version);
+            let source_archive = source_archive_path(crate_, &version);
             assert!(storage.exists(&source_archive)?, "{}", source_archive);
 
             let target = "x86_64-unknown-linux-gnu";
@@ -1820,12 +1838,12 @@ mod tests {
             //  * `cargo doc` fails with the version of the dependency in the lockfile
             //  * there is a newer version of the dependency available that correctly builds
             let crate_ = "docs_rs_test_incorrect_lockfile";
-            let version = "0.1.2";
+            let version = Version::new(0, 1, 2);
             let mut builder = RustwideBuilder::init(env).unwrap();
             builder.update_toolchain()?;
             assert!(
                 builder
-                    .build_package(crate_, version, PackageKind::CratesIo, false)?
+                    .build_package(crate_, &version, PackageKind::CratesIo, false)?
                     .successful
             );
 
@@ -1847,12 +1865,12 @@ mod tests {
             // introducing a completely new dependency (not just version) which
             // would not have had its details pulled down from the sparse-index.
             let crate_ = "docs_rs_test_incorrect_lockfile";
-            let version = "0.2.0";
+            let version = Version::new(0, 2, 0);
             let mut builder = RustwideBuilder::init(env).unwrap();
             builder.update_toolchain()?;
             assert!(
                 builder
-                    .build_package(crate_, version, PackageKind::CratesIo, false)?
+                    .build_package(crate_, &version, PackageKind::CratesIo, false)?
                     .successful
             );
 
@@ -1865,12 +1883,12 @@ mod tests {
     fn test_rustflags_are_passed_to_build_script() {
         wrapper(|env| {
             let crate_ = "proc-macro2";
-            let version = "1.0.95";
+            let version = Version::new(1, 0, 95);
             let mut builder = RustwideBuilder::init(env).unwrap();
             builder.update_toolchain()?;
             assert!(
                 builder
-                    .build_package(crate_, version, PackageKind::CratesIo, false)?
+                    .build_package(crate_, &version, PackageKind::CratesIo, false)?
                     .successful
             );
             Ok(())
@@ -1886,19 +1904,19 @@ mod tests {
             // Will succeed in the crate fetch step, so sources are
             // added. Will fail when we try to build.
             let crate_ = "simconnect-sys";
-            let version = "0.23.1";
+            let version = Version::new(0, 23, 1);
             let mut builder = RustwideBuilder::init(env).unwrap();
             builder.update_toolchain()?;
 
             // `Result` is `Ok`, but the build-result is `false`
             assert!(
                 !builder
-                    .build_package(crate_, version, PackageKind::CratesIo, false)?
+                    .build_package(crate_, &version, PackageKind::CratesIo, false)?
                     .successful
             );
 
             // source archive exists
-            let source_archive = source_archive_path(crate_, version);
+            let source_archive = source_archive_path(crate_, &version);
             assert!(
                 env.storage().exists(&source_archive)?,
                 "archive doesnt exist: {source_archive}"
@@ -1915,12 +1933,12 @@ mod tests {
             // https://github.com/rust-lang/docs.rs/issues/2491
             // package without Cargo.toml, so fails directly in the fetch stage.
             let crate_ = "emheap";
-            let version = "0.1.0";
+            let version = Version::new(0, 1, 0);
             let mut builder = RustwideBuilder::init(env).unwrap();
             builder.update_toolchain()?;
 
             // `Result` is `Ok`, but the build-result is `false`
-            let summary = builder.build_package(crate_, version, PackageKind::CratesIo, false)?;
+            let summary = builder.build_package(crate_, &version, PackageKind::CratesIo, false)?;
 
             assert!(!summary.successful);
             assert!(summary.should_reattempt);
@@ -1939,7 +1957,7 @@ mod tests {
                        INNER JOIN builds as b on b.rid = r.id
                        WHERE c.name = $1 and r.version = $2"#,
                     crate_,
-                    version,
+                    version as _,
                 )
                 .fetch_one(&mut *conn)
                 .await
@@ -1959,17 +1977,17 @@ mod tests {
     fn test_implicit_features_for_optional_dependencies() {
         wrapper(|env| {
             let crate_ = "serde";
-            let version = "1.0.152";
+            let version = Version::new(1, 0, 152);
             let mut builder = RustwideBuilder::init(env).unwrap();
             builder.update_toolchain()?;
             assert!(
                 builder
-                    .build_package(crate_, version, PackageKind::CratesIo, false)?
+                    .build_package(crate_, &version, PackageKind::CratesIo, false)?
                     .successful
             );
 
             assert!(
-                get_features(env, crate_, version)?
+                get_features(env, crate_, &version.to_string())?
                     .unwrap()
                     .iter()
                     .any(|f| f.name == "serde_derive")

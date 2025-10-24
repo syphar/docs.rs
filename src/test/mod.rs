@@ -1,15 +1,15 @@
 mod fakes;
 
 pub(crate) use self::fakes::{FakeBuild, fake_release_that_failed_before_build};
-use crate::cdn::CdnBackend;
-use crate::db::{self, AsyncPoolClient, Pool};
-use crate::error::Result;
-use crate::repositories::RepositoryStatsUpdater;
-use crate::storage::{AsyncStorage, Storage, StorageKind};
-use crate::web::{build_axum_app, cache, page::TemplateData};
 use crate::{
     AsyncBuildQueue, BuildQueue, Config, Context, Index, InstanceMetrics, RegistryApi,
     ServiceMetrics,
+    cdn::CdnBackend,
+    db::{self, AsyncPoolClient, Pool, types::version::Version},
+    error::Result,
+    repositories::RepositoryStatsUpdater,
+    storage::{AsyncStorage, Storage, StorageKind},
+    web::{build_axum_app, cache, page::TemplateData},
 };
 use anyhow::Context as _;
 use axum::body::Bytes;
@@ -20,10 +20,18 @@ use http_body_util::BodyExt; // for `collect`
 use once_cell::sync::OnceCell;
 use serde::de::DeserializeOwned;
 use sqlx::Connection as _;
-use std::{fs, future::Future, panic, rc::Rc, str::FromStr, sync::Arc};
+use std::{fmt, fs, future::Future, panic, rc::Rc, str::FromStr, sync::Arc};
 use tokio::runtime::{Builder, Runtime};
 use tower::ServiceExt;
 use tracing::error;
+
+pub(crate) fn version<V>(version: V) -> Version
+where
+    V: TryInto<Version>,
+    V::Error: fmt::Debug,
+{
+    version.try_into().expect("invalid version")
+}
 
 #[track_caller]
 pub(crate) fn wrapper(f: impl FnOnce(&TestEnvironment) -> Result<()>) {

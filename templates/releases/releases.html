@@ -43,7 +43,7 @@ centered
                             {%- set release_version -%}
                             {%- set has_unyanked_releases = release.has_unyanked_releases.unwrap_or(true) -%}
                             {%- if release_type == "search" && has_unyanked_releases -%}
-                                {%- set release_version = "latest" -%}
+                                {%- set release_version = "latest".to_string() -%}
                             {%- else -%}
                                 {%- set release_version = release.version.to_string() -%}
                             {%- endif -%}

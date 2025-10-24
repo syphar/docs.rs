@@ -744,7 +744,7 @@ pub async fn queue_rebuilds(
 
 #[cfg(test)]
 mod tests {
-    use crate::test::FakeBuild;
+    use crate::test::{FakeBuild, version};
 
     use super::*;
     use chrono::Utc;
@@ -777,7 +777,7 @@ mod tests {
             let queue = build_queue.queued_crates().await?;
             assert_eq!(queue.len(), 1);
             assert_eq!(queue[0].name, "foo");
-            assert_eq!(queue[0].version, "0.1.0");
+            assert_eq!(queue[0].version, Version::new(0, 1, 0));
             assert_eq!(queue[0].priority, REBUILD_PRIORITY);
 
             Ok(())
@@ -793,10 +793,10 @@ mod tests {
 
             let build_queue = env.async_build_queue().await;
             build_queue
-                .add_crate("foo1", "0.1.0", REBUILD_PRIORITY, None)
+                .add_crate("foo1", &version("0.1.0"), REBUILD_PRIORITY, None)
                 .await?;
             build_queue
-                .add_crate("foo2", "0.1.0", REBUILD_PRIORITY, None)
+                .add_crate("foo2", &version("0.1.0"), REBUILD_PRIORITY, None)
                 .await?;
 
             let mut conn = env.async_db().await.async_conn().await;
@@ -835,10 +835,10 @@ mod tests {
 
             let build_queue = env.async_build_queue().await;
             build_queue
-                .add_crate("foo1", "0.1.0", REBUILD_PRIORITY, None)
+                .add_crate("foo1", &version("0.1.0"), REBUILD_PRIORITY, None)
                 .await?;
             build_queue
-                .add_crate("foo2", "0.1.0", REBUILD_PRIORITY, None)
+                .add_crate("foo2", &version("0.1.0"), REBUILD_PRIORITY, None)
                 .await?;
 
             env.fake_release()
@@ -869,8 +869,12 @@ mod tests {
         crate::test::async_wrapper(|env| async move {
             let queue = env.async_build_queue().await;
 
-            queue.add_crate("some_crate", "0.1.1", 0, None).await?;
-            queue.add_crate("some_crate", "0.1.1", 9, None).await?;
+            queue
+                .add_crate("some_crate", &version("0.1.1"), 0, None)
+                .await?;
+            queue
+                .add_crate("some_crate", &version("0.1.1"), 9, None)
+                .await?;
 
             let queued_crates = queue.queued_crates().await?;
             assert_eq!(queued_crates.len(), 1);
@@ -900,7 +904,9 @@ mod tests {
 
             assert_eq!(queue.pending_count().await?, 0);
 
-            queue.add_crate("failed_crate", "0.1.1", 9, None).await?;
+            queue
+                .add_crate("failed_crate", &version("0.1.1"), 9, None)
+                .await?;
 
             assert_eq!(queue.pending_count().await?, 1);
 
@@ -926,17 +932,27 @@ mod tests {
         crate::test::async_wrapper(|env| async move {
             let queue = env.async_build_queue().await;
 
-            queue.add_crate("dummy", "0.1.1", 0, None).await?;
+            queue.add_crate("dummy", &version("0.1.1"), 0, None).await?;
 
             let mut conn = env.async_db().await.async_conn().await;
-            assert!(queue.has_build_queued("dummy", "0.1.1").await.unwrap());
+            assert!(
+                queue
+                    .has_build_queued("dummy", &version("0.1.1"))
+                    .await
+                    .unwrap()
+            );
 
             sqlx::query!("UPDATE queue SET attempt = 6")
                 .execute(&mut *conn)
                 .await
                 .unwrap();
 
-            assert!(!queue.has_build_queued("dummy", "0.1.1").await.unwrap());
+            assert!(
+                !queue
+                    .has_build_queued("dummy", &version("0.1.1"))
+                    .await
+                    .unwrap()
+            );
 
             Ok(())
         })
@@ -954,7 +970,7 @@ mod tests {
 
             let queue = env.build_queue();
 
-            queue.add_crate("krate", "1.0.0", 0, None)?;
+            queue.add_crate("krate", &version("1.0.0"), 0, None)?;
 
             // first let it fail
             queue.process_next_crate(|krate| {
@@ -1013,7 +1029,7 @@ mod tests {
                 ("high-priority-baz", "1.0.0", -1000),
             ];
             for krate in &test_crates {
-                queue.add_crate(krate.0, krate.1, krate.2, None)?;
+                queue.add_crate(krate.0, &version(krate.1), krate.2, None)?;
             }
 
             let assert_next = |name| -> Result<()> {
@@ -1095,8 +1111,8 @@ mod tests {
 
             let queue = env.build_queue();
 
-            queue.add_crate("will_succeed", "1.0.0", -1, None)?;
-            queue.add_crate("will_fail", "1.0.0", 0, None)?;
+            queue.add_crate("will_succeed", &version("1.0.0"), -1, None)?;
+            queue.add_crate("will_fail", &version("1.0.0"), 0, None)?;
 
             let fetch_invalidations = || {
                 env.runtime()
@@ -1146,9 +1162,9 @@ mod tests {
             let queue = env.build_queue();
 
             assert_eq!(queue.pending_count()?, 0);
-            queue.add_crate("foo", "1.0.0", 0, None)?;
+            queue.add_crate("foo", &version("1.0.0"), 0, None)?;
             assert_eq!(queue.pending_count()?, 1);
-            queue.add_crate("bar", "1.0.0", 0, None)?;
+            queue.add_crate("bar", &version("1.0.0"), 0, None)?;
             assert_eq!(queue.pending_count()?, 2);
 
             queue.process_next_crate(|krate| {
@@ -1167,11 +1183,11 @@ mod tests {
             let queue = env.build_queue();
 
             assert_eq!(queue.prioritized_count()?, 0);
-            queue.add_crate("foo", "1.0.0", 0, None)?;
+            queue.add_crate("foo", &version("1.0.0"), 0, None)?;
             assert_eq!(queue.prioritized_count()?, 1);
-            queue.add_crate("bar", "1.0.0", -100, None)?;
+            queue.add_crate("bar", &version("1.0.0"), -100, None)?;
             assert_eq!(queue.prioritized_count()?, 2);
-            queue.add_crate("baz", "1.0.0", 100, None)?;
+            queue.add_crate("baz", &version("1.0.0"), 100, None)?;
             assert_eq!(queue.prioritized_count()?, 2);
 
             queue.process_next_crate(|krate| {
@@ -1191,9 +1207,9 @@ mod tests {
 
             assert!(queue.pending_count_by_priority()?.is_empty());
 
-            queue.add_crate("one", "1.0.0", 1, None)?;
-            queue.add_crate("two", "2.0.0", 2, None)?;
-            queue.add_crate("two_more", "2.0.0", 2, None)?;
+            queue.add_crate("one", &version("1.0.0"), 1, None)?;
+            queue.add_crate("two", &version("2.0.0"), 2, None)?;
+            queue.add_crate("two_more", &version("2.0.0"), 2, None)?;
 
             assert_eq!(
                 queue.pending_count_by_priority()?,
@@ -1220,9 +1236,9 @@ mod tests {
             let queue = env.build_queue();
 
             assert_eq!(queue.failed_count()?, 0);
-            queue.add_crate("foo", "1.0.0", -100, None)?;
+            queue.add_crate("foo", &version("1.0.0"), -100, None)?;
             assert_eq!(queue.failed_count()?, 0);
-            queue.add_crate("bar", "1.0.0", 0, None)?;
+            queue.add_crate("bar", &version("1.0.0"), 0, None)?;
 
             for _ in 0..MAX_ATTEMPTS {
                 assert_eq!(queue.failed_count()?, 0);
@@ -1257,9 +1273,9 @@ mod tests {
             let queue = env.build_queue();
 
             assert_eq!(queue.failed_count()?, 0);
-            queue.add_crate("foo", "1.0.0", -100, None)?;
+            queue.add_crate("foo", &version("1.0.0"), -100, None)?;
             assert_eq!(queue.failed_count()?, 0);
-            queue.add_crate("bar", "1.0.0", 0, None)?;
+            queue.add_crate("bar", &version("1.0.0"), 0, None)?;
 
             for _ in 0..MAX_ATTEMPTS {
                 assert_eq!(queue.failed_count()?, 0);
@@ -1285,25 +1301,23 @@ mod tests {
         crate::test::wrapper(|env| {
             let queue = env.build_queue();
 
-            let test_crates = [
-                ("bar", "1.0.0", 0),
-                ("foo", "1.0.0", -10),
-                ("baz", "1.0.0", 10),
-            ];
+            const VERSION: Version = Version::new(1, 0, 0);
+
+            let test_crates = [("bar", 0), ("foo", -10), ("baz", 10)];
             for krate in &test_crates {
-                queue.add_crate(krate.0, krate.1, krate.2, None)?;
+                queue.add_crate(krate.0, &VERSION, krate.1, None)?;
             }
 
             assert_eq!(
                 vec![
-                    ("foo", "1.0.0", -10),
-                    ("bar", "1.0.0", 0),
-                    ("baz", "1.0.0", 10),
+                    ("foo".into(), VERSION, -10),
+                    ("bar".into(), VERSION, 0),
+                    ("baz".into(), VERSION, 10),
                 ],
                 queue
                     .queued_crates()?
-                    .iter()
-                    .map(|c| (c.name.as_str(), c.version.as_str(), c.priority))
+                    .into_iter()
+                    .map(|c| (c.name, c.version, c.priority))
                     .collect::<Vec<_>>()
             );
 
@@ -1374,7 +1388,7 @@ mod tests {
 
             let name: String = "krate".repeat(100);
 
-            queue.add_crate(&name, "0.0.1", 0, None)?;
+            queue.add_crate(&name, &version("0.0.1"), 0, None)?;
 
             queue.process_next_crate(|krate| {
                 assert_eq!(name, krate.name);
@@ -1390,7 +1404,11 @@ mod tests {
         crate::test::wrapper(|env| {
             let queue = env.build_queue();
 
-            let version: String = "version".repeat(100);
+            let version = Version::parse(&format!(
+                "1.2.3-{}+{}",
+                "prerelease".repeat(100),
+                "build".repeat(100)
+            ))?;
 
             queue.add_crate("krate", &version, 0, None)?;
 

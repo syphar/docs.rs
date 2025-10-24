@@ -21,6 +21,7 @@ use docs_rs::{
 };
 use futures_util::StreamExt;
 use once_cell::sync::OnceCell;
+use semver::Version;
 use sentry::{
     TransactionContext, integrations::panic as sentry_panic,
     integrations::tracing as sentry_tracing,
@@ -296,7 +297,7 @@ impl QueueSubcommand {
                 build_priority,
             } => build_queue.add_crate(
                 &crate_name,
-                &crate_version,
+                &crate_version.clone().into(),
                 build_priority,
                 ctx.config()?.registry_url.as_deref(),
             )?,
@@ -464,6 +465,7 @@ impl BuildSubcommand {
                             &crate_name
                                 .with_context(|| anyhow!("must specify name if not local"))?,
                             &crate_version
+                                .map(|v| v.clone().into())
                                 .with_context(|| anyhow!("must specify version if not local"))?,
                             registry_url
                                 .as_ref()
@@ -663,7 +665,7 @@ impl DatabaseSubcommand {
                         &*ctx.async_storage().await?,
                         &*ctx.config()?,
                         &name,
-                        &version,
+                        &version.clone().into(),
                     )
                     .await
                 })

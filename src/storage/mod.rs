@@ -15,6 +15,7 @@ use crate::{
         BuildId, Pool,
         file::{FileEntry, detect_mime},
         mimes,
+        types::version::Version,
     },
     error::Result,
     utils::spawn_blocking,
@@ -25,7 +26,6 @@ use fn_error_context::context;
 use futures_util::stream::BoxStream;
 use mime::Mime;
 use path_slash::PathExt;
-use semver::Version;
 use std::{
     fmt,
     fs::{self, File},

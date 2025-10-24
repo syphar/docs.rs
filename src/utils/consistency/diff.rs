@@ -131,11 +131,11 @@ mod tests {
             name: "krate".into(),
             releases: vec![
                 Release {
-                    version: "0.0.2".into(),
+                    version: Version::new(0, 0, 2),
                     yanked: Some(false),
                 },
                 Release {
-                    version: "0.0.3".into(),
+                    version: Version::new(0, 0, 3),
                     yanked: Some(true),
                 },
             ],
@@ -145,7 +145,7 @@ mod tests {
             calculate_diff([].iter(), index_releases.iter()),
             vec![Difference::CrateNotInDb(
                 "krate".into(),
-                vec!["0.0.2".into(), "0.0.3".into()]
+                vec![Version::new(0, 0, 2), Version::new(0, 0, 3)]
             )]
         );
     }
@@ -156,11 +156,11 @@ mod tests {
             name: "krate".into(),
             releases: vec![
                 Release {
-                    version: "0.0.2".into(),
+                    version: Version::new(0, 0, 2),
                     yanked: Some(true),
                 },
                 Release {
-                    version: "0.0.3".into(),
+                    version: Version::new(0, 0, 3),
                     yanked: Some(true),
                 },
             ],
@@ -169,11 +169,11 @@ mod tests {
             name: "krate".into(),
             releases: vec![
                 Release {
-                    version: "0.0.2".into(),
+                    version: Version::new(0, 0, 2),
                     yanked: Some(false),
                 },
                 Release {
-                    version: "0.0.3".into(),
+                    version: Version::new(0, 0, 3),
                     yanked: Some(true),
                 },
             ],
@@ -183,7 +183,7 @@ mod tests {
             calculate_diff(db_releases.iter(), index_releases.iter()),
             vec![Difference::ReleaseYank(
                 "krate".into(),
-                "0.0.2".into(),
+                Version::new(0, 0, 2),
                 false,
             )]
         );
@@ -194,14 +194,14 @@ mod tests {
         let db_releases = [Crate {
             name: "krate".into(),
             releases: vec![Release {
-                version: "0.0.2".into(),
+                version: Version::new(0, 0, 2),
                 yanked: None,
             }],
         }];
         let index_releases = [Crate {
             name: "krate".into(),
             releases: vec![Release {
-                version: "0.0.2".into(),
+                version: Version::new(0, 0, 2),
                 yanked: Some(false),
             }],
         }];

@@ -800,8 +800,10 @@ mod tests {
     async fn release_build_status(
         conn: &mut sqlx::PgConnection,
         name: &str,
-        version: &Version,
+        version: &str,
     ) -> BuildStatus {
+        let version: Version = version.parse().expect("invalid version");
+
         let status = sqlx::query_scalar!(
             r#"
             SELECT build_status as "build_status!: BuildStatus"
@@ -810,14 +812,14 @@ mod tests {
             INNER JOIN release_build_status ON releases.id = release_build_status.rid
             WHERE crates.name = $1 AND releases.version = $2"#,
             name,
-            version
+            version as _
         )
         .fetch_one(&mut *conn)
         .await
         .unwrap();
 
         assert_eq!(
-            crate_details(&mut *conn, name, version, None)
+            crate_details(&mut *conn, name, &version, None)
                 .await
                 .build_status,
             status
@@ -826,12 +828,18 @@ mod tests {
         status
     }
 
-    async fn crate_details(
+    async fn crate_details<V>(
         conn: &mut sqlx::PgConnection,
         name: &str,
-        version: &Version,
+        version: V,
         req_version: Option<ReqVersion>,
-    ) -> CrateDetails {
+    ) -> CrateDetails
+    where
+        V: TryInto<Version>,
+        V::Error: std::error::Error + Send + Sync + 'static,
+    {
+        let version = version.try_into().expect("invalid version");
+
         let crate_id = sqlx::query_scalar!(
             r#"SELECT id as "id: CrateId" FROM crates WHERE name = $1"#,
             name
@@ -842,16 +850,10 @@ mod tests {
 
         let releases = releases_for_crate(&mut *conn, crate_id).await.unwrap();
 
-        CrateDetails::new(
-            &mut *conn,
-            name,
-            &Version::parse(version).unwrap(),
-            req_version,
-            releases,
-        )
-        .await
-        .unwrap()
-        .unwrap()
+        CrateDetails::new(&mut *conn, name, &version, req_version, releases)
+            .await
+            .unwrap()
+            .unwrap()
     }
 
     #[fn_error_context::context(
@@ -860,9 +862,10 @@ mod tests {
     async fn assert_last_successful_build_equals(
         db: &TestDatabase,
         package: &str,
-        version: &Version,
+        version: &str,
         expected_last_successful_build: Option<&str>,
     ) -> Result<(), Error> {
+        let version = version.parse::<Version>()?;
         let mut conn = db.async_conn().await;
         let details = crate_details(&mut conn, package, version, None).await;
 
@@ -1110,7 +1113,7 @@ mod tests {
                 details.releases,
                 vec![
                     Release {
-                        version: semver::Version::parse("1.0.0")?,
+                        version: Version::parse("1.0.0")?,
                         build_status: BuildStatus::Success,
                         yanked: Some(false),
                         is_library: Some(true),
@@ -1120,7 +1123,7 @@ mod tests {
                         release_time: None,
                     },
                     Release {
-                        version: semver::Version::parse("0.12.0")?,
+                        version: Version::parse("0.12.0")?,
                         build_status: BuildStatus::Success,
                         yanked: Some(false),
                         is_library: Some(true),
@@ -1130,7 +1133,7 @@ mod tests {
                         release_time: None,
                     },
                     Release {
-                        version: semver::Version::parse("0.3.0")?,
+                        version: Version::parse("0.3.0")?,
                         build_status: BuildStatus::Failure,
                         yanked: Some(false),
                         is_library: Some(true),
@@ -1140,7 +1143,7 @@ mod tests {
                         release_time: None,
                     },
                     Release {
-                        version: semver::Version::parse("0.2.0")?,
+                        version: Version::parse("0.2.0")?,
                         build_status: BuildStatus::Success,
                         yanked: Some(true),
                         is_library: Some(true),
@@ -1150,7 +1153,7 @@ mod tests {
                         release_time: None,
                     },
                     Release {
-                        version: semver::Version::parse("0.2.0-alpha")?,
+                        version: Version::parse("0.2.0-alpha")?,
                         build_status: BuildStatus::Success,
                         yanked: Some(false),
                         is_library: Some(true),
@@ -1160,7 +1163,7 @@ mod tests {
                         release_time: None,
                     },
                     Release {
-                        version: semver::Version::parse("0.1.1")?,
+                        version: Version::parse("0.1.1")?,
                         build_status: BuildStatus::Success,
                         yanked: Some(false),
                         is_library: Some(true),
@@ -1170,7 +1173,7 @@ mod tests {
                         release_time: None,
                     },
                     Release {
-                        version: semver::Version::parse("0.1.0")?,
+                        version: Version::parse("0.1.0")?,
                         build_status: BuildStatus::Success,
                         yanked: Some(false),
                         is_library: Some(true),
@@ -1180,7 +1183,7 @@ mod tests {
                         release_time: None,
                     },
                     Release {
-                        version: semver::Version::parse("0.0.1")?,
+                        version: Version::parse("0.0.1")?,
                         build_status: BuildStatus::Failure,
                         yanked: Some(false),
                         is_library: Some(false),
@@ -1253,10 +1256,10 @@ mod tests {
 
             let mut conn = db.async_conn().await;
             for version in &["0.0.1", "0.0.2", "0.0.3"] {
-                let details = crate_details(&mut conn, "foo", version, None).await;
+                let details = crate_details(&mut conn, "foo", *version, None).await;
                 assert_eq!(
                     details.latest_release().unwrap().version,
-                    semver::Version::parse("0.0.3")?
+                    Version::parse("0.0.3")?
                 );
             }
 
@@ -1289,11 +1292,11 @@ mod tests {
                 .await?;
 
             let mut conn = db.async_conn().await;
-            for version in &["0.0.1", "0.0.2", "0.0.3-pre.1"] {
+            for &version in &["0.0.1", "0.0.2", "0.0.3-pre.1"] {
                 let details = crate_details(&mut conn, "foo", version, None).await;
                 assert_eq!(
                     details.latest_release().unwrap().version,
-                    semver::Version::parse("0.0.2")?
+                    Version::parse("0.0.2")?
                 );
             }
 
@@ -1327,11 +1330,11 @@ mod tests {
                 .await?;
 
             let mut conn = db.async_conn().await;
-            for version in &["0.0.1", "0.0.2", "0.0.3"] {
+            for &version in &["0.0.1", "0.0.2", "0.0.3"] {
                 let details = crate_details(&mut conn, "foo", version, None).await;
                 assert_eq!(
                     details.latest_release().unwrap().version,
-                    semver::Version::parse("0.0.2")?
+                    Version::parse("0.0.2")?
                 );
             }
 
@@ -1367,11 +1370,11 @@ mod tests {
                 .await?;
 
             let mut conn = db.async_conn().await;
-            for version in &["0.0.1", "0.0.2", "0.0.3"] {
+            for &version in &["0.0.1", "0.0.2", "0.0.3"] {
                 let details = crate_details(&mut conn, "foo", version, None).await;
                 assert_eq!(
                     details.latest_release().unwrap().version,
-                    semver::Version::parse("0.0.3")?
+                    Version::parse("0.0.3")?
                 );
             }
 
@@ -1401,11 +1404,11 @@ mod tests {
                 .await?;
 
             let mut conn = db.async_conn().await;
-            for version in &["0.0.1", "0.0.2"] {
+            for &version in &["0.0.1", "0.0.2"] {
                 let details = crate_details(&mut conn, "foo", version, None).await;
                 assert_eq!(
                     details.latest_release().unwrap().version,
-                    semver::Version::parse("0.0.1")?
+                    Version::parse("0.0.1")?
                 );
             }
 
