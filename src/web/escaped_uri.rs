@@ -101,6 +101,10 @@ impl EscapedURI {
         self.uri.path()
     }
 
+    pub fn query(&self) -> Option<&str> {
+        self.uri.query()
+    }
+
     pub fn fragment(&self) -> Option<&str> {
         self.fragment.as_deref()
     }
@@ -211,14 +215,6 @@ impl TryFrom<EscapedURI> for Uri {
         }
     }
 }
-
-// impl Deref for EscapedURI {
-//     type Target = Uri;
-
-//     fn deref(&self) -> &Self::Target {
-//         &self.uri
-//     }
-// }
 
 impl From<Uri> for EscapedURI {
     fn from(value: Uri) -> Self {
