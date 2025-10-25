@@ -1,5 +1,6 @@
 use super::escaped_uri::EscapedURI;
 use anyhow::Result;
+use askama::filters::HtmlSafe;
 use axum::http::uri::Uri;
 use axum_extra::headers::{Header, HeaderName, HeaderValue};
 use serde::Serialize;
@@ -89,6 +90,8 @@ impl Deref for CanonicalUrl {
         &self.0
     }
 }
+
+impl HtmlSafe for CanonicalUrl {}
 
 #[cfg(test)]
 mod tests {

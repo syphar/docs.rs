@@ -12,21 +12,17 @@
 
 use crate::{
     db::{BuildId, ReleaseId},
-    web::{
-        MatchedRelease, MetaData, ReqVersion, error::AxumNope, escaped_uri::EscapedURI,
-        extractors::Path,
-    },
+    web::{MetaData, ReqVersion, error::AxumNope, escaped_uri::EscapedURI, extractors::Path},
 };
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Context as _, Result, bail};
 use axum::{
     RequestPartsExt,
     extract::{FromRequestParts, MatchedPath},
     http::{Uri, request::Parts},
 };
-use docsrs_metadata::HOST_TARGET;
 use itertools::Itertools as _;
 use serde::Deserialize;
-use std::{borrow::Cow, iter};
+use std::borrow::Cow;
 use tracing::trace;
 
 static INDEX_HTML: &str = "index.html";

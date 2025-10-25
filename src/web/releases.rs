@@ -26,6 +26,7 @@ use axum::{
 };
 use base64::{Engine, engine::general_purpose::STANDARD as b64};
 use chrono::{DateTime, Utc};
+use docsrs_metadata::HOST_TARGET;
 use futures_util::stream::TryStreamExt;
 use http::Uri;
 use itertools::Itertools;
@@ -34,7 +35,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
-    str,
+    iter, str,
     sync::Arc,
 };
 use tracing::warn;
@@ -569,9 +570,19 @@ pub(crate) async fn search_handler(
             queries.extend(query_params);
 
             let rustdoc_status = matchver.rustdoc_status();
-            let params: ParsedRustdocParams = matchver
-                .try_into()
-                .context("couldn't create rustdoc params from matched release ")?;
+            let params = RustdocParams::new(&matchver.name)
+                .with_version(ReqVersion::Latest)
+                .parse(
+                    // generate dummy rustdoc params where we
+                    // * don't set a doc_target
+                    // * set `HOST_TARGET` default target & doc_targets, so we never add
+                    //   the target to URLS
+                    // FIXME: could this be a from_ method / constructor? or a separate struct
+                    // for a partial parse?
+                    HOST_TARGET.into(),
+                    matchver.target_name(),
+                    iter::once(HOST_TARGET),
+                );
 
             let uri = if rustdoc_status {
                 params.rustdoc_url().append_query_pairs(queries)
