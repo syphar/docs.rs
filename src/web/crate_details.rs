@@ -818,7 +818,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            crate_details(&mut *conn, name, &version, None)
+            crate_details(&mut *conn, name, version, None)
                 .await
                 .build_status,
             status

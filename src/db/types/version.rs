@@ -1,7 +1,7 @@
 #[allow(clippy::disallowed_types)]
 mod version_impl {
     use crate::error::Result;
-    use derive_more::{Deref, Display};
+    use derive_more::{Deref, Display, From, Into};
     use serde_with::{DeserializeFromStr, SerializeDisplay};
     use sqlx::{
         Postgres,
@@ -16,19 +16,23 @@ mod version_impl {
     ///
     /// Represented as string in the database.
     #[derive(
-        Clone, Debug, Deref, DeserializeFromStr, Display, Eq, Hash, PartialEq, SerializeDisplay,
+        Clone,
+        Debug,
+        Deref,
+        DeserializeFromStr,
+        Display,
+        Eq,
+        From,
+        Hash,
+        Into,
+        PartialEq,
+        SerializeDisplay,
     )]
     pub struct Version(pub semver::Version);
 
     impl Version {
         pub const fn new(major: u64, minor: u64, patch: u64) -> Self {
-            Self(semver::Version {
-                major,
-                minor,
-                patch,
-                pre: semver::Prerelease::EMPTY,
-                build: semver::BuildMetadata::EMPTY,
-            })
+            Self(semver::Version::new(major, minor, patch))
         }
 
         pub fn parse(text: &str) -> Result<Self, semver::Error> {
@@ -63,39 +67,39 @@ mod version_impl {
     impl FromStr for Version {
         type Err = semver::Error;
 
-        fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        fn from_str(s: &str) -> Result<Self, Self::Err> {
             Ok(Version(semver::Version::from_str(s)?))
         }
     }
 
-    impl From<&semver::Version> for Version {
-        fn from(v: &semver::Version) -> Self {
-            Version(v.clone())
-        }
-    }
+    // impl From<&semver::Version> for Version {
+    //     fn from(v: &semver::Version) -> Self {
+    //         Version(v.clone())
+    //     }
+    // }
 
-    impl From<semver::Version> for Version {
-        fn from(v: semver::Version) -> Self {
-            Version(v)
-        }
-    }
+    // impl From<semver::Version> for Version {
+    //     fn from(v: semver::Version) -> Self {
+    //         Version(v)
+    //     }
+    // }
 
-    impl From<Version> for semver::Version {
-        fn from(v: Version) -> Self {
-            v.0
-        }
-    }
+    // impl From<Version> for semver::Version {
+    //     fn from(v: Version) -> Self {
+    //         v.0
+    //     }
+    // }
 
-    impl From<&Version> for Version {
-        fn from(v: &Version) -> Self {
-            v.clone()
-        }
-    }
+    // impl From<&Version> for Version {
+    //     fn from(v: &Version) -> Self {
+    //         v.clone()
+    //     }
+    // }
 
     impl TryFrom<&str> for Version {
         type Error = semver::Error;
 
-        fn try_from(value: &str) -> std::result::Result<Self, Self::Error> {
+        fn try_from(value: &str) -> Result<Self, Self::Error> {
             Ok(Version(semver::Version::from_str(value)?))
         }
     }
@@ -103,7 +107,7 @@ mod version_impl {
     impl TryFrom<&String> for Version {
         type Error = semver::Error;
 
-        fn try_from(value: &String) -> std::result::Result<Self, Self::Error> {
+        fn try_from(value: &String) -> Result<Self, Self::Error> {
             Ok(Version(semver::Version::from_str(value)?))
         }
     }
@@ -111,7 +115,7 @@ mod version_impl {
     impl TryFrom<String> for Version {
         type Error = semver::Error;
 
-        fn try_from(value: String) -> std::result::Result<Self, Self::Error> {
+        fn try_from(value: String) -> Result<Self, Self::Error> {
             Ok(Version(semver::Version::from_str(&value)?))
         }
     }
