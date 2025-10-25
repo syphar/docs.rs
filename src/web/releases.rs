@@ -9,10 +9,7 @@ use crate::{
         ReqVersion, axum_redirect, encode_url_path,
         error::{AxumNope, AxumResult},
         escaped_uri::EscapedURI,
-        extractors::{
-            DbConnection, Path,
-            rustdoc::{ParsedRustdocParams, RustdocParams},
-        },
+        extractors::{DbConnection, Path, rustdoc::RustdocParams},
         match_version,
         page::templates::{RenderBrands, RenderRegular, RenderSolid, filters},
         rustdoc::OfficialCrateDescription,

@@ -226,9 +226,7 @@ mod tests {
     use super::{AxumNope, EscapedURI, IntoResponse};
     use crate::test::{AxumResponseTestExt, AxumRouterTestExt, async_wrapper};
     use crate::web::cache::CachePolicy;
-    use http::Uri;
     use kuchikiki::traits::TendrilSink;
-    use test_case::test_case;
 
     #[test]
     fn test_redirect_error_encodes_url_path() {

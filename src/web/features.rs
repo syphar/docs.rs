@@ -153,7 +153,7 @@ pub(crate) async fn build_features_handler(
                 CachePolicy::ForeverInCdn,
             )
         })?;
-    let params = matched_release.update_params(params);
+    let params = params.parse_with_matched_release(&matched_release);
 
     let version = matched_release.into_version();
 
@@ -164,8 +164,6 @@ pub(crate) async fn build_features_handler(
         Some(params.version().clone()),
     )
     .await?;
-
-    let params = params.parse_with_metadata(&metadata);
 
     let row = sqlx::query!(
         r#"

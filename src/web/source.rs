@@ -211,7 +211,7 @@ pub(crate) async fn source_browser_handler(
                 CachePolicy::ForeverInCdn,
             )
         })?;
-    let params = matched_release.update_params(params);
+    let params = params.parse_with_matched_release(&matched_release);
     let version = matched_release.into_version();
 
     let row = sqlx::query!(
@@ -326,8 +326,6 @@ pub(crate) async fn source_browser_handler(
         Some(params.version().clone()),
     )
     .await?;
-
-    let params = params.parse_with_metadata(&metadata);
 
     Ok(SourcePage {
         file_list,

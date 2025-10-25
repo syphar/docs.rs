@@ -279,7 +279,7 @@ pub(crate) async fn rustdoc_redirector_handler(
         .into_exactly_named()
         .into_canonical_req_version();
     trace!(?matched_release, "matched version");
-    let params = matched_release.update_params(params);
+    let params = params.parse_with_matched_release(&matched_release);
     let crate_name = matched_release.name.clone();
 
     // we might get requests to crate-specific JS/CSS files here.
@@ -323,10 +323,6 @@ pub(crate) async fn rustdoc_redirector_handler(
         .instrument(info_span!("serve asset for crate"))
         .await;
     }
-
-    let params = params
-        .load_and_parse(&mut conn, matched_release.id())
-        .await?;
 
     if matched_release.rustdoc_status() {
         Ok(redirect_to_doc(
@@ -452,7 +448,7 @@ pub(crate) async fn rustdoc_html_server_handler(
                 CachePolicy::ForeverInCdn,
             )
         })?;
-    let params = matched_release.update_params(params);
+    let params = params.parse_with_matched_release(&matched_release);
 
     if !matched_release.rustdoc_status() {
         return Ok(
@@ -463,7 +459,6 @@ pub(crate) async fn rustdoc_html_server_handler(
 
     let krate = CrateDetails::from_matched_release(&mut conn, matched_release).await?;
 
-    let params = params.parse_with_metadata(&krate.metadata);
     trace!(
         ?params,
         doc_targets=?krate.metadata.doc_targets,
@@ -646,10 +641,9 @@ pub(crate) async fn target_redirect_handler(
     let matched_release = match_version(&mut conn, params.name(), params.version())
         .await?
         .into_canonical_req_version_or_else(|_| AxumNope::VersionNotFound)?;
-    let params = matched_release.update_params(params);
+    let params = params.parse_with_matched_release(&matched_release);
 
     let crate_details = CrateDetails::from_matched_release(&mut conn, matched_release).await?;
-    let params = params.parse_with_metadata(&crate_details.metadata);
     trace!(?params, "parsed params");
 
     let storage_path = params.storage_path();

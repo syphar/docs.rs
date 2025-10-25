@@ -101,6 +101,8 @@ pub(crate) struct Release {
     pub is_library: Option<bool>,
     pub rustdoc_status: Option<bool>,
     pub target_name: Option<String>,
+    pub default_target: Option<String>,
+    pub doc_targets: Option<Vec<String>>,
     pub release_time: Option<DateTime<Utc>>,
 }
 
@@ -385,7 +387,9 @@ pub(crate) async fn releases_for_crate(
              releases.is_library,
              releases.rustdoc_status,
              releases.release_time,
-             releases.target_name
+             releases.target_name,
+             releases.default_target,
+             releases.doc_targets
          FROM releases
          INNER JOIN release_build_status ON releases.id = release_build_status.rid
          WHERE
@@ -415,6 +419,8 @@ pub(crate) async fn releases_for_crate(
             is_library: row.is_library,
             rustdoc_status: row.rustdoc_status,
             target_name: row.target_name,
+            default_target: row.default_target,
+            doc_targets: row.doc_targets.map(MetaData::parse_doc_targets),
             release_time: row.release_time,
         }))
     })
@@ -489,7 +495,7 @@ pub(crate) async fn crate_details_handler(
                 CachePolicy::ForeverInCdn,
             )
         })?;
-    let params = matched_release.update_params(params);
+    let params = params.parse_with_matched_release(&matched_release);
 
     let mut details = CrateDetails::from_matched_release(&mut conn, matched_release).await?;
 
@@ -525,8 +531,6 @@ pub(crate) async fn crate_details_handler(
     } = details;
 
     let is_latest_version = params.version().is_latest();
-
-    let params = params.parse_with_metadata(&metadata);
 
     let mut res = CrateDetailsPage {
         version,
@@ -574,7 +578,7 @@ pub(crate) async fn crate_details_handler(
 #[derive(Debug, Clone, PartialEq)]
 struct ReleaseList {
     releases: Vec<Release>,
-    params: RustdocParams,
+    params: ParsedRustdocParams,
 }
 
 impl_axum_webpage! {
@@ -593,7 +597,7 @@ pub(crate) async fn get_all_releases(
     let matched_release = match_version(&mut conn, params.name(), params.version())
         .await?
         .into_canonical_req_version_or_else(|_| AxumNope::VersionNotFound)?;
-    let params = matched_release.update_params(params);
+    let params = params.parse_with_matched_release(&matched_release);
 
     if matched_release.build_status() != BuildStatus::Success {
         // This handler should only be used for successful builds, so then we have all rows in the
@@ -650,11 +654,7 @@ pub(crate) async fn get_all_platforms_inner(
                 CachePolicy::ForeverInCdn,
             )
         })?;
-    let params = matched_release.update_params(params);
-
-    let params = params
-        .load_and_parse(&mut conn, matched_release.id())
-        .await?;
+    let params = params.parse_with_matched_release(&matched_release);
 
     if !matched_release.build_status().is_success() {
         // when the build wasn't finished, we don't have any target platforms
@@ -1036,6 +1036,8 @@ mod tests {
                         id: details.releases[0].id,
                         target_name: Some("foo".to_owned()),
                         release_time: None,
+                        default_target: None,
+                        doc_targets: None,
                     },
                     Release {
                         version: semver::Version::parse("0.12.0")?,
@@ -1046,6 +1048,8 @@ mod tests {
                         id: details.releases[1].id,
                         target_name: Some("foo".to_owned()),
                         release_time: None,
+                        default_target: None,
+                        doc_targets: None,
                     },
                     Release {
                         version: semver::Version::parse("0.3.0")?,
@@ -1056,6 +1060,8 @@ mod tests {
                         id: details.releases[2].id,
                         target_name: Some("foo".to_owned()),
                         release_time: None,
+                        default_target: None,
+                        doc_targets: None,
                     },
                     Release {
                         version: semver::Version::parse("0.2.0")?,
@@ -1066,6 +1072,8 @@ mod tests {
                         id: details.releases[3].id,
                         target_name: Some("foo".to_owned()),
                         release_time: None,
+                        default_target: None,
+                        doc_targets: None,
                     },
                     Release {
                         version: semver::Version::parse("0.2.0-alpha")?,
@@ -1076,6 +1084,8 @@ mod tests {
                         id: details.releases[4].id,
                         target_name: Some("foo".to_owned()),
                         release_time: None,
+                        default_target: None,
+                        doc_targets: None,
                     },
                     Release {
                         version: semver::Version::parse("0.1.1")?,
@@ -1086,6 +1096,8 @@ mod tests {
                         id: details.releases[5].id,
                         target_name: Some("foo".to_owned()),
                         release_time: None,
+                        default_target: None,
+                        doc_targets: None,
                     },
                     Release {
                         version: semver::Version::parse("0.1.0")?,
@@ -1096,6 +1108,8 @@ mod tests {
                         id: details.releases[6].id,
                         target_name: Some("foo".to_owned()),
                         release_time: None,
+                        default_target: None,
+                        doc_targets: None,
                     },
                     Release {
                         version: semver::Version::parse("0.0.1")?,
@@ -1106,6 +1120,8 @@ mod tests {
                         id: details.releases[7].id,
                         target_name: Some("foo".to_owned()),
                         release_time: None,
+                        default_target: None,
+                        doc_targets: None,
                     },
                 ]
             );

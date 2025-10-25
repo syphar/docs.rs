@@ -12,7 +12,10 @@
 
 use crate::{
     db::{BuildId, ReleaseId},
-    web::{MetaData, ReqVersion, error::AxumNope, escaped_uri::EscapedURI, extractors::Path},
+    web::{
+        MatchedRelease, MetaData, ReqVersion, error::AxumNope, escaped_uri::EscapedURI,
+        extractors::Path,
+    },
 };
 use anyhow::{Context as _, Result, bail};
 use axum::{
@@ -205,6 +208,20 @@ impl RustdocParams {
             metadata.target_name.as_deref(),
             metadata.doc_targets.iter().flatten(),
         )
+    }
+
+    pub(crate) fn parse_with_matched_release(
+        self,
+        matched_release: &MatchedRelease,
+    ) -> ParsedRustdocParams {
+        let release = &matched_release.release;
+        self.with_name(&matched_release.name)
+            .with_version(&release.version)
+            .parse(
+                release.default_target.as_deref(),
+                release.target_name.as_deref(),
+                release.doc_targets.iter().flatten(),
+            )
     }
 
     pub(crate) async fn load_and_parse(

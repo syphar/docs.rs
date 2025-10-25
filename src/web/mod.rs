@@ -5,10 +5,7 @@ pub mod page;
 use crate::{
     db::{CrateId, ReleaseId, types::BuildStatus},
     utils::{get_correct_docsrs_style_file, report_error},
-    web::{
-        extractors::rustdoc::RustdocParams,
-        page::templates::{RenderBrands, RenderSolid, filters},
-    },
+    web::page::templates::{RenderBrands, RenderSolid, filters},
 };
 use anyhow::{Context as _, Result, anyhow, bail};
 use askama::Template;
@@ -272,10 +269,6 @@ impl MatchedRelease {
 
     fn is_latest_url(&self) -> bool {
         matches!(self.req_version, ReqVersion::Latest)
-    }
-
-    fn update_params(&self, params: RustdocParams) -> RustdocParams {
-        params.with_name(&self.name).with_version(&self.req_version)
     }
 }
 
