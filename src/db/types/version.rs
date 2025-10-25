@@ -72,30 +72,6 @@ mod version_impl {
         }
     }
 
-    // impl From<&semver::Version> for Version {
-    //     fn from(v: &semver::Version) -> Self {
-    //         Version(v.clone())
-    //     }
-    // }
-
-    // impl From<semver::Version> for Version {
-    //     fn from(v: semver::Version) -> Self {
-    //         Version(v)
-    //     }
-    // }
-
-    // impl From<Version> for semver::Version {
-    //     fn from(v: Version) -> Self {
-    //         v.0
-    //     }
-    // }
-
-    // impl From<&Version> for Version {
-    //     fn from(v: &Version) -> Self {
-    //         v.clone()
-    //     }
-    // }
-
     impl TryFrom<&str> for Version {
         type Error = semver::Error;
 
