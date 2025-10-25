@@ -394,7 +394,7 @@ impl RustwideBuilder {
         let package = metadata.root();
         self.build_package(
             &package.name,
-            &package.version.clone().into(),
+            &package.version,
             PackageKind::Local(path),
             false,
         )
@@ -1678,7 +1678,7 @@ mod tests {
                     release_id,
                     &MetadataPackage {
                         name: crate_.into(),
-                        version: version.clone().into(),
+                        version: version.clone(),
                         id: "".into(),
                         license: None,
                         repository: None,

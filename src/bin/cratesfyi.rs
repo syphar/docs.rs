@@ -8,7 +8,9 @@ use std::sync::Arc;
 use anyhow::{Context as _, Error, Result, anyhow};
 use clap::{Parser, Subcommand, ValueEnum};
 use docs_rs::cdn::CdnBackend;
-use docs_rs::db::{self, CrateId, Overrides, Pool, add_path_into_database};
+use docs_rs::db::{
+    self, CrateId, Overrides, Pool, add_path_into_database, types::version::Version,
+};
 use docs_rs::repositories::RepositoryStatsUpdater;
 use docs_rs::utils::{
     ConfigName, get_config, get_crate_pattern_and_priority, list_crate_priorities, queue_builder,
@@ -21,7 +23,6 @@ use docs_rs::{
 };
 use futures_util::StreamExt;
 use once_cell::sync::OnceCell;
-use semver::Version;
 use sentry::{
     TransactionContext, integrations::panic as sentry_panic,
     integrations::tracing as sentry_tracing,
@@ -297,7 +298,7 @@ impl QueueSubcommand {
                 build_priority,
             } => build_queue.add_crate(
                 &crate_name,
-                &crate_version.clone().into(),
+                &crate_version,
                 build_priority,
                 ctx.config()?.registry_url.as_deref(),
             )?,
@@ -465,7 +466,6 @@ impl BuildSubcommand {
                             &crate_name
                                 .with_context(|| anyhow!("must specify name if not local"))?,
                             &crate_version
-                                .map(|v| v.clone().into())
                                 .with_context(|| anyhow!("must specify version if not local"))?,
                             registry_url
                                 .as_ref()
@@ -665,7 +665,7 @@ impl DatabaseSubcommand {
                         &*ctx.async_storage().await?,
                         &*ctx.config()?,
                         &name,
-                        &version.clone().into(),
+                        &version,
                     )
                     .await
                 })

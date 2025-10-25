@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub(crate) mod version;
+pub mod version;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, sqlx::Type)]
 #[sqlx(type_name = "feature")]

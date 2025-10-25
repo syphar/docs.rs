@@ -102,7 +102,7 @@ impl<'a> FakeRelease<'a> {
             package: MetadataPackage {
                 id: "fake-package-id".into(),
                 name: "fake-package".into(),
-                version: semver::Version::new(1, 0, 0),
+                version: Version::new(1, 0, 0),
                 license: Some("MIT".into()),
                 repository: Some("https://git.example.com".into()),
                 homepage: Some("https://www.example.com".into()),
@@ -176,7 +176,7 @@ impl<'a> FakeRelease<'a> {
         V: TryInto<Version>,
         V::Error: fmt::Debug,
     {
-        self.package.version = new.try_into().expect("invalid version").into();
+        self.package.version = new.try_into().expect("invalid version");
         self
     }
 
@@ -413,14 +413,12 @@ impl<'a> FakeRelease<'a> {
             );
             if archive_storage {
                 let (archive, public) = match kind {
-                    FileKind::Rustdoc => (
-                        rustdoc_archive_path(&package.name, &package.version.clone().into()),
-                        true,
-                    ),
-                    FileKind::Sources => (
-                        source_archive_path(&package.name, &package.version.clone().into()),
-                        false,
-                    ),
+                    FileKind::Rustdoc => {
+                        (rustdoc_archive_path(&package.name, &package.version), true)
+                    }
+                    FileKind::Sources => {
+                        (source_archive_path(&package.name, &package.version), false)
+                    }
                 };
                 debug!("store in archive: {:?}", archive);
                 let (files_list, new_alg) = crate::db::add_path_into_remote_archive(
@@ -549,7 +547,7 @@ impl<'a> FakeRelease<'a> {
                             .store_one_uncompressed(
                                 &rustdoc_json_path(
                                     &package.name,
-                                    &package.version.clone().into(),
+                                    &package.version,
                                     target,
                                     format_version,
                                     Some(*alg),
@@ -567,8 +565,7 @@ impl<'a> FakeRelease<'a> {
         // non-linux platforms.
         let mut async_conn = db.async_conn().await;
         let crate_id = initialize_crate(&mut async_conn, &package.name).await?;
-        let release_id =
-            initialize_release(&mut async_conn, crate_id, &package.version.clone().into()).await?;
+        let release_id = initialize_release(&mut async_conn, crate_id, &package.version).await?;
         crate::db::finish_release(
             &mut async_conn,
             crate_id,
