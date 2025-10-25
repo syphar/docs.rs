@@ -1,15 +1,14 @@
 use super::{MetaData, match_version};
-use crate::db::{BuildId, ReleaseId};
-use crate::registry_api::OwnerKind;
-use crate::utils::get_correct_docsrs_style_file;
 use crate::{
     AsyncStorage,
     db::{
-        CrateId,
+        BuildId, CrateId, ReleaseId,
         types::{BuildStatus, version::Version},
     },
     impl_axum_webpage,
+    registry_api::OwnerKind,
     storage::PathNotFoundError,
+    utils::get_correct_docsrs_style_file,
     web::{
         MatchedRelease, ReqVersion,
         cache::CachePolicy,
