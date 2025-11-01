@@ -114,6 +114,42 @@ pub fn start_background_queue_rebuild(context: &Context) -> Result<(), Error> {
     Ok(())
 }
 
+/// prunes the local cache directories for the webserver
+///
+/// This runs every hour, but also directly after webserver startup.
+pub fn start_background_cache_cleaner(context: &Context) -> Result<(), Error> {
+    let runtime = context.runtime.clone();
+    let storage = context.async_storage.clone();
+
+    runtime.spawn({
+        let storage = storage.clone();
+        async move {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            if let Err(err) = storage
+                .prune_archive_index_cache()
+                .await
+                .context("error running the initial archive index cache pruning")
+            {
+                report_error(&err);
+            }
+        }
+    });
+
+    async_cron(
+        &runtime,
+        "archive index cache pruning",
+        Duration::from_secs(3600),
+        move || {
+            let storage = storage.clone();
+            async move {
+                storage.prune_archive_index_cache().await?;
+                Ok(())
+            }
+        },
+    );
+    Ok(())
+}
+
 pub fn start_background_cdn_invalidator(context: &Context) -> Result<(), Error> {
     let metrics = context.instance_metrics.clone();
     let config = context.config.clone();
@@ -202,6 +238,7 @@ pub fn start_daemon(context: Context, enable_registry_watcher: bool) -> Result<(
     start_background_repository_stats_updater(&context)?;
     start_background_cdn_invalidator(&context)?;
     start_background_queue_rebuild(&context)?;
+    start_background_cache_cleaner(&context)?;
 
     // NOTE: if a error occurred earlier in `start_daemon`, the server will _not_ be joined -
     // instead it will get killed when the process exits.

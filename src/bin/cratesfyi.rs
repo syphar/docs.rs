@@ -5,8 +5,9 @@ use docs_rs::{
     db::{self, CrateId, Overrides, add_path_into_database, types::version::Version},
     start_background_metrics_webserver, start_web_server,
     utils::{
-        ConfigName, get_config, get_crate_pattern_and_priority, list_crate_priorities,
-        queue_builder, remove_crate_priority, set_config, set_crate_priority,
+        ConfigName, daemon::start_background_cache_cleaner, get_config,
+        get_crate_pattern_and_priority, list_crate_priorities, queue_builder,
+        remove_crate_priority, set_config, set_crate_priority,
     },
 };
 use futures_util::StreamExt;
@@ -214,6 +215,8 @@ impl CommandLine {
                 queue_builder(&ctx, RustwideBuilder::init(&ctx)?)?;
             }
             Self::StartWebServer { socket_addr } => {
+                start_background_cache_cleaner(&ctx)?;
+
                 // Blocks indefinitely
                 start_web_server(Some(socket_addr), &ctx)?;
             }
@@ -567,11 +570,17 @@ enum DatabaseSubcommand {
         #[arg(long)]
         dry_run: bool,
     },
+
+    PruneArchiveIndexCache,
 }
 
 impl DatabaseSubcommand {
     fn handle_args(self, ctx: Context) -> Result<()> {
         match self {
+            Self::PruneArchiveIndexCache => ctx
+                .runtime
+                .block_on(async { ctx.async_storage.prune_archive_index_cache().await })
+                .context("Failed to prune archive index cache")?,
             Self::Migrate { version } => ctx
                 .runtime
                 .block_on(async {

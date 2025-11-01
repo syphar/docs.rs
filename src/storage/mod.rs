@@ -21,27 +21,35 @@ use crate::{
     utils::spawn_blocking,
 };
 use anyhow::anyhow;
+use async_stream::try_stream;
 use chrono::{DateTime, Utc};
+use dashmap::DashMap;
 use fn_error_context::context;
-use futures_util::stream::BoxStream;
+use futures_util::{Stream, StreamExt as _, stream::BoxStream};
 use mime::Mime;
 use path_slash::PathExt;
 use std::{
-    fmt,
-    fs::{self, File},
+    cmp, fmt,
+    fs::{self, File, Metadata},
     io::{self, BufReader},
+    iter,
     num::ParseIntError,
     ops::RangeInclusive,
     path::{Path, PathBuf},
+    str::FromStr,
     sync::Arc,
+    time::{Duration, Instant, SystemTime},
 };
-use std::{iter, str::FromStr};
 use tokio::{
     io::{AsyncRead, AsyncWriteExt},
     runtime,
+    sync::RwLock,
 };
-use tracing::{error, info_span, instrument, trace};
+use tracing::{debug, error, info, info_span, instrument, trace};
 use walkdir::WalkDir;
+
+static ARCHIVE_INDEX_FILE_EXTENSION: &str = "index";
+const ARCHIVE_INDEX_ACCESS_TIME_DEBOUNCE: Duration = Duration::from_secs(3600);
 
 type FileRange = RangeInclusive<u64>;
 
@@ -115,6 +123,31 @@ impl StreamingBlob {
     }
 }
 
+/// Recursively walks a directory and yields all files (not directories) found within it.
+///
+/// Roughly an async version of `get_file_list` below.
+fn walk_dir_recursive(
+    root: impl AsRef<Path>,
+) -> impl Stream<Item = Result<(PathBuf, Metadata), io::Error>> {
+    let root = root.as_ref().to_path_buf();
+    try_stream! {
+        let mut dirs = vec![root];
+
+        while let Some(dir) = dirs.pop() {
+            let mut entries = tokio::fs::read_dir(&dir).await?;
+            while let Some(entry) = entries.next_entry().await? {
+                let path = entry.path();
+                let meta = entry.metadata().await?;
+                if meta.is_dir() {
+                    dirs.push(path.clone());
+                } else {
+                    yield (path, meta);
+                }
+            }
+        }
+    }
+}
+
 pub fn get_file_list<P: AsRef<Path>>(path: P) -> Box<dyn Iterator<Item = Result<PathBuf>>> {
     let path = path.as_ref().to_path_buf();
     if path.is_file() {
@@ -181,6 +214,11 @@ enum StorageBackend {
 pub struct AsyncStorage {
     backend: StorageBackend,
     config: Arc<Config>,
+    /// Locks to synchronize access to the locally cached archive index files.
+    locks: DashMap<PathBuf, Arc<RwLock<()>>>,
+    /// for debouncing the update to last-access-time on the locally cached
+    /// archive index files.
+    access_time_last_touch: DashMap<PathBuf, Instant>,
 }
 
 impl AsyncStorage {
@@ -199,6 +237,8 @@ impl AsyncStorage {
                 }
             },
             config,
+            locks: DashMap::new(),
+            access_time_last_touch: DashMap::new(),
         })
     }
 
@@ -313,12 +353,10 @@ impl AsyncStorage {
         path: &str,
     ) -> Result<bool> {
         match self
-            .download_archive_index(archive_path, latest_build_id)
+            .find_in_archive_index(archive_path, latest_build_id, path)
             .await
         {
-            Ok(index_filename) => Ok(archive_index::find_in_file(index_filename, path)
-                .await?
-                .is_some()),
+            Ok(file_info) => Ok(file_info.is_some()),
             Err(err) => {
                 if err.downcast_ref::<PathNotFoundError>().is_some() {
                     Ok(false)
@@ -375,41 +413,216 @@ impl AsyncStorage {
         Ok(blob.decompress())
     }
 
+    #[instrument(skip(self, meta))]
+    async fn check_and_prune_archive_index_file(&self, path: PathBuf, meta: Metadata) {
+        let ttl = self.config.local_archive_cache_ttl;
+
+        let rwlock = self.local_index_cache_lock(&path);
+
+        let Ok(_write_guard) = rwlock.try_write() else {
+            // if we can't acquire the write/exclusive lock, we assume
+            // the file is still in use, so we don't have to check its age,
+            // because we would never delete it.
+            trace!("archive index file is in use, skipping prune");
+            return;
+        };
+
+        // typically mtime is just the download-time of the index, and atime is newer.
+        // In case it's not, we use the latest of both.
+        let last_recorded_access = match (meta.modified(), meta.accessed()) {
+            (Ok(mtime), Ok(atime)) => Some(cmp::max(atime, mtime)),
+            (Err(err), Ok(atime)) => {
+                debug!(?err, "error fetching modified-time, using access-time");
+                Some(atime)
+            }
+            (Ok(mtime), Err(err)) => {
+                debug!(?err, "error fetching access-time, using modified-time");
+                Some(mtime)
+            }
+            (Err(err_mtime), Err(err_atime)) => {
+                debug!(
+                    ?err_mtime,
+                    ?err_atime,
+                    "error fetching either modified-time or access-time"
+                );
+                None
+            }
+        };
+
+        let now = SystemTime::now();
+        let age = last_recorded_access.and_then(|atime| now.duration_since(atime).ok());
+        let should_delete = age.map(|age| age > ttl).unwrap_or(false);
+
+        if !should_delete {
+            trace!(?last_recorded_access, ?age, "file is recent, skipping");
+
+            return;
+        }
+
+        trace!(
+            ?last_recorded_access,
+            ?age,
+            "removing cached archive index file"
+        );
+
+        // Best-effort: remove WAL/SHM companions first, then the DB file.
+        let wal = path.with_extension(format!("{ARCHIVE_INDEX_FILE_EXTENSION}-wal"));
+        let shm = path.with_extension(format!("{ARCHIVE_INDEX_FILE_EXTENSION}-shm"));
+        let _ = tokio::fs::remove_file(&wal).await;
+        let _ = tokio::fs::remove_file(&shm).await;
+
+        match tokio::fs::remove_file(&path).await {
+            Ok(_) => {
+                self.locks.remove(&path);
+                self.access_time_last_touch.remove(&path);
+            }
+            Err(err) => {
+                debug!(?err, "couldn't delete archive index file");
+            }
+        }
+    }
+
+    /// remove old cached archive index files.
+    ///
+    /// We're using the access-time from the filesystem to determine the last access time.
+    ///
+    /// On linux, this field is updated only once every 24h, and on mac & windows not at all.
+    /// So we manually update the access-time when we use the file, debounced to once per hour.
+    #[instrument(skip(self))]
+    pub async fn prune_archive_index_cache(&self) -> Result<()> {
+        let ttl = self.config.local_archive_cache_ttl;
+        let cache_dir = &self.config.local_archive_cache_path;
+        let now = SystemTime::now();
+
+        info!(?ttl, ?now, cache_dir=%cache_dir.display(), "pruning archive index cache");
+
+        walk_dir_recursive(&cache_dir)
+            .for_each_concurrent(8, |item| async move {
+                let Ok((path, meta)) = item else { return };
+
+                if path.is_dir() {
+                    // this shouldn't happen, since walk_dir_recursive only emits files, not
+                    // directories
+                    return;
+                }
+
+                if let Some(ext) = path.extension()
+                    && ext != ARCHIVE_INDEX_FILE_EXTENSION
+                {
+                    return;
+                }
+
+                self.check_and_prune_archive_index_file(path, meta).await;
+            })
+            .await;
+
+        Ok(())
+    }
+
+    fn local_index_cache_lock(&self, local_index_path: impl AsRef<Path>) -> Arc<RwLock<()>> {
+        let local_index_path = local_index_path.as_ref().to_path_buf();
+
+        self.locks
+            .entry(local_index_path)
+            .or_insert_with(|| Arc::new(RwLock::new(())))
+            .downgrade()
+            .clone()
+    }
+
     #[instrument]
-    pub(super) async fn download_archive_index(
+    async fn find_in_archive_index(
         &self,
         archive_path: &str,
         latest_build_id: Option<BuildId>,
-    ) -> Result<PathBuf> {
-        // remote/folder/and/x.zip.index
-        let remote_index_path = format!("{archive_path}.index");
+        path_in_archive: &str,
+    ) -> Result<Option<archive_index::FileInfo>> {
+        // we know that config.local_archive_cache_path is an absolute path, not relative.
+        // So it will be usable as key in the DashMap.
         let local_index_path = self.config.local_archive_cache_path.join(format!(
-            "{archive_path}.{}.index",
+            "{archive_path}.{}.{ARCHIVE_INDEX_FILE_EXTENSION}",
             latest_build_id.map(|id| id.0).unwrap_or(0)
         ));
 
-        if !local_index_path.exists() {
-            let index_content = self.get(&remote_index_path, usize::MAX).await?.content;
+        let rwlock = self.local_index_cache_lock(&local_index_path);
 
-            tokio::fs::create_dir_all(
-                local_index_path
-                    .parent()
-                    .ok_or_else(|| anyhow!("index path without parent"))?,
-            )
-            .await?;
+        // directly acquire the read-lock, so the syscall (`path.exists()`) below is already
+        // protected.
+        let mut _read_guard = rwlock.read().await;
 
-            // when we don't have a locally cached index and many parallel request
-            // we might download the same archive index multiple times here.
-            // So we're storing the content into a temporary file before renaming it
-            // into the final location.
-            let temp_path = tempfile::NamedTempFile::new_in(&self.config.local_archive_cache_path)?
-                .into_temp_path();
-            let mut file = tokio::fs::File::create(&temp_path).await?;
-            file.write_all(&index_content).await?;
-            tokio::fs::rename(temp_path, &local_index_path).await?;
+        if !tokio::fs::try_exists(&local_index_path).await? {
+            // upgrade the lock to a write-lock for downloading & storing the index.
+            drop(_read_guard);
+            let _write_guard = rwlock.write().await;
+
+            // check existance again in case of Race Condition (TOCTOU)
+            if !tokio::fs::try_exists(&local_index_path).await? {
+                // remote/folder/and/x.zip.index
+                let remote_index_path = format!("{archive_path}.{ARCHIVE_INDEX_FILE_EXTENSION}");
+
+                tokio::fs::create_dir_all(
+                    local_index_path
+                        .parent()
+                        .ok_or_else(|| anyhow!("index path without parent"))?,
+                )
+                .await?;
+
+                let temp_path =
+                    tempfile::NamedTempFile::new_in(&self.config.local_archive_cache_path)?
+                        .into_temp_path();
+
+                {
+                    let mut file = tokio::fs::File::create(&temp_path).await?;
+                    let mut stream = self.get_stream(&remote_index_path).await?.content;
+
+                    tokio::io::copy(&mut stream, &mut file).await?;
+
+                    file.flush().await?;
+                }
+
+                tokio::fs::rename(temp_path, &local_index_path).await?;
+            }
+
+            _read_guard = _write_guard.downgrade();
         }
 
-        Ok(local_index_path)
+        // update last-access-time, debounced
+        //
+        // Linux is the only system that updates atime on file access by default, when the mount
+        // option is set. But even then, it's only updated once every 24h.
+        // We want to update more often, so we do it ourselves here, but only once per hour.
+        let now_instant = Instant::now();
+        let touch = match self
+            .access_time_last_touch
+            .get(&local_index_path)
+            .map(|t| *t)
+        {
+            Some(prev) => now_instant.duration_since(prev) >= ARCHIVE_INDEX_ACCESS_TIME_DEBOUNCE,
+            None => true,
+        };
+        if touch {
+            debug!(path=%local_index_path.display(), "updating access time of local archive index cache");
+
+            self.access_time_last_touch
+                .insert(local_index_path.clone(), now_instant);
+
+            spawn_blocking({
+                let local_index_path = local_index_path.clone();
+                move || {
+                    let file = fs::OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .open(&local_index_path)?;
+
+                    let now = SystemTime::now();
+                    let times = fs::FileTimes::new().set_accessed(now);
+                    file.set_times(times)?;
+                    Ok(())
+                }
+            })
+            .await?;
+        }
+
+        archive_index::find_in_file(local_index_path, path_in_archive).await
     }
 
     #[instrument]
@@ -420,11 +633,8 @@ impl AsyncStorage {
         path: &str,
         max_size: usize,
     ) -> Result<Blob> {
-        let index_filename = self
-            .download_archive_index(archive_path, latest_build_id)
-            .await?;
-
-        let info = archive_index::find_in_file(index_filename, path)
+        let info = self
+            .find_in_archive_index(archive_path, latest_build_id, path)
             .await?
             .ok_or(PathNotFoundError)?;
 
@@ -454,11 +664,8 @@ impl AsyncStorage {
         latest_build_id: Option<BuildId>,
         path: &str,
     ) -> Result<StreamingBlob> {
-        let index_filename = self
-            .download_archive_index(archive_path, latest_build_id)
-            .await?;
-
-        let info = archive_index::find_in_file(index_filename, path)
+        let info = self
+            .find_in_archive_index(archive_path, latest_build_id, path)
             .await?
             .ok_or(PathNotFoundError)?;
 
@@ -531,7 +738,7 @@ impl AsyncStorage {
             .await?;
 
         let alg = CompressionAlgorithm::default();
-        let remote_index_path = format!("{}.index", &archive_path);
+        let remote_index_path = format!("{}.{ARCHIVE_INDEX_FILE_EXTENSION}", &archive_path);
         let compressed_index_content = {
             let _span = info_span!("create_archive_index", %remote_index_path).entered();
 
@@ -841,17 +1048,6 @@ impl Storage {
     ) -> Result<Blob> {
         self.runtime
             .block_on(self.inner.get_range(path, max_size, range, compression))
-    }
-
-    pub(super) fn download_index(
-        &self,
-        archive_path: &str,
-        latest_build_id: Option<BuildId>,
-    ) -> Result<PathBuf> {
-        self.runtime.block_on(
-            self.inner
-                .download_archive_index(archive_path, latest_build_id),
-        )
     }
 
     pub(crate) fn get_from_archive(
@@ -1387,16 +1583,17 @@ mod backend_tests {
             fs::write(path, "data")?;
         }
 
+        let remote_index_filename = format!("folder/test.zip.0.{ARCHIVE_INDEX_FILE_EXTENSION}");
         let local_index_location = storage
             .inner
             .config
             .local_archive_cache_path
-            .join("folder/test.zip.0.index");
+            .join(&remote_index_filename);
 
         let (stored_files, compression_alg) =
             storage.store_all_in_archive("folder/test.zip", dir.path())?;
 
-        assert!(storage.exists("folder/test.zip.index")?);
+        assert!(storage.exists(&remote_index_filename)?);
 
         assert_eq!(compression_alg, CompressionAlgorithm::Bzip2);
         assert_eq!(stored_files.len(), files.len());
