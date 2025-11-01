@@ -27,7 +27,7 @@ jobs:
           file: "./dockerfiles/Dockerfile"
           platforms: linux/amd64,linux/arm64
           target: ${{ matrix.target }}
-          build_args: |
+          build-args: |
             GIT_SHA=${{ github.sha }}
           load: true
           cache-from: type=gha
