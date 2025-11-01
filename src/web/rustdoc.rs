@@ -1,5 +1,6 @@
 //! rustdoc handler
 
+use super::extractors::PathFileExtension;
 use crate::{
     AsyncStorage, Config, InstanceMetrics, RUSTDOC_STATIC_STORAGE_PREFIX,
     db::{Pool, types::version::Version},
@@ -39,8 +40,6 @@ use std::{
     sync::{Arc, LazyLock},
 };
 use tracing::{Instrument, debug, error, info_span, instrument, trace};
-
-use super::extractors::PathFileExtension;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OfficialCrateDescription {
@@ -1099,7 +1098,6 @@ mod test {
         registry_api::{CrateOwner, OwnerKind},
         storage::compression::file_extension_for,
         test::*,
-        utils::Dependency,
         web::{cache::CachePolicy, encode_url_path},
     };
     use anyhow::{Context, Result};
@@ -1107,6 +1105,7 @@ mod test {
     use kuchikiki::traits::TendrilSink;
     use pretty_assertions::assert_eq;
     use reqwest::StatusCode;
+    use semver::VersionReq;
     use std::collections::BTreeMap;
     use test_case::test_case;
     use tracing::info;
@@ -2865,8 +2864,12 @@ mod test {
                 .version("0.1.0")
                 .rustdoc_file("testing/index.html")
                 .add_dependency(
-                    Dependency::new("optional-dep".to_string(), "1.2.3".parse().unwrap())
-                        .set_optional(true),
+                    dummy_metadata_dependency()
+                        .name("optional-dep".to_string())
+                        .req(VersionReq::parse("1.2.3").unwrap())
+                        .optional(true)
+                        .build()
+                        .unwrap(),
                 )
                 .create()
                 .await?;

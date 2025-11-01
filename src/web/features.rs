@@ -379,7 +379,7 @@ mod tests {
                 .await
                 .name("foo")
                 .version("0.2.1")
-                .features(HashMap::new())
+                .features(BTreeMap::new())
                 .create()
                 .await?;
 
@@ -402,7 +402,7 @@ mod tests {
                 .await
                 .name("foo")
                 .version("0.2.0")
-                .features(HashMap::new())
+                .features(BTreeMap::new())
                 .create()
                 .await?;
 
@@ -421,7 +421,7 @@ mod tests {
                 .await
                 .name("foo")
                 .version("0.1.0")
-                .features(HashMap::new())
+                .features(BTreeMap::new())
                 .create()
                 .await?;
 
@@ -429,7 +429,7 @@ mod tests {
                 .await
                 .name("foo")
                 .version("0.2.0")
-                .features(HashMap::new())
+                .features(BTreeMap::new())
                 .create()
                 .await?;
 
@@ -452,7 +452,7 @@ mod tests {
                 .await
                 .name("foo")
                 .version("0.1.0")
-                .features(HashMap::new())
+                .features(BTreeMap::new())
                 .create()
                 .await?;
 
@@ -470,7 +470,7 @@ mod tests {
                 .await
                 .name("foo")
                 .version("0.1.0")
-                .features(HashMap::new())
+                .features(BTreeMap::new())
                 .create()
                 .await?;
 
@@ -502,7 +502,7 @@ mod tests {
                 .await
                 .name("foo")
                 .version("0.1.0")
-                .features(features.into_iter().collect::<HashMap<_, _>>())
+                .features(features.into_iter().collect::<BTreeMap<_, _>>())
                 .create()
                 .await?;
 

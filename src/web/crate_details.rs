@@ -786,7 +786,7 @@ pub(crate) async fn get_all_platforms(
 mod tests {
     use super::*;
     use crate::test::{
-        AxumResponseTestExt, AxumRouterTestExt, FakeBuild, TestDatabase, TestEnvironment,
+        AxumResponseTestExt, AxumRouterTestExt, FakeBuild, TestDatabase, TestEnvironment, V1,
         async_wrapper, fake_release_that_failed_before_build,
     };
     use crate::{db::update_build_status, registry_api::CrateOwner};
@@ -794,7 +794,7 @@ mod tests {
     use kuchikiki::traits::TendrilSink;
     use pretty_assertions::assert_eq;
     use reqwest::StatusCode;
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
 
     async fn release_build_status(
         conn: &mut sqlx::PgConnection,
@@ -1611,7 +1611,7 @@ mod tests {
                 .await
                 .name("library")
                 .version("0.1.0")
-                .features(HashMap::new())
+                .features(BTreeMap::new())
                 .create()
                 .await?;
 
@@ -1634,7 +1634,7 @@ mod tests {
             let features = [("_private".into(), Vec::new())]
                 .iter()
                 .cloned()
-                .collect::<HashMap<String, Vec<String>>>();
+                .collect::<BTreeMap<String, Vec<String>>>();
             env.fake_release()
                 .await
                 .name("library")
@@ -1662,7 +1662,7 @@ mod tests {
             let features = [("feature1".into(), Vec::new())]
                 .iter()
                 .cloned()
-                .collect::<HashMap<String, Vec<String>>>();
+                .collect::<BTreeMap<String, Vec<String>>>();
             env.fake_release()
                 .await
                 .name("library")
@@ -1698,7 +1698,7 @@ mod tests {
             ]
             .iter()
             .cloned()
-            .collect::<HashMap<String, Vec<String>>>();
+            .collect::<BTreeMap<String, Vec<String>>>();
             env.fake_release()
                 .await
                 .name("library")
@@ -1798,12 +1798,12 @@ mod tests {
     fn test_minimal_failed_release_doesnt_error_features() {
         async_wrapper(|env| async move {
             let mut conn = env.async_db().async_conn().await;
-            fake_release_that_failed_before_build(&mut conn, "foo", "0.1.0", "some errors").await?;
+            fake_release_that_failed_before_build(&mut conn, "foo", V1, "some errors").await?;
 
             let text_content = env
                 .web_app()
                 .await
-                .get("/crate/foo/0.1.0/features")
+                .get(&format!("/crate/foo/{V1}/features"))
                 .await?
                 .error_for_status()?
                 .text()
@@ -1822,12 +1822,12 @@ mod tests {
     fn test_minimal_failed_release_doesnt_error() {
         async_wrapper(|env| async move {
             let mut conn = env.async_db().async_conn().await;
-            fake_release_that_failed_before_build(&mut conn, "foo", "0.1.0", "some errors").await?;
+            fake_release_that_failed_before_build(&mut conn, "foo", V1, "some errors").await?;
 
             let text_content = env
                 .web_app()
                 .await
-                .get("/crate/foo/0.1.0")
+                .get(&format!("/crate/foo/{V1}"))
                 .await?
                 .error_for_status()?
                 .text()
