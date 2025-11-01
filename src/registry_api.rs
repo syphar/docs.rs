@@ -1,4 +1,4 @@
-use crate::{error::Result, utils::retry_async};
+use crate::{APP_USER_AGENT, error::Result, utils::retry_async};
 use anyhow::{Context, anyhow, bail};
 use chrono::{DateTime, Utc};
 use reqwest::header::{ACCEPT, HeaderValue, USER_AGENT};
@@ -7,12 +7,6 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use tracing::instrument;
 use url::Url;
-
-const APP_USER_AGENT: &str = concat!(
-    env!("CARGO_PKG_NAME"),
-    " ",
-    include_str!(concat!(env!("OUT_DIR"), "/git_version"))
-);
 
 #[derive(Debug)]
 pub struct RegistryApi {

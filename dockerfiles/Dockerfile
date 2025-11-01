@@ -9,18 +9,33 @@
 #  Build stage  #
 #################
 
-FROM ubuntu:22.04 AS build
+FROM rust:1.91-slim-trixie AS build
+
+ENV DEBIAN_FRONTEND=noninteractive
 
 # Install packaged dependencies
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    build-essential git curl cmake gcc g++ pkg-config libmagic-dev \
-    libssl-dev zlib1g-dev ca-certificates mold clang
+# hadolint ignore=DL3008
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    build-essential \
+    git \
+    curl \
+    cmake \
+    gcc \
+    g++ \
+    pkg-config \
+    libmagic-dev \
+    libssl-dev \
+    zlib1g-dev \
+    ca-certificates \
+    mold \
+    clang
 
-# Install the stable toolchain with rustup
-RUN curl https://sh.rustup.rs >/tmp/rustup-init && \
-    chmod +x /tmp/rustup-init && \
-    /tmp/rustup-init -y --no-modify-path --default-toolchain stable --profile minimal
 ENV PATH=/root/.cargo/bin:$PATH
+
+# get the git SHA from the build args, for our generated version numbers
+ARG GIT_SHA=dev
+ENV GIT_SHA=$GIT_SHA
 
 # Configure linking to use mold instead for speed (need to use clang because gcc
 # is too old on this image)
@@ -34,8 +49,7 @@ ENV CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS=-Clink-arg=-fuse-ld=mold
 WORKDIR /build
 COPY benches benches
 COPY Cargo.lock Cargo.toml ./
-COPY crates/metadata crates/metadata/
-COPY crates/font-awesome-as-a-crate crates/font-awesome-as-a-crate
+COPY crates crates
 RUN mkdir -p src/bin && \
     echo "fn main() {}" > src/bin/cratesfyi.rs && \
     echo "fn main() {}" > build.rs
@@ -50,7 +64,6 @@ RUN cargo build --profile=$PROFILE
 # source code didn't change thanks to mtime weirdness.
 RUN rm -rf src build.rs
 
-COPY .git .git
 COPY build.rs build.rs
 RUN touch build.rs
 COPY src src/
@@ -67,14 +80,19 @@ RUN cargo build --profile=$PROFILE
 #  Web server stage  #
 ######################
 
-FROM ubuntu:22.04 AS web-server
+FROM debian:trixie-slim AS web-server
 
+ENV DEBIAN_FRONTEND=noninteractive
+
+# hadolint ignore=DL3008
 RUN apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
-    && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    && apt-get update \
+    && apt-get install -y \
+        --no-install-recommends \
         ca-certificates \
         curl \
         tini \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /srv/docsrs
@@ -86,18 +104,20 @@ CMD ["start-web-server", "0.0.0.0:80"]
 ARG PROFILE_DIR=release
 COPY --from=build /build/target/$PROFILE_DIR/cratesfyi /usr/local/bin
 COPY static /srv/docsrs/static
-COPY templates /srv/docsrs/templates
 COPY vendor /srv/docsrs/vendor
 
 ########################
 #  Build server stage  #
 ########################
 
-FROM ubuntu:22.04 AS build-server
+FROM debian:trixie-slim AS build-server
 
+ENV DEBIAN_FRONTEND=noninteractive
+
+# hadolint ignore=DL3008
 RUN apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
-    && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    && apt-get install -y \
+        --no-install-recommends \
         ca-certificates \
         tini \
         curl \
@@ -106,6 +126,7 @@ RUN apt-get update \
         gcc \
         pkg-config \
         libssl-dev \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # Tini is a small init binary to properly handle signals
@@ -119,15 +140,19 @@ COPY --from=build /build/target/$PROFILE_DIR/cratesfyi /usr/local/bin
 #  Registry watcher stage  #
 ############################
 
-FROM ubuntu:22.04 AS registry-watcher
+FROM debian:trixie-slim AS registry-watcher
 
+ENV DEBIAN_FRONTEND=noninteractive
+
+# hadolint ignore=DL3008
 RUN apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
-    && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    && apt-get install -y \
+        --no-install-recommends \
         ca-certificates \
         tini \
         curl \
         git \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # Tini is a small init binary to properly handle signals
@@ -141,14 +166,22 @@ COPY --from=build /build/target/$PROFILE_DIR/cratesfyi /usr/local/bin
 #  CLI stage  #
 ###############
 
-FROM ubuntu:22.04 AS cli
+FROM debian:trixie-slim AS cli
 
+ENV DEBIAN_FRONTEND=noninteractive
+
+# hadolint ignore=DL3008
 RUN apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
-    && DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    && apt-get install -y \
+        --no-install-recommends \
         ca-certificates \
         tini \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /srv/docsrs
+# copy migrations so we can run them via CLI script
+COPY migrations migrations/
 
 ENTRYPOINT ["/usr/bin/tini", "/usr/local/bin/cratesfyi", "--"]
 
