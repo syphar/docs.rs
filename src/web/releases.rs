@@ -3,7 +3,9 @@
 use crate::{
     AsyncBuildQueue, Config, InstanceMetrics, RegistryApi,
     build_queue::{QueuedCrate, REBUILD_PRIORITY},
-    cdn, impl_axum_webpage,
+    cdn,
+    db::types::version::Version,
+    impl_axum_webpage,
     utils::report_error,
     web::{
         ReqVersion, axum_parse_uri_with_params, axum_redirect, encode_url_path,
@@ -11,6 +13,7 @@ use crate::{
         extractors::{DbConnection, Path},
         match_version,
         page::templates::{RenderBrands, RenderRegular, RenderSolid, filters},
+        rustdoc::OfficialCrateDescription,
     },
 };
 use anyhow::{Context as _, Result, anyhow};
@@ -25,9 +28,11 @@ use futures_util::stream::TryStreamExt;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::str;
-use std::sync::Arc;
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    str,
+    sync::Arc,
+};
 use tracing::warn;
 use url::form_urlencoded;
 
@@ -43,14 +48,13 @@ const RELEASES_IN_FEED: i64 = 150;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Release {
     pub(crate) name: String,
-    pub(crate) version: String,
+    pub(crate) version: Version,
     pub(crate) description: Option<String>,
     pub(crate) target_name: Option<String>,
     pub(crate) rustdoc_status: bool,
     pub(crate) build_time: Option<DateTime<Utc>>,
     pub(crate) stars: i32,
     pub(crate) has_unyanked_releases: Option<bool>,
-    pub(crate) href: Option<&'static str>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
@@ -80,8 +84,8 @@ pub(crate) async fn get_releases(
     };
 
     let query = format!(
-        "SELECT crates.name,
-            releases.version,
+        r#"SELECT crates.name,
+            releases.version as "version: Version",
             releases.description,
             releases.target_name,
             releases.rustdoc_status,
@@ -97,7 +101,7 @@ pub(crate) async fn get_releases(
             release_build_status.build_status != 'in_progress'
 
         ORDER BY {0} DESC
-        LIMIT $1 OFFSET $2",
+        LIMIT $1 OFFSET $2"#,
         ordering,
         if latest_only {
             "INNER JOIN releases ON crates.latest_version_id = releases.id"
@@ -120,7 +124,6 @@ pub(crate) async fn get_releases(
             build_time: row.get(5),
             stars: row.get::<Option<i32>, _>(6).unwrap_or(0),
             has_unyanked_releases: None,
-            href: None,
         })
         .try_collect()
         .await?)
@@ -129,6 +132,7 @@ pub(crate) async fn get_releases(
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ReleaseStatus {
     Available(Release),
+    External(&'static OfficialCrateDescription),
     /// Only contains the crate name.
     NotAvailable(String),
 }
@@ -137,20 +141,6 @@ struct SearchResult {
     pub results: Vec<ReleaseStatus>,
     pub prev_page: Option<String>,
     pub next_page: Option<String>,
-}
-
-fn rust_lib_release(name: &str, description: &str, href: &'static str) -> ReleaseStatus {
-    ReleaseStatus::Available(Release {
-        name: name.to_string(),
-        version: String::new(),
-        description: Some(description.to_string()),
-        build_time: None,
-        target_name: None,
-        rustdoc_status: false,
-        stars: 0,
-        has_unyanked_releases: None,
-        href: Some(href),
-    })
 }
 
 /// Get the search results for a crate search query
@@ -181,7 +171,7 @@ async fn get_search_results(
     let mut crates: HashMap<String, Release> = sqlx::query!(
         r#"SELECT
                crates.name,
-               releases.version,
+               releases.version as "version: Version",
                releases.description,
                release_build_status.last_build_time,
                releases.target_name,
@@ -218,7 +208,6 @@ async fn get_search_results(
                 rustdoc_status: row.rustdoc_status.unwrap_or(false),
                 stars: row.stars.unwrap_or(0),
                 has_unyanked_releases: row.has_unyanked_releases,
-                href: None,
             },
         )
     })
@@ -229,13 +218,8 @@ async fn get_search_results(
     // extend with the release/build information from docs.rs
     // Crates that are not on docs.rs yet will not be returned.
     let mut results = Vec::new();
-    if let Some(super::rustdoc::OfficialCrateDescription {
-        name,
-        href,
-        description,
-    }) = super::rustdoc::DOC_RUST_LANG_ORG_REDIRECTS.get(query)
-    {
-        results.push(rust_lib_release(name, description, href))
+    if let Some(desc) = super::rustdoc::DOC_RUST_LANG_ORG_REDIRECTS.get(query) {
+        results.push(ReleaseStatus::External(desc));
     }
 
     let names: Vec<String> =
@@ -720,7 +704,7 @@ struct BuildQueuePage {
     queue: Vec<QueuedCrate>,
     rebuild_queue: Vec<QueuedCrate>,
     active_cdn_deployments: Vec<String>,
-    in_progress_builds: Vec<(String, String)>,
+    in_progress_builds: Vec<(String, Version)>,
     expand_rebuild_queue: bool,
 }
 
@@ -749,10 +733,10 @@ pub(crate) async fn build_queue_handler(
     // reverse the list, so the oldest comes first
     active_cdn_deployments.reverse();
 
-    let in_progress_builds: Vec<(String, String)> = sqlx::query!(
+    let in_progress_builds: Vec<(String, Version)> = sqlx::query!(
         r#"SELECT
             crates.name,
-            releases.version
+            releases.version as "version: Version"
          FROM builds
          INNER JOIN releases ON releases.id = builds.rid
          INNER JOIN crates ON releases.crate_id = crates.id
@@ -809,8 +793,8 @@ mod tests {
     use crate::db::{finish_build, initialize_build, initialize_crate, initialize_release};
     use crate::registry_api::{CrateOwner, OwnerKind};
     use crate::test::{
-        AxumResponseTestExt, AxumRouterTestExt, FakeBuild, TestEnvironment, async_wrapper,
-        fake_release_that_failed_before_build,
+        AxumResponseTestExt, AxumRouterTestExt, FakeBuild, TestEnvironment, V0_1, V1, V2, V3,
+        async_wrapper, fake_release_that_failed_before_build,
     };
     use anyhow::Error;
     use chrono::{Duration, TimeZone};
@@ -827,7 +811,7 @@ mod tests {
             let mut conn = db.async_conn().await;
 
             let crate_id = initialize_crate(&mut conn, "foo").await?;
-            let release_id = initialize_release(&mut conn, crate_id, "0.1.0").await?;
+            let release_id = initialize_release(&mut conn, crate_id, &V1).await?;
             let build_id = initialize_build(&mut conn, release_id).await?;
 
             finish_build(
@@ -863,21 +847,21 @@ mod tests {
             env.fake_release()
                 .await
                 .name("foo")
-                .version("1.0.0")
+                .version(V1)
                 .github_stats("ghost/foo", 10, 10, 10)
                 .create()
                 .await?;
             env.fake_release()
                 .await
                 .name("bar")
-                .version("1.0.0")
+                .version(V1)
                 .github_stats("ghost/bar", 20, 20, 20)
                 .create()
                 .await?;
             env.fake_release()
                 .await
                 .name("bar")
-                .version("1.0.0")
+                .version(V1)
                 .github_stats("ghost/bar", 20, 20, 20)
                 .create()
                 .await?;
@@ -885,7 +869,7 @@ mod tests {
             env.fake_release()
                 .await
                 .name("baz")
-                .version("1.0.0")
+                .version(V1)
                 .create()
                 .await?;
 
@@ -893,7 +877,7 @@ mod tests {
             env.fake_release()
                 .await
                 .name("in_progress")
-                .version("0.1.0")
+                .version(V0_1)
                 .builds(vec![
                     FakeBuild::default()
                         .build_status(BuildStatus::InProgress)
@@ -929,18 +913,20 @@ mod tests {
             env.fake_release()
                 .await
                 .name("some_random_crate")
+                .version(V1)
                 .build_result_failed()
                 .create()
                 .await?;
             env.fake_release()
                 .await
                 .name("some_other_crate")
+                .version(V1)
                 .create()
                 .await?;
 
             web.assert_redirect(
                 "/releases/search?query=some_random_crate&i-am-feeling-lucky=1",
-                "/crate/some_random_crate/1.0.0",
+                &format!("/crate/some_random_crate/{V1}"),
             )
             .await?;
             Ok(())
@@ -954,17 +940,19 @@ mod tests {
             env.fake_release()
                 .await
                 .name("some_random_crate")
+                .version(V1)
                 .create()
                 .await?;
             env.fake_release()
                 .await
                 .name("some_other_crate")
+                .version(V1)
                 .create()
                 .await?;
 
             web.assert_redirect(
                 "/releases/search?query=some_random_crate&i-am-feeling-lucky=1",
-                "/some_random_crate/1.0.0/some_random_crate/",
+                &format!("/some_random_crate/{V1}/some_random_crate/"),
             )
             .await?;
             Ok(())
@@ -991,11 +979,12 @@ mod tests {
                 .await
                 .github_stats("some/repo", 333, 22, 11)
                 .name("some_random_crate")
+                .version(V1)
                 .create()
                 .await?;
             web.assert_redirect(
                 "/releases/search?query=&i-am-feeling-lucky=1",
-                "/some_random_crate/1.0.0/some_random_crate/",
+                &format!("/some_random_crate/{V1}/some_random_crate/"),
             )
             .await?;
             Ok(())
@@ -1863,9 +1852,9 @@ mod tests {
             );
 
             let queue = env.async_build_queue();
-            queue.add_crate("foo", "1.0.0", 0, None).await?;
-            queue.add_crate("bar", "0.1.0", -10, None).await?;
-            queue.add_crate("baz", "0.0.1", 10, None).await?;
+            queue.add_crate("foo", &V1, 0, None).await?;
+            queue.add_crate("bar", &V2, -10, None).await?;
+            queue.add_crate("baz", &V3, 10, None).await?;
 
             let full = kuchikiki::parse_html().one(web.get("/releases/queue").await?.text().await?);
             let items = full
@@ -1875,14 +1864,14 @@ mod tests {
 
             assert_eq!(items.len(), 3);
             let expected = [
-                ("bar", "0.1.0", Some(10)),
-                ("foo", "1.0.0", None),
-                ("baz", "0.0.1", Some(-10)),
+                ("bar", V2, Some(10)),
+                ("foo", V1, None),
+                ("baz", V3, Some(-10)),
             ];
             for (li, expected) in items.iter().zip(&expected) {
                 let a = li.as_node().select_first("a").expect("missing link");
                 assert!(a.text_contents().contains(expected.0));
-                assert!(a.text_contents().contains(expected.1));
+                assert!(a.text_contents().contains(&expected.1.to_string()));
 
                 if let Some(priority) = expected.2 {
                     assert!(
@@ -1903,13 +1892,13 @@ mod tests {
 
             // we have two queued releases, where the build for one is already in progress
             let queue = env.async_build_queue();
-            queue.add_crate("foo", "1.0.0", 0, None).await?;
-            queue.add_crate("bar", "0.1.0", 0, None).await?;
+            queue.add_crate("foo", &V1, 0, None).await?;
+            queue.add_crate("bar", &V2, 0, None).await?;
 
             env.fake_release()
                 .await
                 .name("foo")
-                .version("1.0.0")
+                .version(V1)
                 .builds(vec![
                     FakeBuild::default()
                         .build_status(BuildStatus::InProgress)
@@ -1933,7 +1922,7 @@ mod tests {
                 .expect("missing in progress list items")
                 .map(|node| node.text_contents().trim().to_string())
                 .collect();
-            assert_eq!(in_progress_items, vec!["foo 1.0.0"]);
+            assert_eq!(in_progress_items, vec![format!("foo {V1}")]);
 
             let queued_items: Vec<_> = lists[1]
                 .as_node()
@@ -1941,7 +1930,7 @@ mod tests {
                 .expect("missing queued list items")
                 .map(|node| node.text_contents().trim().to_string())
                 .collect();
-            assert_eq!(queued_items, vec!["bar 0.1.0"]);
+            assert_eq!(queued_items, vec![format!("bar {V2}")]);
 
             Ok(())
         });
@@ -1978,14 +1967,12 @@ mod tests {
         async_wrapper(|env| async move {
             let web = env.web_app().await;
             let queue = env.async_build_queue();
+            queue.add_crate("foo", &V1, REBUILD_PRIORITY, None).await?;
             queue
-                .add_crate("foo", "1.0.0", REBUILD_PRIORITY, None)
+                .add_crate("bar", &V2, REBUILD_PRIORITY + 1, None)
                 .await?;
             queue
-                .add_crate("bar", "0.1.0", REBUILD_PRIORITY + 1, None)
-                .await?;
-            queue
-                .add_crate("baz", "0.0.1", REBUILD_PRIORITY - 1, None)
+                .add_crate("baz", &V3, REBUILD_PRIORITY - 1, None)
                 .await?;
 
             let full = kuchikiki::parse_html().one(web.get("/releases/queue").await?.text().await?);
@@ -2216,7 +2203,7 @@ mod tests {
                 env.fake_release()
                     .await
                     .name("failed")
-                    .version(&format!("0.0.{i}"))
+                    .version(format!("0.0.{i}"))
                     .build_result_failed()
                     .create()
                     .await?;

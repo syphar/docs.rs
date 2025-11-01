@@ -1,3 +1,7 @@
 [[disallowed-types]]
 path = "axum::extract::Path"
 reason = "use our own custom web::extractors::Path for a nicer error response"
+
+[[disallowed-types]]
+path = "semver::Version"
+reason = "use our own custom db::types::version::Version so you can use it with sqlx"

@@ -1,7 +1,7 @@
 use super::{error::AxumResult, match_version};
 use crate::{
     AsyncStorage,
-    db::{BuildId, Pool},
+    db::{BuildId, Pool, types::version::Version},
     impl_axum_webpage,
     storage::PathNotFoundError,
     web::{
@@ -19,7 +19,6 @@ use askama::Template;
 use axum::{Extension, response::IntoResponse};
 use axum_extra::headers::HeaderMapExt;
 use mime::Mime;
-use semver::Version;
 use serde::Deserialize;
 use std::{cmp::Ordering, sync::Arc};
 use tracing::instrument;
@@ -84,7 +83,7 @@ impl FileList {
             INNER JOIN crates ON crates.id = releases.crate_id
             WHERE crates.name = $1 AND releases.version = $2",
             name,
-            version.to_string(),
+            version as _,
         )
         .fetch_optional(&mut *conn)
         .await?
@@ -242,7 +241,7 @@ pub(crate) async fn source_browser_handler(
              name = $1 AND
              version = $2"#,
         params.name,
-        version.to_string()
+        version as _,
     )
     .fetch_one(&mut *conn)
     .await?;
@@ -253,7 +252,7 @@ pub(crate) async fn source_browser_handler(
         match storage
             .fetch_source_file(
                 &params.name,
-                &version.to_string(),
+                &version,
                 row.latest_build_id,
                 &params.path,
                 row.archive_storage,

@@ -1,5 +1,5 @@
 use super::data::{Crate, Crates, Release, Releases};
-use crate::Index;
+use crate::{Index, db::types::version::Version};
 use anyhow::Result;
 use rayon::iter::ParallelIterator;
 
@@ -12,9 +12,15 @@ pub(super) fn load(index: &Index) -> Result<Crates> {
                 let mut releases: Releases = krate
                     .versions()
                     .iter()
-                    .map(|version| Release {
-                        version: version.version().into(),
-                        yanked: Some(version.is_yanked()),
+                    .filter_map(|version| {
+                        version
+                            .version()
+                            .parse::<Version>()
+                            .ok()
+                            .map(|semversion| Release {
+                                version: semversion,
+                                yanked: Some(version.is_yanked()),
+                            })
                     })
                     .collect();
                 releases.sort_by(|lhs, rhs| lhs.version.cmp(&rhs.version));
