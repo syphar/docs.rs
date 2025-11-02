@@ -14,6 +14,8 @@
   on production. It might have started failing just after the config/context
   rewrite, which is not deployed yet.
   [#2937](https://github.com/rust-lang/docs.rs/pull/2937)
+- unsure if the prefix mount should also be a docker volume, for performance.
+  Not sure how often we actually have to look at the contents?
 
   ## docker image
 

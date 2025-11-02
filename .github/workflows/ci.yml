@@ -68,8 +68,6 @@ jobs:
         run: just compose-down-and-wipe
 
   test:
-    env:
-      SQLX_OFFLINE: 1
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -82,21 +80,8 @@ jobs:
         with:
           prefix-key: ${{ env.RUST_CACHE_KEY }}
 
-      - name: Build
-        run: cargo build --workspace --locked
-
-      - name: Launch postgres and min.io
-        run: just ensure_db_and_s3_are_running
-
-      - name: run workspace tests
-        run: |
-          cargo test --workspace --locked --no-fail-fast
-
-      - name: run slow tests
-        env:
-          DOCSRS_INCLUDE_DEFAULT_TARGETS: true
-        run: |
-          cargo test --locked -- --ignored --test-threads=1
+      - name: run tests
+        run: just run-tests run-builder-tests
 
       - name: shut down test environment
         if: ${{ always() }}
@@ -122,8 +107,8 @@ jobs:
         if: ${{ always() }}
         run: just compose-down-and-wipe
 
-  clippy:
-    name: Clippy
+  rslint:
+    name: rust linters
     runs-on: ubuntu-latest
 
     steps:

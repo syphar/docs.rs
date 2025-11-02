@@ -50,3 +50,19 @@ run-gui-tests: ensure_db_and_s3_are_running cli-db-migrate compose-up-web
   just cli-build-add-essential-files
 
   just _cli gui_tests 
+
+# build binaries for all tests
+build-tests:
+  cargo test --no-run --workspace --locked
+
+
+run-tests: ensure_db_and_s3_are_running build-tests
+  cargo test --workspace --locked --no-fail-fast
+
+run-builder-tests: ensure_db_and_s3_are_running build-tests
+  #!/bin/bash
+  set -euo pipefail
+
+  export DOCSRS_INCLUDE_DEFAULT_TARGETS=true
+
+  cargo test --locked -- --ignored --test-threads=1
