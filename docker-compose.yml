@@ -98,7 +98,10 @@ x-builder: &builder
     build:
         <<: *build
         target: build-server
-    # builders only work with linux/amd64
+    # build servers only work with linux/amd64 for now.
+    # This makes them much slower when working on a mac, but
+    # it needs some work and digging into the builder to fix
+    # this.
     platform: "linux/amd64"
     depends_on:
         - db
@@ -125,7 +128,6 @@ x-registry-watcher: &registry-watcher
         - db
         - s3
     volumes:
-        - "./static:/opt/docsrs/static:ro"
         - "./ignored/docker-registry-watcher/prefix:/opt/docsrs/prefix"
         - crates-io-index:/opt/docsrs/crates.io-index
     environment:
@@ -175,6 +177,7 @@ services:
     registry-watcher-cli:
         <<: *registry-watcher
         profiles:
+            # watcher-CLI should not be run as background daemon, just manually
             - manual
 
     builder-a:
@@ -182,6 +185,8 @@ services:
         volumes:
             - "rustwide-builder-a:/opt/docsrs/rustwide"
             - "./ignored/docker-builder-a/prefix:/opt/docsrs/prefix"
+            # this exposes the docker engine from the host machine
+            # to the build-server inside the container.
             - "/var/run/docker.sock:/var/run/docker.sock"
         profiles:
             - builder
@@ -192,9 +197,11 @@ services:
         volumes:
             - "rustwide-builder-b:/opt/docsrs/rustwide"
             - "./ignored/docker-builder-b/prefix:/opt/docsrs/prefix"
+            # this exposes the docker engine from the host machine
+            # to the build-server inside the container.
             - "/var/run/docker.sock:/var/run/docker.sock"
         profiles:
-            - builderaaa
+            - builder
             - full
 
     builder-cli:
@@ -202,8 +209,11 @@ services:
         volumes:
             - "rustwide-builder-cli:/opt/docsrs/rustwide"
             - "./ignored/docker-builder-cli/prefix:/opt/docsrs/prefix"
+            # this exposes the docker engine from the host machine
+            # to the build-server inside the container.
             - "/var/run/docker.sock:/var/run/docker.sock"
         profiles:
+            # builder-CLI should not be run as background daemon, just manually
             - manual
 
     cli:
@@ -211,8 +221,8 @@ services:
             <<: *build
             target: cli
         depends_on:
-            # only for clarifycation.
-            # when using "docker compose run", these dependencies are ignored,
+            # only for clarification.
+            # When using "docker compose run", these dependencies are ignored,
             # we handle this in our `just` commands.
             - db
             - s3
@@ -296,6 +306,8 @@ services:
         volumes:
             - "${PWD}:/build/out"
         profiles:
+            # gui_tests should not be run as background daemon.
+            # Just run via `just run-gui-tests`.
             - manual
 
 volumes:
