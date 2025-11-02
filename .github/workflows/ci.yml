@@ -45,9 +45,7 @@ jobs:
           prefix-key: ${{ env.RUST_CACHE_KEY }}
 
       - name: Launch postgres
-        run: |
-          touch .docker.env
-          docker compose up --wait --wait-timeout 30 db
+        run: just ensure_db_and_s3_are_running
 
       - name: install SQLX CLI
         run: cargo binstall sqlx-cli --no-default-features --features postgres
@@ -64,6 +62,10 @@ jobs:
           cargo sqlx migrate revert \
             --database-url $DOCSRS_DATABASE_URL \
             --target-version 0
+
+      - name: shut down test environment
+        if: ${{ always() }}
+        run: just compose-down-and-wipe
 
   test:
     env:
@@ -84,9 +86,7 @@ jobs:
         run: cargo build --workspace --locked
 
       - name: Launch postgres and min.io
-        run: |
-          touch .docker.env
-          docker compose up --wait --wait-timeout 30 db s3
+        run: just ensure_db_and_s3_are_running
 
       - name: run workspace tests
         run: |
@@ -98,6 +98,10 @@ jobs:
         run: |
           cargo test --locked -- --ignored --test-threads=1
 
+      - name: shut down test environment
+        if: ${{ always() }}
+        run: just compose-down-and-wipe
+
   GUI_test:
     runs-on: ubuntu-latest
     steps:
@@ -108,13 +112,15 @@ jobs:
         with:
           prefix-key: ${{ env.RUST_CACHE_KEY }}
 
-      - name: Launch postgres and min.io
-        run: |
-          touch .docker.env
-          docker compose up --wait --wait-timeout 30 db s3
+      - name: install `just`
+        run: sudo snap install --edge --classic just
 
       - name: Run GUI tests
-        run: ./dockerfiles/run-gui-tests.sh
+        run: just run-gui-tests
+
+      - name: shut down test environment
+        if: ${{ always() }}
+        run: just compose-down-and-wipe
 
 
   fmt:

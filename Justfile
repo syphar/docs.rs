@@ -5,5 +5,6 @@ _default:
     just --list
 
 import 'justfiles/cli.just'
+import 'justfiles/utils.just'
 import 'justfiles/services.just'
 import 'justfiles/testing.just'
