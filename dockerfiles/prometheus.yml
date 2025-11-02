@@ -11,4 +11,5 @@ scrape_configs:
   - job_name: "docs.rs"
     metrics_path: "/about/metrics"
     static_configs:
-      - targets: ["web:3000"]
+      # registry watcher doesn't have metrics yet.
+      - targets: ["web:80", "builder-a:3000", "builder-b:3000"]

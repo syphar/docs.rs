@@ -165,6 +165,11 @@ COPY --from=build /build/target/$PROFILE_DIR/cratesfyi /usr/local/bin
 ###############
 #  CLI stage  #
 ###############
+# This stage is used to run one-off commands like database migrations.
+# not suited for commands that need: 
+# * the crates.io index, or
+# * need to run builds.
+# for these, use the build-server stage, or registry-watcher stage instead.
 
 FROM debian:trixie-slim AS cli
 
@@ -181,7 +186,7 @@ RUN apt-get update \
 
 WORKDIR /srv/docsrs
 # copy migrations so we can run them via CLI script
-COPY migrations migrations/
+# COPY migrations migrations/
 
 ENTRYPOINT ["/usr/bin/tini", "/usr/local/bin/cratesfyi", "--"]
 
