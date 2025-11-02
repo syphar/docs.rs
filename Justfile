@@ -54,7 +54,7 @@ compose-cli-migrate:
 
 # add a release to the build queue
 [group('compose')]
-compose-cli-queue-add *args compose-cli-migrate:
+compose-cli-queue-add *args: compose-cli-migrate
   just compose-cli queue add {{ args }}
 
 # run builder CLI command in its own one-off docker container.
@@ -127,6 +127,7 @@ compose-up-full:
 compose-down:
   docker compose --profile full down --remove-orphans
 
+# stream logs from all services running in docker-compose. Optionally specify services to tail logs from.
 [group('compose')]
 compose-logs *services:
   docker compose --profile full logs -f {{ services }}
