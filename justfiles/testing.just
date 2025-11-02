@@ -23,7 +23,7 @@ clippy *args:
     --all-targets \
     --workspace \
     --locked \
-    {{ args}} \
+    {{ args }} \
     -- -D warnings 
 
 clippy-fix:
