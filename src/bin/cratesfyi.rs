@@ -439,6 +439,8 @@ impl BuildSubcommand {
             } => {
                 let mut builder = rustwide_builder()?;
 
+                builder.update_toolchain_and_add_essential_files()?;
+
                 if let Some(path) = local {
                     builder
                         .build_local_package(&path)
@@ -477,17 +479,7 @@ impl BuildSubcommand {
                     return Ok(());
                 }
 
-                rustwide_builder()?
-                    .update_toolchain()
-                    .context("failed to update toolchain")?;
-
-                rustwide_builder()?
-                    .purge_caches()
-                    .context("failed to purge caches")?;
-
-                rustwide_builder()?
-                    .add_essential_files()
-                    .context("failed to add essential files")?;
+                rustwide_builder()?.update_toolchain_and_add_essential_files()?;
             }
 
             Self::AddEssentialFiles => {

@@ -180,7 +180,7 @@ services:
             - "./ignored/docker-builder-b/prefix:/opt/docsrs/prefix"
             - "/var/run/docker.sock:/var/run/docker.sock"
         profiles:
-            - builder
+            - builderaaa
             - full
 
     builder-cli:

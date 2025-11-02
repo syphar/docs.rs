@@ -17,7 +17,7 @@ use crate::storage::{
     rustdoc_json_path, source_archive_path,
 };
 use crate::utils::{
-    CargoMetadata, ConfigName, copy_dir_all, get_config, parse_rustc_version, report_error,
+    CargoMetadata, ConfigName, copy_dir_all, get_config, parse_rustc_version, report_error, retry,
     set_config,
 };
 use crate::{AsyncStorage, Config, Context, InstanceMetrics, RegistryApi, Storage};
@@ -170,11 +170,46 @@ impl RustwideBuilder {
         Ok(())
     }
 
+    #[instrument(skip_all)]
+    pub fn update_toolchain_and_add_essential_files(&mut self) -> Result<()> {
+        info!("try updating the toolchain");
+        let updated = retry(
+            || {
+                self.update_toolchain()
+                    .context("downloading new toolchain failed")
+            },
+            3,
+        )?;
+
+        debug!(updated, "toolchain update check complete");
+
+        if updated {
+            // toolchain has changed, purge caches
+            retry(
+                || {
+                    self.purge_caches()
+                        .context("purging rustwide caches failed")
+                },
+                3,
+            )?;
+
+            self.add_essential_files()
+                .context("adding essential files failed")?;
+        }
+
+        Ok(())
+    }
+
+    #[instrument(skip_all)]
     pub fn update_toolchain(&mut self) -> Result<bool> {
         self.toolchain = self.runtime.block_on(async {
             let mut conn = self.db.get_async().await?;
             get_configured_toolchain(&mut conn).await
         })?;
+        debug!(
+            configured_toolchain = self.toolchain.to_string(),
+            "configured toolchain"
+        );
 
         // For CI builds, a lot of the normal update_toolchain things don't apply.
         // CI builds are only for one platform (https://forge.rust-lang.org/infra/docs/rustc-ci.html#try-builds)
@@ -243,7 +278,57 @@ impl RustwideBuilder {
             }
         }
 
-        let has_changed = old_version != Some(self.rustc_version()?);
+        let new_version = self.rustc_version()?;
+        debug!(new_version, "detected new rustc version");
+        let mut has_changed = old_version.as_ref() != Some(&new_version);
+
+        if !has_changed {
+            // This fixes an edge-case on a fresh build server.
+            //
+            // It seems like on the fresh server, there _is_ a recent nightly toolchain
+            // installed, which we then updated with necessary components in this
+            // method.
+            //
+            // But: *for this toolchain, we never ran `add_essential_files`*, because it
+            // was not installed by us.
+            //
+            // Now the culprit: even through we "fix" the previously installed nightly toolchain
+            // with the needed components & targets, we return "updated = false", since the actual
+            // version number didn't change.
+            //
+            // As a result, `BuildQueue::update_toolchain` will not call `add_essential_files`,
+            // which then means we don't have the toolchain-shared static files on our S3 bucket.
+            //
+            // The workaround specifically for `add_essential_files` is the following:
+            //
+            // After `add_essential_files` is finished, it sets `ConfigName::RustcVersion` in the
+            // database to the version it uploaded the essential files for.
+            //
+            // This means, if `ConfigName::RustcVersion` is empty, or different from the current new
+            // version, we can set `updated = true` too.
+            //
+            // I feel like there are more edge-cases, but for now this is OK.
+            //
+            // Alternative would have been to run `build update-toolchain --only-first-time`
+            // in a newly created `ENTRYPOINT` script for the build-server. I leaned to towards
+            // a more self-contained solution which doesn't need docker at all, and also would work
+            // if you run the build-server directly on your machine.
+
+            let rustc_version = self.runtime.block_on({
+                let pool = self.db.clone();
+                async move {
+                    let mut conn = pool
+                        .get_async()
+                        .await
+                        .context("failed to get a database connection")?;
+
+                    get_config::<String>(&mut conn, ConfigName::RustcVersion).await
+                }
+            })?;
+
+            has_changed = rustc_version.is_none() || rustc_version != Some(new_version);
+        }
+
         Ok(has_changed)
     }
 

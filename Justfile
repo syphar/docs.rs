@@ -24,11 +24,16 @@ _touch-docker-env:
 # config
 [group('compose')]
 cleanup:
-  # FIXME: the images sometimes can't be deleted? because in-use? 
-  # But all containers are stopped?
-  docker compose down --volumes --remove-orphans --rmi local
-  rm -rf .rustwide-docker/ && mkdir -p .rustwide-docker
-  rm -rf ignored/ && mkdir -p ignored
+    # FIXME onlt delete containers in our project
+    docker container prune --force
+    # FIXME onlt delete volumesin our project
+    docker volume prune -f -a
+
+    # FIXME: the images sometimes can't be deleted? because in-use? 
+    # But all containers are stopped?
+    docker compose down --volumes --remove-orphans --rmi local
+    rm -rf .rustwide-docker/ && mkdir -p .rustwide-docker
+    rm -rf ignored/ && mkdir -p ignored
 
 _compose-cli service_name *args: _touch-docker-env
   docker compose up -d db s3 --wait

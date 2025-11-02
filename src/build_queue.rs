@@ -601,35 +601,6 @@ impl BuildQueue {
         Ok(())
     }
 
-    fn update_toolchain(&self, builder: &mut RustwideBuilder) -> Result<()> {
-        let updated = retry(
-            || {
-                builder
-                    .update_toolchain()
-                    .context("downloading new toolchain failed")
-            },
-            3,
-        )?;
-
-        if updated {
-            // toolchain has changed, purge caches
-            retry(
-                || {
-                    builder
-                        .purge_caches()
-                        .context("purging rustwide caches failed")
-                },
-                3,
-            )?;
-
-            builder
-                .add_essential_files()
-                .context("adding essential files failed")?;
-        }
-
-        Ok(())
-    }
-
     /// Builds the top package from the queue. Returns whether there was a package in the queue.
     ///
     /// Note that this will return `Ok(true)` even if the package failed to build.
@@ -662,8 +633,8 @@ impl BuildQueue {
                 return Err(err);
             }
 
-            if let Err(err) = self
-                .update_toolchain(&mut *builder)
+            if let Err(err) = builder
+                .update_toolchain_and_add_essential_files()
                 .context("Updating toolchain failed, locking queue")
             {
                 report_error(&err);
