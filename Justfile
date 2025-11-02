@@ -1,4 +1,4 @@
-set shell := ["bash", "-euxo", "pipefail", "-c"]
+set shell := ["bash", "-euo", "pipefail", "-c"]
 
 
 # List available commands
@@ -28,30 +28,15 @@ _touch-docker-env:
 # config
 [group('compose')]
 cleanup:
-  #!/usr/bin/env bash
-
-  PROJECT_NAME=$(docker compose config | yq -r '.name')
-
-  # stop & remove all docker containters, if they belong to this compose project.
-  docker ps -a \
-    --filter "label=com.docker.compose.project=$PROJECT_NAME" \
-    --format json | jq -r '[.ID, .Names] | @tsv' | \
-    while IFS=$'\t' read -r cid cname; do 
-
-    echo "stopping and removing container ${cname} ($cid)"
-    docker container stop "$cid" >/dev/null
-    docker container rm "$cid" >/dev/null
-  done
-
-  #  more cleanup with docker compose down
+  # Docker cleanup with docker compose down
   # 1. volumes: remove named and anonymous volumes declared in the `volumes` section of the compose file.
-  # 2. orphans: remove containers for services not defined in the compose file.
+  # 2. orphans: remove containers for services not defined in the compose file any more.
   # 3. rmi local: remove images that don't have a tag (local build)
-  docker compose down --volumes --remove-orphans --rmi local
+  docker compose --profile full down --volumes --remove-orphans --rmi local
 
   # remove some of our own data directories, when they are mapped to the filesystem.
-
   rm -rf ignored/ && mkdir -p ignored
+
 
 _compose-cli service_name *args: _touch-docker-env
   docker compose up -d db s3 --wait
@@ -74,7 +59,7 @@ compose-cli-queue-add *args:
 
 # run builder CLI command in its own one-off docker container.
 [group('compose')]
-compose-builder-cli *args: _touch-docker-env
+compose-builder-cli *args: _touch-docker-env compose-cli-migrate
   just _compose-cli builder-cli {{ args }}
 
 # set the nightly rust version to be used for builds. Format: `nightly-YYYY-MM-DD`
@@ -99,7 +84,7 @@ compose-cli-build-crate *args:
 
 # run registry-watcher CLI command in its own one-off docker container.
 [group('compose')]
-compose-registry-watcher-cli *args: _touch-docker-env
+compose-registry-watcher-cli *args: _touch-docker-env compose-cli-migrate
   just _compose-cli registry-watcher-cli {{ args }}
 
 # Update last seen reference to the current index head, to only build newly published crates
