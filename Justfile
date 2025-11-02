@@ -39,6 +39,11 @@ _compose-cli service_name *args: _touch-docker-env
 compose-cli *args: _touch-docker-env 
   just _compose-cli cli {{ args }}
 
+# Initialize the docker compose database
+[group('compose')]
+compose-cli-migrate: 
+  just compose-cli database migrate
+
 # run builder CLI command in its own one-off docker container.
 [group('compose')]
 compose-builder-cli *args: _touch-docker-env
@@ -49,15 +54,11 @@ compose-builder-cli *args: _touch-docker-env
 compose-registry-watcher-cli *args: _touch-docker-env
   just _compose-cli registry-watcher-cli {{ args }}
 
-# Initialize the docker compose database
-[group('compose')]
-compose-cli-migrate: 
-  just compose-cli database migrate
-
 # Update last seen reference to the current index head, to only build newly published crates
 [group('compose')]
 compose-cli-queue-head: 
   just compose-registry-watcher-cli queue set-last-seen-reference --head
+
 
 # run migrations, then launch one or more docker compose profiles in the background
 [group('compose')]
