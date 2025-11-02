@@ -6,4 +6,4 @@ _default:
 
 import 'justfiles/cli.just'
 import 'justfiles/services.just'
-import 'justfiles/development.just'
+import 'justfiles/testing.just'
