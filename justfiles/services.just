@@ -46,10 +46,10 @@ compose-down-and-wipe:
 
   # so we just try if we can use passwordless `sudo`: 
   if sudo -n true 2>/dev/null; then
-    # if yes, we can use `sudo` to delete the folder.
+    echo "deleting ignored/ folder with sudo"
     sudo -n rm -rf ignored/
   else
-    # otherwise we try deleting as the current user
+    echo "trying to delete ignored/ folder with current user."
     rm -rf ignored/ || { echo 'Failed to remove ignored/ - skipping' >&2; }
   fi
 
