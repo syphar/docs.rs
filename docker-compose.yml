@@ -14,13 +14,18 @@
 # from the build queue they access)
 #
 # optional profile: `watcher`:
-# * `registry-watcher` -> crates.io registry watcher + repo-stats updater +
-#    cdn invalidator
+# * `registry-watcher` ->
+#     - crates.io registry watcher
+#     - repo-stats updater
+#     - cdn invalidator
+#     - release-rebuild-enqueuer
 #
 # optional profile: `metrics`:
 # * `prometheus` -> configured prometheus instance
 #
-# scrape config is set to collect from the web- & buildservers.
+# prometheus scrape config is set to collect from the web server, the registry watcher, and
+# the build servers. We assume there are no metrics from the CLIs, as we do in
+# prod.
 #
 # optional profile: `full`: all of the above.
 #

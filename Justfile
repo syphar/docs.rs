@@ -24,6 +24,8 @@ _touch-docker-env:
 # config
 [group('compose')]
 cleanup:
+  # FIXME: the images sometimes can't be deleted? because in-use? 
+  # But all containers are stopped?
   docker compose down --volumes --remove-orphans --rmi local
   rm -rf .rustwide-docker/ && mkdir -p .rustwide-docker
   rm -rf ignored/ && mkdir -p ignored
