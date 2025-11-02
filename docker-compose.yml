@@ -52,6 +52,16 @@
 #     instances (web, watcher, builder), and just error in case the specific
 #     server isn't accessible.
 
+x-docker-cache: &docker-cache
+    # shared configuration to cache docker layers across CI runs.
+    # can just always be in in the `docker-compose.yml`, and will
+    # just do nothing if we're not on GHA.
+    # So feel free to add more techniques if needed.
+    cache_from:
+        - type=gha
+    cache_to:
+        - type=gha,mode=max
+
 x-healthcheck: &healthcheck-interval
     interval: 10s
     timeout: 1s
@@ -78,6 +88,7 @@ x-environment: &environment
 
 x-build: &build
     context: .
+    <<: *docker-cache
     dockerfile: ./dockerfiles/Dockerfile
     args:
         PROFILE: dev
@@ -218,6 +229,7 @@ services:
         build:
             context: ./dockerfiles
             dockerfile: ./Dockerfile-postgres
+            <<: *docker-cache
         volumes:
             - postgres-data:/var/lib/postgresql/data
         environment:
@@ -254,6 +266,7 @@ services:
         build:
             context: ./dockerfiles
             dockerfile: ./Dockerfile-prometheus
+            <<: *docker-cache
         ports:
             - "127.0.0.1:9090:9090"
         # we intentionally don't define depends_on here.
@@ -272,9 +285,11 @@ services:
             - full
 
     gui_tests:
+        platform: "linux/amd64"
         build:
             context: .
             dockerfile: ./dockerfiles/Dockerfile-gui-tests
+            <<: *docker-cache
         network_mode: "host"
         extra_hosts:
             - "host.docker.internal:host-gateway"

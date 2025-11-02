@@ -4,7 +4,7 @@
 
 # low-level helper to run any CLI command in its own one-off docker container, 
 # ensuring that `db` and `s3` are running.
-_cli service_name +args: _touch-docker-env
+_cli service_name *args: _touch-docker-env
   # dependencies in the docker-cli file are ignored 
   # here. Instead we explicitly start any dependent services first.
   docker compose up -d db s3 --wait
@@ -37,29 +37,29 @@ cli-queue-add +args:
 # Uses a separate builder-cli container & workspace.
 [group('cli')]
 cli-build +args: _touch-docker-env cli-db-migrate
-  just _cli cli-builder {{ args }}
+  just _cli builder-cli {{ args }}
 
 # set the nightly rust version to be used for builds. Format: `nightly-YYYY-MM-DD`
 [group('cli')]
 cli-build-set-toolchain name only_first_time="false":
   FLAG=""
   if [ "{{only_first_time}}" = "true" ]; then FLAG="--only-first-time"; fi
-  just cli-builder build set-toolchain {{ name }} $FLAG
+  just cli-build build set-toolchain {{ name }} $FLAG
 
 # update the toolchain in the builders
 [group('cli')]
 cli-build-update-toolchain:
-  just cli-builder build update-toolchain
+  just cli-build build update-toolchain
 
 # build & upload toolchain shared static resources
 [group('cli')]
 cli-build-add-essential-files:
-  just cli-builder build add-essential-files
+  just cli-build build add-essential-files
 
 # build a release
 [group('cli')]
-cli-build-crate name version build_priority="5":
-  just cli-builder build crate {{ name }} {{ version }} {{ build_priority }}
+cli-build-crate name version:
+  just cli-build build crate {{ name }} {{ version }}
 
 # run registry-watcher CLI command in its own one-off `registry-watcher` docker container.
 [group('cli')]
@@ -68,8 +68,8 @@ cli-watcher +args: _touch-docker-env cli-db-migrate
 
 # Update last seen reference to the given hash, or the current `HEAD`. 
 [group('cli')]
-cli-queue-reset-last-seen-ref REF="--head": 
-  just cli-watcher queue set-last-seen-reference {{ REF }}
+cli-queue-reset-last-seen-ref ref="--head": 
+  just cli-watcher queue set-last-seen-reference {{ ref }}
 
 # synchronize the crates.io index with our own database. 
 [group('cli')]
