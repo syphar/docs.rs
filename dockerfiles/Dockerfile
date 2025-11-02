@@ -99,7 +99,7 @@ WORKDIR /srv/docsrs
 
 # Tini is a small init binary to properly handle signals
 ENTRYPOINT ["/usr/bin/tini", "/usr/local/bin/cratesfyi", "--"]
-CMD ["start-web-server", "0.0.0.0:80"]
+CMD ["start-web-server", "0.0.0.0:3000"]
 
 ARG PROFILE_DIR=release
 COPY --from=build /build/target/$PROFILE_DIR/cratesfyi /usr/local/bin
@@ -131,7 +131,7 @@ RUN apt-get update \
 
 # Tini is a small init binary to properly handle signals
 ENTRYPOINT ["/usr/bin/tini", "/usr/local/bin/cratesfyi", "--"]
-CMD ["start-build-server"]
+CMD ["start-build-server", "0.0.0.0:3000"]
 
 ARG PROFILE_DIR=release
 COPY --from=build /build/target/$PROFILE_DIR/cratesfyi /usr/local/bin

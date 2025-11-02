@@ -38,6 +38,11 @@
 #   Only alternative would be to build everything for `amd64`, but
 #   that would imply a performance impact on the services that don't
 #   need it.
+# * volumes: typically docker-native volumes are faster than mounts, but
+#   sometimes annoying to inspect for debugging.
+#   For now we choose:
+#   * docker-native for DB, S3, rustwide workspace, crates.io index
+#   * mounts for prefix, code mounts
 
 x-healthcheck: &healthcheck-interval
     interval: 10s
@@ -127,7 +132,7 @@ services:
             - db
             - s3
         ports:
-            - "3000:80"
+            - "3000:3000"
         environment:
             <<: *environment
             DOCSRS_RENDER_THREADS: 2
@@ -135,7 +140,7 @@ services:
             - .docker.env
         healthcheck:
             <<: *healthcheck-interval
-            test: curl --silent --fail localhost:80/about/metrics
+            test: curl --silent --fail localhost:3000/about/metrics
         profiles:
             - web
             - full
@@ -158,7 +163,7 @@ services:
     builder-a:
         <<: *builder
         volumes:
-            - ".rustwide-docker/builder-a:/opt/docsrs/rustwide"
+            - "rustwide-builder-a:/opt/docsrs/rustwide"
             - "./ignored/docker-builder-a/prefix:/opt/docsrs/prefix"
             - "/var/run/docker.sock:/var/run/docker.sock"
         profiles:
@@ -168,7 +173,7 @@ services:
     builder-b:
         <<: *builder
         volumes:
-            - ".rustwide-docker/builder-b:/opt/docsrs/rustwide"
+            - "rustwide-builder-b:/opt/docsrs/rustwide"
             - "./ignored/docker-builder-b/prefix:/opt/docsrs/prefix"
             - "/var/run/docker.sock:/var/run/docker.sock"
         profiles:
@@ -178,7 +183,7 @@ services:
     builder-cli:
         <<: *builder
         volumes:
-            - ".rustwide-docker/builder-cli:/opt/docsrs/rustwide"
+            - "rustwide-builder-cli:/opt/docsrs/rustwide"
             - "./ignored/docker-builder-cli/prefix:/opt/docsrs/prefix"
             - "/var/run/docker.sock:/var/run/docker.sock"
         profiles:
@@ -264,3 +269,6 @@ volumes:
     postgres-data: {}
     minio-data: {}
     crates-io-index: {}
+    rustwide-builder-a: {}
+    rustwide-builder-b: {}
+    rustwide-builder-cli: {}

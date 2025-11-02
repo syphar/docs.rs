@@ -60,7 +60,7 @@ compose-cli-queue-head:
 # run migrations, then launch one or more docker compose profiles in the background
 [group('compose')]
 compose-up *profiles: _touch-docker-env compose-cli-migrate
-  docker compose {{ prepend("--profile ", profiles) }} up --build -d
+  docker compose {{ prepend("--profile ", profiles) }} up --build -d --wait
 
 # Launch web server in the background
 [group('compose')]
