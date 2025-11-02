@@ -32,10 +32,12 @@ jobs:
         uses: raven-actions/actionlint@v2
         with:
           files: .github/workflow/*
-          flags: "-ignore SC2086" # ignore some shellcheck errors
+          flags: "-ignore SC2086"  # ignore some shellcheck errors
 
       - name: install `just`
         run: sudo snap install --edge --classic just
+
+      - uses: cargo-bins/cargo-binstall@main
 
       - name: restore build & cargo cache
         uses: Swatinem/rust-cache@v2
@@ -48,7 +50,7 @@ jobs:
           docker compose up --wait --wait-timeout 30 db
 
       - name: install SQLX CLI
-        run: cargo install sqlx-cli --no-default-features --features postgres
+        run: cargo binstall sqlx-cli --no-default-features --features postgres
 
       - name: run database migrations
         run: cargo sqlx migrate run --database-url $DOCSRS_DATABASE_URL
@@ -69,6 +71,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+
+      - name: install `just`
+        run: sudo snap install --edge --classic just
 
       - name: restore build & cargo cache
         uses: Swatinem/rust-cache@v2
@@ -118,6 +123,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+
       - name: update rust toolchain
         run: rustup component add rustfmt
 

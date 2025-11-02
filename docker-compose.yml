@@ -23,10 +23,6 @@
 # optional profile: `metrics`:
 # * `prometheus` -> configured prometheus instance
 #
-# prometheus scrape config is set to collect from the web server, the registry watcher, and
-# the build servers. We assume there are no metrics from the CLIs, as we do in
-# prod.
-#
 # optional profile: `full`: all of the above.
 #
 # Services purely for manual usage with `docker compose run` are:
@@ -45,9 +41,16 @@
 #   need it.
 # * volumes: typically docker-native volumes are faster than mounts, but
 #   sometimes annoying to inspect for debugging.
+#
 #   For now we choose:
+#
 #   * docker-native for DB, S3, rustwide workspace, crates.io index
 #   * mounts for prefix, code mounts
+#   * prometheus scrape config is set to collect from the web server, the
+#     registry watcher, and the build servers. Scraping is not dynamic, so
+#     the local prometheus server will try to fetch from all service
+#     instances (web, watcher, builder), and just error in case the specific
+#     server isn't accessible.
 
 x-healthcheck: &healthcheck-interval
     interval: 10s

@@ -39,3 +39,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           push: false
+
+          # TODO: later we would set `push: true` and also provide nice tags
+          # for the images.
+          # Unclear is how the deploy would work then.
