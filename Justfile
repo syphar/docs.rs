@@ -24,63 +24,53 @@ lint-js *args:
 _touch-docker-env:
   touch .docker.env
 
-# clean up docker images, volumes & other local artifacts from this docker-compose 
-# config
-[group('compose')]
-cleanup:
-  # Docker cleanup with docker compose down
-  # 1. volumes: remove named and anonymous volumes declared in the `volumes` section of the compose file.
-  # 2. orphans: remove containers for services not defined in the compose file any more.
-  # 3. rmi local: remove images that don't have a tag (local build)
-  docker compose --profile full down --volumes --remove-orphans --rmi local
-
-  # remove some of our own data directories, when they are mapped to the filesystem.
-  rm -rf ignored/ && mkdir -p ignored
-
-
 _compose-cli service_name *args: _touch-docker-env
+  # dependencies in the docker-compose file are ignored 
+  # here. Instead we explicitly start any dependent services first.
   docker compose up -d db s3 --wait
+  # run the CLI command
   docker compose run --build --rm {{ service_name }} {{ args }}
 
-# run any CLI command in its own one-off docker container. Args are passed to the container.
+# run any CLI command in its own one-off `cli` docker container. Args are passed to the container.
 [group('compose')]
-compose-cli *args: _touch-docker-env 
+compose-cli *args: _touch-docker-env  compose-cli-migrate
   just _compose-cli cli {{ args }}
 
 # Initialize the docker compose database
 [group('compose')]
 compose-cli-migrate: 
-  just compose-cli database migrate
+  # intentially not using `compose-cli`, otherweise we have a cycle.
+  just _compose-cli cli database migrate
 
 # add a release to the build queue
 [group('compose')]
-compose-cli-queue-add *args: compose-cli-migrate
+compose-cli-queue-add *args:
   just compose-cli queue add {{ args }}
 
 # run builder CLI command in its own one-off docker container.
 [group('compose')]
-compose-builder-cli *args: _touch-docker-env compose-cli-migrate
-  just _compose-cli builder-cli {{ args }}
+compose-cli-builder *args: _touch-docker-env compose-cli-migrate
+  just _compose-cli cli-builder {{ args }}
 
 # set the nightly rust version to be used for builds. Format: `nightly-YYYY-MM-DD`
 [group('compose')]
 compose-cli-set-toolchain NAME:
-  just compose-builder-cli build set-toolchain {{ NAME }}
+  just compose-cli-builder build set-toolchain {{ NAME }}
 
 # update the toolchain in the builders
 [group('compose')]
 compose-cli-update-toolchain:
-  just compose-builder-cli build update-toolchain
+  just compose-cli-builder build update-toolchain
 
 # build & the toolchain shared essential files
 [group('compose')]
 compose-cli-add-essential-files:
-  just compose-builder-cli build add-essential-files
+  just compose-cli-builder build add-essential-files
 
 # build & the toolchain shared essential files
 [group('compose')]
 compose-cli-build-crate *args:
-  just compose-builder-cli build crate {{ args }}
+  just compose-cli-builder build crate {{ args }}
 
 # run registry-watcher CLI command in its own one-off docker container.
 [group('compose')]
@@ -117,15 +107,25 @@ compose-up-watcher:
 compose-up-metrics: 
   just compose-up metrics
 
-# Launch everything in the background
+# Launch everything, all at once, in the background
 [group('compose')]
 compose-up-full:
   just compose-up full
 
-# Shutdown docker services and cleanup all temporary volumes
+# Shutdown docker services, keep containers & volumes alive.
 [group('compose')]
 compose-down:
   docker compose --profile full down --remove-orphans
+
+
+# Shutdown docker services, then
+# clean up docker images, volumes & other local artifacts from 
+# this docker-compose project
+[group('compose')]
+compose-down-and-wipe:
+  docker compose --profile full down --volumes --remove-orphans --rmi local
+  rm -rf ignored/ && mkdir -p ignored
+
 
 # stream logs from all services running in docker-compose. Optionally specify services to tail logs from.
 [group('compose')]
