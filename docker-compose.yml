@@ -52,7 +52,7 @@ x-healthcheck: &healthcheck-interval
 
 x-environment: &environment
     RUST_BACKTRACE: true
-    RUST_LOG: debug
+    DOCSRS_LOG: docs_rs=trace,tower_http=debug,rustwide=info,aws_smithy_http=trace,axum=debug
 
     DOCSRS_PREFIX: /opt/docsrs/prefix
 
@@ -116,6 +116,9 @@ x-registry-watcher: &registry-watcher
         # So we configure it to be separate from the prefix.
         # Also on a native docker volume for performance
         REGISTRY_INDEX_PATH: /opt/docsrs/crates.io-index
+        # configure the rebuild-queuer
+        DOCSRS_MAX_QUEUED_REBUILDS: 10
+
     env_file:
         - .docker.env
     healthcheck:

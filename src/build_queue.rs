@@ -2,8 +2,11 @@ use crate::Context;
 use crate::db::{CrateId, Pool, delete_crate, delete_version, update_latest_version_id};
 use crate::docbuilder::PackageKind;
 use crate::error::Result;
+use crate::index::IndexExt as _;
 use crate::storage::AsyncStorage;
-use crate::utils::{ConfigName, get_config, get_crate_priority, report_error, retry, set_config};
+use crate::utils::{
+    ConfigName, get_config, get_crate_priority, report_error, retry, set_config, spawn_blocking,
+};
 use crate::{BuildPackageSummary, cdn};
 use crate::{Config, Index, InstanceMetrics, RustwideBuilder};
 use anyhow::Context as _;
@@ -225,23 +228,37 @@ impl AsyncBuildQueue {
     /// Updates registry index repository and adds new crates into build queue.
     ///
     /// Returns the number of crates added
-    pub async fn get_new_crates(&self, index: &Index) -> Result<usize> {
-        let diff = index.diff()?;
+    pub async fn get_new_crates(&self, index: Arc<Index>) -> Result<usize> {
+        let last_seen_reference = self.last_seen_reference().await?;
 
-        let last_seen_reference = if let Some(oid) = self.last_seen_reference().await? {
-            oid
-        } else {
-            warn!(
-                "no last-seen reference found in our database. We assume a fresh install and
-                set the latest reference (HEAD) as last. This means we will then start to queue
-                builds for new crates only from now on, and not for all existing crates."
-            );
-            index.last_reference()?
-        };
+        let (changes, last_seen_reference, new_reference) = spawn_blocking({
+            let index = index.clone();
+            move || {
+                // this needs to be in spawn_blocking because crates-index-diff might use
+                // a blocking `reqwest` client when doing `.peek_changes_ordered()`.
+                let diff = index.diff()?;
 
-        diff.set_last_seen_reference(last_seen_reference)?;
+                let last_seen_reference = if let Some(oid) = last_seen_reference {
+                    oid
+                } else {
+                    warn!(
+                        "no last-seen reference found in our database. We assume a fresh install and
+                         set the latest reference (HEAD) as last. This means we will then start to queue
+                         builds for new releases only from now on, and not for all existing releases."
+                    );
+                    // this also calls `.peek_changes()`, so might execute blocking http calls,
+                    // which lead to panics when used in an async context.
+                    diff.latest_commit_reference()?
+                };
 
-        let (changes, new_reference) = diff.peek_changes_ordered()?;
+                diff.set_last_seen_reference(last_seen_reference)?;
+
+                let (changes, new_reference) = diff.peek_changes_ordered()?;
+
+                Ok((changes, last_seen_reference, new_reference))
+            }
+        })
+        .await?;
 
         let mut conn = self.db.get_async().await?;
         let mut crates_added = 0;

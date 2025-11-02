@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use docs_rs::{
     Config, Context, Index, PackageKind, RustwideBuilder,
     db::{self, CrateId, Overrides, add_path_into_database},
+    index::IndexExt as _,
     start_background_metrics_webserver, start_web_server,
     utils::{
         ConfigName, get_config, get_crate_pattern_and_priority, list_crate_priorities,
@@ -200,9 +201,11 @@ impl CommandLine {
                 }
 
                 start_background_metrics_webserver(Some(metric_server_socket_addr), &ctx)?;
+                // Index::from_config might use `tokio::block_on, so `from_config` might fail
+                // when called inside an async context.
+                let index = Arc::new(Index::from_config(&ctx.config)?);
 
                 ctx.runtime.block_on(async move {
-                    let index = Arc::new(Index::from_config(&ctx.config)?);
                     docs_rs::utils::watch_registry(&ctx.async_build_queue, &ctx.config, index).await
                 })?;
             }
@@ -299,7 +302,7 @@ impl QueueSubcommand {
                     (None, true) => {
                         let index = Index::from_config(&ctx.config)?;
                         println!("Fetching changes to set reference to HEAD");
-                        index.last_reference()?
+                        index.diff()?.latest_commit_reference()?
                     }
                     (_, _) => unreachable!(),
                 };

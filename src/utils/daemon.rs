@@ -31,7 +31,7 @@ pub async fn watch_registry(
         } else {
             debug!("Checking new crates");
             match build_queue
-                .get_new_crates(&index)
+                .get_new_crates(index.clone())
                 .await
                 .context("Failed to get new crates")
             {
