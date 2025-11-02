@@ -36,6 +36,8 @@ compose-down:
 # Shutdown docker services, then clean up docker images, volumes & other local artifacts from this docker-compose project
 [group('compose')]
 compose-down-and-wipe:
+  #!/usr/bin/env bash
+
   docker compose --profile full --profile manual down --volumes --remove-orphans --rmi local
 
   # When testing this in CI, I had permission issues when trying to remove this folder. 
