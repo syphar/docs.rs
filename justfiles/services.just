@@ -31,7 +31,7 @@ compose-up-full:
 # Shutdown docker services, keep containers & volumes alive.
 [group('compose')]
 compose-down:
-  docker compose --profile full down --remove-orphans
+  docker compose --profile full --profile manual down --remove-orphans
 
 # Shutdown docker services, then clean up docker images, volumes & other local artifacts from this docker-compose project
 [group('compose')]

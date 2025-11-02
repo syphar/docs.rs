@@ -90,5 +90,5 @@ cli-queue-reset-last-seen-ref ref="--head":
 # find differences between crates.io and our own database, and fix them on our side.
 [group('cli')]
 [group('database')]
-cli-db-synchronize +args:
+cli-db-synchronize *args:
   just cli-watcher database synchronize {{ args }}

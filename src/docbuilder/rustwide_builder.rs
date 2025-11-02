@@ -286,14 +286,14 @@ impl RustwideBuilder {
             // This fixes an edge-case on a fresh build server.
             //
             // It seems like on the fresh server, there _is_ a recent nightly toolchain
-            // installed, which we then updated with necessary components in this
-            // method.
+            // installed. In this case, this method will just install necessary components and
+            // doc-targets/platforms.
             //
-            // But: *for this toolchain, we never ran `add_essential_files`*, because it
+            // But: *for this local old toolchain, we never ran `add_essential_files`*, because it
             // was not installed by us.
             //
             // Now the culprit: even through we "fix" the previously installed nightly toolchain
-            // with the needed components & targets, we return "updated = false", since the actual
+            // with the needed components & targets, we return "updated = false", since the
             // version number didn't change.
             //
             // As a result, `BuildQueue::update_toolchain` will not call `add_essential_files`,
@@ -302,7 +302,7 @@ impl RustwideBuilder {
             // The workaround specifically for `add_essential_files` is the following:
             //
             // After `add_essential_files` is finished, it sets `ConfigName::RustcVersion` in the
-            // database to the version it uploaded the essential files for.
+            // config database to the rustc version it uploaded the essential files for.
             //
             // This means, if `ConfigName::RustcVersion` is empty, or different from the current new
             // version, we can set `updated = true` too.
@@ -310,13 +310,21 @@ impl RustwideBuilder {
             // I feel like there are more edge-cases, but for now this is OK.
             //
             // Alternative would have been to run `build update-toolchain --only-first-time`
-            // in a newly created `ENTRYPOINT` script for the build-server. I leaned to towards
-            // a more self-contained solution which doesn't need docker at all, and also would work
-            // if you run the build-server directly on your machine.
+            // in a newly created `ENTRYPOINT` script for the build-server. This is how it was
+            // done in the previous (one-dockerfile-and-process-for-everything) approach.
+            // The `entrypoint.sh` script did call `add-essential-files --only-first-time`.
+            //
+            // Problem with that approach: this approach postpones the boot process of the
+            // build-server, where docker and later the infra will try to check with a HTTP
+            // endpoint to see if the build server is ready.
+            //
+            // So I leaned to towards a more self-contained solution which doesn't need docker
+            // at all, and also would work if you run the build-server directly on your machine.
+            //
             // Fixing it here also means the startup of the actual build-server including its
-            // metrics collection endpoints don't be delayed. Generally shoudl doesn't be
-            // a differene how much time is neede on a fresh build-server, between picking the
-            // up from the queue, and actually starting to build the release. In the old
+            // metrics collection endpoints don't be delayed. Generally should doesn't be
+            // a differene how much time is needed on a fresh build-server, between picking the
+            // release up from the queue, and actually starting to build the release. In the old
             // solution, the entrypoint would do the toolchain-update & add-essential files
             // before even starting the build-server, now we're roughly doing the same thing
             // inside the main builder loop.
