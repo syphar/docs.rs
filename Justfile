@@ -1,6 +1,10 @@
+set shell := ["bash", "-euxo", "pipefail", "-c"]
+
+
 # List available commands
 _default:
     just --list
+
 
 sqlx-prepare ADDITIONAL_ARGS="":
   cargo sqlx prepare \
@@ -24,16 +28,30 @@ _touch-docker-env:
 # config
 [group('compose')]
 cleanup:
-    # FIXME onlt delete containers in our project
-    docker container prune --force
-    # FIXME onlt delete volumesin our project
-    docker volume prune -f -a
+  #!/usr/bin/env bash
 
-    # FIXME: the images sometimes can't be deleted? because in-use? 
-    # But all containers are stopped?
-    docker compose down --volumes --remove-orphans --rmi local
-    rm -rf .rustwide-docker/ && mkdir -p .rustwide-docker
-    rm -rf ignored/ && mkdir -p ignored
+  PROJECT_NAME=$(docker compose config | yq -r '.name')
+
+  # stop & remove all docker containters, if they belong to this compose project.
+  docker ps -a \
+    --filter "label=com.docker.compose.project=$PROJECT_NAME" \
+    --format json | jq -r '[.ID, .Names] | @tsv' | \
+    while IFS=$'\t' read -r cid cname; do 
+
+    echo "stopping and removing container ${cname} ($cid)"
+    docker container stop "$cid" >/dev/null
+    docker container rm "$cid" >/dev/null
+  done
+
+  #  more cleanup with docker compose down
+  # 1. volumes: remove named and anonymous volumes declared in the `volumes` section of the compose file.
+  # 2. orphans: remove containers for services not defined in the compose file.
+  # 3. rmi local: remove images that don't have a tag (local build)
+  docker compose down --volumes --remove-orphans --rmi local
+
+  # remove some of our own data directories, when they are mapped to the filesystem.
+
+  rm -rf ignored/ && mkdir -p ignored
 
 _compose-cli service_name *args: _touch-docker-env
   docker compose up -d db s3 --wait
