@@ -2,6 +2,11 @@
 
 set -e
 
+# FIXME: @syphar, it might be easy to update the script with the new 
+# docker compose setup to make it run on non-linux machines. 
+# Perhasp we could even replace the script just with some "Justfile"
+# tasks.
+
 # Just in case it's running, we stop the web server.
 docker compose stop web
 

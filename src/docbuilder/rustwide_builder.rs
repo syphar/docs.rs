@@ -201,7 +201,7 @@ impl RustwideBuilder {
     }
 
     #[instrument(skip_all)]
-    pub fn update_toolchain(&mut self) -> Result<bool> {
+    fn update_toolchain(&mut self) -> Result<bool> {
         self.toolchain = self.runtime.block_on(async {
             let mut conn = self.db.get_async().await?;
             get_configured_toolchain(&mut conn).await
@@ -313,6 +313,13 @@ impl RustwideBuilder {
             // in a newly created `ENTRYPOINT` script for the build-server. I leaned to towards
             // a more self-contained solution which doesn't need docker at all, and also would work
             // if you run the build-server directly on your machine.
+            // Fixing it here also means the startup of the actual build-server including its
+            // metrics collection endpoints don't be delayed. Generally shoudl doesn't be
+            // a differene how much time is neede on a fresh build-server, between picking the
+            // up from the queue, and actually starting to build the release. In the old
+            // solution, the entrypoint would do the toolchain-update & add-essential files
+            // before even starting the build-server, now we're roughly doing the same thing
+            // inside the main builder loop.
 
             let rustc_version = self.runtime.block_on({
                 let pool = self.db.clone();

@@ -123,3 +123,7 @@ compose-up-full:
 [group('compose')]
 compose-down:
   docker compose --profile full down --remove-orphans
+
+[group('compose')]
+compose-logs *services:
+  docker compose --profile full logs -f {{ services }}
