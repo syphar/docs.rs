@@ -48,7 +48,7 @@ jobs:
         run: just ensure_db_and_s3_are_running
 
       - name: install SQLX CLI
-        run: cargo binstall sqlx-cli --no-default-features --features postgres
+        run: cargo binstall sqlx-cli
 
       - name: run database migrations
         run: cargo sqlx migrate run --database-url $DOCSRS_DATABASE_URL
