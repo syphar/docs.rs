@@ -54,7 +54,7 @@ compose-cli-migrate:
 
 # add a release to the build queue
 [group('compose')]
-compose-cli-queue-add *args:
+compose-cli-queue-add *args compose-cli-migrate:
   just compose-cli queue add {{ args }}
 
 # run builder CLI command in its own one-off docker container.
