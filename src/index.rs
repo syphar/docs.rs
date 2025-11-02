@@ -6,6 +6,7 @@ use crates_index_diff::gix;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::AtomicBool;
+use tracing::info;
 
 pub struct Index {
     path: PathBuf,
@@ -16,8 +17,10 @@ impl Index {
     pub fn from_config(config: &Config) -> Result<Self> {
         let path = config.registry_index_path.clone();
         Ok(if let Some(registry_url) = config.registry_url.clone() {
+            info!(path=%path.display(), registry_url, "using custom registry index");
             Index::from_url(path, registry_url)
         } else {
+            info!(path=%path.display(), "using default registry index");
             Index::new(path)
         }?)
     }
@@ -93,5 +96,14 @@ impl Index {
 
     pub fn repository_url(&self) -> Option<&str> {
         self.repository_url.as_deref()
+    }
+
+    /// get the last refernce oid in the crates.io index repository.
+    ///
+    /// Specifically not the "last seen" ref, but the actual last in
+    /// the index.
+    pub fn last_reference(&self) -> Result<gix::ObjectId> {
+        let (_, oid) = self.diff()?.peek_changes()?;
+        Ok(oid)
     }
 }

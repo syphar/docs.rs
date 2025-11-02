@@ -299,8 +299,7 @@ impl QueueSubcommand {
                     (None, true) => {
                         let index = Index::from_config(&ctx.config)?;
                         println!("Fetching changes to set reference to HEAD");
-                        let (_, oid) = index.diff()?.peek_changes()?;
-                        oid
+                        index.last_reference()?
                     }
                     (_, _) => unreachable!(),
                 };

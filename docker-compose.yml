@@ -107,11 +107,10 @@ x-registry-watcher: &registry-watcher
         - s3
     volumes:
         - "./static:/opt/docsrs/static:ro"
-        - "crates-io-index:/opt/docsrs/crates.io-index"
+        - "./ignored/docker-registry-watcher/prefix:/opt/docsrs/prefix"
+        - crates-io-index:/opt/docsrs/crates.io-index
     environment:
         <<: *environment
-        # provide registry url so we clone the index on the first try
-        REGISTRY_URL: https://github.com/rust-lang/crates.io-index.git
         # the crates.io index can be shared between the registry watcher & its
         # CLI service.
         # So we configure it to be separate from the prefix.
@@ -121,7 +120,7 @@ x-registry-watcher: &registry-watcher
         - .docker.env
     healthcheck:
         <<: *healthcheck-interval
-        test: "true"  # no metrics for now in the watcher
+        test: curl --silent --fail localhost:3000/about/metrics
 
 services:
     web:
@@ -147,16 +146,12 @@ services:
 
     registry-watcher:
         <<: *registry-watcher
-        volumes:
-            - "./ignored/docker-registry-watcher/prefix:/opt/docsrs/prefix"
         profiles:
             - watcher
             - full
 
     registry-watcher-cli:
         <<: *registry-watcher
-        volumes:
-            - "./ignored/docker-registry-watcher-cli/prefix:/opt/docsrs/prefix"
         profiles:
             - manual
 

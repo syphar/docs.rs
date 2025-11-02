@@ -13,7 +13,7 @@ use sqlx::Connection as _;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::runtime;
-use tracing::{debug, error, info, instrument};
+use tracing::{debug, error, info, instrument, warn};
 
 /// The static priority for background rebuilds.
 /// Used when queueing rebuilds, and when rendering them
@@ -228,10 +228,17 @@ impl AsyncBuildQueue {
     pub async fn get_new_crates(&self, index: &Index) -> Result<usize> {
         let diff = index.diff()?;
 
-        let last_seen_reference = self
-            .last_seen_reference()
-            .await?
-            .context("no last_seen_reference set in database")?;
+        let last_seen_reference = if let Some(oid) = self.last_seen_reference().await? {
+            oid
+        } else {
+            warn!(
+                "no last-seen reference found in our database. We assume a fresh install and
+                set the latest reference (HEAD) as last. This means we will then start to queue
+                builds for new crates only from now on, and not for all existing crates."
+            );
+            index.last_reference()?
+        };
+
         diff.set_last_seen_reference(last_seen_reference)?;
 
         let (changes, new_reference) = diff.peek_changes_ordered()?;

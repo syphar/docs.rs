@@ -12,4 +12,4 @@ scrape_configs:
     metrics_path: "/about/metrics"
     static_configs:
       # registry watcher doesn't have metrics yet.
-      - targets: ["web:3000", "builder-a:3000", "builder-b:3000"]
+      - targets: ["web:3000", "registry-watcher:3000", "builder-a:3000", "builder-b:3000"]
