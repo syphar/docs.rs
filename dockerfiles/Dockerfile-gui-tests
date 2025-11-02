@@ -1,11 +1,23 @@
 FROM ubuntu:22.04 AS build
 
-# Install packaged dependencies
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    build-essential git curl cmake gcc g++ pkg-config libmagic-dev \
-    libssl-dev zlib1g-dev ca-certificates
+ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y \
+# Install packaged dependencies
+RUN apt-get update && \
+  apt-get install -y --no-install-recommends \
+    build-essential \
+    git \
+    curl \
+    cmake \
+    gcc \
+    g++ \
+    pkg-config \
+    libmagic-dev \
+    libssl-dev \
+    zlib1g-dev \
+    ca-certificates
+
+RUN apt-get install -y \
   ca-certificates \
   curl \
   docker.io \

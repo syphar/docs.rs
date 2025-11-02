@@ -44,10 +44,40 @@ compose-cli *args: _touch-docker-env
 compose-cli-migrate: 
   just compose-cli database migrate
 
+# add a release to the build queue
+[group('compose')]
+compose-cli-set-toolchain *args:
+  just compose-cli queue add {{ args }}
+
 # run builder CLI command in its own one-off docker container.
 [group('compose')]
 compose-builder-cli *args: _touch-docker-env
   just _compose-cli builder-cli {{ args }}
+
+# set the nightly rust version to be used for builds. Format: `nightly-YYYY-MM-DD`
+[group('compose')]
+compose-cli-set-toolchain NAME:
+  just compose-builder-cli build set-toolchain {{ NAME }}
+
+# update the toolchain in the builders
+[group('compose')]
+compose-cli-update-toolchain:
+  just compose-builder-cli build update-toolchain
+
+# build & the toolchain shared essential files
+[group('compose')]
+compose-cli-add-essential-files:
+  just compose-builder-cli build add-essential-files
+
+# build & the toolchain shared essential files
+[group('compose')]
+compose-cli-build-crate *args:
+  just compose-builder-cli build crate {{ args }}
+
+# Update last seen reference to the current index head, to only build newly published crates
+[group('compose')]
+compose-cli-queue-head: 
+  just compose-registry-watcher-cli queue set-last-seen-reference --head
 
 # run registry-watcher CLI command in its own one-off docker container.
 [group('compose')]
@@ -59,11 +89,10 @@ compose-registry-watcher-cli *args: _touch-docker-env
 compose-cli-queue-head: 
   just compose-registry-watcher-cli queue set-last-seen-reference --head
 
-
 # run migrations, then launch one or more docker compose profiles in the background
 [group('compose')]
 compose-up *profiles: _touch-docker-env compose-cli-migrate
-  docker compose {{ prepend("--profile ", profiles) }} up --build -d --wait
+  docker compose {{ prepend("--profile ", profiles) }} up --build -d --wait --remove-orphans
 
 # Launch web server in the background
 [group('compose')]

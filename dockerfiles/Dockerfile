@@ -109,6 +109,11 @@ COPY vendor /srv/docsrs/vendor
 ########################
 #  Build server stage  #
 ########################
+# * includes docker-cli, but expects the docker engine to be mapped into 
+#   the container from the outside, e.g. via 
+#
+#     volumes:
+#       - "/var/run/docker.sock:/var/run/docker.sock"
 
 FROM debian:trixie-slim AS build-server
 
@@ -121,7 +126,7 @@ RUN apt-get update \
         ca-certificates \
         tini \
         curl \
-        docker.io \
+        docker-cli \
         build-essential \
         gcc \
         pkg-config \
