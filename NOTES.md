@@ -2,11 +2,28 @@
 
 - the `Justfile` commands are built so they would even work on a 100% fresh
   setup, and will set up and initialize everything they need.
+- I removed `index: Index` from the context. There is no need to clone the
+  crates.io index on a web- or build-server. The handful of places where we then
+  still need the index just create the obj.
+- there was an error I had when calling `Index::peek_changes` from
+  `crates-index-diff`. In there, we're using the github fastpath to check if
+  there are new commits in the repo, without having to actually `git pull` from
+  the remote. When I called `.peek_changes` in an async context, this lead to
+  tokio errors because inside `crates-index-diff` we're using
+  `reqwest::blocking`. Odd thing is: I couldn't find out why this doesn't fail
+  on production. It might have started failing just after the config/context
+  rewrite, which is not deployed yet.
+  [#2937](https://github.com/rust-lang/docs.rs/pull/2937)
 
   ## docker image
 
 for now, these are production images, changing files will not auto-reload /
-build the image. We could decide to do that layer.
+build the image. We could decide to do that layer. Also I don't want to copy the
+".git" folder into the image, just for the version number. I made the SHA a
+build-arg / env and used these in our codebase.
+
+The fallback to fetching the has from the repo still exists, we might be able to
+drop this functionality at some point.
 
 ## profiles
 
