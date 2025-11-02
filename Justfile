@@ -46,7 +46,7 @@ compose-cli-migrate:
 
 # add a release to the build queue
 [group('compose')]
-compose-cli-set-toolchain *args:
+compose-cli-queue-add *args:
   just compose-cli queue add {{ args }}
 
 # run builder CLI command in its own one-off docker container.
@@ -73,11 +73,6 @@ compose-cli-add-essential-files:
 [group('compose')]
 compose-cli-build-crate *args:
   just compose-builder-cli build crate {{ args }}
-
-# Update last seen reference to the current index head, to only build newly published crates
-[group('compose')]
-compose-cli-queue-head: 
-  just compose-registry-watcher-cli queue set-last-seen-reference --head
 
 # run registry-watcher CLI command in its own one-off docker container.
 [group('compose')]
