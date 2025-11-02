@@ -9,8 +9,35 @@ sqlx-prepare *args:
 sqlx-check:
   just sqlx-prepare -check
 
-lint: 
-  cargo clippy --all-features --all-targets --workspace --locked -- -D warnings
+# Format the code using `cargo fmt`. 
+format:
+    rustup component add rustfmt
+    # like this we get both the non-zero exit code, and the local code is 
+    # formatted.
+    cargo fmt --all -- --check || { cargo fmt --all && exit 1; }
+
+clippy *args:
+  rustup component add clippy
+  cargo clippy \
+    --all-features \
+    --all-targets \
+    --workspace \
+    --locked \
+    {{ args}} \
+    -- -D warnings 
+
+clippy-fix:
+    just clippy --fix --allow-dirty --allow-staged
+
+# run all linters, for local development & CI
+lint: format 
+  #!/usr/bin/env bash
+  if [ "$GITHUB_ACTIONS" = "true" ]; then
+    just clippy
+  else
+    just clippy_fix
+  fi
+
 
 lint-js *args:
   deno run -A npm:eslint@9 static templates gui-tests eslint.config.js {{ args }}

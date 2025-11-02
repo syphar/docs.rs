@@ -122,28 +122,12 @@ jobs:
         if: ${{ always() }}
         run: just compose-down-and-wipe
 
-
-  fmt:
-    name: Rustfmt
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: update rust toolchain
-        run: rustup component add rustfmt
-
-      - run: cargo fmt -- --check
-
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v5
-
-      - name: update rust toolchain
-        run: rustup component add clippy
 
       - name: install `just`
         run: sudo snap install --edge --classic just

@@ -37,7 +37,21 @@ compose-down:
 [group('compose')]
 compose-down-and-wipe:
   docker compose --profile full --profile manual down --volumes --remove-orphans --rmi local
-  rm -rf ignored/ && mkdir -p ignored
+
+  # When testing this in CI, I had permission issues when trying to remove this folder. 
+  # Likely it's related to the docker container runnning as a different (root?) user, so 
+  # these files in the `ignored/` folder belong to `root`. 
+
+  # so we just try if we can use passwordless `sudo`: 
+  if sudo -n true 2>/dev/null; then
+    # if yes, we can use `sudo` to delete the folder.
+    sudo -n rm -rf ignored/
+  else
+    # otherwise we try deleting as the current user
+    rm -rf ignored/ || { echo 'Failed to remove ignored/ - skipping' >&2; }
+  fi
+
+  mkdir -p ignored
 
 # stream logs from all services running in docker-compose. Optionally specify services to tail logs from.
 [group('compose')]
