@@ -1,4 +1,4 @@
-use crate::{Context, db::delete, utils::spawn_blocking};
+use crate::{Context, Index, db::delete, utils::spawn_blocking};
 use anyhow::{Context as _, Result};
 use itertools::Itertools;
 use tracing::{info, warn};
@@ -33,8 +33,11 @@ pub async fn run_check(ctx: &Context, dry_run: bool) -> Result<()> {
 
     tracing::info!("Loading data from index...");
     let index_data = spawn_blocking({
-        let index = ctx.index.clone();
-        move || index::load(&index)
+        let config = ctx.config.clone();
+        move || {
+            let index = Index::from_config(&config)?;
+            index::load(&index)
+        }
     })
     .await
     .context("Loading crate data from index for consistency check")?;

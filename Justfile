@@ -28,34 +28,24 @@ cleanup:
   rm -rf .rustwide-docker/ && mkdir -p .rustwide-docker
   rm -rf ignored/ && mkdir -p ignored
 
+_compose-cli service_name *args: _touch-docker-env
+  docker compose up -d db s3 --wait
+  docker compose run --build --rm {{ service_name }} {{ args }}
 
 # run any CLI command in its own one-off docker container. Args are passed to the container.
 [group('compose')]
-compose-cli *args: _touch-docker-env
-  # ensure dependencies are running.
-  # docker compose ignores dependencies from the yaml file 
-  # when we use `compose run`.
-  # 
-  # no-op if they are already running.
-  docker compose up -d db s3 --wait
-  # run the CLI with the provided args.
-
-  # not suited for commands that need: 
-  # * the crates.io index, or
-  # * need to run builds.
-  docker compose run --build --rm cli {{ args }}
+compose-cli *args: _touch-docker-env 
+  just _compose-cli cli {{ args }}
 
 # run builder CLI command in its own one-off docker container.
 [group('compose')]
 compose-builder-cli *args: _touch-docker-env
-  docker compose up -d db s3 --wait
-  docker compose run --build --rm builder-cli {{ args }}
+  just _compose-cli builder-cli {{ args }}
 
 # run registry-watcher CLI command in its own one-off docker container.
 [group('compose')]
 compose-registry-watcher-cli *args: _touch-docker-env
-  docker compose up -d db s3 --wait
-  docker compose run --build --rm registry-watcher-cli {{ args }}
+  just _compose-cli registry-watcher-cli {{ args }}
 
 # Initialize the docker compose database
 [group('compose')]
@@ -65,21 +55,12 @@ compose-cli-migrate:
 # Update last seen reference to the current index head, to only build newly published crates
 [group('compose')]
 compose-cli-queue-head: 
-  just compose-cli queue set-last-seen-reference --head
+  just compose-registry-watcher-cli queue set-last-seen-reference --head
 
 # run migrations, then launch one or more docker compose profiles in the background
 [group('compose')]
 compose-up *profiles: _touch-docker-env compose-cli-migrate
-  if [ {{profiles.len()}} -eq 0 ]; then
-    echo "❌ Error: You must specify at least one profile, e.g.:";
-    echo "   just compose-up web";
-    echo "   just compose-up web builder";
-    exit 1;
-  fi
-
- docker compose \
-    {{ profiles | map(p => "--profile " + p) | join(" ") }} \
-    up --build -d
+  docker compose {{ prepend("--profile ", profiles) }} up --build -d
 
 # Launch web server in the background
 [group('compose')]

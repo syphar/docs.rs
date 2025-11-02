@@ -55,7 +55,8 @@ pub async fn watch_registry(
 fn start_registry_watcher(context: &Context) -> Result<(), Error> {
     let build_queue = context.async_build_queue.clone();
     let config = context.config.clone();
-    let index = context.index.clone();
+
+    let index = Arc::new(Index::from_config(&config)?);
 
     context.runtime.spawn(async move {
         // space this out to prevent it from clashing against the queue-builder thread on launch

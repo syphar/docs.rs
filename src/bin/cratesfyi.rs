@@ -1,7 +1,7 @@
 use anyhow::{Context as _, Result, anyhow};
 use clap::{Parser, Subcommand, ValueEnum};
 use docs_rs::{
-    Config, Context, PackageKind, RustwideBuilder,
+    Config, Context, Index, PackageKind, RustwideBuilder,
     db::{self, CrateId, Overrides, add_path_into_database},
     start_background_metrics_webserver, start_web_server,
     utils::{
@@ -202,8 +202,8 @@ impl CommandLine {
                 start_background_metrics_webserver(Some(metric_server_socket_addr), &ctx)?;
 
                 ctx.runtime.block_on(async move {
-                    docs_rs::utils::watch_registry(&ctx.async_build_queue, &ctx.config, ctx.index)
-                        .await
+                    let index = Arc::new(Index::from_config(&ctx.config)?);
+                    docs_rs::utils::watch_registry(&ctx.async_build_queue, &ctx.config, index).await
                 })?;
             }
             Self::StartBuildServer {
@@ -297,8 +297,9 @@ impl QueueSubcommand {
                 let reference = match (reference, head) {
                     (Some(reference), false) => reference,
                     (None, true) => {
+                        let index = Index::from_config(&ctx.config)?;
                         println!("Fetching changes to set reference to HEAD");
-                        let (_, oid) = ctx.index.diff()?.peek_changes()?;
+                        let (_, oid) = index.diff()?.peek_changes()?;
                         oid
                     }
                     (_, _) => unreachable!(),

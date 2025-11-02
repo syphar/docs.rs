@@ -1,3 +1,4 @@
+use crate::Config;
 use crate::error::Result;
 use crate::utils::report_error;
 use anyhow::Context;
@@ -12,6 +13,15 @@ pub struct Index {
 }
 
 impl Index {
+    pub fn from_config(config: &Config) -> Result<Self> {
+        let path = config.registry_index_path.clone();
+        Ok(if let Some(registry_url) = config.registry_url.clone() {
+            Index::from_url(path, registry_url)
+        } else {
+            Index::new(path)
+        }?)
+    }
+
     pub fn from_url(path: PathBuf, url: String) -> Result<Self> {
         crates_index_diff::Index::from_path_or_cloned_with_options(
             &path,
