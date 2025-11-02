@@ -26,7 +26,7 @@ cli +args: _touch-docker-env  cli-db-migrate
 [group('cli')]
 [group('database')]
 cli-db-migrate: 
-  # intentially not using `cli`, because it has a dependency on `cli-db-migrate`. 
+  # intentially not using `cli` recipe, because it has a dependency on `cli-db-migrate`. 
   # Otherwise we would have a stack overflow / infinite recursion.
   # 
   # TODO: potential optimization: only run the container when we have to 
@@ -48,7 +48,8 @@ cli-queue-add +args:
 cli-build +args: _touch-docker-env cli-db-migrate
   just _cli builder-cli {{ args }}
 
-# set the nightly rust version to be used for builds. Format: `nightly-YYYY-MM-DD`
+# set the nightly rust version to be used for builds. Format: `nightly-YYYY-MM-DD` 
+# or just `nightly` for always using the latest nightly.  
 [group('cli')]
 [group('build')]
 cli-build-set-toolchain name only_first_time="false":
@@ -86,7 +87,7 @@ cli-watcher +args: _touch-docker-env cli-db-migrate
 cli-queue-reset-last-seen-ref ref="--head": 
   just cli-watcher queue set-last-seen-reference {{ ref }}
 
-# synchronize the crates.io index with our own database. 
+# find differences between crates.io and our own database, and fix them on our side.
 [group('cli')]
 [group('database')]
 cli-db-synchronize +args:
