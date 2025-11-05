@@ -1,37 +1,43 @@
 use super::TestDatabase;
-
-use crate::db::file::{FileEntry, file_list_to_json};
-use crate::db::types::BuildStatus;
-use crate::db::{
-    BuildId, ReleaseId, initialize_build, initialize_crate, initialize_release, update_build_status,
+use crate::{
+    db::{
+        BuildId, ReleaseId,
+        file::{FileEntry, file_list_to_json},
+        initialize_build, initialize_crate, initialize_release,
+        types::{BuildStatus, version::Version},
+        update_build_status,
+    },
+    docbuilder::{DocCoverage, RUSTDOC_JSON_COMPRESSION_ALGORITHMS},
+    error::Result,
+    registry_api::{CrateData, CrateOwner, ReleaseData},
+    storage::{
+        AsyncStorage, CompressionAlgorithm, RustdocJsonFormatVersion, compress,
+        rustdoc_archive_path, rustdoc_json_path, source_archive_path,
+    },
+    utils::{Dependency, MetadataPackage, cargo_metadata::Target},
 };
-use crate::docbuilder::{DocCoverage, RUSTDOC_JSON_COMPRESSION_ALGORITHMS};
-use crate::error::Result;
-use crate::registry_api::{CrateData, CrateOwner, ReleaseData};
-use crate::storage::{
-    AsyncStorage, CompressionAlgorithm, RustdocJsonFormatVersion, compress, rustdoc_archive_path,
-    rustdoc_json_path, source_archive_path,
-};
-use crate::utils::{Dependency, MetadataPackage, Target};
 use anyhow::{Context, bail};
 use base64::{Engine, engine::general_purpose::STANDARD as b64};
 use chrono::{DateTime, Utc};
-use std::collections::HashMap;
-use std::iter;
-use std::sync::Arc;
+use std::{collections::HashMap, fmt, iter, sync::Arc};
 use tracing::debug;
 
 /// Create a fake release in the database that failed before the build.
 /// This is a temporary small factory function only until we refactored the
 /// `FakeRelease` and `FakeBuild` factories to be more flexible.
-pub(crate) async fn fake_release_that_failed_before_build(
+pub(crate) async fn fake_release_that_failed_before_build<V>(
     conn: &mut sqlx::PgConnection,
     name: &str,
-    version: &str,
+    version: V,
     errors: &str,
-) -> Result<(ReleaseId, BuildId)> {
+) -> Result<(ReleaseId, BuildId)>
+where
+    V: TryInto<Version>,
+    V::Error: std::error::Error + Send + Sync + 'static,
+{
+    let version = version.try_into()?;
     let crate_id = initialize_crate(&mut *conn, name).await?;
-    let release_id = initialize_release(&mut *conn, crate_id, version).await?;
+    let release_id = initialize_release(&mut *conn, crate_id, &version).await?;
     let build_id = initialize_build(&mut *conn, release_id).await?;
 
     sqlx::query_scalar!(
@@ -95,7 +101,7 @@ impl<'a> FakeRelease<'a> {
             package: MetadataPackage {
                 id: "fake-package-id".into(),
                 name: "fake-package".into(),
-                version: "1.0.0".into(),
+                version: Version::new(1, 0, 0),
                 license: Some("MIT".into()),
                 repository: Some("https://git.example.com".into()),
                 homepage: Some("https://www.example.com".into()),
@@ -103,7 +109,7 @@ impl<'a> FakeRelease<'a> {
                 documentation: Some("https://docs.example.com".into()),
                 dependencies: vec![Dependency {
                     name: "fake-dependency".into(),
-                    req: "^1.0.0".into(),
+                    req: semver::VersionReq::parse("^1.0.0").unwrap(),
                     kind: None,
                     rename: None,
                     optional: false,
@@ -164,8 +170,12 @@ impl<'a> FakeRelease<'a> {
         self
     }
 
-    pub(crate) fn version(mut self, new: &str) -> Self {
-        self.package.version = new.into();
+    pub(crate) fn version<V>(mut self, new: V) -> Self
+    where
+        V: TryInto<Version>,
+        V::Error: fmt::Debug,
+    {
+        self.package.version = new.try_into().expect("invalid version");
         self
     }
 
@@ -330,7 +340,7 @@ impl<'a> FakeRelease<'a> {
     }
 
     /// Returns the release_id
-    pub(crate) async fn create(self) -> Result<ReleaseId> {
+    pub(crate) async fn create(mut self) -> Result<ReleaseId> {
         use std::fs;
         use std::path::Path;
 
@@ -514,37 +524,34 @@ impl<'a> FakeRelease<'a> {
         store_files_into(&self.source_files, crate_dir)?;
 
         let default_target = self.default_target.unwrap_or("x86_64-unknown-linux-gnu");
+        if !self.doc_targets.iter().any(|t| t == default_target) {
+            self.doc_targets.insert(0, default_target.to_owned());
+        }
 
-        {
-            let mut targets = self.doc_targets.clone();
-            if !targets.contains(&default_target.to_owned()) {
-                targets.push(default_target.to_owned());
-            }
-            for target in &targets {
-                let dummy_rustdoc_json_content = serde_json::to_vec(&serde_json::json!({
-                    "format_version": 42
-                }))?;
+        for target in &self.doc_targets {
+            let dummy_rustdoc_json_content = serde_json::to_vec(&serde_json::json!({
+                "format_version": 42
+            }))?;
 
-                for alg in RUSTDOC_JSON_COMPRESSION_ALGORITHMS {
-                    let compressed_json: Vec<u8> = compress(&*dummy_rustdoc_json_content, *alg)?;
+            for alg in RUSTDOC_JSON_COMPRESSION_ALGORITHMS {
+                let compressed_json: Vec<u8> = compress(&*dummy_rustdoc_json_content, *alg)?;
 
-                    for format_version in [
-                        RustdocJsonFormatVersion::Version(42),
-                        RustdocJsonFormatVersion::Latest,
-                    ] {
-                        storage
-                            .store_one_uncompressed(
-                                &rustdoc_json_path(
-                                    &package.name,
-                                    &package.version,
-                                    target,
-                                    format_version,
-                                    Some(*alg),
-                                ),
-                                compressed_json.clone(),
-                            )
-                            .await?;
-                    }
+                for format_version in [
+                    RustdocJsonFormatVersion::Version(42),
+                    RustdocJsonFormatVersion::Latest,
+                ] {
+                    storage
+                        .store_one_uncompressed(
+                            &rustdoc_json_path(
+                                &package.name,
+                                &package.version,
+                                target,
+                                format_version,
+                                Some(*alg),
+                            ),
+                            compressed_json.clone(),
+                        )
+                        .await?;
                 }
             }
         }
@@ -555,6 +562,7 @@ impl<'a> FakeRelease<'a> {
         let mut async_conn = db.async_conn().await;
         let crate_id = initialize_crate(&mut async_conn, &package.name).await?;
         let release_id = initialize_release(&mut async_conn, crate_id, &package.version).await?;
+
         crate::db::finish_release(
             &mut async_conn,
             crate_id,

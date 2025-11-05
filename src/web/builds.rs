@@ -1,18 +1,19 @@
-use super::{
-    cache::CachePolicy,
-    error::{AxumNope, JsonAxumNope, JsonAxumResult},
-    headers::CanonicalUrl,
-};
 use crate::{
     AsyncBuildQueue, Config,
-    db::{BuildId, types::BuildStatus},
+    db::{
+        BuildId,
+        types::{BuildStatus, version::Version},
+    },
     docbuilder::Limits,
     impl_axum_webpage,
     web::{
         MetaData, ReqVersion,
-        error::{AxumResult, EscapedURI},
-        extractors::{DbConnection, Path},
-        filters, match_version,
+        cache::CachePolicy,
+        error::{AxumNope, AxumResult, JsonAxumNope, JsonAxumResult},
+        extractors::{DbConnection, Path, rustdoc::RustdocParams},
+        filters,
+        headers::CanonicalUrl,
+        match_version,
         page::templates::{RenderBrands, RenderRegular, RenderSolid},
     },
 };
@@ -26,7 +27,6 @@ use axum_extra::{
 use chrono::{DateTime, Utc};
 use constant_time_eq::constant_time_eq;
 use http::StatusCode;
-use semver::Version;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,6 +47,7 @@ struct BuildsPage {
     builds: Vec<Build>,
     limits: Limits,
     canonical_url: CanonicalUrl,
+    params: RustdocParams,
 }
 
 impl_axum_webpage! { BuildsPage }
@@ -58,26 +59,41 @@ impl BuildsPage {
 }
 
 pub(crate) async fn build_list_handler(
-    Path((name, req_version)): Path<(String, ReqVersion)>,
+    params: RustdocParams,
     mut conn: DbConnection,
     Extension(config): Extension<Arc<Config>>,
 ) -> AxumResult<impl IntoResponse> {
-    let version = match_version(&mut conn, &name, &req_version)
+    let version = match_version(&mut conn, params.name(), params.req_version())
         .await?
         .assume_exact_name()?
         .into_canonical_req_version_or_else(|version| {
             AxumNope::Redirect(
-                EscapedURI::new(&format!("/crate/{name}/{version}/builds"), None),
+                params.clone().with_req_version(version).builds_url(),
                 CachePolicy::ForeverInCdn,
             )
         })?
         .into_version();
 
+    let metadata = MetaData::from_crate(
+        &mut conn,
+        params.name(),
+        &version,
+        Some(params.req_version().clone()),
+    )
+    .await?;
+    let params = params.apply_metadata(&metadata);
+
     Ok(BuildsPage {
-        metadata: MetaData::from_crate(&mut conn, &name, &version, Some(req_version)).await?,
-        builds: get_builds(&mut conn, &name, &version).await?,
-        limits: Limits::for_crate(&config, &mut conn, &name).await?,
-        canonical_url: CanonicalUrl::from_path(format!("/crate/{name}/latest/builds")),
+        metadata,
+        builds: get_builds(&mut conn, params.name(), &version).await?,
+        limits: Limits::for_crate(&config, &mut conn, params.name()).await?,
+        canonical_url: CanonicalUrl::from_uri(
+            params
+                .clone()
+                .with_req_version(&ReqVersion::Latest)
+                .builds_url(),
+        ),
+        params,
     }
     .into_response())
 }
@@ -112,9 +128,7 @@ async fn build_trigger_check(
         return Err(AxumNope::VersionNotFound);
     }
 
-    let crate_version_is_in_queue = build_queue
-        .has_build_queued(name, &version.to_string())
-        .await?;
+    let crate_version_is_in_queue = build_queue.has_build_queued(name, version).await?;
 
     if crate_version_is_in_queue {
         return Err(AxumNope::BadRequest(anyhow!(
@@ -161,7 +175,7 @@ pub(crate) async fn build_trigger_rebuild_handler(
     build_queue
         .add_crate(
             &name,
-            &version.to_string(),
+            &version,
             TRIGGERED_REBUILD_PRIORITY,
             None, /* because crates.io is the only service that calls this endpoint */
         )
@@ -205,8 +219,8 @@ mod tests {
     use crate::{
         db::Overrides,
         test::{
-            AxumResponseTestExt, AxumRouterTestExt, FakeBuild, TestEnvironment, async_wrapper,
-            fake_release_that_failed_before_build,
+            AxumResponseTestExt, AxumRouterTestExt, FakeBuild, TestEnvironment, V1, V2,
+            async_wrapper, fake_release_that_failed_before_build,
         },
         web::cache::CachePolicy,
     };
@@ -351,7 +365,7 @@ mod tests {
         env.fake_release()
             .await
             .name("foo")
-            .version("0.1.0")
+            .version(V1)
             .create()
             .await?;
 
@@ -398,14 +412,14 @@ mod tests {
         let build_queue = env.async_build_queue();
 
         assert_eq!(build_queue.pending_count().await?, 0);
-        assert!(!build_queue.has_build_queued("foo", "0.1.0").await?);
+        assert!(!build_queue.has_build_queued("foo", &V1).await?);
 
         {
             let app = env.web_app().await;
             let response = app
                 .oneshot(
                     Request::builder()
-                        .uri("/crate/foo/0.1.0/rebuild")
+                        .uri(format!("/crate/foo/{V1}/rebuild"))
                         .method("POST")
                         .header("Authorization", &format!("Bearer {correct_token}"))
                         .body(Body::empty())
@@ -418,14 +432,14 @@ mod tests {
         }
 
         assert_eq!(build_queue.pending_count().await?, 1);
-        assert!(build_queue.has_build_queued("foo", "0.1.0").await?);
+        assert!(build_queue.has_build_queued("foo", &V1).await?);
 
         {
             let app = env.web_app().await;
             let response = app
                 .oneshot(
                     Request::builder()
-                        .uri("/crate/foo/0.1.0/rebuild")
+                        .uri(format!("/crate/foo/{V1}/rebuild"))
                         .method("POST")
                         .header("Authorization", &format!("Bearer {correct_token}"))
                         .body(Body::empty())
@@ -438,13 +452,13 @@ mod tests {
                 json,
                 serde_json::json!({
                     "title": "Bad request",
-                    "message": "crate foo 0.1.0 already queued for rebuild"
+                    "message": format!("crate foo {V1} already queued for rebuild")
                 })
             );
         }
 
         assert_eq!(build_queue.pending_count().await?, 1);
-        assert!(build_queue.has_build_queued("foo", "0.1.0").await?);
+        assert!(build_queue.has_build_queued("foo", &V1).await?);
 
         Ok(())
     }
@@ -455,12 +469,16 @@ mod tests {
             env.fake_release()
                 .await
                 .name("foo")
-                .version("0.1.0")
+                .version(V1)
                 .no_builds()
                 .create()
                 .await?;
 
-            let response = env.web_app().await.get("/crate/foo/0.1.0/builds").await?;
+            let response = env
+                .web_app()
+                .await
+                .get(&format!("/crate/foo/{V1}/builds"))
+                .await?;
 
             response.assert_cache_control(CachePolicy::NoCaching, env.config());
             let page = kuchikiki::parse_html().one(response.text().await?);
@@ -492,7 +510,7 @@ mod tests {
             env.fake_release()
                 .await
                 .name("foo")
-                .version("0.1.0")
+                .version(V1)
                 .create()
                 .await?;
 
@@ -507,7 +525,7 @@ mod tests {
             let page = kuchikiki::parse_html().one(
                 env.web_app()
                     .await
-                    .get("/crate/foo/0.1.0/builds")
+                    .get(&format!("/crate/foo/{V1}/builds"))
                     .await?
                     .text()
                     .await?,
@@ -523,7 +541,6 @@ mod tests {
                 .collect();
             let values: Vec<_> = values.iter().map(|v| &**v).collect();
 
-            dbg!(&values);
             assert!(values.contains(&"6.44 GB"));
             assert!(values.contains(&"2 hours"));
             assert!(values.contains(&"102.4 kB"));
@@ -540,7 +557,7 @@ mod tests {
             env.fake_release()
                 .await
                 .name("aquarelle")
-                .version("0.1.0")
+                .version(V1)
                 .builds(vec![
                     FakeBuild::default()
                         .rustc_version("rustc (blabla 2019-01-01)")
@@ -552,7 +569,7 @@ mod tests {
             env.fake_release()
                 .await
                 .name("aquarelle")
-                .version("0.2.0")
+                .version(V2)
                 .builds(vec![
                     FakeBuild::default()
                         .rustc_version("rustc (blabla 2019-01-01)")
@@ -587,7 +604,7 @@ mod tests {
             env.fake_release()
                 .await
                 .name("foo")
-                .version("0.1.0")
+                .version(V1)
                 .builds(vec![
                     FakeBuild::default()
                         .rustc_version("rustc (blabla 2019-01-01)")
@@ -596,7 +613,11 @@ mod tests {
                 .create()
                 .await?;
 
-            let resp = env.web_app().await.get("/crate/foo/0.2.0/builds").await?;
+            let resp = env
+                .web_app()
+                .await
+                .get(&format!("/crate/foo/{V2}/builds"))
+                .await?;
             assert_eq!(resp.status(), StatusCode::NOT_FOUND);
             Ok(())
         });

@@ -1,8 +1,7 @@
-use crate::{APP_USER_AGENT, error::Result, utils::retry_async};
+use crate::{APP_USER_AGENT, db::types::version::Version, error::Result, utils::retry_async};
 use anyhow::{Context, anyhow, bail};
 use chrono::{DateTime, Utc};
 use reqwest::header::{ACCEPT, HeaderValue, USER_AGENT};
-use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use tracing::instrument;
@@ -113,7 +112,11 @@ impl RegistryApi {
     }
 
     #[instrument(skip(self))]
-    pub(crate) async fn get_release_data(&self, name: &str, version: &str) -> Result<ReleaseData> {
+    pub(crate) async fn get_release_data(
+        &self,
+        name: &str,
+        version: &Version,
+    ) -> Result<ReleaseData> {
         let (release_time, yanked, downloads) = self
             .get_release_time_yanked_downloads(name, version)
             .await
@@ -130,7 +133,7 @@ impl RegistryApi {
     async fn get_release_time_yanked_downloads(
         &self,
         name: &str,
-        version: &str,
+        version: &Version,
     ) -> Result<(DateTime<Utc>, bool, i32)> {
         let url = {
             let mut url = self.api_base.clone();
@@ -171,11 +174,10 @@ impl RegistryApi {
         .json()
         .await?;
 
-        let version = Version::parse(version)?;
         let version = response
             .versions
             .into_iter()
-            .find(|data| data.num == version)
+            .find(|data| data.num == *version)
             .with_context(|| anyhow!("Could not find version in response"))?;
 
         Ok((version.created_at, version.yanked, version.downloads))

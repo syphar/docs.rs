@@ -1,16 +1,17 @@
 use crate::{
-    db::types::{BuildStatus, Feature},
+    db::types::{BuildStatus, Feature, version::Version},
     docbuilder::DocCoverage,
     error::Result,
     registry_api::{CrateData, CrateOwner, ReleaseData},
     storage::CompressionAlgorithm,
-    utils::{MetadataPackage, rustc_version::parse_rustc_date},
+    utils::{Dependency, MetadataPackage, rustc_version::parse_rustc_date},
     web::crate_details::{latest_release, releases_for_crate},
 };
 use anyhow::{Context, anyhow};
-use derive_more::Display;
+use derive_more::{Deref, Display};
 use futures_util::stream::TryStreamExt;
-use serde::Serialize;
+use semver::VersionReq;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use slug::slugify;
 use std::{
@@ -32,6 +33,44 @@ pub struct ReleaseId(pub i32);
 #[derive(Debug, Clone, Copy, Display, PartialEq, Eq, Hash, Serialize, sqlx::Type)]
 #[sqlx(transparent)]
 pub struct BuildId(pub i32);
+
+type DepOut = (String, String, String, bool);
+type DepIn = (String, VersionReq, Option<String>, Option<bool>);
+
+/// A crate dependency in our internal representation for releases.dependencies json.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Deref)]
+#[serde(from = "DepIn", into = "DepOut")]
+pub(crate) struct ReleaseDependency(Dependency);
+
+impl ReleaseDependency {
+    pub(crate) fn into_inner(self) -> Dependency {
+        self.0
+    }
+}
+
+impl From<DepIn> for ReleaseDependency {
+    fn from((name, req, kind, optional): DepIn) -> Self {
+        ReleaseDependency(Dependency {
+            name,
+            req,
+            kind,
+            optional: optional.unwrap_or(false),
+            rename: None,
+        })
+    }
+}
+
+impl From<ReleaseDependency> for DepOut {
+    fn from(rd: ReleaseDependency) -> Self {
+        let d = rd.0;
+        (
+            d.name,
+            d.req.to_string(),
+            d.kind.unwrap_or_else(|| "normal".into()),
+            d.optional,
+        )
+    }
+}
 
 /// Adds a package into database.
 ///
@@ -59,7 +98,7 @@ pub(crate) async fn finish_release(
     source_size: u64,
 ) -> Result<()> {
     debug!("updating release data");
-    let dependencies = convert_dependencies(metadata_pkg);
+    let dependencies = convert_dependencies(metadata_pkg)?;
     let rustdoc = get_rustdoc(metadata_pkg, source_dir).unwrap_or(None);
     let readme = get_readme(metadata_pkg, source_dir).unwrap_or(None);
     let features = get_features(metadata_pkg);
@@ -94,7 +133,7 @@ pub(crate) async fn finish_release(
            WHERE id = $1"#,
         release_id.0,
         registry_data.release_time,
-        serde_json::to_value(dependencies)?,
+        dependencies,
         metadata_pkg.package_name(),
         registry_data.yanked,
         has_docs,
@@ -351,7 +390,7 @@ pub(crate) async fn initialize_crate(conn: &mut sqlx::PgConnection, name: &str) 
 pub(crate) async fn initialize_release(
     conn: &mut sqlx::PgConnection,
     crate_id: CrateId,
-    version: &str,
+    version: &Version,
 ) -> Result<ReleaseId> {
     let release_id = sqlx::query_scalar!(
         r#"INSERT INTO releases (crate_id, version, archive_storage)
@@ -361,7 +400,7 @@ pub(crate) async fn initialize_release(
             version = EXCLUDED.version
          RETURNING id as "id: ReleaseId" "#,
         crate_id.0,
-        version
+        version as _,
     )
     .fetch_one(&mut *conn)
     .await?;
@@ -393,20 +432,14 @@ pub(crate) async fn initialize_build(
     Ok(build_id)
 }
 
-/// Convert dependencies into Vec<(String, String, String, bool)>
-fn convert_dependencies(pkg: &MetadataPackage) -> Vec<(String, String, String, bool)> {
-    pkg.dependencies
+/// Convert dependencies into our own internal JSON representation
+fn convert_dependencies(pkg: &MetadataPackage) -> Result<serde_json::Value> {
+    let dependencies: Vec<_> = pkg
+        .dependencies
         .iter()
-        .map(|dependency| {
-            let name = dependency.name.clone();
-            let version = dependency.req.clone();
-            let kind = dependency
-                .kind
-                .clone()
-                .unwrap_or_else(|| "normal".to_string());
-            (name, version, kind, dependency.optional)
-        })
-        .collect()
+        .map(|dependency| ReleaseDependency(dependency.clone()))
+        .collect::<Vec<_>>();
+    Ok(serde_json::to_value(dependencies)?)
 }
 
 /// Reads features and converts them to Vec<Feature> with default being first
@@ -657,7 +690,7 @@ mod test {
         async_wrapper(|env| async move {
             let mut conn = env.async_db().async_conn().await;
             let crate_id = initialize_crate(&mut conn, "krate").await?;
-            let release_id = initialize_release(&mut conn, crate_id, "0.1.0").await?;
+            let release_id = initialize_release(&mut conn, crate_id, &V0_1).await?;
             let build_id = initialize_build(&mut conn, release_id).await?;
 
             update_build_with_error(&mut conn, build_id, Some("error message")).await?;
@@ -691,7 +724,7 @@ mod test {
         async_wrapper(|env| async move {
             let mut conn = env.async_db().async_conn().await;
             let crate_id = initialize_crate(&mut conn, "krate").await?;
-            let release_id = initialize_release(&mut conn, crate_id, "0.1.0").await?;
+            let release_id = initialize_release(&mut conn, crate_id, &V0_1).await?;
             let build_id = initialize_build(&mut conn, release_id).await?;
 
             finish_build(
@@ -740,7 +773,7 @@ mod test {
         async_wrapper(|env| async move {
             let mut conn = env.async_db().async_conn().await;
             let crate_id = initialize_crate(&mut conn, "krate").await?;
-            let release_id = initialize_release(&mut conn, crate_id, "0.1.0").await?;
+            let release_id = initialize_release(&mut conn, crate_id, &V0_1).await?;
             let build_id = initialize_build(&mut conn, release_id).await?;
 
             finish_build(
@@ -785,7 +818,7 @@ mod test {
         async_wrapper(|env| async move {
             let mut conn = env.async_db().async_conn().await;
             let crate_id = initialize_crate(&mut conn, "krate").await?;
-            let release_id = initialize_release(&mut conn, crate_id, "0.1.0").await?;
+            let release_id = initialize_release(&mut conn, crate_id, &V0_1).await?;
             let build_id = initialize_build(&mut conn, release_id).await?;
 
             finish_build(
@@ -832,7 +865,7 @@ mod test {
                 .fake_release()
                 .await
                 .name("dummy")
-                .version("0.13.0")
+                .version(V0_1)
                 .keywords(vec!["kw 1".into(), "kw 2".into()])
                 .create()
                 .await?;
@@ -875,7 +908,7 @@ mod test {
             env.fake_release()
                 .await
                 .name("dummy")
-                .version("0.13.0")
+                .version(V0_1)
                 .keywords(vec!["kw 3".into(), "kw 4".into()])
                 .create()
                 .await?;
@@ -884,7 +917,7 @@ mod test {
             env.fake_release()
                 .await
                 .name("dummy")
-                .version("0.13.0")
+                .version(V0_1)
                 .keywords(vec!["kw 3".into(), "kw 4".into()])
                 .create()
                 .await?;
@@ -899,7 +932,7 @@ mod test {
             env.fake_release()
                 .await
                 .name("dummy")
-                .version("0.13.0")
+                .version(V1)
                 .keywords(vec!["kw 3".into(), "kw 4".into()])
                 .create()
                 .await?;
@@ -908,7 +941,7 @@ mod test {
                 .fake_release()
                 .await
                 .name("dummy")
-                .version("0.13.0")
+                .version(V1)
                 .keywords(vec!["kw 1".into(), "kw 2".into()])
                 .create()
                 .await?;
@@ -1229,22 +1262,21 @@ mod test {
         async_wrapper(|env| async move {
             let mut conn = env.async_db().async_conn().await;
             let name = "krate";
-            let version = "0.1.0";
             let crate_id = initialize_crate(&mut conn, name).await?;
 
-            let release_id = initialize_release(&mut conn, crate_id, version).await?;
+            let release_id = initialize_release(&mut conn, crate_id, &V1).await?;
 
             let id = sqlx::query_scalar!(
                 r#"SELECT id as "id: ReleaseId" FROM releases WHERE crate_id = $1 and version = $2"#,
                 crate_id.0,
-                version
+                V1 as _,
             )
             .fetch_one(&mut *conn)
             .await?;
 
             assert_eq!(release_id, id);
 
-            let same_release_id = initialize_release(&mut conn, crate_id, version).await?;
+            let same_release_id = initialize_release(&mut conn, crate_id, &V1).await?;
             assert_eq!(release_id, same_release_id);
 
             Ok(())
@@ -1256,9 +1288,8 @@ mod test {
         async_wrapper(|env| async move {
             let mut conn = env.async_db().async_conn().await;
             let name = "krate";
-            let version = "0.1.0";
             let crate_id = initialize_crate(&mut conn, name).await?;
-            let release_id = initialize_release(&mut conn, crate_id, version).await?;
+            let release_id = initialize_release(&mut conn, crate_id, &V1).await?;
 
             let build_id = initialize_build(&mut conn, release_id).await?;
 
@@ -1302,13 +1333,23 @@ mod test {
             let mut conn = env.async_db().async_conn().await;
 
             let crate_id = initialize_crate(&mut conn, "krate").await?;
-            let version: String = "version".repeat(100);
+            let version = Version::parse(&format!(
+                "1.2.3-{}+{}",
+                "prerelease".repeat(100),
+                "build".repeat(100)
+            ))?;
             let release_id = initialize_release(&mut conn, crate_id, &version).await?;
 
-            let db_version =
-                sqlx::query_scalar!("SELECT version FROM releases WHERE id = $1", release_id.0)
-                    .fetch_one(&mut *conn)
-                    .await?;
+            let db_version = sqlx::query_scalar!(
+                r#"
+                SELECT
+                    version as "version: Version"
+                FROM releases
+                WHERE id = $1"#,
+                release_id.0
+            )
+            .fetch_one(&mut *conn)
+            .await?;
 
             assert_eq!(db_version, version);
 

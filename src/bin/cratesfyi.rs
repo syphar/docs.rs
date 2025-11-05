@@ -2,8 +2,7 @@ use anyhow::{Context as _, Result, anyhow};
 use clap::{Parser, Subcommand, ValueEnum};
 use docs_rs::{
     Config, Context, Index, PackageKind, RustwideBuilder,
-    db::{self, CrateId, Overrides, add_path_into_database},
-    index::IndexExt as _,
+    db::{self, CrateId, Overrides, add_path_into_database, types::version::Version},
     start_background_metrics_webserver, start_web_server,
     utils::{
         ConfigName, get_config, get_crate_pattern_and_priority, list_crate_priorities,
@@ -201,12 +200,11 @@ impl CommandLine {
                 }
 
                 start_background_metrics_webserver(Some(metric_server_socket_addr), &ctx)?;
-                // Index::from_config might use `tokio::block_on, so `from_config` might fail
-                // when called inside an async context.
-                let index = Arc::new(Index::from_config(&ctx.config)?);
 
                 ctx.runtime.block_on(async move {
-                    docs_rs::utils::watch_registry(&ctx.async_build_queue, &ctx.config, index).await
+                    let index = Index::from_config(&ctx.config).await?;
+                    docs_rs::utils::watch_registry(&ctx.async_build_queue, &ctx.config, &index)
+                        .await
                 })?;
             }
             Self::StartBuildServer {
@@ -240,7 +238,7 @@ enum QueueSubcommand {
         crate_name: String,
         /// Version of crate to build
         #[arg(name = "CRATE_VERSION")]
-        crate_version: String,
+        crate_version: Version,
         /// Priority of build (new crate builds get priority 0)
         #[arg(
             name = "BUILD_PRIORITY",
@@ -300,9 +298,11 @@ impl QueueSubcommand {
                 let reference = match (reference, head) {
                     (Some(reference), false) => reference,
                     (None, true) => {
-                        let index = Index::from_config(&ctx.config)?;
                         println!("Fetching changes to set reference to HEAD");
-                        index.diff()?.latest_commit_reference()?
+                        ctx.runtime.block_on(async move {
+                            let index = Index::from_config(&ctx.config).await?;
+                            index.latest_commit_reference().await
+                        })?
                     }
                     (_, _) => unreachable!(),
                 };
@@ -399,7 +399,7 @@ enum BuildSubcommand {
 
         /// Version of crate
         #[arg(name = "CRATE_VERSION")]
-        crate_version: Option<String>,
+        crate_version: Option<Version>,
 
         /// Build a crate at a specific path
         #[arg(short = 'l', long = "local", conflicts_with_all(&["CRATE_NAME", "CRATE_VERSION"]))]
@@ -789,6 +789,6 @@ enum DeleteSubcommand {
 
         /// The version of the crate to delete
         #[arg(name = "VERSION")]
-        version: String,
+        version: Version,
     },
 }

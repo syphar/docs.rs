@@ -12,7 +12,7 @@ use std::future::Future;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
-use tokio::{runtime, task::spawn_blocking, time::Instant};
+use tokio::{runtime, time::Instant};
 use tracing::{debug, info};
 
 /// Run the registry watcher
@@ -21,7 +21,7 @@ use tracing::{debug, info};
 pub async fn watch_registry(
     build_queue: &AsyncBuildQueue,
     config: &Config,
-    index: Arc<Index>,
+    index: &Index,
 ) -> Result<(), Error> {
     let mut last_gc = Instant::now();
 
@@ -31,7 +31,7 @@ pub async fn watch_registry(
         } else {
             debug!("Checking new crates");
             match build_queue
-                .get_new_crates(index.clone())
+                .get_new_crates(index)
                 .await
                 .context("Failed to get new crates")
             {
@@ -41,11 +41,7 @@ pub async fn watch_registry(
         }
 
         if last_gc.elapsed().as_secs() >= config.registry_gc_interval {
-            spawn_blocking({
-                let index = index.clone();
-                move || index.run_git_gc()
-            })
-            .await?;
+            index.run_git_gc().await;
             last_gc = Instant::now();
         }
         tokio::time::sleep(config.delay_between_registry_fetches).await;
@@ -56,13 +52,12 @@ fn start_registry_watcher(context: &Context) -> Result<(), Error> {
     let build_queue = context.async_build_queue.clone();
     let config = context.config.clone();
 
-    let index = Arc::new(Index::from_config(&config)?);
-
     context.runtime.spawn(async move {
         // space this out to prevent it from clashing against the queue-builder thread on launch
         tokio::time::sleep(Duration::from_secs(30)).await;
 
-        watch_registry(&build_queue, &config, index).await
+        let index = Index::from_config(&config).await?;
+        watch_registry(&build_queue, &config, &index).await
     });
 
     Ok(())

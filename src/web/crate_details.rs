@@ -1,19 +1,24 @@
-use super::{MetaData, match_version};
-use crate::db::{BuildId, ReleaseId};
-use crate::registry_api::OwnerKind;
-use crate::utils::{get_correct_docsrs_style_file, report_error};
 use crate::{
     AsyncStorage,
-    db::{CrateId, types::BuildStatus},
+    db::{
+        BuildId, CrateId, ReleaseDependency, ReleaseId,
+        types::{BuildStatus, version::Version},
+    },
     impl_axum_webpage,
+    registry_api::OwnerKind,
     storage::PathNotFoundError,
+    utils::{Dependency, get_correct_docsrs_style_file},
     web::{
-        MatchedRelease, ReqVersion,
+        MatchedRelease, MetaData, ReqVersion,
         cache::CachePolicy,
-        error::{AxumNope, AxumResult, EscapedURI},
-        extractors::{DbConnection, Path},
+        error::{AxumNope, AxumResult},
+        extractors::{
+            DbConnection,
+            rustdoc::{PageKind, RustdocParams},
+        },
+        headers::CanonicalUrl,
+        match_version,
         page::templates::{RenderBrands, RenderRegular, RenderSolid, filters},
-        rustdoc::RustdocHtmlParams,
     },
 };
 use anyhow::{Context, Result, anyhow};
@@ -25,8 +30,6 @@ use axum::{
 use chrono::{DateTime, Utc};
 use futures_util::stream::TryStreamExt;
 use log::warn;
-use semver::Version;
-use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -37,13 +40,13 @@ pub(crate) struct CrateDetails {
     pub(crate) version: Version,
     pub(crate) description: Option<String>,
     pub(crate) owners: Vec<(String, String, OwnerKind)>,
-    pub(crate) dependencies: Option<Value>,
+    pub(crate) dependencies: Vec<Dependency>,
     readme: Option<String>,
     rustdoc: Option<String>, // this is description_long in database
     release_time: Option<DateTime<Utc>>,
     build_status: BuildStatus,
     pub latest_build_id: Option<BuildId>,
-    last_successful_build: Option<String>,
+    last_successful_build: Option<Version>,
     pub rustdoc_status: Option<bool>,
     pub archive_storage: bool,
     pub repository_url: Option<String>,
@@ -81,7 +84,7 @@ struct RepositoryMetadata {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(crate) struct Release {
     pub id: ReleaseId,
-    pub version: semver::Version,
+    pub version: Version,
     #[allow(clippy::doc_overindented_list_items)]
     /// Aggregated build status of the release.
     /// * no builds -> build In progress
@@ -100,6 +103,8 @@ pub(crate) struct Release {
     pub is_library: Option<bool>,
     pub rustdoc_status: Option<bool>,
     pub target_name: Option<String>,
+    pub default_target: Option<String>,
+    pub doc_targets: Option<Vec<String>>,
     pub release_time: Option<DateTime<Utc>>,
 }
 
@@ -229,12 +234,20 @@ impl CrateDetails {
 
         let parsed_license = krate.license.as_deref().map(super::licenses::parse_license);
 
+        let dependencies = krate
+            .dependencies
+            .and_then(|value| serde_json::from_value::<Vec<ReleaseDependency>>(value).ok())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|rdep| rdep.into_inner())
+            .collect();
+
         let mut crate_details = CrateDetails {
             name: krate.name,
             version: version.clone(),
             description: krate.description,
             owners: Vec::new(),
-            dependencies: krate.dependencies,
+            dependencies,
             readme: krate.readme,
             rustdoc: krate.description_long,
             release_time: krate.release_time,
@@ -285,7 +298,7 @@ impl CrateDetails {
                 .filter(|release| {
                     release.build_status == BuildStatus::Success && release.yanked == Some(false)
                 })
-                .map(|release| release.version.to_string())
+                .map(|release| release.version.clone())
                 .next();
         }
 
@@ -297,7 +310,7 @@ impl CrateDetails {
         let manifest = match storage
             .fetch_source_file(
                 &self.name,
-                &self.version.to_string(),
+                &self.version,
                 self.latest_build_id,
                 "Cargo.toml",
                 self.archive_storage,
@@ -326,7 +339,7 @@ impl CrateDetails {
             match storage
                 .fetch_source_file(
                     &self.name,
-                    &self.version.to_string(),
+                    &self.version,
                     self.latest_build_id,
                     path,
                     self.archive_storage,
@@ -378,13 +391,15 @@ pub(crate) async fn releases_for_crate(
     let mut releases: Vec<Release> = sqlx::query!(
         r#"SELECT
              releases.id as "id: ReleaseId",
-             releases.version,
+             releases.version as "version: Version",
              release_build_status.build_status as "build_status!: BuildStatus",
              releases.yanked,
              releases.is_library,
              releases.rustdoc_status,
              releases.release_time,
-             releases.target_name
+             releases.target_name,
+             releases.default_target,
+             releases.doc_targets
          FROM releases
          INNER JOIN release_build_status ON releases.id = release_build_status.rid
          WHERE
@@ -393,27 +408,16 @@ pub(crate) async fn releases_for_crate(
     )
     .fetch(&mut *conn)
     .try_filter_map(|row| async move {
-        let semversion = match semver::Version::parse(&row.version).with_context(|| {
-            format!(
-                "invalid semver in database for crate {crate_id}: {}",
-                row.version
-            )
-        }) {
-            Ok(semver) => semver,
-            Err(err) => {
-                report_error(&err);
-                return Ok(None);
-            }
-        };
-
         Ok(Some(Release {
             id: row.id,
-            version: semversion,
+            version: row.version,
             build_status: row.build_status,
             yanked: row.yanked,
             is_library: row.is_library,
             rustdoc_status: row.rustdoc_status,
             target_name: row.target_name,
+            default_target: row.default_target,
+            doc_targets: row.doc_targets.map(MetaData::parse_doc_targets),
             release_time: row.release_time,
         }))
     })
@@ -424,9 +428,8 @@ pub(crate) async fn releases_for_crate(
     Ok(releases)
 }
 
-#[derive(Template)]
+#[derive(Debug, Clone, Template)]
 #[template(path = "crate/details.html")]
-#[derive(Debug, Clone, PartialEq)]
 struct CrateDetailsPage {
     version: Version,
     name: String,
@@ -440,16 +443,18 @@ struct CrateDetailsPage {
     documentation_url: Option<String>,
     repository_url: Option<String>,
     repository_metadata: Option<RepositoryMetadata>,
-    dependencies: Option<Value>,
+    dependencies: Vec<Dependency>,
     releases: Vec<Release>,
     readme: Option<String>,
     build_status: BuildStatus,
     rustdoc_status: Option<bool>,
     is_library: Option<bool>,
-    last_successful_build: Option<String>,
+    last_successful_build: Option<Version>,
     rustdoc: Option<String>, // this is description_long in database
     source_size: Option<i64>,
     documentation_size: Option<i64>,
+    canonical_url: CanonicalUrl,
+    params: RustdocParams,
 }
 
 impl CrateDetailsPage {
@@ -464,37 +469,29 @@ impl_axum_webpage! {
     cpu_intensive_rendering = true,
 }
 
-#[derive(Deserialize, Clone, Debug)]
-pub(crate) struct CrateDetailHandlerParams {
-    name: String,
-    version: Option<ReqVersion>,
-}
-
 #[tracing::instrument(skip(conn, storage))]
 pub(crate) async fn crate_details_handler(
-    Path(params): Path<CrateDetailHandlerParams>,
+    params: RustdocParams,
     Extension(storage): Extension<Arc<AsyncStorage>>,
     mut conn: DbConnection,
 ) -> AxumResult<AxumResponse> {
-    let req_version = params.version.ok_or_else(|| {
-        AxumNope::Redirect(
-            EscapedURI::new(
-                &format!("/crate/{}/{}", &params.name, ReqVersion::Latest),
-                None,
-            ),
+    if params.original_path() != params.crate_details_url().path() {
+        return Err(AxumNope::Redirect(
+            params.crate_details_url(),
             CachePolicy::ForeverInCdn,
-        )
-    })?;
+        ));
+    }
 
-    let matched_release = match_version(&mut conn, &params.name, &req_version)
+    let matched_release = match_version(&mut conn, params.name(), params.req_version())
         .await?
         .assume_exact_name()?
         .into_canonical_req_version_or_else(|version| {
             AxumNope::Redirect(
-                EscapedURI::new(&format!("/crate/{}/{}", &params.name, version), None),
+                params.clone().with_req_version(version).crate_details_url(),
                 CachePolicy::ForeverInCdn,
             )
         })?;
+    let params = params.apply_matched_release(&matched_release);
 
     let mut details = CrateDetails::from_matched_release(&mut conn, matched_release).await?;
 
@@ -529,6 +526,8 @@ pub(crate) async fn crate_details_handler(
         ..
     } = details;
 
+    let is_latest_version = params.req_version().is_latest();
+
     let mut res = CrateDetailsPage {
         version,
         name,
@@ -552,15 +551,22 @@ pub(crate) async fn crate_details_handler(
         rustdoc,
         source_size,
         documentation_size,
+        canonical_url: CanonicalUrl::from_uri(
+            params
+                .clone()
+                .with_req_version(ReqVersion::Latest)
+                .crate_details_url(),
+        ),
+        params,
     }
     .into_response();
     res.extensions_mut()
-        .insert::<CachePolicy>(if req_version.is_latest() {
+        .insert::<CachePolicy>(if is_latest_version {
             CachePolicy::ForeverInCdn
         } else {
             CachePolicy::ForeverInCdnAndStaleInBrowser
         });
-    Ok(res.into_response())
+    Ok(res)
 }
 
 #[derive(Template)]
@@ -568,9 +574,7 @@ pub(crate) async fn crate_details_handler(
 #[derive(Debug, Clone, PartialEq)]
 struct ReleaseList {
     releases: Vec<Release>,
-    crate_name: String,
-    inner_path: String,
-    target: String,
+    params: RustdocParams,
 }
 
 impl_axum_webpage! {
@@ -581,16 +585,15 @@ impl_axum_webpage! {
 
 #[tracing::instrument]
 pub(crate) async fn get_all_releases(
-    Path(params): Path<RustdocHtmlParams>,
+    params: RustdocParams,
     mut conn: DbConnection,
 ) -> AxumResult<AxumResponse> {
-    // NOTE: we're getting RustDocHtmlParams here, where both target and path are optional.
-    // Due to how this handler is used in the `releases_list` macro, we always get both values.
-    // both values (when used in the topbar).
-
-    let matched_release = match_version(&mut conn, &params.name, &params.version)
+    let params = params.with_page_kind(PageKind::Rustdoc);
+    // NOTE: we're getting RustDocParams here, where both target and path are optional.
+    let matched_release = match_version(&mut conn, params.name(), params.req_version())
         .await?
         .into_canonical_req_version_or_else(|_| AxumNope::VersionNotFound)?;
+    let params = params.apply_matched_release(&matched_release);
 
     if matched_release.build_status() != BuildStatus::Success {
         // This handler should only be used for successful builds, so then we have all rows in the
@@ -600,51 +603,20 @@ pub(crate) async fn get_all_releases(
         return Err(AxumNope::CrateNotFound);
     }
 
-    // NOTE: we don't check if the target exists here.
-    // If the target doesn't exist, the target-redirect will think
-    // it's part of the `inner_path`, don't find the file in storage,
-    // and redirect to a search.
-    let target = if let Some(req_target) = params.target {
-        format!("{req_target}/")
-    } else {
-        String::new()
-    };
-
-    let inner_path = params.path.unwrap_or_default();
-    let inner_path = inner_path.trim_end_matches('/');
-
     Ok(ReleaseList {
         releases: matched_release.all_releases,
-        target,
-        inner_path: inner_path.to_string(),
-        crate_name: params.name,
+        params,
     }
     .into_response())
-}
-
-#[derive(Debug, Clone, PartialEq)]
-struct ShortMetadata {
-    name: String,
-    version: Version,
-    req_version: ReqVersion,
-    doc_targets: Vec<String>,
-}
-
-impl ShortMetadata {
-    // Used in templates.
-    pub(crate) fn doc_targets(&self) -> Option<&[String]> {
-        Some(&self.doc_targets)
-    }
 }
 
 #[derive(Template)]
 #[template(path = "rustdoc/platforms.html")]
 #[derive(Debug, Clone, PartialEq)]
 struct PlatformList {
-    metadata: ShortMetadata,
-    inner_path: String,
     use_direct_platform_links: bool,
     current_target: String,
+    params: RustdocParams,
 }
 
 impl_axum_webpage! {
@@ -655,140 +627,77 @@ impl_axum_webpage! {
 
 #[tracing::instrument]
 pub(crate) async fn get_all_platforms_inner(
-    Path(params): Path<RustdocHtmlParams>,
+    mut params: RustdocParams,
     mut conn: DbConnection,
     is_crate_root: bool,
 ) -> AxumResult<AxumResponse> {
-    let req_path: String = params.path.unwrap_or_default();
-    let req_path: Vec<&str> = req_path.split('/').collect();
+    if !is_crate_root {
+        params = params.with_page_kind(PageKind::Rustdoc);
+    }
 
-    let matched_release = match_version(&mut conn, &params.name, &params.version)
+    let matched_release = match_version(&mut conn, params.name(), params.req_version())
         .await?
         .into_exactly_named_or_else(|corrected_name, req_version| {
             AxumNope::Redirect(
-                EscapedURI::new(
-                    &format!(
-                        "/platforms/{}/{}/{}",
-                        corrected_name,
-                        req_version,
-                        req_path.join("/")
-                    ),
-                    None,
-                ),
+                params
+                    .clone()
+                    .with_name(corrected_name)
+                    .with_req_version(req_version)
+                    .platforms_partial_url(),
                 CachePolicy::NoCaching,
             )
         })?
         .into_canonical_req_version_or_else(|version| {
             AxumNope::Redirect(
-                EscapedURI::new(
-                    &format!(
-                        "/platforms/{}/{}/{}",
-                        &params.name,
-                        version,
-                        req_path.join("/")
-                    ),
-                    None,
-                ),
+                params
+                    .clone()
+                    .with_req_version(version)
+                    .platforms_partial_url(),
                 CachePolicy::ForeverInCdn,
             )
         })?;
+    let params = params.apply_matched_release(&matched_release);
 
-    let krate = sqlx::query!(
-        "SELECT
-            releases.default_target,
-            releases.doc_targets
-        FROM releases
-        WHERE releases.id = $1;",
-        matched_release.id().0,
-    )
-    .fetch_optional(&mut *conn)
-    .await?
-    .ok_or(AxumNope::CrateNotFound)?;
-
-    if krate.doc_targets.is_none()
-        || krate.default_target.is_none()
-        || matched_release.target_name().is_none()
-    {
+    if !matched_release.build_status().is_success() {
         // when the build wasn't finished, we don't have any target platforms
         // we could read from.
         return Ok(PlatformList {
-            metadata: ShortMetadata {
-                name: params.name,
-                version: matched_release.version().clone(),
-                req_version: params.version.clone(),
-                doc_targets: Vec::new(),
-            },
-            inner_path: "".into(),
             use_direct_platform_links: is_crate_root,
             current_target: "".into(),
+            params,
         }
         .into_response());
     }
-
-    let doc_targets = MetaData::parse_doc_targets(krate.doc_targets.unwrap());
-
-    // The path within this crate version's rustdoc output
-    let inner;
-    let (target, inner_path) = {
-        let mut inner_path = req_path.clone();
-
-        let target = if inner_path.len() > 1
-            && doc_targets
-                .iter()
-                .any(|s| Some(s) == params.target.as_ref())
-        {
-            inner_path.remove(0);
-            params.target.as_ref().unwrap()
-        } else {
-            ""
-        };
-
-        inner = inner_path.join("/");
-        (target, inner.trim_end_matches('/'))
-    };
-    let inner_path = if inner_path.is_empty() {
-        format!("{}/index.html", matched_release.target_name().unwrap())
-    } else {
-        format!("{}/{inner_path}", matched_release.target_name().unwrap())
-    };
 
     let latest_release = latest_release(&matched_release.all_releases)
         .expect("we couldn't end up here without releases");
 
     let current_target = if latest_release.build_status.is_success() {
-        if target.is_empty() {
-            krate.default_target.unwrap()
-        } else {
-            target.to_owned()
-        }
+        params
+            .doc_target_or_default()
+            .unwrap_or_default()
+            .to_owned()
     } else {
         String::new()
     };
 
     Ok(PlatformList {
-        metadata: ShortMetadata {
-            name: params.name,
-            version: matched_release.version().clone(),
-            req_version: params.version.clone(),
-            doc_targets,
-        },
-        inner_path,
         use_direct_platform_links: is_crate_root,
         current_target,
+        params,
     }
     .into_response())
 }
 
 pub(crate) async fn get_all_platforms_root(
-    Path(mut params): Path<RustdocHtmlParams>,
+    params: RustdocParams,
     conn: DbConnection,
 ) -> AxumResult<AxumResponse> {
-    params.path = None;
-    get_all_platforms_inner(Path(params), conn, true).await
+    get_all_platforms_inner(params.with_inner_path(""), conn, true).await
 }
 
 pub(crate) async fn get_all_platforms(
-    params: Path<RustdocHtmlParams>,
+    params: RustdocParams,
     conn: DbConnection,
 ) -> AxumResult<AxumResponse> {
     get_all_platforms_inner(params, conn, false).await
@@ -813,6 +722,8 @@ mod tests {
         name: &str,
         version: &str,
     ) -> BuildStatus {
+        let version: Version = version.parse().expect("invalid version");
+
         let status = sqlx::query_scalar!(
             r#"
             SELECT build_status as "build_status!: BuildStatus"
@@ -821,7 +732,7 @@ mod tests {
             INNER JOIN release_build_status ON releases.id = release_build_status.rid
             WHERE crates.name = $1 AND releases.version = $2"#,
             name,
-            version
+            version as _
         )
         .fetch_one(&mut *conn)
         .await
@@ -837,12 +748,18 @@ mod tests {
         status
     }
 
-    async fn crate_details(
+    async fn crate_details<V>(
         conn: &mut sqlx::PgConnection,
         name: &str,
-        version: &str,
+        version: V,
         req_version: Option<ReqVersion>,
-    ) -> CrateDetails {
+    ) -> CrateDetails
+    where
+        V: TryInto<Version>,
+        V::Error: std::error::Error + Send + Sync + 'static,
+    {
+        let version = version.try_into().expect("invalid version");
+
         let crate_id = sqlx::query_scalar!(
             r#"SELECT id as "id: CrateId" FROM crates WHERE name = $1"#,
             name
@@ -853,16 +770,10 @@ mod tests {
 
         let releases = releases_for_crate(&mut *conn, crate_id).await.unwrap();
 
-        CrateDetails::new(
-            &mut *conn,
-            name,
-            &Version::parse(version).unwrap(),
-            req_version,
-            releases,
-        )
-        .await
-        .unwrap()
-        .unwrap()
+        CrateDetails::new(&mut *conn, name, &version, req_version, releases)
+            .await
+            .unwrap()
+            .unwrap()
     }
 
     #[fn_error_context::context(
@@ -872,13 +783,14 @@ mod tests {
         db: &TestDatabase,
         package: &str,
         version: &str,
-        expected_last_successful_build: Option<&str>,
+        expected_last_successful_build: Option<Version>,
     ) -> Result<(), Error> {
+        let version = version.parse::<Version>()?;
         let mut conn = db.async_conn().await;
         let details = crate_details(&mut conn, package, version, None).await;
 
         anyhow::ensure!(
-            details.last_successful_build.as_deref() == expected_last_successful_build,
+            details.last_successful_build == expected_last_successful_build,
             "didn't expect {:?}",
             details.last_successful_build,
         );
@@ -971,9 +883,11 @@ mod tests {
 
             assert_last_successful_build_equals(db, "foo", "0.0.1", None).await?;
             assert_last_successful_build_equals(db, "foo", "0.0.2", None).await?;
-            assert_last_successful_build_equals(db, "foo", "0.0.3", Some("0.0.2")).await?;
+            assert_last_successful_build_equals(db, "foo", "0.0.3", Some("0.0.2".parse().unwrap()))
+                .await?;
             assert_last_successful_build_equals(db, "foo", "0.0.4", None).await?;
-            assert_last_successful_build_equals(db, "foo", "0.0.5", Some("0.0.2")).await?;
+            assert_last_successful_build_equals(db, "foo", "0.0.5", Some("0.0.2".parse().unwrap()))
+                .await?;
             Ok(())
         });
     }
@@ -1045,7 +959,8 @@ mod tests {
                 .await?;
 
             assert_last_successful_build_equals(db, "foo", "0.0.1", None).await?;
-            assert_last_successful_build_equals(db, "foo", "0.0.2", Some("0.0.4")).await?;
+            assert_last_successful_build_equals(db, "foo", "0.0.2", Some("0.0.4".parse().unwrap()))
+                .await?;
             assert_last_successful_build_equals(db, "foo", "0.0.3", None).await?;
             assert_last_successful_build_equals(db, "foo", "0.0.4", None).await?;
             Ok(())
@@ -1121,7 +1036,7 @@ mod tests {
                 details.releases,
                 vec![
                     Release {
-                        version: semver::Version::parse("1.0.0")?,
+                        version: Version::parse("1.0.0")?,
                         build_status: BuildStatus::Success,
                         yanked: Some(false),
                         is_library: Some(true),
@@ -1129,9 +1044,11 @@ mod tests {
                         id: details.releases[0].id,
                         target_name: Some("foo".to_owned()),
                         release_time: None,
+                        default_target: Some("x86_64-unknown-linux-gnu".into()),
+                        doc_targets: Some(vec!["x86_64-unknown-linux-gnu".into()]),
                     },
                     Release {
-                        version: semver::Version::parse("0.12.0")?,
+                        version: Version::parse("0.12.0")?,
                         build_status: BuildStatus::Success,
                         yanked: Some(false),
                         is_library: Some(true),
@@ -1139,9 +1056,11 @@ mod tests {
                         id: details.releases[1].id,
                         target_name: Some("foo".to_owned()),
                         release_time: None,
+                        default_target: Some("x86_64-unknown-linux-gnu".into()),
+                        doc_targets: Some(vec!["x86_64-unknown-linux-gnu".into()]),
                     },
                     Release {
-                        version: semver::Version::parse("0.3.0")?,
+                        version: Version::parse("0.3.0")?,
                         build_status: BuildStatus::Failure,
                         yanked: Some(false),
                         is_library: Some(true),
@@ -1149,9 +1068,11 @@ mod tests {
                         id: details.releases[2].id,
                         target_name: Some("foo".to_owned()),
                         release_time: None,
+                        default_target: Some("x86_64-unknown-linux-gnu".into()),
+                        doc_targets: Some(vec!["x86_64-unknown-linux-gnu".into()]),
                     },
                     Release {
-                        version: semver::Version::parse("0.2.0")?,
+                        version: Version::parse("0.2.0")?,
                         build_status: BuildStatus::Success,
                         yanked: Some(true),
                         is_library: Some(true),
@@ -1159,9 +1080,11 @@ mod tests {
                         id: details.releases[3].id,
                         target_name: Some("foo".to_owned()),
                         release_time: None,
+                        default_target: Some("x86_64-unknown-linux-gnu".into()),
+                        doc_targets: Some(vec!["x86_64-unknown-linux-gnu".into()]),
                     },
                     Release {
-                        version: semver::Version::parse("0.2.0-alpha")?,
+                        version: Version::parse("0.2.0-alpha")?,
                         build_status: BuildStatus::Success,
                         yanked: Some(false),
                         is_library: Some(true),
@@ -1169,9 +1092,11 @@ mod tests {
                         id: details.releases[4].id,
                         target_name: Some("foo".to_owned()),
                         release_time: None,
+                        default_target: Some("x86_64-unknown-linux-gnu".into()),
+                        doc_targets: Some(vec!["x86_64-unknown-linux-gnu".into()]),
                     },
                     Release {
-                        version: semver::Version::parse("0.1.1")?,
+                        version: Version::parse("0.1.1")?,
                         build_status: BuildStatus::Success,
                         yanked: Some(false),
                         is_library: Some(true),
@@ -1179,9 +1104,11 @@ mod tests {
                         id: details.releases[5].id,
                         target_name: Some("foo".to_owned()),
                         release_time: None,
+                        default_target: Some("x86_64-unknown-linux-gnu".into()),
+                        doc_targets: Some(vec!["x86_64-unknown-linux-gnu".into()]),
                     },
                     Release {
-                        version: semver::Version::parse("0.1.0")?,
+                        version: Version::parse("0.1.0")?,
                         build_status: BuildStatus::Success,
                         yanked: Some(false),
                         is_library: Some(true),
@@ -1189,9 +1116,11 @@ mod tests {
                         id: details.releases[6].id,
                         target_name: Some("foo".to_owned()),
                         release_time: None,
+                        default_target: Some("x86_64-unknown-linux-gnu".into()),
+                        doc_targets: Some(vec!["x86_64-unknown-linux-gnu".into()]),
                     },
                     Release {
-                        version: semver::Version::parse("0.0.1")?,
+                        version: Version::parse("0.0.1")?,
                         build_status: BuildStatus::Failure,
                         yanked: Some(false),
                         is_library: Some(false),
@@ -1199,6 +1128,8 @@ mod tests {
                         id: details.releases[7].id,
                         target_name: Some("foo".to_owned()),
                         release_time: None,
+                        default_target: Some("x86_64-unknown-linux-gnu".into()),
+                        doc_targets: Some(vec!["x86_64-unknown-linux-gnu".into()]),
                     },
                 ]
             );
@@ -1263,10 +1194,10 @@ mod tests {
 
             let mut conn = db.async_conn().await;
             for version in &["0.0.1", "0.0.2", "0.0.3"] {
-                let details = crate_details(&mut conn, "foo", version, None).await;
+                let details = crate_details(&mut conn, "foo", *version, None).await;
                 assert_eq!(
                     details.latest_release().unwrap().version,
-                    semver::Version::parse("0.0.3")?
+                    Version::parse("0.0.3")?
                 );
             }
 
@@ -1299,11 +1230,11 @@ mod tests {
                 .await?;
 
             let mut conn = db.async_conn().await;
-            for version in &["0.0.1", "0.0.2", "0.0.3-pre.1"] {
+            for &version in &["0.0.1", "0.0.2", "0.0.3-pre.1"] {
                 let details = crate_details(&mut conn, "foo", version, None).await;
                 assert_eq!(
                     details.latest_release().unwrap().version,
-                    semver::Version::parse("0.0.2")?
+                    Version::parse("0.0.2")?
                 );
             }
 
@@ -1337,11 +1268,11 @@ mod tests {
                 .await?;
 
             let mut conn = db.async_conn().await;
-            for version in &["0.0.1", "0.0.2", "0.0.3"] {
+            for &version in &["0.0.1", "0.0.2", "0.0.3"] {
                 let details = crate_details(&mut conn, "foo", version, None).await;
                 assert_eq!(
                     details.latest_release().unwrap().version,
-                    semver::Version::parse("0.0.2")?
+                    Version::parse("0.0.2")?
                 );
             }
 
@@ -1377,11 +1308,11 @@ mod tests {
                 .await?;
 
             let mut conn = db.async_conn().await;
-            for version in &["0.0.1", "0.0.2", "0.0.3"] {
+            for &version in &["0.0.1", "0.0.2", "0.0.3"] {
                 let details = crate_details(&mut conn, "foo", version, None).await;
                 assert_eq!(
                     details.latest_release().unwrap().version,
-                    semver::Version::parse("0.0.3")?
+                    Version::parse("0.0.3")?
                 );
             }
 
@@ -1411,11 +1342,11 @@ mod tests {
                 .await?;
 
             let mut conn = db.async_conn().await;
-            for version in &["0.0.1", "0.0.2"] {
+            for &version in &["0.0.1", "0.0.2"] {
                 let details = crate_details(&mut conn, "foo", version, None).await;
                 assert_eq!(
                     details.latest_release().unwrap().version,
-                    semver::Version::parse("0.0.1")?
+                    Version::parse("0.0.1")?
                 );
             }
 
@@ -1867,6 +1798,8 @@ mod tests {
                 })
                 .collect();
 
+            dbg!(&platform_links);
+
             assert_eq!(platform_links.len(), 2);
 
             for (_, url, rel) in &platform_links {
@@ -1889,7 +1822,7 @@ mod tests {
             url: &str,
             should_contain_redirect: bool,
         ) {
-            let response = env.web_app().await.get(url).await.unwrap();
+            let response = env.web_app().await.get(dbg!(url)).await.unwrap();
             let status = response.status();
             assert!(
                 status.is_success(),
@@ -1899,7 +1832,11 @@ mod tests {
                 response.redirect_target().unwrap_or_default(),
             );
             let text = response.text().await.unwrap();
-            let list1 = check_links(text.clone(), false, should_contain_redirect);
+            let list1 = dbg!(check_links(
+                text.clone(),
+                false,
+                dbg!(should_contain_redirect)
+            ));
 
             // Same test with AJAX endpoint.
             let platform_menu_url = kuchikiki::parse_html()
@@ -1911,14 +1848,23 @@ mod tests {
                 .get("data-url")
                 .expect("data-url")
                 .to_string();
-            let response = env.web_app().await.get(&platform_menu_url).await.unwrap();
-            assert!(response.status().is_success());
+            let response = env
+                .web_app()
+                .await
+                .get(&dbg!(platform_menu_url))
+                .await
+                .unwrap();
+            assert!(
+                response.status().is_success(),
+                "{}",
+                response.text().await.unwrap()
+            );
             response.assert_cache_control(CachePolicy::ForeverInCdn, env.config());
-            let list2 = check_links(
+            let list2 = dbg!(check_links(
                 response.text().await.unwrap(),
                 true,
                 should_contain_redirect,
-            );
+            ));
             assert_eq!(list1, list2);
         }
 
@@ -1943,12 +1889,7 @@ mod tests {
             run_check_links_redir(&env, "/crate/dummy/0.4.0", false).await;
 
             run_check_links_redir(&env, "/dummy/latest/dummy/", true).await;
-            run_check_links_redir(
-                &env,
-                "/dummy/0.4.0/x86_64-pc-windows-msvc/dummy/index.html",
-                true,
-            )
-            .await;
+            run_check_links_redir(&env, "/dummy/0.4.0/x86_64-pc-windows-msvc/dummy/", true).await;
             run_check_links_redir(
                 &env,
                 "/dummy/0.4.0/x86_64-pc-windows-msvc/dummy/struct.A.html",
@@ -1987,6 +1928,7 @@ mod tests {
                 .rustdoc_file("dummy-ba/index.html")
                 .rustdoc_file("x86_64-unknown-linux-gnu/dummy-ba/index.html")
                 .add_target("x86_64-unknown-linux-gnu")
+                .default_target("aarch64-apple-darwin")
                 .create()
                 .await?;
             env.fake_release()
@@ -1996,6 +1938,7 @@ mod tests {
                 .rustdoc_file("dummy-ba/index.html")
                 .rustdoc_file("x86_64-unknown-linux-gnu/dummy-ba/index.html")
                 .add_target("x86_64-unknown-linux-gnu")
+                .default_target("aarch64-apple-darwin")
                 .create()
                 .await?;
 
@@ -2014,8 +1957,8 @@ mod tests {
                 &env,
                 "/crate/dummy-ba/latest/menus/releases/dummy_ba/index.html",
                 vec![
-                    "/crate/dummy-ba/0.5.0/target-redirect/dummy_ba/index.html".to_string(),
-                    "/crate/dummy-ba/0.4.0/target-redirect/dummy_ba/index.html".to_string(),
+                    "/crate/dummy-ba/0.5.0/target-redirect/dummy_ba/".to_string(),
+                    "/crate/dummy-ba/0.4.0/target-redirect/dummy_ba/".to_string(),
                 ],
             )
             .await;
@@ -2024,8 +1967,8 @@ mod tests {
                 &env,
                 "/crate/dummy-ba/latest/menus/releases/x86_64-unknown-linux-gnu/dummy_ba/index.html",
                 vec![
-                    "/crate/dummy-ba/0.5.0/target-redirect/x86_64-unknown-linux-gnu/dummy_ba/index.html".to_string(),
-                    "/crate/dummy-ba/0.4.0/target-redirect/x86_64-unknown-linux-gnu/dummy_ba/index.html".to_string(),
+                    "/crate/dummy-ba/0.5.0/target-redirect/x86_64-unknown-linux-gnu/dummy_ba/".to_string(),
+                    "/crate/dummy-ba/0.4.0/target-redirect/x86_64-unknown-linux-gnu/dummy_ba/".to_string(),
                 ],
             ).await;
 
