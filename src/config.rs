@@ -1,6 +1,6 @@
 use crate::{cdn::CdnKind, storage::StorageKind};
 use anyhow::{Context, Result, anyhow, bail};
-use std::{env::VarError, error::Error, fs, io, path::PathBuf, str::FromStr, time::Duration};
+use std::{env::VarError, error::Error, io, path, path::PathBuf, str::FromStr, time::Duration};
 use tracing::trace;
 use url::Url;
 
@@ -246,7 +246,7 @@ fn ensure_absolute_path(path: PathBuf) -> io::Result<PathBuf> {
     if path.is_absolute() {
         Ok(path)
     } else {
-        Ok(fs::canonicalize(&path)?)
+        Ok(path::absolute(&path)?)
     }
 }
 
