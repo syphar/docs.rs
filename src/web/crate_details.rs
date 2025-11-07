@@ -1,8 +1,8 @@
 use crate::{
     AsyncStorage,
     db::{
-        BuildId, CrateId, ReleaseDependency, ReleaseId,
-        types::{BuildStatus, version::Version},
+        BuildId, CrateId, ReleaseId,
+        types::{BuildStatus, dependencies::ReleaseDependencyList, version::Version},
     },
     impl_axum_webpage,
     registry_api::OwnerKind,
@@ -234,12 +234,17 @@ impl CrateDetails {
 
         let parsed_license = krate.license.as_deref().map(super::licenses::parse_license);
 
-        let dependencies = krate
+        let dependencies: Vec<Dependency> = krate
             .dependencies
-            .and_then(|value| serde_json::from_value::<Vec<ReleaseDependency>>(value).ok())
+            .map(serde_json::from_value::<ReleaseDependencyList>)
+            .transpose()
+            // NOTE: we sometimes have invalid semver-requirement strings the database
+            // (at the time writing, 14 releases out of 2 million).
+            // We silently ignore those here.
+            .unwrap_or_default()
             .unwrap_or_default()
             .into_iter()
-            .map(|rdep| rdep.into_inner())
+            .map(Into::into)
             .collect();
 
         let mut crate_details = CrateDetails {
