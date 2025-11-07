@@ -1,9 +1,12 @@
+# syntax=docker/dockerfile:1
+
 # To produce a smaller image this Dockerfile contains two separate stages: in
 # the first one all the build dependencies are installed and docs.rs is built,
 # while in the second one just the runtime dependencies are installed, with the
 # binary built in the previous stage copied there.
 #
 # As of 2019-10-29 this reduces the image from 2.8GB to 500 MB.
+
 
 #################
 #  Build stage  #
@@ -54,10 +57,10 @@ RUN mkdir -p src/bin && \
     echo "fn main() {}" > src/bin/cratesfyi.rs && \
     echo "fn main() {}" > build.rs
 
-RUN cargo fetch
-
 ARG PROFILE=release
-RUN cargo build --profile=$PROFILE
+RUN --mount=type=cache,target=/usr/local/cargo/registry,id=cargo-registry,sharing=locked \
+    --mount=type=cache,target=/build/target,id=cargo-target,sharing=locked \
+    cargo build --profile=$PROFILE
 
 # Dependencies are now cached, copy the actual source code and do another full
 # build. The touch on all the .rs files is needed, otherwise cargo assumes the
@@ -74,7 +77,9 @@ COPY assets assets/
 COPY .sqlx .sqlx/
 COPY migrations migrations/
 
-RUN cargo build --profile=$PROFILE
+RUN --mount=type=cache,target=/usr/local/cargo/registry,id=cargo-registry,sharing=locked \
+    --mount=type=cache,target=/build/target,id=cargo-target,sharing=locked \
+    cargo build --profile=$PROFILE
 
 ######################
 #  Web server stage  #
