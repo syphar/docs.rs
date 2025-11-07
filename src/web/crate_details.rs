@@ -2201,7 +2201,7 @@ path = "src/lib.rs"
 
             assert_eq!(
                 env.web_app().await.get("/crate/dummy%3E").await?.status(),
-                StatusCode::FOUND
+                StatusCode::BAD_REQUEST
             );
 
             Ok(())

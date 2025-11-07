@@ -13,6 +13,7 @@ use axum::{
     extract::{FromRequestParts, MatchedPath},
     http::{Uri, request::Parts},
 };
+use cargo_util_schemas::manifest::PackageName;
 use itertools::Itertools as _;
 use serde::Deserialize;
 use std::borrow::Cow;
@@ -42,7 +43,7 @@ pub(crate) struct RustdocParams {
     page_kind: Option<PageKind>,
 
     original_uri: Option<Uri>,
-    name: String,
+    name: PackageName,
     req_version: ReqVersion,
     doc_target: Option<String>,
     inner_path: Option<String>,
@@ -101,7 +102,7 @@ impl std::fmt::Debug for RustdocParams {
 /// specificity of the route.
 #[derive(Deserialize, Debug)]
 struct UrlParams {
-    pub name: String,
+    pub name: PackageName,
     #[serde(default)]
     pub version: ReqVersion,
     pub target: Option<String>,
@@ -125,10 +126,7 @@ where
     /// We also extract & store the original URI, and also use it to find a potential static
     /// route stuffix (e.g. the `/settings.html` in the `/{krate}/{version}/settings.html` route).
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let Path(params) = parts
-            .extract::<Path<UrlParams>>()
-            .await
-            .map_err(|err| AxumNope::BadRequest(err.into()))?;
+        let Path(params) = parts.extract::<Path<UrlParams>>().await?;
 
         let original_uri = parts.extract::<Uri>().await.expect("infallible extractor");
 
@@ -156,9 +154,9 @@ where
 /// Builder-style methods to create & update the parameters.
 #[allow(dead_code)]
 impl RustdocParams {
-    pub(crate) fn new(name: impl Into<String>) -> Self {
+    pub(crate) fn new(name: impl AsRef<str>) -> Self {
         Self {
-            name: name.into().trim().into(),
+            name: name.as_ref().parse().unwrap(),
             req_version: ReqVersion::default(),
             original_uri: None,
             doc_target: None,
@@ -222,9 +220,9 @@ impl RustdocParams {
     pub(crate) fn name(&self) -> &str {
         &self.name
     }
-    pub(crate) fn with_name(self, name: impl Into<String>) -> Self {
+    pub(crate) fn with_name(self, name: impl AsRef<str>) -> Self {
         self.update(|mut params| {
-            params.name = name.into().trim().into();
+            params.name = name.as_ref().parse().unwrap();
             params
         })
     }
