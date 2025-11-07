@@ -26,8 +26,6 @@ jobs:
       - name: setup docker buildx
         uses: docker/setup-buildx-action@v3
 
-        # FIXME: we have to set the release profile here somehoe?
-
       - name: build docker image
         uses: docker/build-push-action@v6
         with:
@@ -37,6 +35,8 @@ jobs:
           target: ${{ matrix.target }}
           build-args: |
             GIT_SHA=${{ github.sha }}
+            PROFILE=release
+            PROFILE_DIR=release
           load: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
