@@ -9,17 +9,7 @@ on:
     - cron: "0 0 * * *"
 
 env:
-  RUST_BACKTRACE: 1
   RUST_CACHE_KEY: rust-cache-20241114
-  DOCSRS_PREFIX: ignored/cratesfyi-prefix
-  DOCSRS_DATABASE_URL: postgresql://cratesfyi:password@localhost:15432
-  DOCSRS_LOG: docs_rs=debug,rustwide=info
-  AWS_ACCESS_KEY_ID: cratesfyi
-  AWS_SECRET_ACCESS_KEY: secret_key
-  S3_ENDPOINT: http://localhost:9000
-  DOCSRS_INCLUDE_DEFAULT_TARGETS: false
-  DOCSRS_DOCKER_IMAGE: ghcr.io/rust-lang/crates-build-env/linux-micro
-  SENTRY_ENVIRONMENT: dev
 
 jobs:
   sqlx:
@@ -48,7 +38,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Launch postgres
-        run: just ensure_db_and_s3_are_running
+        run: just _ensure_db_and_s3_are_running
 
       - name: install SQLX CLI
         run: cargo binstall sqlx-cli
@@ -98,11 +88,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: restore build & cargo cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          prefix-key: ${{ env.RUST_CACHE_KEY }}
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -116,7 +101,7 @@ jobs:
         if: ${{ always() }}
         run: just compose-down-and-wipe
 
-  rslint:
+  lint-rs:
     name: rust linters
     runs-on: ubuntu-latest
 
@@ -136,11 +121,14 @@ jobs:
 
       - run: just lint
 
-  eslint:
+  lint-js:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+
       - uses: denoland/setup-deno@v2
+
       - name: install `just`
         run: sudo snap install --edge --classic just
+
       - run: just lint-js

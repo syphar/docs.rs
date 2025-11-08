@@ -10,11 +10,13 @@ compose-up-web:
 
 # Launch two build servers in the background 
 [group('compose')]
+[group('builder')]
 compose-up-builder: 
   just compose-up builder
 
 # Launch registry watcher in the background 
 [group('compose')]
+[group('watcher')]
 compose-up-watcher: 
   just compose-up watcher
 
@@ -37,6 +39,7 @@ compose-down:
 [group('compose')]
 compose-down-and-wipe:
   #!/usr/bin/env bash
+  set -euo pipefail
 
   docker compose --profile full --profile manual down --volumes --remove-orphans --rmi local
 
@@ -58,4 +61,4 @@ compose-down-and-wipe:
 # stream logs from all services running in docker-compose. Optionally specify services to tail logs from.
 [group('compose')]
 compose-logs *services:
-  docker compose --profile full --profile manual logs -f {{ services }}
+  docker compose --profile full logs -f {{ services }}

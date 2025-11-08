@@ -1,21 +1,28 @@
 # just commands for CI & local development
 
+
+
+[group('testing')]
 sqlx-prepare *args:
   cargo sqlx prepare \
     --database-url $DOCSRS_DATABASE_URL \
     --workspace {{ args }} \
     -- --all-targets --all-features
 
+[group('testing')]
 sqlx-check:
   just sqlx-prepare -check
 
 # Format the code using `cargo fmt`. 
+[group('testing')]
 format:
     rustup component add rustfmt
     # like this we get both the non-zero exit code, and the local code is 
     # formatted.
     cargo fmt --all -- --check || { cargo fmt --all && exit 1; }
 
+# run clippy, in our config
+[group('testing')]
 clippy *args:
   rustup component add clippy
   cargo clippy \
@@ -26,12 +33,17 @@ clippy *args:
     {{ args }} \
     -- -D warnings 
 
+# run clippy --fix
+[group('testing')]
 clippy-fix:
     just clippy --fix --allow-dirty --allow-staged
 
 # run all linters, for local development & CI
+[group('testing')]
 lint: format 
   #!/usr/bin/env bash
+  set -euo pipefail
+
   if [ "$GITHUB_ACTIONS" = "true" ]; then
     just clippy
   else
@@ -39,10 +51,12 @@ lint: format
   fi
 
 
+[group('testing')]
 lint-js *args:
   deno run -A npm:eslint@9 static templates gui-tests eslint.config.js {{ args }}
   
-run-gui-tests: ensure_db_and_s3_are_running cli-db-migrate compose-up-web
+[group('testing')]
+run-gui-tests: _ensure_db_and_s3_are_running cli-db-migrate compose-up-web
   just cli-build-update-toolchain
   just cli-build-crate sysinfo 0.23.4
   just cli-build-crate sysinfo 0.23.5
@@ -51,18 +65,35 @@ run-gui-tests: ensure_db_and_s3_are_running cli-db-migrate compose-up-web
 
   just _cli gui_tests 
 
-# build binaries for all tests
-build-tests:
-  cargo test --no-run --workspace --locked
-
-
-run-tests: ensure_db_and_s3_are_running build-tests
-  cargo test --workspace --locked --no-fail-fast
-
-run-builder-tests: ensure_db_and_s3_are_running build-tests
-  #!/bin/bash
+_build-test-binaries:
+  #!/usr/bin/env bash
   set -euo pipefail
 
+  export SQLX_OFFLINE=1
+  cargo test --no-run --workspace --locked
+
+[group('testing')]
+run-tests: _ensure_db_and_s3_are_running _build-test-binaries
+  #!/usr/bin/env bash
+  set -euo pipefail
+
+  export $(grep -v '^#' .env.tests | xargs)
+  export DOCSRS_INCLUDE_DEFAULT_TARGETS=false
+  export DOCSRS_LOG=docs_rs=debug,rustwide=info
+  export RUST_BACKTRACE=1
+
+  cargo test --workspace --locked --no-fail-fast
+
+[group('testing')]
+[group('builder')]
+run-builder-tests: _ensure_db_and_s3_are_running _build-test-binaries
+  #!/usr/bin/env bash
+  set -euo pipefail
+
+  export $(grep -v '^#' .env.tests | xargs)
   export DOCSRS_INCLUDE_DEFAULT_TARGETS=true
+  export DOCSRS_DOCKER_IMAGE=ghcr.io/rust-lang/crates-build-env/linux-micro
+  export DOCSRS_LOG=docs_rs=debug,rustwide=info
+  export RUST_BACKTRACE=1
 
   cargo test --locked -- --ignored --test-threads=1
