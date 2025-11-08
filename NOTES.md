@@ -17,6 +17,11 @@
 - unsure if the prefix mount should also be a docker volume, for performance.
   Not sure how often we actually have to look at the contents?
 
+- no apt-get upgrade in docker build, typically you should rely on the
+  base-image to be up-to-date. Rebuild every night.
+- focus right now: docker images for production and local manual testing
+- not yet: running build-tests locally
+
 ## TODO
 
 - what is better, buildx cache mounts or just layer caching?

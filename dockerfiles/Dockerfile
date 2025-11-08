@@ -105,7 +105,6 @@ RUN apt-get update \
 
 WORKDIR /srv/docsrs
 
-# Tini is a small init binary to properly handle signals
 ENTRYPOINT ["/usr/bin/tini", "/usr/local/bin/cratesfyi", "--"]
 CMD ["start-web-server", "0.0.0.0:3000"]
 
@@ -141,7 +140,6 @@ RUN apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Tini is a small init binary to properly handle signals
 ENTRYPOINT ["/usr/bin/tini", "/usr/local/bin/cratesfyi", "--"]
 CMD ["start-build-server", "0.0.0.0:3000"]
 
@@ -167,7 +165,6 @@ RUN apt-get update \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Tini is a small init binary to properly handle signals
 ENTRYPOINT ["/usr/bin/tini", "/usr/local/bin/cratesfyi", "--"]
 CMD ["start-registry-watcher", "0.0.0.0:3000", "--repository-stats-updater=enabled", "--cdn-invalidator=enabled", "--queue-rebuilds=enabled"]
 
