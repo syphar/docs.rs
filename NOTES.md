@@ -28,6 +28,10 @@
 ## TODO
 
 - what is better, buildx cache mounts or just layer caching?
+- readme docs, split "run everything on your host" -> only db & s3 via compose. 
+  how can guillaume test this perhaps? default dotenv?
+- second approach, all in compose, describe 
+- leave mixtures up to the dev
 
   ## docker image
 
