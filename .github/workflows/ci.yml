@@ -17,13 +17,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # We check that all github actions workflows have valid syntax
-      - name: Validate YAML file
-        uses: raven-actions/actionlint@v2
-        with:
-          files: .github/workflow/*
-          flags: "-ignore SC2086"  # ignore some shellcheck errors
-
       - name: install `just`
         run: sudo snap install --edge --classic just
 
@@ -37,24 +30,14 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Launch postgres
-        run: just _ensure_db_and_s3_are_running
-
       - name: install SQLX CLI
         run: cargo binstall sqlx-cli
 
-      - name: run database migrations
-        run: cargo sqlx migrate run --database-url $DOCSRS_DATABASE_URL
-
-      - name: run sqlx prepare --check
-        run: just sqlx-prepare
-
-      - name: test reverse migrations
+      - name: run sqlx migration up & down
         run: |
-          # --target 0 means "revert everything"
-          cargo sqlx migrate revert \
-            --database-url $DOCSRS_DATABASE_URL \
-            --target-version 0
+          just sqlx-migrate-run \
+            sqlx-check \
+            sqlx-migrate-revert
 
       - name: shut down test environment
         if: ${{ always() }}
@@ -122,6 +105,7 @@ jobs:
       - run: just lint
 
   lint-js:
+    name: js linters
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -132,3 +116,16 @@ jobs:
         run: sudo snap install --edge --classic just
 
       - run: just lint-js
+
+  lint-actions:
+    name: gh actions linters
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # We check that all github actions workflows have valid syntax
+      - name: Validate YAML file
+        uses: raven-actions/actionlint@v2
+        with:
+          files: .github/workflow/*
+          flags: "-ignore SC2086"  # ignore some shellcheck errors
