@@ -35,22 +35,19 @@
 #   while it doesn't matter for the rest of the services.
 #   This means for example on a Mac, the layers will be
 #   cached separately, once for `linux/amd64` and once for
-#   `linux/arm64`.
-#   Only alternative would be to build everything for `amd64`, but
-#   that would imply a performance impact on the services that don't
-#   need it.
+#   `linux/arm64`, which increases build-time.
+#
 # * volumes: typically docker-native volumes are faster than mounts, but
 #   sometimes annoying to inspect for debugging.
-#
 #   For now we choose:
-#
 #   * docker-native for DB, S3, rustwide workspace, crates.io index
-#   * mounts for prefix, code mounts
-#   * prometheus scrape config is set to collect from the web server, the
-#     registry watcher, and the build servers. Scraping is not dynamic, so
-#     the local prometheus server will try to fetch from all service
-#     instances (web, watcher, builder), and just error in case the specific
-#     server isn't accessible.
+#   * mounts for prefix
+#
+# * prometheus scrape config is set to collect from the web server, the
+#   registry watcher, and the build servers. Scraping is not dynamic, so
+#   the local prometheus server will try to fetch from all service
+#   instances (web, watcher, builder), and just error in case the specific
+#   server isn't accessible.
 
 x-docker-cache: &docker-cache
     # shared configuration to cache docker layers across CI runs.
@@ -69,7 +66,8 @@ x-healthcheck: &healthcheck-interval
     start_period: 10s
 
 x-environment: &environment
-    # default environment that can be overwritten in `.docker.env
+    # needed default environment that can be overwritten in `.docker.env`
+    # Example in `.docker.env.sample`
     RUST_BACKTRACE: ${RUST_BACKTRACE:-true}
     DOCSRS_LOG: ${DOCSRS_LOG:-docs_rs=trace,tower_http=debug,rustwide=info,aws_smithy_http=trace,axum=debug}
 
@@ -86,7 +84,7 @@ x-environment: &environment
 
 x-builder-environment: &builder-environment
     <<: *environment
-    # default builder environment that can be overwritten in `.docker.env
+    # default builder environment that can be overwritten in `.docker.env`
     DOCSRS_INCLUDE_DEFAULT_TARGETS: ${DOCSRS_INCLUDE_DEFAULT_TARGETS:-false}
     DOCSRS_DOCKER_IMAGE: ${DOCSRS_DOCKER_IMAGE:-ghcr.io/rust-lang/crates-build-env/linux-micro}
 
@@ -141,7 +139,7 @@ x-registry-watcher: &registry-watcher
         # So we configure it to be separate from the prefix.
         # Also on a native docker volume for performance
         REGISTRY_INDEX_PATH: /opt/docsrs/crates.io-index
-        # configure the rebuild-queuer
+        # configure the rebuild-queuer,
         DOCSRS_MAX_QUEUED_REBUILDS: ${DOCSRS_MAX_QUEUED_REBUILDS:-10}
     env_file:
         - .docker.env
@@ -311,7 +309,7 @@ services:
             - "${PWD}:/build/out"
         profiles:
             # gui_tests should not be run as background daemon.
-            # Just run via `just run-gui-tests`.
+            # Run via `just run-gui-tests`.
             - manual
 
 volumes:
