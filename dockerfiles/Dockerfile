@@ -77,9 +77,12 @@ COPY assets assets/
 COPY .sqlx .sqlx/
 COPY migrations migrations/
 
+ARG PROFILE_DIR=release
 RUN --mount=type=cache,target=/usr/local/cargo/registry,id=cargo-registry,sharing=locked \
     --mount=type=cache,target=/build/target,id=cargo-target,sharing=locked \
-    cargo build --profile=$PROFILE
+    mkdir /artifacts && \
+    cargo build --profile=$PROFILE \
+    cp /build/target/$PROFILE_DIR/cratesfyi /artifacts/
 
 ######################
 #  Web server stage  #
@@ -106,8 +109,7 @@ WORKDIR /srv/docsrs
 ENTRYPOINT ["/usr/bin/tini", "/usr/local/bin/cratesfyi", "--"]
 CMD ["start-web-server", "0.0.0.0:3000"]
 
-ARG PROFILE_DIR=release
-COPY --from=build /build/target/$PROFILE_DIR/cratesfyi /usr/local/bin
+COPY --from=build /artifacts/cratesfyi /usr/local/bin
 COPY static /srv/docsrs/static
 COPY vendor /srv/docsrs/vendor
 
@@ -143,8 +145,7 @@ RUN apt-get update \
 ENTRYPOINT ["/usr/bin/tini", "/usr/local/bin/cratesfyi", "--"]
 CMD ["start-build-server", "0.0.0.0:3000"]
 
-ARG PROFILE_DIR=release
-COPY --from=build /build/target/$PROFILE_DIR/cratesfyi /usr/local/bin
+COPY --from=build /artifacts/cratesfyi /usr/local/bin
 
 ############################
 #  Registry watcher stage  #
@@ -169,8 +170,7 @@ RUN apt-get update \
 ENTRYPOINT ["/usr/bin/tini", "/usr/local/bin/cratesfyi", "--"]
 CMD ["start-registry-watcher", "0.0.0.0:3000", "--repository-stats-updater=enabled", "--cdn-invalidator=enabled", "--queue-rebuilds=enabled"]
 
-ARG PROFILE_DIR=release
-COPY --from=build /build/target/$PROFILE_DIR/cratesfyi /usr/local/bin
+COPY --from=build /artifacts/cratesfyi /usr/local/bin
 
 ###############
 #  CLI stage  #
@@ -200,5 +200,4 @@ COPY migrations migrations/
 
 ENTRYPOINT ["/usr/bin/tini", "/usr/local/bin/cratesfyi", "--"]
 
-ARG PROFILE_DIR=release
-COPY --from=build /build/target/$PROFILE_DIR/cratesfyi /usr/local/bin
+COPY --from=build /artifacts/cratesfyi /usr/local/bin
