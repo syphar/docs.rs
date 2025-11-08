@@ -77,23 +77,27 @@ run-tests: _ensure_db_and_s3_are_running _build-test-binaries
   #!/usr/bin/env bash
   set -euo pipefail
 
-  export $(grep -v '^#' .env.tests | xargs)
   export DOCSRS_INCLUDE_DEFAULT_TARGETS=false
   export DOCSRS_LOG=docs_rs=debug,rustwide=info
   export RUST_BACKTRACE=1
+  export DOCSRS_PREFIX=ignored/cratesfyi-prefix
+  export DOCSRS_DATABASE_URL=postgresql://cratesfyi:password@localhost:15432
+  export AWS_ACCESS_KEY_ID=cratesfyi
+  export AWS_SECRET_ACCESS_KEY=secret_key
+  export S3_ENDPOINT=http://localhost:9000
 
   cargo test --workspace --locked --no-fail-fast
 
 [group('testing')]
 [group('builder')]
-run-builder-tests: _ensure_db_and_s3_are_running _build-test-binaries
+run-builder-tests: _ensure_db_and_s3_are_running
   #!/usr/bin/env bash
   set -euo pipefail
 
-  export $(grep -v '^#' .env.tests | xargs)
   export DOCSRS_INCLUDE_DEFAULT_TARGETS=true
   export DOCSRS_DOCKER_IMAGE=ghcr.io/rust-lang/crates-build-env/linux-micro
   export DOCSRS_LOG=docs_rs=debug,rustwide=info
   export RUST_BACKTRACE=1
+  export DOCSRS_PREFIX=ignored/cratesfyi-prefix
 
   cargo test --locked -- --ignored --test-threads=1

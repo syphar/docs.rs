@@ -17,6 +17,10 @@
 - unsure if the prefix mount should also be a docker volume, for performance.
   Not sure how often we actually have to look at the contents?
 
+## TODO
+
+- what is better, buildx cache mounts or just layer caching?
+
   ## docker image
 
 for now, these are production images, changing files will not auto-reload /

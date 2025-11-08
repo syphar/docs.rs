@@ -147,6 +147,7 @@ CMD ["start-build-server", "0.0.0.0:3000"]
 
 COPY --from=build /artifacts/cratesfyi /usr/local/bin
 
+
 ############################
 #  Registry watcher stage  #
 ############################

@@ -69,6 +69,8 @@ x-healthcheck: &healthcheck-interval
     start_period: 10s
 
 x-environment: &environment
+    # FIXME: change to FOO: ${FOO:-default123 where these vars are just a 
+    # default that should be possible to override
     RUST_BACKTRACE: true
     DOCSRS_LOG: docs_rs=trace,tower_http=debug,rustwide=info,aws_smithy_http=trace,axum=debug
 
@@ -85,6 +87,15 @@ x-environment: &environment
     S3_ENDPOINT: http://s3:9000
     AWS_ACCESS_KEY_ID: cratesfyi
     AWS_SECRET_ACCESS_KEY: secret_key
+
+x-builder-environment: &builder-environment
+    <<: *environment
+    DOCSRS_RUSTWIDE_WORKSPACE: /opt/docsrs/rustwide
+    DOCSRS_COMPILER_METRICS_PATH: /opt/docsrs/prefix/metrics
+    DOCSRS_DOCKER: true
+    DOCSRS_DOCKER_IMAGE: ghcr.io/rust-lang/crates-build-env/linux-micro
+    DOCSRS_BUILD_CPU_LIMIT: 2
+    DOCSRS_INCLUDE_DEFAULT_TARGETS: false
 
 x-build: &build
     context: .
@@ -107,13 +118,7 @@ x-builder: &builder
         - db
         - s3
     environment:
-        <<: *environment
-        DOCSRS_RUSTWIDE_WORKSPACE: /opt/docsrs/rustwide
-        DOCSRS_COMPILER_METRICS_PATH: /opt/docsrs/prefix/metrics
-        DOCSRS_DOCKER: true
-        DOCSRS_DOCKER_IMAGE: ghcr.io/rust-lang/crates-build-env/linux-micro
-        DOCSRS_BUILD_CPU_LIMIT: 2
-        DOCSRS_INCLUDE_DEFAULT_TARGETS: false
+        <<: *builder-environment
     env_file:
         - .docker.env
     healthcheck:
