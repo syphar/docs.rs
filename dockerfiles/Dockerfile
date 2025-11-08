@@ -81,7 +81,7 @@ ARG PROFILE_DIR=release
 RUN --mount=type=cache,target=/usr/local/cargo/registry,id=cargo-registry,sharing=locked \
     --mount=type=cache,target=/build/target,id=cargo-target,sharing=locked \
     mkdir /artifacts && \
-    cargo build --profile=$PROFILE \
+    cargo build --profile=$PROFILE && \
     cp /build/target/$PROFILE_DIR/cratesfyi /artifacts/
 
 ######################
