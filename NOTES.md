@@ -22,6 +22,9 @@
 - focus right now: docker images for production and local manual testing
 - not yet: running build-tests locally
 
+- test pre-push hook removed, too slow anyways
+- pre-commit hooks too
+
 ## TODO
 
 - what is better, buildx cache mounts or just layer caching?
