@@ -130,7 +130,11 @@ pub struct Config {
 
     // automatic rebuild configuration
     pub(crate) max_queued_rebuilds: Option<u16>,
+
+    // opentelemetry endpoint to send OTLP to
+    pub(crate) opentelemetry_endpoint: Option<Url>,
 }
+// OTEL_EXPORTER_OTLP_ENDPOINT
 
 impl Config {
     pub fn from_env() -> Result<ConfigBuilder> {
@@ -173,6 +177,7 @@ impl Config {
                 "DOCSRS_REGISTRY_API_HOST",
                 "https://crates.io".parse().unwrap(),
             )?)
+            .opentelemetry_endpoint(maybe_env("OTEL_EXPORTER_OTLP_ENDPOINT")?)
             .prefix(prefix.clone())
             .database_url(require_env("DOCSRS_DATABASE_URL")?)
             .max_pool_size(env("DOCSRS_MAX_POOL_SIZE", 90u32)?)

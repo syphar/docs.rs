@@ -20,6 +20,7 @@ pub mod consistency;
 mod copy;
 pub mod daemon;
 mod html;
+pub(crate) mod opentelemetry;
 mod queue;
 pub(crate) mod queue_builder;
 pub(crate) mod rustc_version;

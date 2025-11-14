@@ -1,13 +1,30 @@
 use crate::cdn::CdnBackend;
 use crate::db::Pool;
 use crate::repositories::RepositoryStatsUpdater;
+use crate::utils::opentelemetry::NoopMeterProvider;
 use crate::{
     AsyncBuildQueue, AsyncStorage, BuildQueue, Config, InstanceMetrics, RegistryApi,
     ServiceMetrics, Storage,
 };
 use anyhow::Result;
+use opentelemetry::metrics::MeterProvider;
+use opentelemetry_otlp::{Protocol, WithExportConfig as _};
+use opentelemetry_resource_detectors::{OsResourceDetector, ProcessResourceDetector};
+use opentelemetry_sdk::Resource;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::runtime;
+
+// get_resource returns a Resource containing information about the environment
+// The Resource is used to provide context to Traces, Metrics and Logs
+// It is created by merging the results of multiple ResourceDetectors
+// The ResourceDetectors are responsible for detecting information about the environment
+fn get_resource() -> Resource {
+    Resource::builder()
+        .with_detector(Box::new(OsResourceDetector))
+        .with_detector(Box::new(ProcessResourceDetector))
+        .build()
+}
 
 pub struct Context {
     pub config: Arc<Config>,
@@ -22,6 +39,7 @@ pub struct Context {
     pub registry_api: Arc<RegistryApi>,
     pub repository_stats_updater: Arc<RepositoryStatsUpdater>,
     pub runtime: runtime::Handle,
+    metric_provider: Arc<dyn MeterProvider + Send + Sync>,
 }
 
 impl Context {
@@ -71,6 +89,27 @@ impl Context {
         let build_queue = Arc::new(BuildQueue::new(runtime.clone(), async_build_queue.clone()));
         let storage = Arc::new(Storage::new(async_storage.clone(), runtime.clone()));
 
+        // opentelemetry metric provider setup,
+        // if no endpoint is configured, use a no-op provider
+        let metric_provider: Arc<dyn MeterProvider + Send + Sync> =
+            if let Some(ref endpoint) = config.opentelemetry_endpoint {
+                let exporter = opentelemetry_otlp::MetricExporter::builder()
+                    .with_tonic()
+                    .with_endpoint(endpoint.to_string())
+                    .with_protocol(Protocol::Grpc)
+                    .with_timeout(Duration::from_secs(3))
+                    .build()?;
+
+                let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
+                    .with_periodic_exporter(exporter)
+                    .with_resource(get_resource())
+                    .build();
+
+                Arc::new(provider)
+            } else {
+                Arc::new(NoopMeterProvider::new())
+            };
+
         Ok(Self {
             async_build_queue,
             build_queue,
@@ -87,6 +126,7 @@ impl Context {
             repository_stats_updater: Arc::new(RepositoryStatsUpdater::new(&config, pool)),
             runtime,
             config,
+            metric_provider,
         })
     }
 }
