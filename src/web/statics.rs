@@ -132,7 +132,7 @@ mod tests {
     };
     use axum::response::Response as AxumResponse;
     use axum_extra::headers::ETag;
-    use http::header::ETAG;
+    use http::header::{CONTENT_TYPE, ETAG};
     use reqwest::StatusCode;
     use std::fs;
     use test_case::test_case;
@@ -141,7 +141,7 @@ mod tests {
 
     fn content_length(resp: &AxumResponse) -> u64 {
         resp.headers()
-            .get("Content-Length")
+            .get(CONTENT_LENGTH)
             .expect("content-length header")
             .to_str()
             .unwrap()
@@ -164,7 +164,7 @@ mod tests {
             resp.assert_cache_control(CachePolicy::ForeverInCdnAndBrowser, env.config());
             let headers = resp.headers();
             assert_eq!(
-                headers.get("Content-Type"),
+                headers.get(CONTENT_TYPE),
                 Some(&"text/css".parse().unwrap()),
             );
 
@@ -185,7 +185,7 @@ mod tests {
             assert!(resp.status().is_success());
             resp.assert_cache_control(CachePolicy::ForeverInCdnAndBrowser, env.config());
             assert_eq!(
-                resp.headers().get("Content-Type"),
+                resp.headers().get(CONTENT_TYPE),
                 Some(&"text/css".parse().unwrap()),
             );
             assert_eq!(content_length(&resp), VENDORED_CSS.len() as u64);
@@ -227,7 +227,7 @@ mod tests {
             assert!(resp.status().is_success());
             resp.assert_cache_control(CachePolicy::ForeverInCdnAndBrowser, env.config());
             assert_eq!(
-                resp.headers().get("Content-Type"),
+                resp.headers().get(CONTENT_TYPE),
                 Some(&"text/javascript".parse().unwrap()),
             );
             assert!(content_length(&resp) > 10);
@@ -291,7 +291,7 @@ mod tests {
                 let resp = web.get(&url).await?;
 
                 assert_eq!(
-                    resp.headers().get("Content-Type"),
+                    resp.headers().get(CONTENT_TYPE),
                     Some(&mime.parse().unwrap()),
                     "{url:?} has an incorrect content type",
                 );
