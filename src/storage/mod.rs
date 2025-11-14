@@ -566,20 +566,14 @@ impl AsyncStorage {
                 )
                 .await?;
 
-                let temp_path =
-                    tempfile::NamedTempFile::new_in(&self.config.local_archive_cache_path)?
-                        .into_temp_path();
-
                 {
-                    let mut file = tokio::fs::File::create(&temp_path).await?;
+                    let mut file = tokio::fs::File::create(&local_index_path).await?;
                     let mut stream = self.get_stream(&remote_index_path).await?.content;
 
                     tokio::io::copy(&mut stream, &mut file).await?;
 
                     file.flush().await?;
                 }
-
-                tokio::fs::rename(temp_path, &local_index_path).await?;
             }
 
             _read_guard = _write_guard.downgrade();
