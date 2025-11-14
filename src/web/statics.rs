@@ -1,3 +1,5 @@
+use crate::web::headers::compute_etag;
+
 use super::{cache::CachePolicy, metrics::request_recorder, routes::get_static};
 use axum::{
     Router as AxumRouter,
@@ -8,7 +10,8 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get_service,
 };
-use axum_extra::headers::HeaderValue;
+use axum_extra::headers::{ETag, HeaderMapExt as _, HeaderValue};
+use http::HeaderMap;
 use tower_http::services::ServeDir;
 
 const VENDORED_CSS: &str = include_str!(concat!(env!("OUT_DIR"), "/vendored.css"));
@@ -19,16 +22,28 @@ const RUSTDOC_2021_12_05_CSS: &str =
 const RUSTDOC_2025_08_20_CSS: &str =
     include_str!(concat!(env!("OUT_DIR"), "/rustdoc-2025-08-20.css"));
 
+include!(concat!(env!("OUT_DIR"), "/web_static_md5_map.rs"));
+
 fn build_static_css_response(content: &'static str) -> impl IntoResponse {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        CONTENT_TYPE,
+        HeaderValue::from_static(mime::TEXT_CSS.as_ref()),
+    );
+    headers.typed_insert(
+        // FIXME: do this at build-time, either build-script, or `lhash` with its const md5 impl
+        compute_etag(content),
+    );
+
     (
         Extension(CachePolicy::ForeverInCdnAndBrowser),
-        [(CONTENT_TYPE, mime::TEXT_CSS.as_ref())],
+        headers,
         content,
     )
 }
 
 async fn set_needed_static_headers(req: Request, next: Next) -> Response {
-    let req_path = req.uri().path();
+    let req_path = req.uri().path().to_owned();
     let is_opensearch_xml = req_path.ends_with("/opensearch.xml");
 
     let mut response = next.run(req).await;
@@ -46,6 +61,24 @@ async fn set_needed_static_headers(req: Request, next: Next) -> Response {
             CONTENT_TYPE,
             HeaderValue::from_static("application/opensearchdescription+xml"),
         );
+    }
+
+    if response.status().is_success() {
+        if let Some(md5) = WEB_STATIC_MD5_MAP.get(
+            req_path
+                .trim_start_matches("/-/static/")
+                .trim_start_matches('/'),
+        ) {
+            let etag: ETag = format!("\"{md5}\"")
+                .parse()
+                .expect("compile time generated, should always pass");
+            response.headers_mut().typed_insert(etag);
+        } else {
+            panic!(
+                "no md5 found for req_path: {}\n{:?}",
+                req_path, WEB_STATIC_MD5_MAP
+            );
+        }
     }
 
     response
@@ -87,9 +120,11 @@ mod tests {
     use super::{STYLE_CSS, VENDORED_CSS};
     use crate::{
         test::{AxumResponseTestExt, AxumRouterTestExt, async_wrapper},
-        web::cache::CachePolicy,
+        web::{cache::CachePolicy, headers::compute_etag},
     };
     use axum::response::Response as AxumResponse;
+    use axum_extra::headers::ETag;
+    use http::header::ETAG;
     use reqwest::StatusCode;
     use std::fs;
     use test_case::test_case;
@@ -106,6 +141,11 @@ mod tests {
             .unwrap()
     }
 
+    fn etag(resp: &AxumResponse) -> ETag {
+        let etag = resp.headers().get(ETAG).unwrap();
+        etag.to_str().unwrap().parse().unwrap()
+    }
+
     #[test]
     fn style_css() {
         async_wrapper(|env| async move {
@@ -114,11 +154,14 @@ mod tests {
             let resp = web.get("/-/static/style.css").await?;
             assert!(resp.status().is_success());
             resp.assert_cache_control(CachePolicy::ForeverInCdnAndBrowser, env.config());
+            let headers = resp.headers();
             assert_eq!(
-                resp.headers().get("Content-Type"),
+                headers.get("Content-Type"),
                 Some(&"text/css".parse().unwrap()),
             );
+
             assert_eq!(content_length(&resp), STYLE_CSS.len() as u64);
+            assert_eq!(etag(&resp), compute_etag(STYLE_CSS.as_bytes()));
             assert_eq!(resp.bytes().await?, STYLE_CSS.as_bytes());
 
             Ok(())
@@ -138,6 +181,7 @@ mod tests {
                 Some(&"text/css".parse().unwrap()),
             );
             assert_eq!(content_length(&resp), VENDORED_CSS.len() as u64);
+            assert_eq!(etag(&resp), compute_etag(VENDORED_CSS.as_bytes()));
             assert_eq!(resp.text().await?, VENDORED_CSS);
 
             Ok(())
@@ -157,6 +201,7 @@ mod tests {
             // to an IO-error.
             let resp = web.get("/-/static/index.js/something").await?;
             assert_eq!(resp.status().as_u16(), StatusCode::NOT_FOUND);
+            assert!(resp.headers().get(ETAG).is_none());
 
             Ok(())
         });
@@ -178,6 +223,7 @@ mod tests {
                 Some(&"text/javascript".parse().unwrap()),
             );
             assert!(content_length(&resp) > 10);
+            etag(&resp); // panics if etag missing or invalid
             assert!(resp.text().await?.contains(expected_content));
 
             Ok(())
@@ -203,11 +249,9 @@ mod tests {
 
                     assert!(resp.status().is_success(), "failed to fetch {url:?}");
                     resp.assert_cache_control(CachePolicy::ForeverInCdnAndBrowser, env.config());
-                    assert_eq!(
-                        resp.bytes().await?,
-                        fs::read(path).unwrap(),
-                        "failed to fetch {url:?}",
-                    );
+                    let content = fs::read(path).unwrap();
+                    assert_eq!(etag(&resp), compute_etag(&content));
+                    assert_eq!(resp.bytes().await?, content, "failed to fetch {url:?}",);
                 }
             }
 
@@ -221,6 +265,7 @@ mod tests {
             let response = env.web_app().await.get("/-/static/whoop-de-do.png").await?;
             response.assert_cache_control(CachePolicy::NoCaching, env.config());
             assert_eq!(response.status(), StatusCode::NOT_FOUND);
+            assert!(response.headers().get(ETAG).is_none());
 
             Ok(())
         });

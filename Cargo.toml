@@ -107,6 +107,7 @@ fn-error-context = "0.2.0"
 # Templating
 askama = "0.14.0"
 walkdir = "2"
+phf = "0.13.1"
 
 # Date and Time utilities
 chrono = { version = "0.4.11", default-features = false, features = ["clock", "serde"] }
@@ -136,8 +137,10 @@ debug = "line-tables-only"
 
 [build-dependencies]
 time = "0.3"
+md5 = "0.8.0"
 gix = { version = "0.74.0", default-features = false }
 string_cache_codegen = "0.6.1"
+phf_codegen = "0.13"
 walkdir = "2"
 anyhow = { version = "1.0.42", features = ["backtrace"] }
 grass = { version = "0.13.1", default-features = false }

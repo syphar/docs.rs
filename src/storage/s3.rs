@@ -206,7 +206,7 @@ impl S3Backend {
 
         let etag = if let Some(mut etag) = res.e_tag {
             if let Some(range) = range {
-                etag = format!("{}:{}-{}", etag, range.start(), range.end())
+                etag = format!("\"{}:{}-{}\"", etag, range.start(), range.end())
             }
             match etag.parse::<headers::ETag>() {
                 Ok(etag) => Some(etag),

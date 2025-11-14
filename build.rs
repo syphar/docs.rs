@@ -1,5 +1,5 @@
 use anyhow::{Context as _, Error, Result};
-use std::{env, path::Path};
+use std::{env, fs::File, io::Write as _, path::Path};
 
 mod tracked {
     use std::{
@@ -75,6 +75,7 @@ fn main() -> Result<()> {
     compile_sass(out_dir)?;
     write_known_targets(out_dir)?;
     compile_syntax(out_dir).context("could not compile syntax files")?;
+    calculate_static_md5_hashes(out_dir)?;
 
     // trigger recompilation when a new migration is added
     println!("cargo:rerun-if-changed=migrations");
@@ -156,6 +157,43 @@ fn compile_sass(out_dir: &Path) -> Result<()> {
     let grids = tracked::read_to_string("vendor/pure-css/css/grids-responsive-min.css")?;
     let vendored = pure + &grids;
     std::fs::write(out_dir.join("vendored").with_extension("css"), vendored)?;
+
+    Ok(())
+}
+
+fn calculate_static_md5_hashes(out_dir: &Path) -> Result<()> {
+    const STATIC_DIRS: &[&str] = &["static", "vendor"];
+
+    let dest_path = Path::new(&out_dir).join("web_static_md5_map.rs");
+    let mut file = File::create(dest_path)?;
+
+    let mut map = phf_codegen::Map::new();
+
+    for static_dir in STATIC_DIRS {
+        for entry in walkdir::WalkDir::new(static_dir) {
+            let entry = entry?;
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+
+            let rel = path.strip_prefix(&static_dir).unwrap();
+            let rel_str = rel.to_string_lossy().replace('\\', "/");
+
+            let bytes = std::fs::read(path)?;
+            let digest = md5::compute(bytes);
+            let md5_hex = format!("{:x}", digest);
+
+            map.entry(rel_str, format!("\"{md5_hex}\""));
+        }
+    }
+
+    write!(
+        &mut file,
+        "pub static WEB_STATIC_MD5_MAP: ::phf::Map<&'static str, &'static str> = {};\n",
+        map.build()
+    )
+    .unwrap();
 
     Ok(())
 }

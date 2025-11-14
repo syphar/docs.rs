@@ -566,6 +566,7 @@ impl AsyncStorage {
                 mime: mimes::APPLICATION_ZIP.clone(),
                 content: zip_content,
                 compression: None,
+                etag: None, // not needed when uploading
                 date_updated: Utc::now(),
             },
             Blob {
@@ -574,6 +575,7 @@ impl AsyncStorage {
                 content: compressed_index_content,
                 compression: Some(alg),
                 date_updated: Utc::now(),
+                etag: None, // not needed when uploading
             },
         ])
         .await?;
@@ -623,8 +625,9 @@ impl AsyncStorage {
                         mime,
                         content,
                         compression: Some(alg),
-                        // this field is ignored by the backend
+                        // these fields are ignored by the backend
                         date_updated: Utc::now(),
+                        etag: None,
                     });
                 }
                 Ok((blobs, file_paths))
@@ -658,8 +661,9 @@ impl AsyncStorage {
             mime,
             content,
             compression: None,
-            // this field is ignored by the backend
+            // these fields are ignored by the backend
             date_updated: Utc::now(),
+            etag: None,
         }])
         .await?;
 
@@ -685,8 +689,9 @@ impl AsyncStorage {
             mime,
             content,
             compression: Some(alg),
-            // this field is ignored by the backend
+            // these fields are ignored by the backend
             date_updated: Utc::now(),
+            etag: None,
         }])
         .await?;
 
@@ -712,8 +717,9 @@ impl AsyncStorage {
             mime,
             content,
             compression: Some(alg),
-            // this field is ignored by the backend
+            // these fields are ignored by the backend
             date_updated: Utc::now(),
+            etag: None,
         }])
         .await?;
 
@@ -1147,6 +1153,7 @@ mod backend_tests {
             date_updated: Utc::now(),
             content: "Hello world!".into(),
             compression: None,
+            etag: None,
         };
         storage.store_blobs(vec![blob])?;
         assert!(storage.exists("path/to/file.txt")?);
@@ -1163,6 +1170,7 @@ mod backend_tests {
             date_updated: Utc::now(),
             compression: None,
             content: b"test content\n".to_vec(),
+            etag: None,
         }])?;
 
         assert!(!storage.get_public_access(path)?);
@@ -1190,6 +1198,7 @@ mod backend_tests {
             path: path.into(),
             mime: mime::TEXT_PLAIN,
             date_updated: Utc::now(),
+            etag: None,
             compression: None,
             content: b"test content\n".to_vec(),
         };
@@ -1229,6 +1238,7 @@ mod backend_tests {
             path: "foo/bar.txt".into(),
             mime: mime::TEXT_PLAIN,
             date_updated: Utc::now(),
+            etag: None,
             compression: None,
             content: b"test content\n".to_vec(),
         };
@@ -1271,6 +1281,7 @@ mod backend_tests {
                     path: filename.into(),
                     mime: mime::TEXT_PLAIN,
                     date_updated: Utc::now(),
+                    etag: None,
                     compression: None,
                     content: b"test content\n".to_vec(),
                 })
@@ -1314,6 +1325,7 @@ mod backend_tests {
             path: "small-blob.bin".into(),
             mime: mime::TEXT_PLAIN,
             date_updated: Utc::now(),
+            etag: None,
             content: vec![0; MAX_SIZE],
             compression: None,
         };
@@ -1321,6 +1333,7 @@ mod backend_tests {
             path: "big-blob.bin".into(),
             mime: mime::TEXT_PLAIN,
             date_updated: Utc::now(),
+            etag: None,
             content: vec![0; MAX_SIZE * 2],
             compression: None,
         };
@@ -1358,6 +1371,7 @@ mod backend_tests {
                 path: path.into(),
                 mime: mime::TEXT_PLAIN,
                 date_updated: Utc::now(),
+                etag: None,
                 compression: None,
                 content: b"Hello world!\n".to_vec(),
             })
@@ -1503,6 +1517,7 @@ mod backend_tests {
                     content,
                     path: format!("{i}.rs"),
                     date_updated: now,
+                    etag: None,
                     compression: None,
                 }
             })
@@ -1566,6 +1581,7 @@ mod backend_tests {
                     compression: None,
                     mime: mime::TEXT_PLAIN,
                     date_updated: Utc::now(),
+                    etag: None,
                 })
                 .collect(),
         )?;

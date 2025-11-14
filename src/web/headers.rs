@@ -2,9 +2,14 @@ use super::escaped_uri::EscapedURI;
 use anyhow::Result;
 use askama::filters::HtmlSafe;
 use axum::http::uri::Uri;
-use axum_extra::headers::{Header, HeaderName, HeaderValue};
+use axum_extra::headers::{ETag, Header, HeaderName, HeaderValue};
 use serde::Serialize;
 use std::{fmt, ops::Deref};
+
+pub fn compute_etag<T: AsRef<[u8]>>(content: T) -> ETag {
+    let digest = md5::compute(&content);
+    format!("\"{:x}\"", digest).parse().unwrap()
+}
 
 /// simplified typed header for a `Link rel=canonical` header in the response.
 ///

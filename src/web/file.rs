@@ -15,6 +15,7 @@ use axum::{
     },
     response::{IntoResponse, Response as AxumResponse},
 };
+use axum_extra::headers::HeaderMapExt;
 use tokio_util::io::ReaderStream;
 
 #[derive(Debug)]
@@ -39,7 +40,7 @@ impl File {
 
 impl IntoResponse for File {
     fn into_response(self) -> AxumResponse {
-        (
+        let mut response = (
             StatusCode::OK,
             [
                 (CONTENT_TYPE, self.0.mime.as_ref()),
@@ -51,7 +52,13 @@ impl IntoResponse for File {
             Extension(CachePolicy::ForeverInCdnAndBrowser),
             self.0.content,
         )
-            .into_response()
+            .into_response();
+
+        if let Some(etag) = self.0.etag {
+            response.headers_mut().typed_insert(etag)
+        }
+
+        response
     }
 }
 
@@ -70,7 +77,7 @@ impl IntoResponse for StreamingFile {
         // Convert the AsyncBufRead into a Stream of Bytes
         let stream = ReaderStream::new(self.0.content);
         let body = Body::from_stream(stream);
-        (
+        let mut response = (
             StatusCode::OK,
             [
                 (CONTENT_TYPE, self.0.mime.as_ref()),
@@ -82,7 +89,13 @@ impl IntoResponse for StreamingFile {
             Extension(CachePolicy::ForeverInCdnAndBrowser),
             body,
         )
-            .into_response()
+            .into_response();
+
+        if let Some(etag) = self.0.etag {
+            response.headers_mut().typed_insert(etag)
+        }
+
+        response
     }
 }
 
