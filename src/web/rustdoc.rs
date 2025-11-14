@@ -34,7 +34,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response as AxumResponse},
 };
-use http::{HeaderValue, Uri, header};
+use http::{HeaderValue, Uri, header, uri::Authority};
 use serde::Deserialize;
 use std::{
     collections::HashMap,
@@ -219,6 +219,7 @@ pub(crate) async fn rustdoc_redirector_handler(
     let params = params.with_page_kind(PageKind::Rustdoc);
 
     fn redirect_to_doc(
+        original_uri: Option<&Uri>,
         url: EscapedURI,
         cache_policy: CachePolicy,
         path_in_crate: Option<&str>,
@@ -229,7 +230,20 @@ pub(crate) async fn rustdoc_redirector_handler(
             url
         };
 
-        trace!("redirect to doc");
+        if let Some(original_uri) = original_uri
+            && original_uri.path() == url.path()
+            && (url.authority().is_none()
+                || url.authority() == Some(&Authority::from_static("docs.rs")))
+        {
+            return Err(anyhow!(
+                "infinite redirect detected, \noriginal_uri = {}, redirect_url = {}",
+                original_uri,
+                url
+            )
+            .into());
+        }
+
+        trace!(%url, ?cache_policy, path_in_crate, "redirect to doc");
         Ok(axum_cached_redirect(url, cache_policy)?)
     }
 
@@ -266,6 +280,7 @@ pub(crate) async fn rustdoc_redirector_handler(
         let target_uri =
             EscapedURI::from_uri(description.href.clone()).append_raw_query(original_query);
         return redirect_to_doc(
+            params.original_uri(),
             target_uri,
             CachePolicy::ForeverInCdnAndStaleInBrowser,
             path_in_crate.as_deref(),
@@ -329,6 +344,7 @@ pub(crate) async fn rustdoc_redirector_handler(
 
     if matched_release.rustdoc_status() {
         Ok(redirect_to_doc(
+            params.original_uri(),
             params.rustdoc_url().append_raw_query(original_query),
             if matched_release.is_latest_url() {
                 CachePolicy::ForeverInCdn
@@ -3041,7 +3057,7 @@ mod test {
 
             web.assert_redirect_cached_unchecked(
                 "/clap/latest/clapproc%20macro%20%60Parser%60%20not%20expanded:%20Cannot%20create%20expander%20for",
-                "/clap/latest/clapproc%20macro%20%60Parser%60%20not%20expanded:%20Cannot%20create%20expander%20for",
+                "/clap/latest/clap/clapproc%20macro%20%60Parser%60%20not%20expanded:%20Cannot%20create%20expander%20for",
                 CachePolicy::ForeverInCdn,
                 env.config(),
             ).await?;
@@ -3339,6 +3355,67 @@ mod test {
             .await?;
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[test_case("/dummy/"; "only krate")]
+    #[test_case("/dummy/latest/"; "with version")]
+    #[test_case("/dummy/latest/dummy"; "target-name as path, without trailing slash")]
+    #[test_case("/dummy/latest/dummy/"; "final target")]
+    async fn test_full_latest_url_without_trailing_slash(path: &str) -> Result<()> {
+        // test for https://github.com/rust-lang/docs.rs/issues/2989
+
+        let env = TestEnvironment::new().await?;
+
+        env.fake_release()
+            .await
+            .name("dummy")
+            .version("1.0.0")
+            .create()
+            .await?;
+
+        let web = env.web_app().await;
+        const TARGET: &str = "/dummy/latest/dummy/";
+        if path == TARGET {
+            web.get(path).await?.status().is_success();
+        } else {
+            web.assert_redirect_unchecked(path, "/dummy/latest/dummy/")
+                .await?;
+        }
+
+        Ok(())
+    }
+    #[tokio::test(flavor = "multi_thread")]
+    #[test_case(
+        "/dummy/latest/other_path",
+        "/dummy/latest/dummy/other_path";
+        "other path, without trailing slash"
+    )]
+    #[test_case(
+        "/dummy/latest/other_path.html",
+        "/dummy/latest/dummy/other_path.html";
+        "other html path, without trailing slash"
+    )]
+    async fn test_full_latest_url_some_path_but_trailing_slash(
+        path: &str,
+        expected_redirect: &str,
+    ) -> Result<()> {
+        // test for https://github.com/rust-lang/docs.rs/issues/2989
+
+        let env = TestEnvironment::new().await?;
+
+        env.fake_release()
+            .await
+            .name("dummy")
+            .version("1.0.0")
+            .create()
+            .await?;
+
+        let web = env.web_app().await;
+        web.assert_redirect_unchecked(path, expected_redirect)
+            .await?;
+
         Ok(())
     }
 }
