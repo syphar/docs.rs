@@ -58,10 +58,10 @@ lint: format
   #!/usr/bin/env bash
   set -euo pipefail
 
-  if [ "$GITHUB_ACTIONS" = "true" ]; then
+  if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
     just clippy
   else
-    just clippy_fix
+    just clippy-fix
   fi
 
 

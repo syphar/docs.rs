@@ -1,13 +1,8 @@
 use anyhow::{Context as _, Result, anyhow};
 use clap::{Parser, Subcommand, ValueEnum};
 use docs_rs::{
-<<<<<<< HEAD
     Config, Context, Index, PackageKind, RustwideBuilder,
-    db::{self, CrateId, Overrides, add_path_into_database, types::version::Version},
-=======
-    Config, Context, PackageKind, RustwideBuilder,
     db::{self, CrateId, Overrides, ReleaseId, add_path_into_database, types::version::Version},
->>>>>>> master
     start_background_metrics_webserver, start_web_server,
     utils::{
         ConfigName, get_config, get_crate_pattern_and_priority, list_crate_priorities,
