@@ -903,6 +903,7 @@ mod test {
     };
     use anyhow::{Context, Result};
     use chrono::{NaiveDate, Utc};
+    use http::header::ETAG;
     use kuchikiki::traits::TendrilSink;
     use pretty_assertions::assert_eq;
     use reqwest::StatusCode;
@@ -2960,6 +2961,7 @@ mod test {
             let web = env.web_app().await;
             let response = web.get(&format!("/dummy/0.1.0/{name}")).await?;
             assert!(response.status().is_success());
+            assert!(response.headers().get(ETAG).is_some());
             assert_eq!(response.text().await?, "content");
 
             Ok(())
@@ -2992,7 +2994,9 @@ mod test {
                 "{:?}",
                 response.headers().get("Location"),
             );
-            assert!(web.get("/asset.js").await?.status().is_success());
+            let response = web.get("/asset.js").await?;
+            assert!(response.status().is_success());
+            assert!(response.headers().get(ETAG).is_some());
 
             assert!(web.get(&format!("/{path}")).await?.status().is_success());
             let response = web.get(&format!("/dummy/0.1.0/{path}")).await?;
