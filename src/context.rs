@@ -26,6 +26,28 @@ fn get_resource() -> Resource {
         .build()
 }
 
+/// opentelemetry metric provider setup,
+/// if no endpoint is configured, use a no-op provider
+fn get_metric_provider(config: &Config) -> Arc<dyn MeterProvider + Send + Sync> {
+    if let Some(ref endpoint) = config.opentelemetry_endpoint {
+        let exporter = opentelemetry_otlp::MetricExporter::builder()
+            .with_tonic()
+            .with_endpoint(endpoint.to_string())
+            .with_protocol(Protocol::Grpc)
+            .with_timeout(Duration::from_secs(3))
+            .build()?;
+
+        let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
+            .with_periodic_exporter(exporter)
+            .with_resource(get_resource())
+            .build();
+
+        Arc::new(provider)
+    } else {
+        Arc::new(NoopMeterProvider::new())
+    }
+}
+
 pub struct Context {
     pub config: Arc<Config>,
     pub async_build_queue: Arc<AsyncBuildQueue>,
@@ -71,6 +93,8 @@ impl Context {
     ) -> Result<Self> {
         let config = Arc::new(config);
 
+        let metric_provider = get_metric_provider(&config);
+
         let async_storage = Arc::new(
             AsyncStorage::new(pool.clone(), instance_metrics.clone(), config.clone()).await?,
         );
@@ -80,35 +104,16 @@ impl Context {
             instance_metrics.clone(),
             config.clone(),
             async_storage.clone(),
+            metric_provider.meter("storage"),
         ));
 
         let cdn = Arc::new(CdnBackend::new(&config).await);
 
         let runtime = runtime::Handle::current();
+
         // sync wrappers around build-queue & storage async resources
         let build_queue = Arc::new(BuildQueue::new(runtime.clone(), async_build_queue.clone()));
         let storage = Arc::new(Storage::new(async_storage.clone(), runtime.clone()));
-
-        // opentelemetry metric provider setup,
-        // if no endpoint is configured, use a no-op provider
-        let metric_provider: Arc<dyn MeterProvider + Send + Sync> =
-            if let Some(ref endpoint) = config.opentelemetry_endpoint {
-                let exporter = opentelemetry_otlp::MetricExporter::builder()
-                    .with_tonic()
-                    .with_endpoint(endpoint.to_string())
-                    .with_protocol(Protocol::Grpc)
-                    .with_timeout(Duration::from_secs(3))
-                    .build()?;
-
-                let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
-                    .with_periodic_exporter(exporter)
-                    .with_resource(get_resource())
-                    .build();
-
-                Arc::new(provider)
-            } else {
-                Arc::new(NoopMeterProvider::new())
-            };
 
         Ok(Self {
             async_build_queue,

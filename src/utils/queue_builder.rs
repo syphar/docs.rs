@@ -1,10 +1,30 @@
 use crate::Context;
 use crate::{docbuilder::RustwideBuilder, utils::report_error};
 use anyhow::{Context as _, Error};
+use opentelemetry::metrics::{self, Counter};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::Duration;
 use std::{fs, io, path::Path, thread};
 use tracing::{debug, error, warn};
+
+#[derive(Debug)]
+struct BuildQueueMetrics {
+    // queued_crates_count: Gauge<u64>,
+    // prioritized_crates_count: IntGauge,
+    // failed_crates_count: IntGauge,
+    // queue_is_locked: IntGauge,
+    // queued_crates_count_by_priority: IntGaugeVec,
+    // queued_cdn_invalidations_by_distribution: IntGaugeVec,
+    queued_builds: Counter<u64>,
+}
+
+impl BuildQueueMetrics {
+    fn new(meter: &metrics::Meter) -> Self {
+        BuildQueueMetrics {
+            queued_builds: meter.u64_counter("queued_builds").build(),
+        }
+    }
+}
 
 /// the main build-server loop
 pub fn queue_builder(context: &Context, mut builder: RustwideBuilder) -> Result<(), Error> {

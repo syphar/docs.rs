@@ -12,6 +12,7 @@ use crate::{
 use anyhow::Context as _;
 use fn_error_context::context;
 use futures_util::{StreamExt, stream::TryStreamExt};
+use opentelemetry::metrics::{self, Counter, Gauge};
 use sqlx::Connection as _;
 use std::{collections::HashMap, sync::Arc};
 use tokio::runtime;
@@ -49,6 +50,7 @@ impl AsyncBuildQueue {
         metrics: Arc<InstanceMetrics>,
         config: Arc<Config>,
         storage: Arc<AsyncStorage>,
+        meter: metrics::Meter,
     ) -> Self {
         AsyncBuildQueue {
             max_attempts: config.build_attempts.into(),
@@ -333,6 +335,7 @@ impl AsyncBuildQueue {
                             release.name, release.version
                         );
                         self.metrics.queued_builds.inc();
+                        self.otel_metrics.queued_builds.add(1, &[]);
                         crates_added += 1;
                     }
                     Err(err) => report_error(&err),
