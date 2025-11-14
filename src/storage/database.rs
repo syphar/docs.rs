@@ -1,5 +1,6 @@
 use super::{Blob, FileRange, StreamingBlob};
 use crate::{InstanceMetrics, db::Pool, error::Result};
+use axum_extra::headers;
 use chrono::{DateTime, Utc};
 use futures_util::stream::{Stream, TryStreamExt};
 use sqlx::Acquire;
@@ -114,6 +115,9 @@ impl DatabaseBackend {
         });
         let content = result.content.unwrap_or_default();
         let content_len = content.len();
+
+        let digest = md5::compute(&content);
+        let etag: headers::ETag = format!("{:x}", digest).parse().unwrap();
         Ok(StreamingBlob {
             path: result.path,
             mime: result
@@ -121,6 +125,7 @@ impl DatabaseBackend {
                 .parse()
                 .unwrap_or(mime::APPLICATION_OCTET_STREAM),
             date_updated: result.date_updated,
+            etag: Some(etag),
             content: Box::new(io::Cursor::new(content)),
             content_length: content_len,
             compression,

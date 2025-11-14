@@ -21,6 +21,7 @@ use crate::{
     utils::spawn_blocking,
 };
 use anyhow::anyhow;
+use axum_extra::headers;
 use chrono::{DateTime, Utc};
 use fn_error_context::context;
 use futures_util::stream::BoxStream;
@@ -49,11 +50,12 @@ type FileRange = RangeInclusive<u64>;
 #[error("path not found")]
 pub(crate) struct PathNotFoundError;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Blob {
     pub(crate) path: String,
     pub(crate) mime: Mime,
     pub(crate) date_updated: DateTime<Utc>,
+    pub(crate) etag: Option<headers::ETag>,
     pub(crate) content: Vec<u8>,
     pub(crate) compression: Option<CompressionAlgorithm>,
 }
@@ -68,6 +70,7 @@ pub(crate) struct StreamingBlob {
     pub(crate) path: String,
     pub(crate) mime: Mime,
     pub(crate) date_updated: DateTime<Utc>,
+    pub(crate) etag: Option<headers::ETag>,
     pub(crate) compression: Option<CompressionAlgorithm>,
     pub(crate) content_length: usize,
     pub(crate) content: Box<dyn AsyncRead + Unpin + Send>,
@@ -79,6 +82,7 @@ impl std::fmt::Debug for StreamingBlob {
             .field("path", &self.path)
             .field("mime", &self.mime)
             .field("date_updated", &self.date_updated)
+            .field("etag", &self.etag)
             .field("compression", &self.compression)
             .finish()
     }
@@ -94,6 +98,7 @@ impl StreamingBlob {
 
         self.content = wrap_reader_for_decompression(self.content, alg);
         self.compression = None;
+        // not touching the etag, they should represent the original content
         self
     }
 
@@ -109,6 +114,7 @@ impl StreamingBlob {
             path: self.path,
             mime: self.mime,
             date_updated: self.date_updated,
+            etag: self.etag, // downloading doesn't change the etag
             content: content.into_inner(),
             compression: self.compression,
         })
@@ -442,6 +448,7 @@ impl AsyncStorage {
             path: format!("{archive_path}/{path}"),
             mime: detect_mime(path),
             date_updated: blob.date_updated,
+            etag: blob.etag,
             content: blob.content,
             compression: None,
         })
@@ -472,6 +479,7 @@ impl AsyncStorage {
             mime: detect_mime(path),
             date_updated: blob.date_updated,
             content: blob.content,
+            etag: blob.etag,
             content_length: blob.content_length,
             compression: None,
         })
@@ -1057,6 +1065,7 @@ mod test {
             path: "some_path.db".into(),
             mime: mime::APPLICATION_OCTET_STREAM,
             date_updated: Utc::now(),
+            etag: None,
             compression: Some(alg),
             content_length: compressed_index_content.len(),
             content: Box::new(io::Cursor::new(compressed_index_content)),
