@@ -132,6 +132,11 @@ fn compile_sass_file(src: &Path, dest: &Path) -> Result<()> {
 fn compile_sass(out_dir: &Path) -> Result<()> {
     const STYLE_DIR: &str = "templates/style";
 
+    let md5_dest_path = Path::new(&out_dir).join("web_style_md5_map.rs");
+    let mut md5_file = File::create(md5_dest_path)?;
+
+    let mut md5_map = phf_codegen::Map::new();
+
     for entry in walkdir::WalkDir::new(STYLE_DIR) {
         let entry = entry?;
         if entry.metadata()?.is_dir() {
@@ -148,6 +153,14 @@ fn compile_sass(out_dir: &Path) -> Result<()> {
                 compile_sass_file(entry.path(), &dest).with_context(|| {
                     format!("compiling {} to {}", entry.path().display(), dest.display())
                 })?;
+
+                let bytes = std::fs::read(&dest)?;
+                let digest = md5::compute(bytes);
+                let md5_hex = format!("{:x}", digest);
+
+                let rel_str = dest.file_name().unwrap().to_string_lossy().to_string();
+                dbg!(&rel_str);
+                md5_map.entry(rel_str, format!("\"{md5_hex}\""));
             }
         }
     }
@@ -156,7 +169,19 @@ fn compile_sass(out_dir: &Path) -> Result<()> {
     let pure = tracked::read_to_string("vendor/pure-css/css/pure-min.css")?;
     let grids = tracked::read_to_string("vendor/pure-css/css/grids-responsive-min.css")?;
     let vendored = pure + &grids;
-    std::fs::write(out_dir.join("vendored").with_extension("css"), vendored)?;
+    std::fs::write(out_dir.join("vendored").with_extension("css"), &vendored)?;
+
+    let digest = md5::compute(&vendored.as_bytes());
+    let md5_hex = format!("{:x}", digest);
+
+    md5_map.entry("vendored.css".to_owned(), format!("\"{md5_hex}\""));
+
+    write!(
+        &mut md5_file,
+        "pub static WEB_STYLE_MD5_MAP: ::phf::Map<&'static str, &'static str> = {};\n",
+        md5_map.build()
+    )
+    .unwrap();
 
     Ok(())
 }

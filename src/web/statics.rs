@@ -1,5 +1,3 @@
-use crate::web::headers::compute_etag;
-
 use super::{cache::CachePolicy, metrics::request_recorder, routes::get_static};
 use axum::{
     Router as AxumRouter,
@@ -23,17 +21,23 @@ const RUSTDOC_2025_08_20_CSS: &str =
     include_str!(concat!(env!("OUT_DIR"), "/rustdoc-2025-08-20.css"));
 
 include!(concat!(env!("OUT_DIR"), "/web_static_md5_map.rs"));
+include!(concat!(env!("OUT_DIR"), "/web_style_md5_map.rs"));
 
-fn build_static_css_response(content: &'static str) -> impl IntoResponse {
+fn build_static_css_response(name: &str, content: &'static str) -> impl IntoResponse {
     let mut headers = HeaderMap::new();
     headers.insert(
         CONTENT_TYPE,
         HeaderValue::from_static(mime::TEXT_CSS.as_ref()),
     );
-    headers.typed_insert(
-        // FIXME: do this at build-time, either build-script, or `lhash` with its const md5 impl
-        compute_etag(content),
-    );
+
+    if let Some(md5) = WEB_STYLE_MD5_MAP.get(name) {
+        let etag: ETag = format!("\"{md5}\"")
+            .parse()
+            .expect("compile time generated, should always pass");
+        headers.typed_insert(etag);
+    } else {
+        panic!("no md5 found for name: {}\n{:?}", name, WEB_STYLE_MD5_MAP);
+    }
 
     (
         Extension(CachePolicy::ForeverInCdnAndBrowser),
@@ -88,23 +92,27 @@ pub(crate) fn build_static_router() -> AxumRouter {
     AxumRouter::new()
         .route(
             "/vendored.css",
-            get_static(|| async { build_static_css_response(VENDORED_CSS) }),
+            get_static(|| async { build_static_css_response("vendored.css", VENDORED_CSS) }),
         )
         .route(
             "/style.css",
-            get_static(|| async { build_static_css_response(STYLE_CSS) }),
+            get_static(|| async { build_static_css_response("style.css", STYLE_CSS) }),
         )
         .route(
             "/rustdoc.css",
-            get_static(|| async { build_static_css_response(RUSTDOC_CSS) }),
+            get_static(|| async { build_static_css_response("rustdoc.css", RUSTDOC_CSS) }),
         )
         .route(
             "/rustdoc-2021-12-05.css",
-            get_static(|| async { build_static_css_response(RUSTDOC_2021_12_05_CSS) }),
+            get_static(|| async {
+                build_static_css_response("rustdoc-2021-12-05.css", RUSTDOC_2021_12_05_CSS)
+            }),
         )
         .route(
             "/rustdoc-2025-08-20.css",
-            get_static(|| async { build_static_css_response(RUSTDOC_2025_08_20_CSS) }),
+            get_static(|| async {
+                build_static_css_response("rustdoc-2025-08-20.css", RUSTDOC_2025_08_20_CSS)
+            }),
         )
         .fallback_service(
             get_service(ServeDir::new("static").fallback(ServeDir::new("vendor")))
