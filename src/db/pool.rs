@@ -23,7 +23,9 @@ struct PoolMetrics {
 
 impl PoolMetrics {
     fn new(pool: sqlx::PgPool, meter: &metrics::Meter) -> Self {
-        const PREFIX: &str = "docsrs.db_pool";
+        const PREFIX: &str = "docsrs.db.pool";
+        // FIXME: semantic names?
+        // https://github.com/open-telemetry/semantic-conventions/blob/main/docs/database/database-metrics.md#metric-dbclientconnectioncount
         Self {
             failed_connections: meter
                 .u64_counter(format!("{PREFIX}.failed_connections"))
