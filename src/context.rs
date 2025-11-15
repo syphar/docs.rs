@@ -15,9 +15,11 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime;
 
+type AnyMetricProvider = Arc<dyn MeterProvider + Send + Sync>;
+
 /// opentelemetry metric provider setup,
 /// if no endpoint is configured, use a no-op provider
-fn get_metric_provider(config: &Config) -> Result<Arc<dyn MeterProvider + Send + Sync>> {
+pub(crate) fn get_metric_provider(config: &Config) -> Result<AnyMetricProvider> {
     if let Some(ref endpoint) = config.opentelemetry_endpoint {
         let exporter = opentelemetry_otlp::MetricExporter::builder()
             .with_tonic()
@@ -55,7 +57,7 @@ pub struct Context {
     pub registry_api: Arc<RegistryApi>,
     pub repository_stats_updater: Arc<RepositoryStatsUpdater>,
     pub runtime: runtime::Handle,
-    pub metric_provider: Arc<dyn MeterProvider + Send + Sync>,
+    pub metric_provider: AnyMetricProvider,
 }
 
 impl Context {
@@ -63,8 +65,15 @@ impl Context {
     #[cfg(not(test))]
     pub async fn from_config(config: Config) -> Result<Self> {
         let instance_metrics = Arc::new(InstanceMetrics::new()?);
-        let pool = Pool::new(&config, instance_metrics.clone()).await?;
-        Self::from_config_with_metrics_and_pool(config, instance_metrics, pool).await
+        let metric_provider = get_metric_provider(&config)?;
+        let pool = Pool::new(
+            &config,
+            instance_metrics.clone(),
+            &metric_provider.meter("pool"),
+        )
+        .await?;
+        Self::from_config_with_metrics_and_pool(config, instance_metrics, metric_provider, pool)
+            .await
     }
 
     /// Create a new context environment from the given configuration, for running tests.
@@ -72,9 +81,11 @@ impl Context {
     pub async fn from_config(
         config: Config,
         instance_metrics: Arc<InstanceMetrics>,
+        metric_provider: AnyMetricProvider,
         pool: Pool,
     ) -> Result<Self> {
-        Self::from_config_with_metrics_and_pool(config, instance_metrics, pool).await
+        Self::from_config_with_metrics_and_pool(config, instance_metrics, metric_provider, pool)
+            .await
     }
 
     /// private function for context environment generation, allows passing in a
@@ -83,14 +94,19 @@ impl Context {
     async fn from_config_with_metrics_and_pool(
         config: Config,
         instance_metrics: Arc<InstanceMetrics>,
+        metric_provider: AnyMetricProvider,
         pool: Pool,
     ) -> Result<Self> {
         let config = Arc::new(config);
 
-        let metric_provider = get_metric_provider(&config)?;
-
         let async_storage = Arc::new(
-            AsyncStorage::new(pool.clone(), instance_metrics.clone(), config.clone()).await?,
+            AsyncStorage::new(
+                pool.clone(),
+                instance_metrics.clone(),
+                config.clone(),
+                &metric_provider.meter("storage"),
+            )
+            .await?,
         );
 
         let async_build_queue = Arc::new(AsyncBuildQueue::new(
@@ -98,7 +114,7 @@ impl Context {
             instance_metrics.clone(),
             config.clone(),
             async_storage.clone(),
-            metric_provider.meter("storage"),
+            metric_provider.meter("build_queue"),
         ));
 
         let cdn = Arc::new(CdnBackend::new(&config).await);

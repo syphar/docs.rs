@@ -26,6 +26,7 @@ use dashmap::DashMap;
 use fn_error_context::context;
 use futures_util::{TryStreamExt as _, stream::BoxStream};
 use mime::Mime;
+use opentelemetry::metrics::{self, Counter};
 use path_slash::PathExt;
 use std::{
     fmt,
@@ -177,6 +178,22 @@ impl std::str::FromStr for StorageKind {
     }
 }
 
+#[derive(Debug)]
+struct StorageMetrics {
+    uploaded_files: Counter<u64>,
+}
+
+impl StorageMetrics {
+    fn new(meter: &metrics::Meter) -> Self {
+        const PREFIX: &str = "docsrs.storage";
+        Self {
+            uploaded_files: meter
+                .u64_counter(format!("{PREFIX}.uploaded_files"))
+                .build(),
+        }
+    }
+}
+
 enum StorageBackend {
     Database(DatabaseBackend),
     S3(Box<S3Backend>),
@@ -194,15 +211,18 @@ impl AsyncStorage {
         pool: Pool,
         metrics: Arc<InstanceMetrics>,
         config: Arc<Config>,
+        meter: &metrics::Meter,
     ) -> Result<Self> {
+        let otel_metrics = StorageMetrics::new(meter);
+
         Ok(Self {
             backend: match config.storage_backend {
                 StorageKind::Database => {
-                    StorageBackend::Database(DatabaseBackend::new(pool, metrics))
+                    StorageBackend::Database(DatabaseBackend::new(pool, metrics, otel_metrics))
                 }
-                StorageKind::S3 => {
-                    StorageBackend::S3(Box::new(S3Backend::new(metrics, &config).await?))
-                }
+                StorageKind::S3 => StorageBackend::S3(Box::new(
+                    S3Backend::new(metrics, &config, otel_metrics).await?,
+                )),
             },
             config,
             locks: DashMap::new(),
@@ -1787,6 +1807,7 @@ mod backend_tests {
             assert_eq!(blob.mime, actual.mime);
         }
 
+        // FIXME: otel metrics?
         assert_eq!(NAMES.len(), metrics.uploaded_files_total.get() as usize);
 
         Ok(())

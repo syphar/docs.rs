@@ -3,18 +3,7 @@
 https://github.com/open-telemetry/semantic-conventions/blob/main/docs/database/database-metrics.md#metric-dbclientconnectioncount
 
 
-/// The number of idle database connections
-idle_db_connections: IntGauge,
-/// The number of used database connections
-used_db_connections: IntGauge,
-/// The maximum number of database connections
-max_db_connections: IntGauge,
-/// Number of attempted and failed connections to the database
-pub(crate) failed_db_connections: IntCounter,
 
-
-/// Number of files uploaded to the storage backend
-pub(crate) uploaded_files_total: IntCounter,
 
 /// The number of attempted files that failed due to a memory limit
 pub(crate) html_rewrite_ooms: IntCounter,
@@ -33,6 +22,12 @@ pub(crate) im_feeling_lucky_searches: IntCounter,
 * pub(crate) build_time: prometheus::Histogram,
 * pub(crate) cdn_invalidation_time: prometheus::HistogramVec,
 * pub(crate) cdn_queue_time: prometheus::HistogramVec,
+* idle_db_connections: IntGauge,
+* used_db_connections: IntGauge,
+* max_db_connections: IntGauge,
+* pub(crate) failed_db_connections: IntCounter,
+* pub(crate) uploaded_files_total: IntCounter,
+
 
 
 ## this could be log-based metrics?
@@ -41,7 +36,7 @@ pub(crate) im_feeling_lucky_searches: IntCounter,
 * pub(crate) recent_platforms: IntGaugeVec["duration"],
 * pub(crate) recently_accessed_releases: RecentlyAccessedReleases,
 
-## replace web metrics? 
+## replace web metrics?
 https://github.com/ttys3/axum-otel-metrics
 
 /// The traffic of various docs.rs routes

@@ -149,6 +149,7 @@ impl Pool {
             }),
             Err(err) => {
                 self.metrics.failed_db_connections.inc();
+                self.otel_metrics.failed_connections.add(1, &[]);
                 Err(PoolError::AsyncClientError(err))
             }
         }

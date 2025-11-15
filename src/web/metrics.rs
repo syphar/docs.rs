@@ -9,8 +9,29 @@ use axum::{
     middleware::Next,
     response::IntoResponse,
 };
+use opentelemetry::metrics::{self, Counter};
 use prometheus::{Encoder, TextEncoder, proto::MetricFamily};
 use std::{borrow::Cow, future::Future, sync::Arc, time::Instant};
+
+#[derive(Debug)]
+struct WebMetrics {
+    html_rewrite_ooms: Counter<u64>,
+    im_feeling_lucky_searches: Counter<u64>,
+}
+
+impl WebMetrics {
+    fn new(meter: &metrics::Meter) -> Self {
+        const PREFIX: &str = "docsrs.web";
+        Self {
+            html_rewrite_ooms: meter
+                .u64_counter(format!("{PREFIX}.html_rewrite_ooms"))
+                .build(),
+            im_feeling_lucky_searches: meter
+                .u64_counter(format!("{PREFIX}.im_feeling_lucky_searches"))
+                .build(),
+        }
+    }
+}
 
 async fn fetch_and_render_metrics<Fut>(fetch_metrics: Fut) -> AxumResult<impl IntoResponse>
 where
