@@ -9,6 +9,10 @@ use crate::{
 };
 use anyhow::Error;
 use dashmap::DashMap;
+use opentelemetry::{
+    KeyValue,
+    metrics::{self, Gauge},
+};
 use prometheus::proto::MetricFamily;
 use std::{
     collections::HashSet,
@@ -374,5 +378,100 @@ impl ServiceMetrics {
         self.failed_crates_count
             .set(queue.failed_count().await? as i64);
         Ok(self.registry.gather())
+    }
+}
+
+#[derive(Debug)]
+pub struct OtelServiceMetrics {
+    pub queued_crates_count: Gauge<u64>,
+    pub prioritized_crates_count: Gauge<u64>,
+    pub failed_crates_count: Gauge<u64>,
+    pub queue_is_locked: Gauge<u64>,
+    pub queued_crates_count_by_priority: Gauge<u64>,
+    pub queued_cdn_invalidations_by_distribution: Gauge<u64>,
+}
+
+impl OtelServiceMetrics {
+    pub fn new(meter: &metrics::Meter) -> Self {
+        const PREFIX: &str = "docsrs.service";
+        Self {
+            queued_crates_count: meter
+                .u64_gauge(format!("{PREFIX}.queued_crates_count"))
+                .build(),
+            prioritized_crates_count: meter
+                .u64_gauge(format!("{PREFIX}.prioritized_crates_count"))
+                .build(),
+            failed_crates_count: meter
+                .u64_gauge(format!("{PREFIX}.failed_crates_count"))
+                .build(),
+            queue_is_locked: meter.u64_gauge(format!("{PREFIX}.queue_is_locked")).build(),
+            queued_crates_count_by_priority: meter
+                .u64_gauge(format!("{PREFIX}.queued_crates_count_by_priority"))
+                .build(),
+            queued_cdn_invalidations_by_distribution: meter
+                .u64_gauge(format!("{PREFIX}.queued_cdn_invalidations_by_distribution"))
+                .build(),
+        }
+    }
+
+    pub(crate) async fn gather(
+        &self,
+        pool: &Pool,
+        queue: &AsyncBuildQueue,
+        config: &Config,
+    ) -> Result<(), Error> {
+        self.queue_is_locked
+            .record(queue.is_locked().await? as u64, &[]);
+        self.queued_crates_count
+            .record(queue.pending_count().await? as u64, &[]);
+        self.prioritized_crates_count
+            .record(queue.prioritized_count().await? as u64, &[]);
+
+        let queue_pending_count = queue.pending_count_by_priority().await?;
+
+        // gauges keep their old value per label when it's not removed, reset to zero or updated.
+        // When a priority is used at least once, it would be kept in the metric and the last
+        // value would be remembered. `pending_count_by_priority` returns only the priorities
+        // that are currently in the queue, which means when the tasks for a priority are
+        // finished, we wouldn't update the metric anymore, which means a wrong value is
+        // in the metric.
+        //
+        // The solution is to reset the metric, and then set all priorities again.
+        // self.queued_crates_count_by_priority.reset();
+
+        // FIXME: how to solve the issue here? without reset?
+        // Perhaps switch to priorities per Enum? Then we know what's possbile.
+
+        // for commonly used priorities we want the value to be zero, and not missing,
+        // when there are no items in the queue with that priority.
+        // So we create a set of all priorities we want to be explicitly zeroed, combined
+        // with the actual priorities in the queue.
+        let all_priorities: HashSet<i32> =
+            queue_pending_count.keys().copied().chain(0..=20).collect();
+
+        for priority in all_priorities {
+            let count = queue_pending_count.get(&priority).unwrap_or(&0);
+
+            self.queued_crates_count_by_priority.record(
+                *count as u64,
+                &[KeyValue::new("priority", priority.to_string())],
+            );
+        }
+
+        let mut conn = pool.get_async().await?;
+        for (distribution_id, count) in
+            cdn::queued_or_active_crate_invalidation_count_by_distribution(&mut conn, config)
+                .await?
+        {
+            self.queued_cdn_invalidations_by_distribution.record(
+                count as u64,
+                &[KeyValue::new("distribution", distribution_id)],
+            );
+        }
+
+        self.failed_crates_count
+            .record(queue.failed_count().await? as u64, &[]);
+
+        Ok(())
     }
 }
