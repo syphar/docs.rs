@@ -1,12 +1,6 @@
 # TODO
 
 
-/// The number of attempted files that failed due to a memory limit
-pub(crate) html_rewrite_ooms: IntCounter,
-
-/// the number of "I'm feeling lucky" searches for crates
-pub(crate) im_feeling_lucky_searches: IntCounter,
-
 
 ## DONE
 * pub(crate) queued_builds: IntCounter,
@@ -23,6 +17,8 @@ pub(crate) im_feeling_lucky_searches: IntCounter,
 * max_db_connections: IntGauge,
 * pub(crate) failed_db_connections: IntCounter,
 * pub(crate) uploaded_files_total: IntCounter,
+* pub(crate) html_rewrite_ooms: IntCounter,
+* pub(crate) im_feeling_lucky_searches: IntCounter,
 
 
 
