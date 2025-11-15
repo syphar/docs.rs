@@ -1,5 +1,7 @@
 # TODO
 
+https://github.com/open-telemetry/semantic-conventions/blob/main/docs/database/database-metrics.md#metric-dbclientconnectioncount
+
 
 /// The number of idle database connections
 idle_db_connections: IntGauge,
