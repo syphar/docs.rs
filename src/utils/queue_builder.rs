@@ -1,7 +1,6 @@
 use crate::Context;
 use crate::{docbuilder::RustwideBuilder, utils::report_error};
 use anyhow::{Context as _, Error};
-use opentelemetry::metrics::{self, Counter};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::time::Duration;
 use std::{fs, io, path::Path, thread};

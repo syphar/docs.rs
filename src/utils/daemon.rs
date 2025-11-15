@@ -121,6 +121,8 @@ pub fn start_background_cdn_invalidator(context: &Context) -> Result<(), Error> 
     let runtime = context.runtime.clone();
     let cdn = context.cdn.clone();
 
+    let otel_metrics = Arc::new(cdn::CdnMetrics::new(&context.metric_provider.meter("cdn")));
+
     if config.cloudfront_distribution_id_web.is_none()
         && config.cloudfront_distribution_id_static.is_none()
     {
@@ -142,6 +144,7 @@ pub fn start_background_cdn_invalidator(context: &Context) -> Result<(), Error> 
             let config = config.clone();
             let cdn = cdn.clone();
             let metrics = metrics.clone();
+            let otel_metrics = otel_metrics.clone();
             async move {
                 let mut conn = pool.get_async().await?;
                 if let Some(distribution_id) = config.cloudfront_distribution_id_web.as_ref() {
@@ -149,6 +152,7 @@ pub fn start_background_cdn_invalidator(context: &Context) -> Result<(), Error> 
                         &config,
                         &cdn,
                         &metrics,
+                        &otel_metrics,
                         &mut conn,
                         distribution_id,
                     )
@@ -160,6 +164,7 @@ pub fn start_background_cdn_invalidator(context: &Context) -> Result<(), Error> 
                         &config,
                         &cdn,
                         &metrics,
+                        &otel_metrics,
                         &mut conn,
                         distribution_id,
                     )

@@ -1,6 +1,6 @@
 use opentelemetry::{
-    InstrumentationScope, KeyValue,
-    metrics::{InstrumentProvider, Meter, MeterProvider, SyncInstrument},
+    InstrumentationScope,
+    metrics::{InstrumentProvider, Meter, MeterProvider},
 };
 use std::sync::Arc;
 
@@ -40,22 +40,3 @@ impl NoopMeter {
 }
 
 impl InstrumentProvider for NoopMeter {}
-
-/// A no-op sync instrument
-#[derive(Debug, Default)]
-pub(crate) struct NoopSyncInstrument {
-    _private: (),
-}
-
-impl NoopSyncInstrument {
-    /// Create a new no-op sync instrument
-    pub(crate) fn new() -> Self {
-        NoopSyncInstrument { _private: () }
-    }
-}
-
-impl<T> SyncInstrument<T> for NoopSyncInstrument {
-    fn measure(&self, _value: T, _attributes: &[KeyValue]) {
-        // Ignored
-    }
-}

@@ -15,7 +15,9 @@ use axum::body::Bytes;
 use axum::{Router, body::Body, http::Request, response::Response as AxumResponse};
 use fn_error_context::context;
 use futures_util::stream::TryStreamExt;
-use http_body_util::BodyExt; // for `collect`
+use http_body_util::BodyExt;
+use opentelemetry::metrics::MeterProvider;
+// for `collect`
 use serde::de::DeserializeOwned;
 use sqlx::Connection as _;
 use std::{fs, future::Future, panic, rc::Rc, str::FromStr, sync::Arc};
@@ -420,6 +422,10 @@ impl TestEnvironment {
 
     pub(crate) fn instance_metrics(&self) -> &InstanceMetrics {
         &self.context.instance_metrics
+    }
+
+    pub(crate) fn metric_provider(&self) -> Arc<dyn MeterProvider + Send + Sync> {
+        self.context.metric_provider.clone()
     }
 
     pub(crate) fn runtime(&self) -> &runtime::Handle {
