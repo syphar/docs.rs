@@ -12,11 +12,33 @@ use crate::{
 use anyhow::Context as _;
 use fn_error_context::context;
 use futures_util::{StreamExt, stream::TryStreamExt};
-use opentelemetry::metrics::{self, Counter, Gauge};
+use opentelemetry::metrics::{self, Counter, Histogram};
 use sqlx::Connection as _;
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, time::Instant};
 use tokio::runtime;
 use tracing::{debug, error, info, instrument, warn};
+
+#[derive(Debug)]
+struct BuildQueueMetrics {
+    total_builds: Counter<u64>,
+    queued_builds: Counter<u64>,
+    build_time: Histogram<f64>,
+    // this metric is duplicated between BuildQueueMetrics & BuilderMetrics,
+    // not sure how to handle this
+    failed_builds: Counter<u64>,
+}
+
+impl BuildQueueMetrics {
+    fn new(meter: &metrics::Meter) -> Self {
+        const PREFIX: &str = "docsrs.build_queue";
+        Self {
+            total_builds: meter.u64_counter(format!("{PREFIX}.total_builds")).build(),
+            queued_builds: meter.u64_counter(format!("{PREFIX}.queued_builds")).build(),
+            build_time: meter.f64_histogram(format!("{PREFIX}.build_time")).build(),
+            failed_builds: meter.u64_counter(format!("{PREFIX}.failed_builds")).build(),
+        }
+    }
+}
 
 /// The static priority for background rebuilds.
 /// Used when queueing rebuilds, and when rendering them
@@ -41,6 +63,7 @@ pub struct AsyncBuildQueue {
     storage: Arc<AsyncStorage>,
     pub(crate) db: Pool,
     metrics: Arc<InstanceMetrics>,
+    otel_metrics: BuildQueueMetrics,
     max_attempts: i32,
 }
 
@@ -58,6 +81,7 @@ impl AsyncBuildQueue {
             db,
             metrics,
             storage,
+            otel_metrics: BuildQueueMetrics::new(&meter),
         }
     }
 
@@ -543,13 +567,17 @@ impl BuildQueue {
             None => return Ok(()),
         };
 
-        let res = self
-            .inner
-            .metrics
-            .build_time
-            .observe_closure_duration(|| f(&to_process));
+        let res = {
+            let instant = Instant::now();
+            let res = f(&to_process);
+            let elapsed = instant.elapsed().as_secs_f64();
+            self.inner.metrics.build_time.observe(elapsed);
+            self.inner.otel_metrics.build_time.record(elapsed, &[]);
+            res
+        };
 
         self.inner.metrics.total_builds.inc();
+        self.inner.otel_metrics.total_builds.add(1, &[]);
         if let Err(err) = self.runtime.block_on(cdn::queue_crate_invalidation(
             &mut transaction,
             &self.inner.config,
@@ -574,6 +602,7 @@ impl BuildQueue {
 
             if attempt >= self.inner.max_attempts {
                 self.inner.metrics.failed_builds.inc();
+                self.inner.otel_metrics.failed_builds.add(1, &[]);
             }
             Ok(())
         };
@@ -1050,6 +1079,7 @@ mod tests {
 
         // Ensure metrics were recorded correctly
         let metrics = env.instance_metrics();
+        // FIXME: how to test for the otal metrics?
         assert_eq!(metrics.total_builds.get(), 9);
         assert_eq!(metrics.failed_builds.get(), 1);
         assert_eq!(metrics.build_time.get_sample_count(), 9);

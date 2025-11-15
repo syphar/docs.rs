@@ -134,7 +134,6 @@ pub struct Config {
     // opentelemetry endpoint to send OTLP to
     pub(crate) opentelemetry_endpoint: Option<Url>,
 }
-// OTEL_EXPORTER_OTLP_ENDPOINT
 
 impl Config {
     pub fn from_env() -> Result<ConfigBuilder> {

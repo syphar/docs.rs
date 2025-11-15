@@ -24,6 +24,7 @@ use crate::{
 use anyhow::{Context as _, Error, anyhow, bail};
 use docsrs_metadata::{BuildTargets, DEFAULT_TARGETS, HOST_TARGET, Metadata};
 use itertools::Itertools as _;
+use opentelemetry::metrics::{self, Counter, Histogram};
 use regex::Regex;
 use rustwide::{
     AlternativeRegistry, Build, Crate, Toolchain, Workspace, WorkspaceBuilder,
@@ -113,6 +114,34 @@ pub enum PackageKind<'a> {
     Registry(&'a str),
 }
 
+#[derive(Debug)]
+struct BuilderMetrics {
+    successful_builds: Counter<u64>,
+    failed_builds: Counter<u64>,
+    non_library_builds: Counter<u64>,
+    documentation_size: Histogram<u64>,
+}
+
+impl BuilderMetrics {
+    fn new(meter: &metrics::Meter) -> Self {
+        const PREFIX: &str = "docsrs.builder";
+        Self {
+            successful_builds: meter
+                .u64_counter(format!("{PREFIX}.successful_builds"))
+                .build(),
+            failed_builds: meter.u64_counter(format!("{PREFIX}.failed_builds")).build(),
+            non_library_builds: meter
+                .u64_counter(format!("{PREFIX}.non_library_builds_builds"))
+                .build(),
+            documentation_size: meter
+                .u64_histogram(format!("{PREFIX}.documentation_size"))
+                .with_unit("bytes")
+                .with_description("size of the generated documentation in bytes")
+                .build(),
+        }
+    }
+}
+
 pub struct RustwideBuilder {
     workspace: Workspace,
     toolchain: Toolchain,
@@ -125,6 +154,7 @@ pub struct RustwideBuilder {
     registry_api: Arc<RegistryApi>,
     repository_stats_updater: Arc<RepositoryStatsUpdater>,
     workspace_initialize_time: Instant,
+    otel_metrics: BuilderMetrics,
 }
 
 impl RustwideBuilder {
@@ -133,6 +163,8 @@ impl RustwideBuilder {
             let mut conn = context.pool.get_async().await?;
             get_configured_toolchain(&mut conn).await
         })?;
+
+        let meter = context.metric_provider.meter("builder");
 
         Ok(RustwideBuilder {
             workspace: build_workspace(context)?,
@@ -146,6 +178,7 @@ impl RustwideBuilder {
             registry_api: context.registry_api.clone(),
             repository_stats_updater: context.repository_stats_updater.clone(),
             workspace_initialize_time: Instant::now(),
+            otel_metrics: BuilderMetrics::new(&meter),
         })
     }
 
@@ -732,6 +765,7 @@ impl RustwideBuilder {
                     self.metrics
                         .documentation_size
                         .observe(documentation_size as f64 / 1024.0 / 1024.0);
+                    self.otel_metrics.documentation_size.record(documentation_size, &[]);
                     algs.insert(new_alg);
                     Some(documentation_size)
                 } else {
@@ -766,10 +800,13 @@ impl RustwideBuilder {
 
                 if res.result.successful {
                     self.metrics.successful_builds.inc();
+                    self.otel_metrics.successful_builds.add(1, &[]);
                 } else if res.cargo_metadata.root().is_library() {
                     self.metrics.failed_builds.inc();
+                    self.otel_metrics.failed_builds.add(1, &[]);
                 } else {
                     self.metrics.non_library_builds.inc();
+                    self.otel_metrics.non_library_builds.add(1, &[]);
                 }
 
                 let release_data = if !is_local {

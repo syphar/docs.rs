@@ -15,20 +15,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::runtime;
 
-// get_resource returns a Resource containing information about the environment
-// The Resource is used to provide context to Traces, Metrics and Logs
-// It is created by merging the results of multiple ResourceDetectors
-// The ResourceDetectors are responsible for detecting information about the environment
-fn get_resource() -> Resource {
-    Resource::builder()
-        .with_detector(Box::new(OsResourceDetector))
-        .with_detector(Box::new(ProcessResourceDetector))
-        .build()
-}
-
 /// opentelemetry metric provider setup,
 /// if no endpoint is configured, use a no-op provider
-fn get_metric_provider(config: &Config) -> Arc<dyn MeterProvider + Send + Sync> {
+fn get_metric_provider(config: &Config) -> Result<Arc<dyn MeterProvider + Send + Sync>> {
     if let Some(ref endpoint) = config.opentelemetry_endpoint {
         let exporter = opentelemetry_otlp::MetricExporter::builder()
             .with_tonic()
@@ -39,12 +28,17 @@ fn get_metric_provider(config: &Config) -> Arc<dyn MeterProvider + Send + Sync> 
 
         let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
             .with_periodic_exporter(exporter)
-            .with_resource(get_resource())
+            .with_resource(
+                Resource::builder()
+                    .with_detector(Box::new(OsResourceDetector))
+                    .with_detector(Box::new(ProcessResourceDetector))
+                    .build(),
+            )
             .build();
 
-        Arc::new(provider)
+        Ok(Arc::new(provider))
     } else {
-        Arc::new(NoopMeterProvider::new())
+        Ok(Arc::new(NoopMeterProvider::new()))
     }
 }
 
@@ -61,7 +55,7 @@ pub struct Context {
     pub registry_api: Arc<RegistryApi>,
     pub repository_stats_updater: Arc<RepositoryStatsUpdater>,
     pub runtime: runtime::Handle,
-    metric_provider: Arc<dyn MeterProvider + Send + Sync>,
+    pub metric_provider: Arc<dyn MeterProvider + Send + Sync>,
 }
 
 impl Context {
@@ -93,7 +87,7 @@ impl Context {
     ) -> Result<Self> {
         let config = Arc::new(config);
 
-        let metric_provider = get_metric_provider(&config);
+        let metric_provider = get_metric_provider(&config)?;
 
         let async_storage = Arc::new(
             AsyncStorage::new(pool.clone(), instance_metrics.clone(), config.clone()).await?,
