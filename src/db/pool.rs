@@ -16,9 +16,9 @@ const DEFAULT_SCHEMA: &str = "public";
 #[derive(Debug)]
 struct PoolMetrics {
     failed_connections: Counter<u64>,
-    idle_connections: ObservableGauge<u64>,
-    used_connections: ObservableGauge<u64>,
-    max_connections: ObservableGauge<u64>,
+    _idle_connections: ObservableGauge<u64>,
+    _used_connections: ObservableGauge<u64>,
+    _max_connections: ObservableGauge<u64>,
 }
 
 impl PoolMetrics {
@@ -30,7 +30,7 @@ impl PoolMetrics {
             failed_connections: meter
                 .u64_counter(format!("{PREFIX}.failed_connections"))
                 .build(),
-            idle_connections: meter
+            _idle_connections: meter
                 .u64_observable_gauge(format!("{PREFIX}.idle_connections"))
                 .with_callback({
                     let pool = pool.clone();
@@ -39,7 +39,7 @@ impl PoolMetrics {
                     }
                 })
                 .build(),
-            used_connections: meter
+            _used_connections: meter
                 .u64_observable_gauge(format!("{PREFIX}.used_connections"))
                 .with_callback({
                     let pool = pool.clone();
@@ -49,7 +49,7 @@ impl PoolMetrics {
                     }
                 })
                 .build(),
-            max_connections: meter
+            _max_connections: meter
                 .u64_observable_gauge(format!("{PREFIX}.max_connections"))
                 .with_callback({
                     let pool = pool.clone();

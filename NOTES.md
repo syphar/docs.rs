@@ -1,9 +1,5 @@
 # TODO
 
-https://github.com/open-telemetry/semantic-conventions/blob/main/docs/database/database-metrics.md#metric-dbclientconnectioncount
-
-
-
 
 /// The number of attempted files that failed due to a memory limit
 pub(crate) html_rewrite_ooms: IntCounter,

@@ -9,18 +9,25 @@ use axum::{
     middleware::Next,
     response::IntoResponse,
 };
-use opentelemetry::metrics::{self, Counter};
+use opentelemetry::{
+    KeyValue,
+    metrics::{self, Counter, Histogram},
+};
 use prometheus::{Encoder, TextEncoder, proto::MetricFamily};
 use std::{borrow::Cow, future::Future, sync::Arc, time::Instant};
 
 #[derive(Debug)]
-struct WebMetrics {
-    html_rewrite_ooms: Counter<u64>,
-    im_feeling_lucky_searches: Counter<u64>,
+pub(crate) struct WebMetrics {
+    pub(crate) html_rewrite_ooms: Counter<u64>,
+    pub(crate) im_feeling_lucky_searches: Counter<u64>,
+
+    // check if these could be log-based metrics too?
+    routes_visited: Counter<u64>,
+    response_time: Histogram<f64>,
 }
 
 impl WebMetrics {
-    fn new(meter: &metrics::Meter) -> Self {
+    pub(crate) fn new(meter: &metrics::Meter) -> Self {
         const PREFIX: &str = "docsrs.web";
         Self {
             html_rewrite_ooms: meter
@@ -28,6 +35,12 @@ impl WebMetrics {
                 .build(),
             im_feeling_lucky_searches: meter
                 .u64_counter(format!("{PREFIX}.im_feeling_lucky_searches"))
+                .build(),
+            routes_visited: meter
+                .u64_counter(format!("{PREFIX}.routes_visited"))
+                .build(),
+            response_time: meter
+                .f64_histogram(format!("{PREFIX}.routes_visited"))
                 .build(),
         }
     }
@@ -113,18 +126,31 @@ pub(crate) async fn request_recorder(
         .expect("metrics missing in request extensions")
         .clone();
 
+    let otel_metrics = request
+        .extensions()
+        .get::<Arc<WebMetrics>>()
+        .expect("otel metrics missing in request extensions")
+        .clone();
+
     let start = Instant::now();
     let result = next.run(request).await;
     let resp_time = duration_to_seconds(start.elapsed());
+
+    let attrs = [KeyValue::new("route", route_name.to_string())];
 
     metrics
         .routes_visited
         .with_label_values(&[&route_name])
         .inc();
+
+    otel_metrics.routes_visited.add(1, &attrs);
+
     metrics
         .response_time
         .with_label_values(&[&route_name])
         .observe(resp_time);
+
+    otel_metrics.response_time.record(resp_time, &attrs);
 
     result
 }
