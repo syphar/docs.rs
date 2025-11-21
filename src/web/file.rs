@@ -56,6 +56,8 @@ impl StreamingFile {
     }
 
     pub fn into_response(self, if_none_match: Option<IfNoneMatch>) -> AxumResponse {
+        const CACHE_POLICY: CachePolicy = CachePolicy::ForeverInCdnAndBrowser;
+
         if let Some(ref if_none_match) = if_none_match
             && let Some(ref etag) = self.0.etag
             && !if_none_match.precondition_passes(etag)
@@ -63,24 +65,25 @@ impl StreamingFile {
             return (
                 StatusCode::NOT_MODIFIED,
                 TypedHeader(etag.clone()),
-                Extension(CachePolicy::ForeverInCdnAndBrowser),
+                // it's generally a good idea to repeat caching headers on 304 responses
+                Extension(CACHE_POLICY),
             )
                 .into_response();
+        } else {
+            // Convert the AsyncBufRead into a Stream of Bytes
+            let stream = ReaderStream::new(self.0.content);
+
+            let last_modified: SystemTime = self.0.date_updated.into();
+            (
+                StatusCode::OK,
+                TypedHeader(ContentType::from(self.0.mime)),
+                TypedHeader(LastModified::from(last_modified)),
+                self.0.etag.map(TypedHeader),
+                Extension(CACHE_POLICY),
+                Body::from_stream(stream),
+            )
+                .into_response()
         }
-
-        // Convert the AsyncBufRead into a Stream of Bytes
-        let stream = ReaderStream::new(self.0.content);
-
-        let last_modified: SystemTime = self.0.date_updated.into();
-        (
-            StatusCode::OK,
-            TypedHeader(ContentType::from(self.0.mime)),
-            TypedHeader(LastModified::from(last_modified)),
-            self.0.etag.map(TypedHeader),
-            Extension(CachePolicy::ForeverInCdnAndBrowser),
-            Body::from_stream(stream),
-        )
-            .into_response()
     }
 }
 
@@ -91,6 +94,8 @@ mod tests {
     use chrono::Utc;
     use http::header::{CACHE_CONTROL, LAST_MODIFIED};
     use std::rc::Rc;
+
+    // FIXME: add tests for conditional get in `StreamingFile::into_response`
 
     #[tokio::test(flavor = "multi_thread")]
     async fn file_roundtrip_axum() -> Result<()> {
@@ -110,6 +115,7 @@ mod tests {
         file.0.date_updated = now;
 
         let resp = file.into_response(None);
+        assert!(resp.status().is_success());
         assert!(resp.headers().get(CACHE_CONTROL).is_none());
         let cache = resp
             .extensions()

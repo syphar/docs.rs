@@ -947,6 +947,10 @@ mod test {
     use test_case::test_case;
     use tracing::info;
 
+    // FIXME: more tests for static asset serving that now
+    // * gets etags
+    // * does conditional get / 304
+
     async fn try_latest_version_redirect(
         path: &str,
         web: &axum::Router,

@@ -351,6 +351,8 @@ mod tests {
     use reqwest::StatusCode;
     use test_case::test_case;
 
+    // FIXME: add tests for the etag & conditional get for raw source assets returned
+
     fn get_file_list_links(body: &str) -> Vec<String> {
         let dom = kuchikiki::parse_html().one(body);
 
