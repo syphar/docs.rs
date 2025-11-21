@@ -22,6 +22,7 @@ use crate::{
     utils::spawn_blocking,
 };
 use anyhow::{anyhow, bail};
+use axum_extra::headers;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use fn_error_context::context;
@@ -60,11 +61,12 @@ type FileRange = RangeInclusive<u64>;
 #[error("path not found")]
 pub(crate) struct PathNotFoundError;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Blob {
     pub(crate) path: String,
     pub(crate) mime: Mime,
     pub(crate) date_updated: DateTime<Utc>,
+    pub(crate) etag: Option<headers::ETag>,
     pub(crate) content: Vec<u8>,
     pub(crate) compression: Option<CompressionAlgorithm>,
 }
@@ -79,6 +81,7 @@ pub(crate) struct StreamingBlob {
     pub(crate) path: String,
     pub(crate) mime: Mime,
     pub(crate) date_updated: DateTime<Utc>,
+    pub(crate) etag: Option<headers::ETag>,
     pub(crate) compression: Option<CompressionAlgorithm>,
     pub(crate) content_length: usize,
     pub(crate) content: Box<dyn AsyncBufRead + Unpin + Send>,
@@ -90,6 +93,7 @@ impl std::fmt::Debug for StreamingBlob {
             .field("path", &self.path)
             .field("mime", &self.mime)
             .field("date_updated", &self.date_updated)
+            .field("etag", &self.etag)
             .field("compression", &self.compression)
             .finish()
     }
@@ -124,6 +128,7 @@ impl StreamingBlob {
         );
 
         self.compression = None;
+        // not touching the etag, it should represent the original content
         Ok(self)
     }
 
@@ -138,9 +143,24 @@ impl StreamingBlob {
             path: self.path,
             mime: self.mime,
             date_updated: self.date_updated,
+            etag: self.etag, // downloading doesn't change the etag
             content: content.into_inner(),
             compression: self.compression,
         })
+    }
+}
+
+impl From<Blob> for StreamingBlob {
+    fn from(value: Blob) -> Self {
+        Self {
+            path: value.path,
+            mime: value.mime,
+            date_updated: value.date_updated,
+            etag: value.etag,
+            compression: value.compression,
+            content_length: value.content.len(),
+            content: Box::new(io::Cursor::new(value.content)),
+        }
     }
 }
 
@@ -570,6 +590,7 @@ impl AsyncStorage {
                         path: format!("{archive_path}/{path}"),
                         mime: detect_mime(path),
                         date_updated: stream.date_updated,
+                        etag: stream.etag,
                         content: stream.content,
                         content_length: stream.content_length,
                         compression: None,
@@ -688,6 +709,7 @@ impl AsyncStorage {
                 mime: mimes::APPLICATION_ZIP.clone(),
                 content: zip_content,
                 compression: None,
+                etag: None, // not needed when uploading
                 date_updated: Utc::now(),
             },
             Blob {
@@ -696,6 +718,7 @@ impl AsyncStorage {
                 content: compressed_index_content,
                 compression: Some(alg),
                 date_updated: Utc::now(),
+                etag: None, // not needed when uploading
             },
         ])
         .await?;
@@ -745,8 +768,9 @@ impl AsyncStorage {
                         mime,
                         content,
                         compression: Some(alg),
-                        // this field is ignored by the backend
+                        // these fields are ignored by the backend
                         date_updated: Utc::now(),
+                        etag: None,
                     });
                 }
                 Ok((blobs, file_paths))
@@ -780,8 +804,9 @@ impl AsyncStorage {
             mime,
             content,
             compression: None,
-            // this field is ignored by the backend
+            // these fields are ignored by the backend
             date_updated: Utc::now(),
+            etag: None,
         }])
         .await?;
 
@@ -807,8 +832,9 @@ impl AsyncStorage {
             mime,
             content,
             compression: Some(alg),
-            // this field is ignored by the backend
+            // these fields are ignored by the backend
             date_updated: Utc::now(),
+            etag: None,
         }])
         .await?;
 
@@ -834,8 +860,9 @@ impl AsyncStorage {
             mime,
             content,
             compression: Some(alg),
-            // this field is ignored by the backend
+            // these fields are ignored by the backend
             date_updated: Utc::now(),
+            etag: None,
         }])
         .await?;
 
@@ -1264,7 +1291,7 @@ pub(crate) fn source_archive_path(name: &str, version: &Version) -> String {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::test::TestEnvironment;
+    use crate::{test::TestEnvironment, web::headers::compute_etag};
     use std::env;
     use test_case::test_case;
 
@@ -1280,6 +1307,7 @@ mod test {
             mime: mime::APPLICATION_OCTET_STREAM,
             date_updated: Utc::now(),
             compression: alg,
+            etag: Some(compute_etag(&content)),
             content_length: content.len(),
             content: Box::new(io::Cursor::new(content)),
         }
@@ -1421,6 +1449,7 @@ mod test {
             path: "some_path.db".into(),
             mime: mime::APPLICATION_OCTET_STREAM,
             date_updated: Utc::now(),
+            etag: None,
             compression: Some(alg),
             content_length: compressed_index_content.len(),
             content: Box::new(io::Cursor::new(compressed_index_content)),
@@ -1640,6 +1669,7 @@ mod backend_tests {
             date_updated: Utc::now(),
             content: "Hello world!".into(),
             compression: None,
+            etag: None,
         };
         storage.store_blobs(vec![blob])?;
         assert!(storage.exists("path/to/file.txt")?);
@@ -1656,6 +1686,7 @@ mod backend_tests {
             date_updated: Utc::now(),
             compression: None,
             content: b"test content\n".to_vec(),
+            etag: None,
         }])?;
 
         assert!(!storage.get_public_access(path)?);
@@ -1683,6 +1714,7 @@ mod backend_tests {
             path: path.into(),
             mime: mime::TEXT_PLAIN,
             date_updated: Utc::now(),
+            etag: None,
             compression: None,
             content: b"test content\n".to_vec(),
         };
@@ -1722,6 +1754,7 @@ mod backend_tests {
             path: "foo/bar.txt".into(),
             mime: mime::TEXT_PLAIN,
             date_updated: Utc::now(),
+            etag: None,
             compression: None,
             content: b"test content\n".to_vec(),
         };
@@ -1764,6 +1797,7 @@ mod backend_tests {
                     path: filename.into(),
                     mime: mime::TEXT_PLAIN,
                     date_updated: Utc::now(),
+                    etag: None,
                     compression: None,
                     content: b"test content\n".to_vec(),
                 })
@@ -1807,6 +1841,7 @@ mod backend_tests {
             path: "small-blob.bin".into(),
             mime: mime::TEXT_PLAIN,
             date_updated: Utc::now(),
+            etag: None,
             content: vec![0; MAX_SIZE],
             compression: None,
         };
@@ -1814,6 +1849,7 @@ mod backend_tests {
             path: "big-blob.bin".into(),
             mime: mime::TEXT_PLAIN,
             date_updated: Utc::now(),
+            etag: None,
             content: vec![0; MAX_SIZE * 2],
             compression: None,
         };
@@ -1855,6 +1891,7 @@ mod backend_tests {
                 path: path.into(),
                 mime: mime::TEXT_PLAIN,
                 date_updated: Utc::now(),
+                etag: None,
                 compression: None,
                 content: b"Hello world!\n".to_vec(),
             })
@@ -2018,6 +2055,7 @@ mod backend_tests {
                     content,
                     path: format!("{i}.rs"),
                     date_updated: now,
+                    etag: None,
                     compression: None,
                 }
             })
@@ -2081,6 +2119,7 @@ mod backend_tests {
                     compression: None,
                     mime: mime::TEXT_PLAIN,
                     date_updated: Utc::now(),
+                    etag: None,
                 })
                 .collect(),
         )?;

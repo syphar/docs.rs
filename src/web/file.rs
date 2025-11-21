@@ -1,6 +1,6 @@
 //! Database based file handler
 
-use super::cache::CachePolicy;
+use super::{cache::CachePolicy, headers::IfNoneMatch};
 use crate::{
     Config,
     error::Result,
@@ -9,12 +9,14 @@ use crate::{
 use axum::{
     body::Body,
     extract::Extension,
-    http::{
-        StatusCode,
-        header::{CONTENT_TYPE, LAST_MODIFIED},
-    },
+    http::StatusCode,
     response::{IntoResponse, Response as AxumResponse},
 };
+use axum_extra::{
+    TypedHeader,
+    headers::{ContentType, LastModified},
+};
+use std::time::SystemTime;
 use tokio_util::io::ReaderStream;
 
 #[derive(Debug)]
@@ -37,21 +39,10 @@ impl File {
     }
 }
 
-impl IntoResponse for File {
-    fn into_response(self) -> AxumResponse {
-        (
-            StatusCode::OK,
-            [
-                (CONTENT_TYPE, self.0.mime.as_ref()),
-                (
-                    LAST_MODIFIED,
-                    &self.0.date_updated.format("%a, %d %b %Y %T %Z").to_string(),
-                ),
-            ],
-            Extension(CachePolicy::ForeverInCdnAndBrowser),
-            self.0.content,
-        )
-            .into_response()
+impl File {
+    pub fn into_response(self, if_none_match: Option<IfNoneMatch>) -> AxumResponse {
+        let streaming_blob: StreamingBlob = self.0.into();
+        StreamingFile(streaming_blob).into_response(if_none_match)
     }
 }
 
@@ -63,24 +54,31 @@ impl StreamingFile {
     pub(super) async fn from_path(storage: &AsyncStorage, path: &str) -> Result<StreamingFile> {
         Ok(StreamingFile(storage.get_stream(path).await?))
     }
-}
 
-impl IntoResponse for StreamingFile {
-    fn into_response(self) -> AxumResponse {
+    pub fn into_response(self, if_none_match: Option<IfNoneMatch>) -> AxumResponse {
+        if let Some(ref if_none_match) = if_none_match
+            && let Some(ref etag) = self.0.etag
+            && !if_none_match.precondition_passes(etag)
+        {
+            return (
+                StatusCode::NOT_MODIFIED,
+                TypedHeader(etag.clone()),
+                Extension(CachePolicy::ForeverInCdnAndBrowser),
+            )
+                .into_response();
+        }
+
         // Convert the AsyncBufRead into a Stream of Bytes
         let stream = ReaderStream::new(self.0.content);
-        let body = Body::from_stream(stream);
+
+        let last_modified: SystemTime = self.0.date_updated.into();
         (
             StatusCode::OK,
-            [
-                (CONTENT_TYPE, self.0.mime.as_ref()),
-                (
-                    LAST_MODIFIED,
-                    &self.0.date_updated.format("%a, %d %b %Y %T %Z").to_string(),
-                ),
-            ],
+            TypedHeader(ContentType::from(self.0.mime)),
+            TypedHeader(LastModified::from(last_modified)),
+            self.0.etag.map(TypedHeader),
             Extension(CachePolicy::ForeverInCdnAndBrowser),
-            body,
+            Body::from_stream(stream),
         )
             .into_response()
     }
@@ -91,7 +89,7 @@ mod tests {
     use super::*;
     use crate::test::TestEnvironment;
     use chrono::Utc;
-    use http::header::CACHE_CONTROL;
+    use http::header::{CACHE_CONTROL, LAST_MODIFIED};
     use std::rc::Rc;
 
     #[tokio::test(flavor = "multi_thread")]
@@ -111,7 +109,7 @@ mod tests {
 
         file.0.date_updated = now;
 
-        let resp = file.into_response();
+        let resp = file.into_response(None);
         assert!(resp.headers().get(CACHE_CONTROL).is_none());
         let cache = resp
             .extensions()

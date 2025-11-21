@@ -13,6 +13,7 @@ use crate::{
         },
         file::File as DbFile,
         headers::CanonicalUrl,
+        headers::IfNoneMatch,
         match_version,
         page::templates::{RenderBrands, RenderRegular, RenderSolid, filters},
     },
@@ -20,7 +21,7 @@ use crate::{
 use anyhow::{Context as _, Result};
 use askama::Template;
 use axum::{Extension, response::IntoResponse};
-use axum_extra::headers::HeaderMapExt;
+use axum_extra::{TypedHeader, headers::HeaderMapExt};
 use mime::Mime;
 use std::{cmp::Ordering, sync::Arc};
 use tracing::instrument;
@@ -189,7 +190,9 @@ pub(crate) async fn source_browser_handler(
     params: RustdocParams,
     Extension(storage): Extension<Arc<AsyncStorage>>,
     mut conn: DbConnection,
+    if_none_match: Option<TypedHeader<IfNoneMatch>>,
 ) -> AxumResult<impl IntoResponse> {
+    let if_none_match = if_none_match.map(|th| th.0);
     let params = params.with_page_kind(PageKind::Source);
     let matched_release = match_version(&mut conn, params.name(), params.req_version())
         .await?
@@ -281,7 +284,7 @@ pub(crate) async fn source_browser_handler(
         let is_text = blob.mime.type_() == mime::TEXT || blob.mime == mime::APPLICATION_JSON;
         // serve the file with DatabaseFileHandler if file isn't text and not empty
         if !is_text && !blob.is_empty() {
-            let mut response = DbFile(blob).into_response();
+            let mut response = DbFile(blob).into_response(if_none_match);
             response.headers_mut().typed_insert(canonical_url);
             response
                 .extensions_mut()
