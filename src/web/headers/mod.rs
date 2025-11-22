@@ -5,7 +5,7 @@ mod surrogate_key;
 pub use canonical_url::CanonicalUrl;
 use http::HeaderName;
 pub(crate) use if_none_match::IfNoneMatch;
-pub use surrogate_key::{SURROGATE_KEY, SurrogateKey, SurrogateKeys};
+pub use surrogate_key::{SurrogateKey, SurrogateKeys, SURROGATE_KEY};
 
 /// Fastly's Surrogate-Control header
 /// https://www.fastly.com/documentation/reference/http/http-headers/Surrogate-Control/
