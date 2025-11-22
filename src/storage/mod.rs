@@ -1672,7 +1672,6 @@ mod backend_tests {
             mime: mime::TEXT_PLAIN,
             content: "Hello world!".into(),
             compression: None,
-            etag: None,
         };
         storage.store_blobs(vec![blob])?;
         assert!(storage.exists("path/to/file.txt")?);
@@ -1688,7 +1687,6 @@ mod backend_tests {
             mime: mime::TEXT_PLAIN,
             compression: None,
             content: b"test content\n".to_vec(),
-            etag: None,
         }])?;
 
         assert!(!storage.get_public_access(path)?);
