@@ -143,7 +143,20 @@ pub(crate) async fn request_recorder(
     let result = next.run(request).await;
     let resp_time = start.elapsed().as_secs_f64();
 
-    let attrs = [KeyValue::new("route", route_name.to_string())];
+    let status_kind = match result.status() {
+        StatusCode::NOT_MODIFIED => "not_modified",
+        s if s.is_informational() => "informational",
+        s if s.is_success() => "success",
+        s if s.is_redirection() => "redirection",
+        s if s.is_client_error() => "client_error",
+        s if s.is_server_error() => "server_error",
+        _ => "other",
+    };
+
+    let attrs = [
+        KeyValue::new("route", route_name.to_string()),
+        KeyValue::new("status_kind", status_kind),
+    ];
 
     metrics
         .routes_visited

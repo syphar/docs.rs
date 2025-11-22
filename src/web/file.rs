@@ -90,12 +90,44 @@ impl StreamingFile {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::TestEnvironment;
+    use crate::{storage::CompressionAlgorithm, test::TestEnvironment, web::headers::compute_etag};
     use chrono::Utc;
     use http::header::{CACHE_CONTROL, LAST_MODIFIED};
-    use std::rc::Rc;
+    use std::{io, rc::Rc};
+
+    fn streaming_blob(
+        content: impl Into<Vec<u8>>,
+        alg: Option<CompressionAlgorithm>,
+    ) -> StreamingBlob {
+        let content = content.into();
+        StreamingBlob {
+            path: "some_path.db".into(),
+            mime: mime::APPLICATION_OCTET_STREAM,
+            date_updated: Utc::now(),
+            compression: alg,
+            etag: Some(compute_etag(&content)),
+            content_length: content.len(),
+            content: Box::new(io::Cursor::new(content)),
+        }
+    }
 
     // FIXME: add tests for conditional get in `StreamingFile::into_response`
+
+    #[tokio::test]
+    async fn test_stream_into_response() -> Result<()> {
+        let stream = StreamingFile(streaming_blob(b"123", None));
+        let resp = stream.into_response(None);
+        assert!(resp.status().is_success());
+        assert!(resp.headers().get(CACHE_CONTROL).is_none());
+        let cache = resp
+            .extensions()
+            .get::<CachePolicy>()
+            .expect("missing cache response extension");
+        assert!(matches!(cache, CachePolicy::ForeverInCdnAndBrowser));
+        assert!(resp.headers().get(LAST_MODIFIED).is_some());
+
+        Ok(())
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn file_roundtrip_axum() -> Result<()> {
