@@ -62,13 +62,13 @@ impl StreamingFile {
             && let Some(ref etag) = self.0.etag
             && !if_none_match.precondition_passes(etag)
         {
-            return (
+            (
                 StatusCode::NOT_MODIFIED,
                 TypedHeader(etag.clone()),
                 // it's generally a good idea to repeat caching headers on 304 responses
                 Extension(CACHE_POLICY),
             )
-                .into_response();
+                .into_response()
         } else {
             // Convert the AsyncBufRead into a Stream of Bytes
             let stream = ReaderStream::new(self.0.content);

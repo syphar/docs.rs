@@ -1,19 +1,19 @@
 use super::{
     cache::CachePolicy, headers::IfNoneMatch, metrics::request_recorder, routes::get_static,
 };
+use crate::db::mimes::APPLICATION_OPENSEARCH_XML;
 use axum::{
     Router as AxumRouter,
     extract::{Extension, Request},
-    http::header::CONTENT_TYPE,
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::get_service,
 };
 use axum_extra::{
-    headers::{ETag, HeaderMapExt as _, HeaderValue},
+    headers::{ContentType, ETag, HeaderMapExt as _},
     typed_header::TypedHeader,
 };
-use http::{Method, StatusCode, Uri};
+use http::{StatusCode, Uri};
 use tower_http::services::ServeDir;
 
 const VENDORED_CSS: &str = include_str!(concat!(env!("OUT_DIR"), "/vendored.css"));
@@ -24,12 +24,14 @@ const RUSTDOC_2021_12_05_CSS: &str =
 const RUSTDOC_2025_08_20_CSS: &str =
     include_str!(concat!(env!("OUT_DIR"), "/rustdoc-2025-08-20.css"));
 
+const STATIC_CACHE_POLICY: CachePolicy = CachePolicy::ForeverInCdnAndBrowser;
+
 include!(concat!(env!("OUT_DIR"), "/static_etag_map.rs"));
 
 fn build_static_css_response(content: &'static str) -> impl IntoResponse {
     (
-        Extension(CachePolicy::ForeverInCdnAndBrowser),
-        [(CONTENT_TYPE, mime::TEXT_CSS.as_ref())],
+        Extension(STATIC_CACHE_POLICY),
+        TypedHeader(ContentType::from(mime::TEXT_CSS)),
         content,
     )
 }
@@ -41,18 +43,15 @@ async fn set_needed_static_headers(req: Request, next: Next) -> Response {
     let mut response = next.run(req).await;
 
     if response.status().is_success() {
-        response
-            .extensions_mut()
-            .insert(CachePolicy::ForeverInCdnAndBrowser);
+        response.extensions_mut().insert(STATIC_CACHE_POLICY);
     }
 
     if is_opensearch_xml {
         // overwrite the content type for opensearch.xml,
         // otherwise mime-guess would return `text/xml`.
-        response.headers_mut().insert(
-            CONTENT_TYPE,
-            HeaderValue::from_static("application/opensearchdescription+xml"),
-        );
+        response
+            .headers_mut()
+            .typed_insert(ContentType::from(APPLICATION_OPENSEARCH_XML.clone()));
     }
 
     response
@@ -60,7 +59,6 @@ async fn set_needed_static_headers(req: Request, next: Next) -> Response {
 
 async fn conditional_get(
     partial_uri: Uri,
-    method: Method,
     if_none_match: Option<TypedHeader<IfNoneMatch>>,
     req: Request,
     next: Next,
@@ -86,18 +84,12 @@ async fn conditional_get(
     if let Some(if_none_match) = if_none_match
         && !if_none_match.precondition_passes(&etag)
     {
-        if !matches!(method, Method::GET | Method::HEAD) {
-            // this follows RFC. When etag/if-non match, but
-            // it's not GET/HEAD, return 412 Precondition Failed.
-            return StatusCode::PRECONDITION_FAILED.into_response();
-        } else {
-            return (
-                StatusCode::NOT_MODIFIED,
-                TypedHeader(etag),
-                Extension(CachePolicy::ForeverInCdnAndBrowser),
-            )
-                .into_response();
-        }
+        return (
+            StatusCode::NOT_MODIFIED,
+            TypedHeader(etag),
+            Extension(CachePolicy::ForeverInCdnAndBrowser),
+        )
+            .into_response();
     }
 
     let mut res = next.run(req).await;
@@ -166,8 +158,7 @@ mod tests {
     }
 
     fn etag(resp: &Response) -> ETag {
-        let etag = resp.headers().get(ETAG).unwrap();
-        etag.to_str().unwrap().parse().unwrap()
+        resp.headers().typed_get().unwrap()
     }
 
     async fn test_conditional_get(web: &Router, path: &str) -> anyhow::Result<()> {
@@ -189,7 +180,7 @@ mod tests {
 
             let cached_response = web
                 .clone()
-                .oneshot(req(path, move |h| h.typed_insert(if_none_match)))
+                .oneshot(req(path, |h| h.typed_insert(if_none_match)))
                 .await?;
 
             assert_eq!(cached_response.status(), StatusCode::NOT_MODIFIED);
@@ -203,7 +194,7 @@ mod tests {
 
             let uncached_response = web
                 .clone()
-                .oneshot(req(path, move |h| h.typed_insert(other_if_none_match)))
+                .oneshot(req(path, |h| h.typed_insert(other_if_none_match)))
                 .await?;
 
             assert_eq!(uncached_response.status(), StatusCode::OK);
