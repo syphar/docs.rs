@@ -19,6 +19,29 @@ pub static SURROGATE_KEY: HeaderName = HeaderName::from_static("surrogate-key");
 #[derive(Debug, Clone, Deref, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SurrogateKey(HeaderValue);
 
+impl SurrogateKey {
+    pub const fn from_static(s: &'static str) -> Self {
+        if s.is_empty() {
+            panic!("surrogate key cannot be empty");
+        }
+        if s.len() > 1024 {
+            panic!("surrogate key exceeds maximum length of 1024 bytes");
+        }
+
+        let bytes = s.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            let b = bytes[i];
+            if b < 0x21 || b > 0x7E {
+                panic!("invalid character found in surrogate key");
+            }
+            i += 1;
+        }
+
+        SurrogateKey(HeaderValue::from_static(s))
+    }
+}
+
 impl FromStr for SurrogateKey {
     type Err = anyhow::Error;
 
@@ -189,6 +212,14 @@ mod tests {
         assert!(SurrogateKey::from_str(&input).is_err());
     }
 
+    #[test]
+    #[should_panic]
+    fn test_parse_surrogate_key_too_long_const() {
+        const INPUT: [u8; 1025] = [b'X'; 1025];
+        let input = std::str::from_utf8(&INPUT).unwrap();
+        SurrogateKey::from_static(&input);
+    }
+
     #[test_case(""; "empty")]
     #[test_case(" "; "space")]
     #[test_case("\n"; "newline")]
@@ -200,8 +231,9 @@ mod tests {
     #[test_case("1234")]
     #[test_case("crate-some-crate")]
     #[test_case("release-some-crate-1.2.3")]
-    fn test_parse_surrogate_key_ok(input: &str) {
-        assert_eq!(SurrogateKey::from_str(input).unwrap(), input);
+    fn test_parse_surrogate_key_ok(input: &'static str) {
+        assert_eq!(SurrogateKey::from_str(&input).unwrap(), input);
+        assert_eq!(SurrogateKey::from_static(&input), input);
     }
 
     #[test]

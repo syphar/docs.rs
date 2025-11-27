@@ -19,17 +19,14 @@ use http::{
     request::Parts,
 };
 use serde::Deserialize;
-use std::{
-    convert::Infallible,
-    sync::{Arc, LazyLock},
-};
+use std::{convert::Infallible, sync::Arc};
 use tracing::error;
 
 pub const X_RLNG_SOURCE_CDN: HeaderName = HeaderName::from_static("x-rlng-source-cdn");
 
 /// a surrogate key that is attached to _all_ content.
 /// This enables us to use the fastly "soft purge" for everything.
-pub static SURROGATE_KEY_ALL: LazyLock<SurrogateKey> = LazyLock::new(|| "all".parse().unwrap());
+pub const SURROGATE_KEY_ALL: SurrogateKey = SurrogateKey::from_static("all");
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResponseCacheHeaders {
