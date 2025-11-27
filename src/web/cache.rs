@@ -3,7 +3,7 @@ use crate::{
     db::types::krate_name::KrateName,
     web::{
         extractors::Path,
-        headers::{SURROGATE_CONTROL, SURROGATE_KEY, SurrogateKeys},
+        headers::{SURROGATE_CONTROL, SURROGATE_KEY, SurrogateKey, SurrogateKeys},
     },
 };
 use axum::{
@@ -19,10 +19,17 @@ use http::{
     request::Parts,
 };
 use serde::Deserialize;
-use std::{convert::Infallible, sync::Arc};
+use std::{
+    convert::Infallible,
+    sync::{Arc, LazyLock},
+};
 use tracing::error;
 
 pub const X_RLNG_SOURCE_CDN: HeaderName = HeaderName::from_static("x-rlng-source-cdn");
+
+/// a surrogate key that is attached to _all_ content.
+/// This enables us to use the fastly "soft purge" for everything.
+pub static SURROGATE_KEY_ALL: LazyLock<SurrogateKey> = LazyLock::new(|| "all".parse().unwrap());
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResponseCacheHeaders {
