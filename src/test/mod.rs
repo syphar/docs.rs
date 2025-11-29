@@ -17,7 +17,7 @@ use crate::{
     test::test_metrics::CollectedMetrics,
     web::{
         build_axum_app,
-        cache::{self, TargetCdn, X_RLNG_SOURCE_CDN},
+        cache::{self, CanRenderCacheCacheHeader, TargetCdn, X_RLNG_SOURCE_CDN},
         headers::{IfNoneMatch, SURROGATE_CONTROL, SurrogateKeys},
         page::TemplateData,
     },

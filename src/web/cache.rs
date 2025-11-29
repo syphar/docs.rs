@@ -191,24 +191,13 @@ pub enum CacheDirective {
     ForeverInCdnAndStaleInBrowser,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct CachePolicy {
-    directive: CacheDirective,
-    keys: Vec<SurrogateKey>,
+pub trait CanRenderCacheCacheHeader {
+    fn render(&self, config: &Config, target_cdn: TargetCdn) -> ResponseCacheHeaders;
 }
 
-impl From<CacheDirective> for CachePolicy {
-    fn from(directive: CacheDirective) -> Self {
-        CachePolicy {
-            directive,
-            keys: Vec::new(),
-        }
-    }
-}
-
-impl CachePolicy {
-    pub fn render(&self, config: &Config, target_cdn: TargetCdn) -> ResponseCacheHeaders {
-        let mut headers = match self.directive {
+impl CanRenderCacheCacheHeader for CacheDirective {
+    fn render(&self, config: &Config, target_cdn: TargetCdn) -> ResponseCacheHeaders {
+        match *self {
             CacheDirective::NoCaching => NO_CACHING.clone(),
             CacheDirective::NoStoreMustRevalidate => NO_STORE_MUST_REVALIDATE.clone(),
             CacheDirective::ShortInCdnAndBrowser => SHORT.clone(),
@@ -241,7 +230,28 @@ impl CachePolicy {
 
                 forever_in_cdn
             }
-        };
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CachePolicy {
+    directive: CacheDirective,
+    keys: Vec<SurrogateKey>,
+}
+
+impl From<CacheDirective> for CachePolicy {
+    fn from(directive: CacheDirective) -> Self {
+        CachePolicy {
+            directive,
+            keys: Vec::new(),
+        }
+    }
+}
+
+impl CanRenderCacheCacheHeader for CachePolicy {
+    fn render(&self, config: &Config, target_cdn: TargetCdn) -> ResponseCacheHeaders {
+        let mut headers = self.directive.render(config, target_cdn);
 
         if target_cdn == TargetCdn::CloudFront {
             // CloudFront doesn't support surrogate keys.
