@@ -10,7 +10,7 @@ use crate::{
     utils::{Dependency, get_correct_docsrs_style_file},
     web::{
         MatchedRelease, MetaData, ReqVersion,
-        cache::{CacheDirective, CachePolicy},
+        cache::CacheDirective,
         error::{AxumNope, AxumResult},
         extractors::{
             DbConnection,

@@ -1,10 +1,8 @@
-use super::{
-    cache::CachePolicy, headers::IfNoneMatch, metrics::request_recorder, routes::get_static,
-};
+use super::{headers::IfNoneMatch, metrics::request_recorder, routes::get_static};
 use crate::{db::mimes::APPLICATION_OPENSEARCH_XML, web::cache::CacheDirective};
 use axum::{
     Router as AxumRouter,
-    extract::{Extension, Request},
+    extract::Request,
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::get_service,

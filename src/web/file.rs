@@ -1,6 +1,6 @@
 //! Database based file handler
 
-use super::{cache::CachePolicy, headers::IfNoneMatch};
+use super::headers::IfNoneMatch;
 use crate::{
     Config,
     error::Result,
@@ -9,7 +9,6 @@ use crate::{
 };
 use axum::{
     body::Body,
-    extract::Extension,
     http::StatusCode,
     response::{IntoResponse, Response as AxumResponse},
 };
@@ -96,7 +95,10 @@ mod tests {
     use crate::{
         storage::CompressionAlgorithm,
         test::TestEnvironment,
-        web::{cache::CacheDirective, headers::compute_etag},
+        web::{
+            cache::{CacheDirective, CachePolicy},
+            headers::compute_etag,
+        },
     };
     use axum_extra::headers::{ETag, HeaderMapExt as _};
     use chrono::Utc;

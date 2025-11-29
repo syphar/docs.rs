@@ -7,7 +7,7 @@ use axum_extra::headers::{self, Header};
 use derive_more::Deref;
 use http::{HeaderName, HeaderValue};
 use itertools::Itertools as _;
-use std::{fmt::Display, iter, str::FromStr};
+use std::{collections::HashSet, fmt::Display, iter, str::FromStr};
 
 use crate::db::types::krate_name::KrateName;
 
@@ -74,8 +74,8 @@ impl From<KrateName> for SurrogateKey {
 }
 
 /// A full Fastly Surrogate-Key header, containing one or more keys.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SurrogateKeys(Vec<SurrogateKey>);
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SurrogateKeys(HashSet<SurrogateKey>);
 
 impl Display for SurrogateKeys {
     #[allow(unstable_name_collisions)]
@@ -118,13 +118,10 @@ impl Header for SurrogateKeys {
     }
 }
 
-impl Default for SurrogateKeys {
-    fn default() -> Self {
-        SurrogateKeys(Vec::new())
-    }
-}
-
 impl SurrogateKeys {
+    // Build SurrogateKeys from an iterator, de-duplicating keys.
+    // Takes only as many elements as would fit into the header,
+    // then stops consuming the iterator.
     pub fn extend_until_full<I>(&mut self, iter: I)
     where
         I: IntoIterator<Item = SurrogateKey>,
@@ -140,7 +137,7 @@ impl SurrogateKeys {
 
         let mut current_key_size: u64 = self.encoded_len();
 
-        self.0.extend(iter.into_iter().unique().take_while(|key| {
+        self.0.extend(iter.into_iter().take_while(|key| {
             let key_size = key.len() as u64 + 1; // +1 for the space or terminator
             if current_key_size + key_size > MAX_LEN {
                 false
@@ -155,7 +152,7 @@ impl SurrogateKeys {
     where
         I: IntoIterator<Item = SurrogateKey>,
     {
-        let mut keys = SurrogateKeys(Vec::new());
+        let mut keys = SurrogateKeys::default();
         keys.extend_until_full(iter);
         keys
     }
@@ -179,7 +176,7 @@ impl SurrogateKeys {
     where
         I: IntoIterator<Item = SurrogateKey>,
     {
-        let mut keys = SurrogateKeys(Vec::new());
+        let mut keys = SurrogateKeys::default();
         keys.try_extend(iter)?;
         Ok(keys)
     }
@@ -201,7 +198,7 @@ impl FromStr for SurrogateKeys {
         let keys = s
             .split(' ')
             .map(SurrogateKey::from_str)
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<HashSet<_>, _>>()?;
         Ok(SurrogateKeys(keys))
     }
 }

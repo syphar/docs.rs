@@ -1,12 +1,10 @@
 use crate::web::{
-    cache::{CacheDirective, CachePolicy},
+    cache::CacheDirective,
     error::{AxumNope, AxumResult},
     extractors::{DbConnection, rustdoc::RustdocParams},
     match_version,
 };
-use axum::{
-    Json, extract::Extension, http::header::ACCESS_CONTROL_ALLOW_ORIGIN, response::IntoResponse,
-};
+use axum::{Json, http::header::ACCESS_CONTROL_ALLOW_ORIGIN, response::IntoResponse};
 
 pub(crate) async fn status_handler(
     params: RustdocParams,

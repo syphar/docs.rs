@@ -1,12 +1,9 @@
 use crate::web::{
-    cache::{CacheDirective, CachePolicy},
-    error::AxumNope,
-    metrics::request_recorder,
-    statics::build_static_router,
+    cache::CacheDirective, error::AxumNope, metrics::request_recorder, statics::build_static_router,
 };
 use askama::Template;
 use axum::{
-    Extension, Router as AxumRouter,
+    Router as AxumRouter,
     extract::Request as AxumHttpRequest,
     handler::Handler as AxumHandler,
     middleware::{self, Next},

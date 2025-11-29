@@ -5,7 +5,7 @@ use crate::{
     storage::PathNotFoundError,
     web::{
         MetaData, ReqVersion,
-        cache::{CacheDirective, CachePolicy},
+        cache::CacheDirective,
         error::{AxumNope, AxumResult},
         extractors::{
             DbConnection,
@@ -20,7 +20,7 @@ use crate::{
 use anyhow::{Context as _, Result};
 use askama::Template;
 use axum::{Extension, response::IntoResponse};
-use axum_extra::{TypedHeader, headers::HeaderMapExt};
+use axum_extra::TypedHeader;
 use mime::Mime;
 use std::{cmp::Ordering, sync::Arc};
 use tracing::instrument;
@@ -280,7 +280,8 @@ pub(crate) async fn source_browser_handler(
                 CacheDirective::ForeverInCdnAndStaleInBrowser,
                 TypedHeader(canonical_url),
                 StreamingFile(stream).into_response(if_none_match.as_deref()),
-            ));
+            )
+                .into_response());
         } else {
             let max_file_size = config.max_file_size_for(&stream.path);
 
