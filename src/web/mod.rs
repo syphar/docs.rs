@@ -680,8 +680,9 @@ where
     U: TryInto<http::Uri> + std::fmt::Debug,
     <U as TryInto<http::Uri>>::Error: std::fmt::Debug,
 {
+    let cache_policy: cache::CachePolicy = cache_policy.into();
     let mut resp = axum_redirect(uri)?.into_response();
-    resp.extensions_mut().insert(cache_policy.into());
+    resp.extensions_mut().insert(cache_policy);
     Ok(resp)
 }
 

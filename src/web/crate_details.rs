@@ -565,14 +565,12 @@ pub(crate) async fn crate_details_handler(
         params,
     }
     .into_response();
-    res.extensions_mut().insert::<CachePolicy>(
-        if is_latest_version {
+    res.extensions_mut()
+        .insert(CachePolicy::from(if is_latest_version {
             CacheDirective::ForeverInCdn
         } else {
             CacheDirective::ForeverInCdnAndStaleInBrowser
-        }
-        .into(),
-    );
+        }));
     Ok(res)
 }
 

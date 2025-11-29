@@ -521,11 +521,12 @@ impl RustdocPage {
         max_parse_memory: usize,
         if_none_match: Option<&IfNoneMatch>,
     ) -> AxumResponse {
-        let cache_policy = if self.is_latest_url {
+        let cache_policy: CachePolicy = if self.is_latest_url {
             CacheDirective::ForeverInCdn
         } else {
             CacheDirective::ForeverInCdnAndStaleInBrowser
-        };
+        }
+        .into();
         let robots_tag = (!self.is_latest_url).then_some([(&X_ROBOTS_TAG, "noindex")]);
 
         let etag = rustdoc_html
