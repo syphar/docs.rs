@@ -533,7 +533,7 @@ pub(crate) async fn crate_details_handler(
 
     let is_latest_version = params.req_version().is_latest();
 
-    let mut res = CrateDetailsPage {
+    let res = CrateDetailsPage {
         version,
         name,
         owners,
@@ -563,15 +563,17 @@ pub(crate) async fn crate_details_handler(
                 .crate_details_url(),
         ),
         params,
-    }
-    .into_response();
-    res.extensions_mut()
-        .insert(CachePolicy::from(if is_latest_version {
+    };
+
+    Ok((
+        if is_latest_version {
             CacheDirective::ForeverInCdn
         } else {
             CacheDirective::ForeverInCdnAndStaleInBrowser
-        }));
-    Ok(res)
+        },
+        res,
+    )
+        .into_response())
 }
 
 #[derive(Template)]

@@ -521,12 +521,11 @@ impl RustdocPage {
         max_parse_memory: usize,
         if_none_match: Option<&IfNoneMatch>,
     ) -> AxumResponse {
-        let cache_policy: CachePolicy = if self.is_latest_url {
+        let cache_directive = if self.is_latest_url {
             CacheDirective::ForeverInCdn
         } else {
             CacheDirective::ForeverInCdnAndStaleInBrowser
-        }
-        .into();
+        };
         let robots_tag = (!self.is_latest_url).then_some([(&X_ROBOTS_TAG, "noindex")]);
 
         let etag = rustdoc_html
@@ -541,16 +540,16 @@ impl RustdocPage {
             (
                 StatusCode::NOT_MODIFIED,
                 robots_tag,
+                cache_directive,
                 TypedHeader(etag.clone()),
-                Extension(cache_policy),
             )
                 .into_response()
         } else {
             (
                 StatusCode::OK,
                 robots_tag,
+                cache_directive,
                 etag.map(TypedHeader),
-                Extension(cache_policy),
                 TypedHeader(ContentType::from(mime::TEXT_HTML_UTF_8)),
                 Body::from_stream(utils::rewrite_rustdoc_html_stream(
                     template_data,
@@ -878,8 +877,8 @@ pub(crate) async fn badge_handler(
 
     Ok((
         StatusCode::MOVED_PERMANENTLY,
+        CacheDirective::ForeverInCdnAndBrowser,
         [(http::header::LOCATION, url.to_string())],
-        Extension(CachePolicy::from(CacheDirective::ForeverInCdnAndBrowser)),
     ))
 }
 

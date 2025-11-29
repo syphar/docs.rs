@@ -276,12 +276,11 @@ pub(crate) async fn source_browser_handler(
         let is_text = stream.mime.type_() == mime::TEXT || stream.mime == mime::APPLICATION_JSON;
         if !is_text {
             // if the file isn't text, serve it directly to the client
-            let mut response = StreamingFile(stream).into_response(if_none_match.as_deref());
-            response.headers_mut().typed_insert(canonical_url);
-            response.extensions_mut().insert(CachePolicy::from(
+            return Ok((
                 CacheDirective::ForeverInCdnAndStaleInBrowser,
+                TypedHeader(canonical_url),
+                StreamingFile(stream).into_response(if_none_match.as_deref()),
             ));
-            return Ok(response);
         } else {
             let max_file_size = config.max_file_size_for(&stream.path);
 

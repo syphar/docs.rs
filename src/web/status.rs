@@ -13,7 +13,7 @@ pub(crate) async fn status_handler(
     mut conn: DbConnection,
 ) -> impl IntoResponse {
     (
-        Extension(CachePolicy::from(CacheDirective::NoStoreMustRevalidate)),
+        CacheDirective::NoStoreMustRevalidate,
         [(ACCESS_CONTROL_ALLOW_ORIGIN, "*")],
         // We use an async block to emulate a try block so that we can apply the above CORS header
         // and cache policy to both successful and failed responses

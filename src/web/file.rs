@@ -58,7 +58,7 @@ impl StreamingFile {
     }
 
     pub fn into_response(self, if_none_match: Option<&IfNoneMatch>) -> AxumResponse {
-        let cache_policy: CachePolicy = CacheDirective::ForeverInCdnAndBrowser.into();
+        const CACHE_DIRECTIVE: CacheDirective = CacheDirective::ForeverInCdnAndBrowser;
         let last_modified = LastModified::from(SystemTime::from(self.0.date_updated));
 
         if let Some(if_none_match) = if_none_match
@@ -67,10 +67,10 @@ impl StreamingFile {
         {
             (
                 StatusCode::NOT_MODIFIED,
+                CACHE_DIRECTIVE,
                 // it's generally recommended to repeat caching headers on 304 responses
                 TypedHeader(etag.clone()),
                 TypedHeader(last_modified),
-                Extension(cache_policy),
             )
                 .into_response()
         } else {
@@ -79,10 +79,10 @@ impl StreamingFile {
 
             (
                 StatusCode::OK,
+                CACHE_DIRECTIVE,
                 TypedHeader(ContentType::from(self.0.mime)),
                 TypedHeader(last_modified),
                 self.0.etag.map(TypedHeader),
-                Extension(cache_policy),
                 Body::from_stream(stream),
             )
                 .into_response()

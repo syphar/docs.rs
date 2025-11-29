@@ -30,7 +30,7 @@ include!(concat!(env!("OUT_DIR"), "/static_etag_map.rs"));
 
 fn build_static_css_response(content: &'static str) -> impl IntoResponse {
     (
-        Extension(CachePolicy::from(STATIC_CACHE_DIRECTIVE)),
+        STATIC_CACHE_DIRECTIVE,
         TypedHeader(ContentType::from(mime::TEXT_CSS)),
         content,
     )
@@ -40,23 +40,20 @@ async fn set_needed_static_headers(req: Request, next: Next) -> Response {
     let req_path = req.uri().path();
     let is_opensearch_xml = req_path.ends_with("/opensearch.xml");
 
-    let mut response = next.run(req).await;
+    let response = next.run(req).await;
 
-    if response.status().is_success() {
+    (
         response
-            .extensions_mut()
-            .insert(CachePolicy::from(STATIC_CACHE_DIRECTIVE));
-    }
-
-    if is_opensearch_xml {
+            .status()
+            .is_success()
+            .then_some(STATIC_CACHE_DIRECTIVE),
         // overwrite the content type for opensearch.xml,
         // otherwise mime-guess would return `text/xml`.
-        response
-            .headers_mut()
-            .typed_insert(ContentType::from(APPLICATION_OPENSEARCH_XML.clone()));
-    }
-
-    response
+        is_opensearch_xml
+            .then(|| TypedHeader(ContentType::from(APPLICATION_OPENSEARCH_XML.clone()))),
+        response,
+    )
+        .into_response()
 }
 
 async fn conditional_get(
@@ -88,8 +85,8 @@ async fn conditional_get(
     {
         return (
             StatusCode::NOT_MODIFIED,
+            CacheDirective::ForeverInCdnAndBrowser,
             TypedHeader(etag),
-            Extension(CachePolicy::from(CacheDirective::ForeverInCdnAndBrowser)),
         )
             .into_response();
     }

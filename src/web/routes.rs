@@ -106,7 +106,7 @@ pub(super) fn build_metric_routes() -> AxumRouter {
 
 fn cached_permanent_redirect(uri: &str) -> impl IntoResponse {
     (
-        Extension(CachePolicy::from(CacheDirective::ForeverInCdnAndBrowser)),
+        CacheDirective::ForeverInCdnAndBrowser,
         Redirect::permanent(uri),
     )
 }
