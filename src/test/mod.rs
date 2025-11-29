@@ -18,7 +18,7 @@ use crate::{
     web::{
         build_axum_app,
         cache::{self, TargetCdn, X_RLNG_SOURCE_CDN},
-        headers::{IfNoneMatch, SURROGATE_CONTROL},
+        headers::{IfNoneMatch, SURROGATE_CONTROL, SurrogateKeys},
         page::TemplateData,
     },
 };
@@ -73,6 +73,11 @@ pub(crate) fn assert_cache_headers_eq(
         expected_headers.surrogate_control.as_ref(),
         response.headers().get(&SURROGATE_CONTROL),
         "surrogate control header mismatch"
+    );
+    assert_eq!(
+        expected_headers.surrogate_keys.as_ref(),
+        response.headers().typed_get::<SurrogateKeys>().as_ref(),
+        "surrogate key header mismatch"
     );
 }
 

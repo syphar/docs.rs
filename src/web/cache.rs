@@ -248,15 +248,15 @@ impl CachePolicy {
             return headers;
         }
 
-        // TODO: should we support already having surrogate keys here?
-        debug_assert!(
-            headers.surrogate_keys.is_none()
-                || headers.surrogate_keys.as_ref().unwrap().key_count() == 0,
-            "we don't support pre-defined surrogate keys in CachePolicy yet"
-        );
         if !self.keys.is_empty() {
             // FIXME: error when too many keys?
-            headers.surrogate_keys = Some(SurrogateKeys::from_iter_until_full(self.keys.clone()));
+
+            headers
+                .surrogate_keys
+                .get_or_insert_default()
+                .try_extend(self.keys.clone())
+                .expect("adding surrogate keys to header failed");
+
             debug_assert_eq!(
                 headers.surrogate_keys.as_ref().unwrap().key_count(),
                 self.keys.len()
@@ -389,9 +389,10 @@ pub(crate) async fn cache_middleware(
                 .unwrap_or(true),
             "there shouldn't be a name on any other routes"
         );
-        if let Ok(krate_name) = name.parse::<KrateName>() {
-            let keys = SurrogateKeys::from_iter_until_full(vec![krate_name.into()]);
-
+        if let Ok(krate_name) = name.parse::<KrateName>()
+            && let Ok(keys) = SurrogateKeys::try_from_iter(vec![krate_name.into()])
+        {
+            // FIXME: edge cases with too many keys? or panic?
             resp_headers.typed_insert(keys);
 
             // only allow caching in the CDN when we have a surrogate key to invalidate it later.

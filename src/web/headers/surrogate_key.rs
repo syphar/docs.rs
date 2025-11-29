@@ -118,11 +118,14 @@ impl Header for SurrogateKeys {
     }
 }
 
+impl Default for SurrogateKeys {
+    fn default() -> Self {
+        SurrogateKeys(Vec::new())
+    }
+}
+
 impl SurrogateKeys {
-    /// Build SurrogateKeys from an iterator, de-duplicating keys.
-    /// Takes only as many elements as would fit into the header,
-    /// then stops consuming the iterator.
-    pub fn from_iter_until_full<I>(iter: I) -> Self
+    pub fn extend_until_full<I>(&mut self, iter: I)
     where
         I: IntoIterator<Item = SurrogateKey>,
     {
@@ -135,27 +138,54 @@ impl SurrogateKeys {
 
         const MAX_LEN: u64 = 16_384;
 
-        let mut current_key_size: u64 = 0;
+        let mut current_key_size: u64 = self.encoded_len();
 
-        SurrogateKeys(
-            iter.into_iter()
-                .unique()
-                .take_while(|key| {
-                    let key_size = key.len() as u64 + 1; // +1 for the space or terminator
-                    if current_key_size + key_size > MAX_LEN {
-                        false
-                    } else {
-                        current_key_size += key_size;
-                        true
-                    }
-                })
-                .collect(),
-        )
+        self.0.extend(iter.into_iter().unique().take_while(|key| {
+            let key_size = key.len() as u64 + 1; // +1 for the space or terminator
+            if current_key_size + key_size > MAX_LEN {
+                false
+            } else {
+                current_key_size += key_size;
+                true
+            }
+        }))
     }
 
-    #[cfg(test)]
-    pub fn encoded_len(&self) -> usize {
-        self.0.iter().map(|k| k.0.len() + 1).sum::<usize>()
+    pub fn from_iter_until_full<I>(iter: I) -> Self
+    where
+        I: IntoIterator<Item = SurrogateKey>,
+    {
+        let mut keys = SurrogateKeys(Vec::new());
+        keys.extend_until_full(iter);
+        keys
+    }
+
+    pub fn try_extend<I>(&mut self, iter: I) -> anyhow::Result<()>
+    where
+        I: IntoIterator<Item = SurrogateKey>,
+    {
+        let mut iter = iter.into_iter().peekable();
+
+        self.extend_until_full(&mut iter);
+
+        if iter.peek().is_some() {
+            bail!("adding surrogate key would exceed maximum header length of 16,384 bytes");
+        }
+
+        Ok(())
+    }
+
+    pub fn try_from_iter<I>(iter: I) -> anyhow::Result<Self>
+    where
+        I: IntoIterator<Item = SurrogateKey>,
+    {
+        let mut keys = SurrogateKeys(Vec::new());
+        keys.try_extend(iter)?;
+        Ok(keys)
+    }
+
+    pub fn encoded_len(&self) -> u64 {
+        self.0.iter().map(|k| (k.0.len() + 1) as u64).sum::<u64>()
     }
 
     pub fn key_count(&self) -> usize {
@@ -216,7 +246,7 @@ mod tests {
         assert_ne!(k3, k2);
 
         assert_eq!(
-            test_typed_encode(SurrogateKeys::from_iter_until_full([k1, k2, k3])),
+            test_typed_encode(SurrogateKeys::try_from_iter([k1, k2, k3]).unwrap()),
             "key-2 key-1"
         );
 
@@ -241,7 +271,7 @@ mod tests {
     fn test_try_from_iter_checks_full_length() -> anyhow::Result<()> {
         let mut it = (0..10_000).map(|n| SurrogateKey::from_str(&format!("key-{n}")).unwrap());
 
-        let first_key = SurrogateKeys::from_iter_until_full(&mut it);
+        let first_key = SurrogateKeys::try_from_iter(&mut it).unwrap();
         assert_eq!(first_key.encoded_len(), 16377); // < the max length of 16384
 
         // elements remaining in the iterator
