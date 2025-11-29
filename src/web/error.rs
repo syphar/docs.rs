@@ -35,7 +35,7 @@ pub enum AxumNope {
     #[error("bad request")]
     BadRequest(anyhow::Error),
     #[error("redirect")]
-    Redirect(EscapedURI, CachePolicy),
+    Redirect(EscapedURI, Box<CachePolicy>),
 }
 
 // FUTURE: Ideally, the split between the 3 kinds of responses would
@@ -126,7 +126,7 @@ struct ErrorInfo {
     pub status: StatusCode,
 }
 
-fn redirect_with_policy(target: EscapedURI, cache_policy: CachePolicy) -> AxumResponse {
+fn redirect_with_policy(target: EscapedURI, cache_policy: impl Into<CachePolicy>) -> AxumResponse {
     match super::axum_cached_redirect(target, cache_policy) {
         Ok(response) => response.into_response(),
         Err(err) => AxumNope::InternalError(err).into_response(),
@@ -145,7 +145,7 @@ impl IntoResponse for AxumNope {
                 }
                 .into_response()
             }
-            AxumNope::Redirect(target, cache_policy) => redirect_with_policy(target, cache_policy),
+            AxumNope::Redirect(target, cache_policy) => redirect_with_policy(target, *cache_policy),
             _ => {
                 let ErrorInfo {
                     title,
@@ -174,7 +174,7 @@ impl IntoResponse for JsonAxumNope {
                 // return 404
                 StatusCode::NOT_FOUND.into_response()
             }
-            AxumNope::Redirect(target, cache_policy) => redirect_with_policy(target, cache_policy),
+            AxumNope::Redirect(target, cache_policy) => redirect_with_policy(target, *cache_policy),
             _ => {
                 let ErrorInfo {
                     title,

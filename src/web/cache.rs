@@ -257,6 +257,13 @@ impl From<CacheDirective> for CachePolicy {
     }
 }
 
+impl From<CacheDirective> for Box<CachePolicy> {
+    fn from(directive: CacheDirective) -> Self {
+        let policy: CachePolicy = directive.into();
+        Box::new(policy)
+    }
+}
+
 impl IntoResponseParts for CachePolicy {
     type Error = Infallible;
 
