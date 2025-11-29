@@ -4,7 +4,7 @@ use crate::{
     impl_axum_webpage,
     web::{
         MetaData,
-        cache::CachePolicy,
+        cache::CacheDirective,
         error::{AxumNope, AxumResult},
         extractors::{DbConnection, Path, rustdoc::RustdocParams},
         file::File,
@@ -79,7 +79,7 @@ pub(crate) async fn build_details_handler(
                     .clone()
                     .with_req_version(version)
                     .build_details_url(id, build_params.filename.as_deref()),
-                CachePolicy::ForeverInCdn,
+                CacheDirective::ForeverInCdn.into(),
             )
         })?
         .into_version();

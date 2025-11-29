@@ -10,7 +10,7 @@ use crate::{
     utils::{Dependency, get_correct_docsrs_style_file},
     web::{
         MatchedRelease, MetaData, ReqVersion,
-        cache::CachePolicy,
+        cache::{CacheDirective, CachePolicy},
         error::{AxumNope, AxumResult},
         extractors::{
             DbConnection,
@@ -486,7 +486,7 @@ pub(crate) async fn crate_details_handler(
         .into_canonical_req_version_or_else(|version| {
             AxumNope::Redirect(
                 params.clone().with_req_version(version).crate_details_url(),
-                CachePolicy::ForeverInCdn,
+                CacheDirective::ForeverInCdn.into(),
             )
         })?;
     let params = params.apply_matched_release(&matched_release);
@@ -494,7 +494,7 @@ pub(crate) async fn crate_details_handler(
     if params.original_path() != params.crate_details_url().path() {
         return Err(AxumNope::Redirect(
             params.crate_details_url(),
-            CachePolicy::ForeverInCdn,
+            CacheDirective::ForeverInCdn.into(),
         ));
     }
 
@@ -565,12 +565,14 @@ pub(crate) async fn crate_details_handler(
         params,
     }
     .into_response();
-    res.extensions_mut()
-        .insert::<CachePolicy>(if is_latest_version {
-            CachePolicy::ForeverInCdn
+    res.extensions_mut().insert::<CachePolicy>(
+        if is_latest_version {
+            CacheDirective::ForeverInCdn
         } else {
-            CachePolicy::ForeverInCdnAndStaleInBrowser
-        });
+            CacheDirective::ForeverInCdnAndStaleInBrowser
+        }
+        .into(),
+    );
     Ok(res)
 }
 
@@ -584,7 +586,7 @@ struct ReleaseList {
 
 impl_axum_webpage! {
     ReleaseList,
-    cache_policy = |_| CachePolicy::ForeverInCdn,
+    cache_policy = |_| CacheDirective::ForeverInCdn.into(),
     cpu_intensive_rendering = true,
 }
 
@@ -626,7 +628,7 @@ struct PlatformList {
 
 impl_axum_webpage! {
     PlatformList,
-    cache_policy = |_| CachePolicy::ForeverInCdn,
+    cache_policy = |_| CacheDirective::ForeverInCdn.into(),
     cpu_intensive_rendering = true,
 }
 
@@ -649,7 +651,7 @@ pub(crate) async fn get_all_platforms_inner(
                     .with_name(corrected_name)
                     .with_req_version(req_version)
                     .platforms_partial_url(),
-                CachePolicy::NoCaching,
+                CacheDirective::NoCaching.into(),
             )
         })?
         .into_canonical_req_version_or_else(|version| {
@@ -658,7 +660,7 @@ pub(crate) async fn get_all_platforms_inner(
                     .clone()
                     .with_req_version(version)
                     .platforms_partial_url(),
-                CachePolicy::ForeverInCdn,
+                CacheDirective::ForeverInCdn.into(),
             )
         })?;
     let params = params.apply_matched_release(&matched_release);
@@ -1161,7 +1163,8 @@ mod tests {
                 .await?;
 
             let response = env.web_app().await.get("/crate/foo/0.0.1").await?;
-            response.assert_cache_control(CachePolicy::ForeverInCdnAndStaleInBrowser, env.config());
+            response
+                .assert_cache_control(CacheDirective::ForeverInCdnAndStaleInBrowser, env.config());
 
             assert!(
                 response
@@ -1865,7 +1868,7 @@ mod tests {
                 "{}",
                 response.text().await.unwrap()
             );
-            response.assert_cache_control(CachePolicy::ForeverInCdn, env.config());
+            response.assert_cache_control(CacheDirective::ForeverInCdn, env.config());
             let list2 = dbg!(check_links(
                 response.text().await.unwrap(),
                 true,
@@ -2042,7 +2045,7 @@ mod tests {
 
             let resp = web.get("/crate/dummy/latest").await?;
             assert!(resp.status().is_success());
-            resp.assert_cache_control(CachePolicy::ForeverInCdn, env.config());
+            resp.assert_cache_control(CacheDirective::ForeverInCdn, env.config());
             let body = resp.text().await?;
             assert!(body.contains("<a href=\"/crate/dummy/latest/features\""));
             assert!(body.contains("<a href=\"/crate/dummy/latest/builds\""));
@@ -2054,7 +2057,7 @@ mod tests {
             web.assert_redirect_cached(
                 "/crate/dummy",
                 "/crate/dummy/latest",
-                CachePolicy::ForeverInCdn,
+                CacheDirective::ForeverInCdn,
                 env.config(),
             )
             .await?;

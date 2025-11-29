@@ -3,7 +3,7 @@ use crate::{
     impl_axum_webpage,
     web::{
         MetaData, ReqVersion,
-        cache::CachePolicy,
+        cache::CacheDirective,
         error::{AxumNope, AxumResult},
         extractors::{
             DbConnection,
@@ -109,10 +109,10 @@ impl FeaturesPage {
 impl_axum_webpage! {
     FeaturesPage,
     cache_policy = |page| if page.is_latest_url {
-        CachePolicy::ForeverInCdn
+        CacheDirective::ForeverInCdn
     } else {
-        CachePolicy::ForeverInCdnAndStaleInBrowser
-    },
+        CacheDirective::ForeverInCdnAndStaleInBrowser
+    }.into(),
 }
 
 impl FeaturesPage {
@@ -149,7 +149,7 @@ pub(crate) async fn build_features_handler(
         .into_canonical_req_version_or_else(|version| {
             AxumNope::Redirect(
                 params.clone().with_req_version(version).features_url(),
-                CachePolicy::ForeverInCdn,
+                CacheDirective::ForeverInCdn.into(),
             )
         })?;
     let params = params.apply_matched_release(&matched_release);
@@ -403,7 +403,7 @@ mod tests {
             web.assert_redirect_cached(
                 "/crate/foo/~0.2/features",
                 "/crate/foo/0.2.1/features",
-                CachePolicy::ForeverInCdn,
+                CacheDirective::ForeverInCdn,
                 env.config(),
             )
             .await?;
@@ -425,7 +425,7 @@ mod tests {
             let web = env.web_app().await;
             let resp = web.get("/crate/foo/0.2.0/features").await?;
             assert!(resp.status().is_success());
-            resp.assert_cache_control(CachePolicy::ForeverInCdnAndStaleInBrowser, env.config());
+            resp.assert_cache_control(CacheDirective::ForeverInCdnAndStaleInBrowser, env.config());
             Ok(())
         });
     }
@@ -452,7 +452,7 @@ mod tests {
             let web = env.web_app().await;
             let resp = web.get("/crate/foo/latest/features").await?;
             assert!(resp.status().is_success());
-            resp.assert_cache_control(CachePolicy::ForeverInCdn, env.config());
+            resp.assert_cache_control(CacheDirective::ForeverInCdn, env.config());
             let body = resp.text().await?;
             assert!(body.contains("<a href=\"/crate/foo/latest/builds\""));
             assert!(body.contains("<a href=\"/crate/foo/latest/source/\""));

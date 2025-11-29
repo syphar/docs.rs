@@ -9,7 +9,7 @@ use crate::{
     impl_axum_webpage,
     web::{
         MetaData, ReqVersion,
-        cache::CachePolicy,
+        cache::CacheDirective,
         error::{AxumNope, AxumResult, JsonAxumNope, JsonAxumResult},
         extractors::{DbConnection, Path, rustdoc::RustdocParams},
         filters,
@@ -70,7 +70,7 @@ pub(crate) async fn build_list_handler(
         .into_canonical_req_version_or_else(|version| {
             AxumNope::Redirect(
                 params.clone().with_req_version(version).builds_url(),
-                CachePolicy::ForeverInCdn,
+                CacheDirective::ForeverInCdn.into(),
             )
         })?
         .into_version();
@@ -219,7 +219,7 @@ mod tests {
             AxumResponseTestExt, AxumRouterTestExt, FakeBuild, TestEnvironment, V1, V2,
             async_wrapper, fake_release_that_failed_before_build,
         },
-        web::cache::CachePolicy,
+        web::cache::CacheDirective,
     };
     use anyhow::Result;
     use axum::{body::Body, http::Request};
@@ -239,7 +239,7 @@ mod tests {
                 .get("/crate/foo/0.1.0/builds")
                 .await?
                 .error_for_status()?;
-            response.assert_cache_control(CachePolicy::NoCaching, env.config());
+            response.assert_cache_control(CacheDirective::NoCaching, env.config());
             let page = kuchikiki::parse_html().one(response.text().await?);
 
             let rows: Vec<_> = page
@@ -283,7 +283,7 @@ mod tests {
                 .await?;
 
             let response = env.web_app().await.get("/crate/foo/0.1.0/builds").await?;
-            response.assert_cache_control(CachePolicy::NoCaching, env.config());
+            response.assert_cache_control(CacheDirective::NoCaching, env.config());
             let page = kuchikiki::parse_html().one(response.text().await?);
 
             let rows: Vec<_> = page
@@ -477,7 +477,7 @@ mod tests {
                 .get(&format!("/crate/foo/{V1}/builds"))
                 .await?;
 
-            response.assert_cache_control(CachePolicy::NoCaching, env.config());
+            response.assert_cache_control(CacheDirective::NoCaching, env.config());
             let page = kuchikiki::parse_html().one(response.text().await?);
 
             let rows: Vec<_> = page

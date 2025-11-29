@@ -298,7 +298,7 @@ impl PartialEq<str> for EscapedURI {
 #[cfg(test)]
 mod tests {
     use super::EscapedURI;
-    use crate::web::{cache::CachePolicy, error::AxumNope};
+    use crate::web::{cache::CacheDirective, error::AxumNope};
     use axum::response::IntoResponse as _;
     use http::Uri;
     use test_case::test_case;
@@ -313,7 +313,7 @@ mod tests {
     fn test_redirect_error_encodes_url_path() {
         let response = AxumNope::Redirect(
             EscapedURI::from_path("/something>"),
-            CachePolicy::ForeverInCdnAndBrowser,
+            CacheDirective::ForeverInCdnAndBrowser.into(),
         )
         .into_response();
 

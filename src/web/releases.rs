@@ -1,7 +1,7 @@
 //! Releases web handlersrelease
 
-use super::cache::CachePolicy;
 use crate::build_queue::PRIORITY_CONTINUOUS;
+use crate::web::cache::CacheDirective;
 use crate::{
     AsyncBuildQueue, Config, InstanceMetrics, RegistryApi,
     build_queue::QueuedCrate,
@@ -257,7 +257,7 @@ struct HomePage {
 
 impl_axum_webpage! {
     HomePage,
-    cache_policy = |_| CachePolicy::ShortInCdnAndBrowser,
+    cache_policy = |_| CacheDirective::ShortInCdnAndBrowser.into(),
 }
 
 pub(crate) async fn home_page(mut conn: DbConnection) -> AxumResult<impl IntoResponse> {
@@ -2073,7 +2073,7 @@ mod tests {
             seen.insert("".to_owned());
 
             let resp = web.get("/").await?;
-            resp.assert_cache_control(CachePolicy::ShortInCdnAndBrowser, env.config());
+            resp.assert_cache_control(CacheDirective::ShortInCdnAndBrowser, env.config());
 
             assert!(resp.status().is_success());
 

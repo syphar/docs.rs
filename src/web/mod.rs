@@ -672,17 +672,16 @@ where
     ))
 }
 
-#[instrument]
 fn axum_cached_redirect<U>(
     uri: U,
-    cache_policy: cache::CachePolicy,
+    cache_policy: impl Into<cache::CachePolicy>,
 ) -> Result<axum::response::Response, Error>
 where
     U: TryInto<http::Uri> + std::fmt::Debug,
     <U as TryInto<http::Uri>>::Error: std::fmt::Debug,
 {
     let mut resp = axum_redirect(uri)?.into_response();
-    resp.extensions_mut().insert(cache_policy);
+    resp.extensions_mut().insert(cache_policy.into());
     Ok(resp)
 }
 
@@ -1346,7 +1345,7 @@ mod test {
 
     #[test]
     fn test_axum_redirect_cached() {
-        let response = axum_cached_redirect("/something", cache::CachePolicy::NoCaching)
+        let response = axum_cached_redirect("/something", cache::CacheDirective::NoCaching)
             .unwrap()
             .into_response();
         assert_eq!(response.status(), StatusCode::FOUND);
@@ -1354,17 +1353,17 @@ mod test {
             response.headers().get(http::header::LOCATION).unwrap(),
             "/something"
         );
-        assert!(matches!(
+        assert_eq!(
             response.extensions().get::<cache::CachePolicy>().unwrap(),
-            cache::CachePolicy::NoCaching,
-        ))
+            &cache::CachePolicy::from(cache::CacheDirective::NoCaching),
+        )
     }
 
     #[test_case("without_leading_slash")]
     #[test_case("//with_double_leading_slash")]
     fn test_axum_redirect_failure(path: &str) {
         assert!(axum_redirect(path).is_err());
-        assert!(axum_cached_redirect(path, cache::CachePolicy::NoCaching).is_err());
+        assert!(axum_cached_redirect(path, cache::CacheDirective::NoCaching).is_err());
     }
 
     #[test]

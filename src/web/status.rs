@@ -1,5 +1,5 @@
 use crate::web::{
-    cache::CachePolicy,
+    cache::{CacheDirective, CachePolicy},
     error::{AxumNope, AxumResult},
     extractors::{DbConnection, rustdoc::RustdocParams},
     match_version,
@@ -13,7 +13,7 @@ pub(crate) async fn status_handler(
     mut conn: DbConnection,
 ) -> impl IntoResponse {
     (
-        Extension(CachePolicy::NoStoreMustRevalidate),
+        Extension(CachePolicy::from(CacheDirective::NoStoreMustRevalidate)),
         [(ACCESS_CONTROL_ALLOW_ORIGIN, "*")],
         // We use an async block to emulate a try block so that we can apply the above CORS header
         // and cache policy to both successful and failed responses
@@ -28,7 +28,7 @@ pub(crate) async fn status_handler(
                 .into_canonical_req_version_or_else(|version| {
                     AxumNope::Redirect(
                         params.clone().with_req_version(version).build_status_url(),
-                        CachePolicy::NoCaching,
+                        CacheDirective::NoCaching.into(),
                     )
                 })?
                 .into_version();
@@ -48,7 +48,7 @@ pub(crate) async fn status_handler(
 mod tests {
     use crate::{
         test::{AxumResponseTestExt, AxumRouterTestExt, async_wrapper},
-        web::{ReqVersion, cache::CachePolicy},
+        web::{ReqVersion, cache::CacheDirective},
     };
     use reqwest::StatusCode;
     use test_case::test_case;
@@ -73,7 +73,7 @@ mod tests {
                 .await
                 .get_and_follow_redirects(&format!("/crate/foo/{req_version}/status.json"))
                 .await?;
-            response.assert_cache_control(CachePolicy::NoStoreMustRevalidate, env.config());
+            response.assert_cache_control(CacheDirective::NoStoreMustRevalidate, env.config());
             assert_eq!(response.headers()["access-control-allow-origin"], "*");
             assert_eq!(response.status(), StatusCode::OK);
             let value: serde_json::Value = serde_json::from_str(&response.text().await?)?;
@@ -104,7 +104,7 @@ mod tests {
             let redirect = web
                 .assert_redirect("/crate/foo/*/status.json", "/crate/foo/latest/status.json")
                 .await?;
-            redirect.assert_cache_control(CachePolicy::NoStoreMustRevalidate, env.config());
+            redirect.assert_cache_control(CacheDirective::NoStoreMustRevalidate, env.config());
             assert_eq!(redirect.headers()["access-control-allow-origin"], "*");
 
             Ok(())
@@ -131,7 +131,7 @@ mod tests {
                     "/crate/foo/0.1.0/status.json",
                 )
                 .await?;
-            redirect.assert_cache_control(CachePolicy::NoStoreMustRevalidate, env.config());
+            redirect.assert_cache_control(CacheDirective::NoStoreMustRevalidate, env.config());
             assert_eq!(redirect.headers()["access-control-allow-origin"], "*");
 
             Ok(())
@@ -159,7 +159,7 @@ mod tests {
                 .await
                 .get_and_follow_redirects(&format!("/crate/foo/{req_version}/status.json"))
                 .await?;
-            response.assert_cache_control(CachePolicy::NoStoreMustRevalidate, env.config());
+            response.assert_cache_control(CacheDirective::NoStoreMustRevalidate, env.config());
             assert_eq!(response.headers()["access-control-allow-origin"], "*");
             assert_eq!(response.status(), StatusCode::OK);
             let value: serde_json::Value = serde_json::from_str(&response.text().await?)?;
@@ -200,7 +200,7 @@ mod tests {
                 .await
                 .get_and_follow_redirects(&format!("/crate/{krate}/{req_version}/status.json"))
                 .await?;
-            response.assert_cache_control(CachePolicy::NoStoreMustRevalidate, env.config());
+            response.assert_cache_control(CacheDirective::NoStoreMustRevalidate, env.config());
             assert_eq!(response.headers()["access-control-allow-origin"], "*");
             assert_eq!(response.status(), StatusCode::NOT_FOUND);
             Ok(())

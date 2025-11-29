@@ -224,15 +224,17 @@ pub(crate) type JsonAxumResult<T> = Result<T, JsonAxumNope>;
 #[cfg(test)]
 mod tests {
     use super::{AxumNope, EscapedURI, IntoResponse};
-    use crate::test::{AxumResponseTestExt, AxumRouterTestExt, async_wrapper};
-    use crate::web::cache::CachePolicy;
+    use crate::{
+        test::{AxumResponseTestExt, AxumRouterTestExt, async_wrapper},
+        web::cache::CacheDirective,
+    };
     use kuchikiki::traits::TendrilSink;
 
     #[test]
     fn test_redirect_error_encodes_url_path() {
         let response = AxumNope::Redirect(
             EscapedURI::from_path("/something>"),
-            CachePolicy::ForeverInCdnAndBrowser,
+            CacheDirective::ForeverInCdnAndBrowser.into(),
         )
         .into_response();
 

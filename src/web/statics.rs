@@ -1,7 +1,7 @@
 use super::{
     cache::CachePolicy, headers::IfNoneMatch, metrics::request_recorder, routes::get_static,
 };
-use crate::db::mimes::APPLICATION_OPENSEARCH_XML;
+use crate::{db::mimes::APPLICATION_OPENSEARCH_XML, web::cache::CacheDirective};
 use axum::{
     Router as AxumRouter,
     extract::{Extension, Request},
@@ -24,13 +24,13 @@ const RUSTDOC_2021_12_05_CSS: &str =
 const RUSTDOC_2025_08_20_CSS: &str =
     include_str!(concat!(env!("OUT_DIR"), "/rustdoc-2025-08-20.css"));
 
-const STATIC_CACHE_POLICY: CachePolicy = CachePolicy::ForeverInCdnAndBrowser;
+const STATIC_CACHE_DIRECTIVE: CacheDirective = CacheDirective::ForeverInCdnAndBrowser;
 
 include!(concat!(env!("OUT_DIR"), "/static_etag_map.rs"));
 
 fn build_static_css_response(content: &'static str) -> impl IntoResponse {
     (
-        Extension(STATIC_CACHE_POLICY),
+        Extension(CachePolicy::from(STATIC_CACHE_DIRECTIVE)),
         TypedHeader(ContentType::from(mime::TEXT_CSS)),
         content,
     )
@@ -43,7 +43,9 @@ async fn set_needed_static_headers(req: Request, next: Next) -> Response {
     let mut response = next.run(req).await;
 
     if response.status().is_success() {
-        response.extensions_mut().insert(STATIC_CACHE_POLICY);
+        response
+            .extensions_mut()
+            .insert(CachePolicy::from(STATIC_CACHE_DIRECTIVE));
     }
 
     if is_opensearch_xml {
@@ -87,7 +89,7 @@ async fn conditional_get(
         return (
             StatusCode::NOT_MODIFIED,
             TypedHeader(etag),
-            Extension(CachePolicy::ForeverInCdnAndBrowser),
+            Extension(CacheDirective::ForeverInCdnAndBrowser),
         )
             .into_response();
     }
@@ -211,7 +213,7 @@ mod tests {
             const PATH: &str = "/-/static/style.css";
             let resp = web.get(PATH).await?;
             assert!(resp.status().is_success());
-            resp.assert_cache_control(CachePolicy::ForeverInCdnAndBrowser, env.config());
+            resp.assert_cache_control(CacheDirective::ForeverInCdnAndBrowser, env.config());
             let headers = resp.headers();
             assert_eq!(
                 headers.get(CONTENT_TYPE),
@@ -238,7 +240,7 @@ mod tests {
             let resp = web.get(PATH).await?;
             assert!(resp.status().is_success(), "{}", resp.text().await?);
 
-            resp.assert_cache_control(CachePolicy::ForeverInCdnAndBrowser, env.config());
+            resp.assert_cache_control(CacheDirective::ForeverInCdnAndBrowser, env.config());
             assert_eq!(
                 resp.headers().get(CONTENT_TYPE),
                 Some(&"text/css".parse().unwrap()),
@@ -282,7 +284,7 @@ mod tests {
 
             let resp = web.get(path).await?;
             assert!(resp.status().is_success());
-            resp.assert_cache_control(CachePolicy::ForeverInCdnAndBrowser, env.config());
+            resp.assert_cache_control(CacheDirective::ForeverInCdnAndBrowser, env.config());
             assert_eq!(
                 resp.headers().get(CONTENT_TYPE),
                 Some(&"text/javascript".parse().unwrap()),
@@ -315,7 +317,7 @@ mod tests {
                     let resp = web.get(&url).await?;
 
                     assert!(resp.status().is_success(), "failed to fetch {url:?}");
-                    resp.assert_cache_control(CachePolicy::ForeverInCdnAndBrowser, env.config());
+                    resp.assert_cache_control(CacheDirective::ForeverInCdnAndBrowser, env.config());
                     let content = fs::read(path).unwrap();
                     assert_eq!(etag(&resp), compute_etag(&content));
                     assert_eq!(resp.bytes().await?, content, "failed to fetch {url:?}",);
@@ -332,7 +334,7 @@ mod tests {
     fn static_file_that_doesnt_exist() {
         async_wrapper(|env| async move {
             let response = env.web_app().await.get("/-/static/whoop-de-do.png").await?;
-            response.assert_cache_control(CachePolicy::NoCaching, env.config());
+            response.assert_cache_control(CacheDirective::NoCaching, env.config());
             assert_eq!(response.status(), StatusCode::NOT_FOUND);
             assert!(response.headers().get(ETAG).is_none());
 

@@ -5,7 +5,7 @@ use crate::{
     storage::PathNotFoundError,
     web::{
         MetaData, ReqVersion,
-        cache::CachePolicy,
+        cache::CacheDirective,
         error::{AxumNope, AxumResult},
         extractors::{
             DbConnection,
@@ -171,10 +171,10 @@ impl_axum_webpage! {
     SourcePage,
     canonical_url = |page| Some(page.canonical_url.clone()),
     cache_policy = |page| if page.is_latest_url {
-        CachePolicy::ForeverInCdn
+        CacheDirective::ForeverInCdn
     } else {
-        CachePolicy::ForeverInCdnAndStaleInBrowser
-    },
+        CacheDirective::ForeverInCdnAndStaleInBrowser
+    }.into(),
     cpu_intensive_rendering = true,
 }
 
@@ -203,13 +203,13 @@ pub(crate) async fn source_browser_handler(
                     .with_name(corrected_name)
                     .with_req_version(req_version)
                     .source_url(),
-                CachePolicy::NoCaching,
+                CacheDirective::NoCaching.into(),
             )
         })?
         .into_canonical_req_version_or_else(|version| {
             AxumNope::Redirect(
                 params.clone().with_req_version(version).source_url(),
-                CachePolicy::ForeverInCdn,
+                CacheDirective::ForeverInCdn.into(),
             )
         })?;
     let params = params.apply_matched_release(&matched_release);
@@ -281,7 +281,7 @@ pub(crate) async fn source_browser_handler(
             response.headers_mut().typed_insert(canonical_url);
             response
                 .extensions_mut()
-                .insert(CachePolicy::ForeverInCdnAndStaleInBrowser);
+                .insert(CacheDirective::ForeverInCdnAndStaleInBrowser);
             return Ok(response);
         } else {
             let max_file_size = config.max_file_size_for(&stream.path);
@@ -354,7 +354,7 @@ pub(crate) async fn source_browser_handler(
 mod tests {
     use crate::{
         test::{AxumResponseTestExt, AxumRouterTestExt, TestEnvironment, async_wrapper},
-        web::{cache::CachePolicy, encode_url_path, headers::IfNoneMatch},
+        web::{cache::CacheDirective, encode_url_path, headers::IfNoneMatch},
     };
     use anyhow::Result;
     use axum_extra::headers::{ContentType, ETag, HeaderMapExt as _};
@@ -422,7 +422,7 @@ mod tests {
             let web = env.web_app().await;
             web.assert_success_cached(
                 "/crate/fake/0.1.0/source/",
-                CachePolicy::ForeverInCdnAndStaleInBrowser,
+                CacheDirective::ForeverInCdnAndStaleInBrowser,
                 env.config(),
             )
             .await?;
@@ -432,7 +432,8 @@ mod tests {
                 response.headers().get("link").unwrap(),
                 "<https://docs.rs/crate/fake/latest/source/some_filename.rs>; rel=\"canonical\""
             );
-            response.assert_cache_control(CachePolicy::ForeverInCdnAndStaleInBrowser, env.config());
+            response
+                .assert_cache_control(CacheDirective::ForeverInCdnAndStaleInBrowser, env.config());
             assert!(response.text().await?.contains("some_random_content"));
             Ok(())
         });
@@ -466,7 +467,8 @@ mod tests {
                 headers.typed_get::<ContentType>().unwrap(),
                 APPLICATION_PDF.into(),
             );
-            response.assert_cache_control(CachePolicy::ForeverInCdnAndStaleInBrowser, env.config());
+            response
+                .assert_cache_control(CacheDirective::ForeverInCdnAndStaleInBrowser, env.config());
 
             let etag: ETag = headers.typed_get().unwrap();
 
@@ -553,7 +555,7 @@ mod tests {
                 .await
                 .get("/crate/fake/latest/source/")
                 .await?;
-            resp.assert_cache_control(CachePolicy::ForeverInCdn, env.config());
+            resp.assert_cache_control(CacheDirective::ForeverInCdn, env.config());
             let body = resp.text().await?;
             assert!(body.contains("<a href=\"/crate/fake/latest/builds\""));
             assert!(body.contains("<a href=\"/crate/fake/latest/source/\""));
@@ -599,7 +601,7 @@ mod tests {
             web.assert_redirect_cached(
                 "/crate/mbedtls/*/source/",
                 "/crate/mbedtls/latest/source/",
-                CachePolicy::ForeverInCdn,
+                CacheDirective::ForeverInCdn,
                 env.config(),
             )
             .await?;
@@ -624,7 +626,7 @@ mod tests {
             web.assert_redirect_cached(
                 "/crate/mbedtls/~0.2.0/source/",
                 "/crate/mbedtls/0.2.0/source/",
-                CachePolicy::ForeverInCdn,
+                CacheDirective::ForeverInCdn,
                 env.config(),
             )
             .await?;
@@ -648,7 +650,7 @@ mod tests {
             let web = env.web_app().await;
             web.assert_success_cached(
                 "/crate/rustc-ap-syntax/178.0.0/source/fold.rs",
-                CachePolicy::ForeverInCdnAndStaleInBrowser,
+                CacheDirective::ForeverInCdnAndStaleInBrowser,
                 env.config(),
             )
             .await?;
@@ -767,7 +769,8 @@ mod tests {
             let web = env.web_app().await;
             let response = web.get("/crate/fake/0.1.0/source/").await?;
             assert!(response.status().is_success());
-            response.assert_cache_control(CachePolicy::ForeverInCdnAndStaleInBrowser, env.config());
+            response
+                .assert_cache_control(CacheDirective::ForeverInCdnAndStaleInBrowser, env.config());
 
             assert_eq!(
                 get_file_list_links(&response.text().await?),
@@ -801,7 +804,8 @@ mod tests {
                 .get("/crate/fake/0.1.0/source/folder1/some_filename.rs")
                 .await?;
             assert!(response.status().is_success());
-            response.assert_cache_control(CachePolicy::ForeverInCdnAndStaleInBrowser, env.config());
+            response
+                .assert_cache_control(CacheDirective::ForeverInCdnAndStaleInBrowser, env.config());
 
             assert_eq!(
                 get_file_list_links(&response.text().await?),

@@ -11,7 +11,7 @@ use crate::{
     utils::{self, Dependency},
     web::{
         MetaData, ReqVersion, axum_cached_redirect,
-        cache::{CachePolicy, ExtendSurrogateKeys as _},
+        cache::{CacheDirective, CachePolicy, ExtendSurrogateKeys as _},
         crate_details::CrateDetails,
         csp::Csp,
         error::{AxumNope, AxumResult},
@@ -277,7 +277,7 @@ pub(crate) async fn rustdoc_redirector_handler(
         // https://github.com/rust-lang/docs.rs/commit/f3848a34c391841a2516a9e6ad1f80f6f490c6d0
         return Ok(axum_cached_redirect(
             "/-/static/favicon.ico",
-            CachePolicy::ForeverInCdnAndBrowser,
+            CacheDirective::ForeverInCdnAndBrowser,
         )?);
     }
 
@@ -292,7 +292,7 @@ pub(crate) async fn rustdoc_redirector_handler(
         return redirect_to_doc(
             params.original_uri(),
             target_uri,
-            CachePolicy::ForeverInCdnAndStaleInBrowser,
+            CacheDirective::ForeverInCdnAndStaleInBrowser.into(),
             path_in_crate.as_deref(),
         );
     }
@@ -365,9 +365,9 @@ pub(crate) async fn rustdoc_redirector_handler(
             params.original_uri(),
             params.rustdoc_url().append_raw_query(original_query),
             if matched_release.is_latest_url() {
-                CachePolicy::ForeverInCdn
+                CacheDirective::ForeverInCdn
             } else {
-                CachePolicy::ForeverInCdnAndStaleInBrowser
+                CacheDirective::ForeverInCdnAndStaleInBrowser
             }
             .with_surrogate_key(crate_name.into()),
             path_in_crate.as_deref(),
@@ -376,7 +376,7 @@ pub(crate) async fn rustdoc_redirector_handler(
     } else {
         Ok(axum_cached_redirect(
             params.crate_details_url().append_raw_query(original_query),
-            CachePolicy::ForeverInCdn.with_surrogate_key(crate_name.into()),
+            CacheDirective::ForeverInCdn.with_surrogate_key(crate_name.into()),
         )?
         .into_response())
     }
@@ -522,9 +522,9 @@ impl RustdocPage {
         if_none_match: Option<&IfNoneMatch>,
     ) -> AxumResponse {
         let cache_policy = if self.is_latest_url {
-            CachePolicy::ForeverInCdn
+            CacheDirective::ForeverInCdn
         } else {
-            CachePolicy::ForeverInCdnAndStaleInBrowser
+            CacheDirective::ForeverInCdnAndStaleInBrowser
         };
         let robots_tag = (!self.is_latest_url).then_some([(&X_ROBOTS_TAG, "noindex")]);
 
@@ -611,20 +611,20 @@ pub(crate) async fn rustdoc_html_server_handler(
                     .with_req_version(req_version)
                     .rustdoc_url()
                     .append_raw_query(original_query.as_deref()),
-                CachePolicy::NoCaching,
+                CacheDirective::NoCaching.into(),
             )
         })?
         .into_canonical_req_version_or_else(|version| {
             AxumNope::Redirect(
                 params.clone().with_req_version(version).rustdoc_url(),
-                CachePolicy::ForeverInCdn,
+                CacheDirective::ForeverInCdn.into(),
             )
         })?;
     let params = params.apply_matched_release(&matched_release);
 
     if !matched_release.rustdoc_status() {
         return Ok(
-            axum_cached_redirect(params.crate_details_url(), CachePolicy::ForeverInCdn)?
+            axum_cached_redirect(params.crate_details_url(), CacheDirective::ForeverInCdn)?
                 .into_response(),
         );
     }
@@ -646,7 +646,7 @@ pub(crate) async fn rustdoc_html_server_handler(
             params
                 .rustdoc_url()
                 .append_raw_query(original_query.as_deref()),
-            CachePolicy::ForeverInCdn,
+            CacheDirective::ForeverInCdn,
         )?);
     }
 
@@ -701,7 +701,7 @@ pub(crate) async fn rustdoc_html_server_handler(
                         params
                             .rustdoc_url()
                             .append_raw_query(original_query.as_deref()),
-                        CachePolicy::ForeverInCdn,
+                        CacheDirective::ForeverInCdn,
                     )?);
                 }
             }
@@ -714,7 +714,7 @@ pub(crate) async fn rustdoc_html_server_handler(
                 // but only if the first element after the version is a target?
                 return Ok(axum_cached_redirect(
                     params.target_redirect_url(),
-                    CachePolicy::ForeverInCdn,
+                    CacheDirective::ForeverInCdn,
                 )?);
             }
 
@@ -852,9 +852,9 @@ pub(crate) async fn target_redirect_handler(
     Ok(axum_cached_redirect(
         redirect_uri,
         if params.req_version().is_latest() {
-            CachePolicy::ForeverInCdn
+            CacheDirective::ForeverInCdn
         } else {
-            CachePolicy::ForeverInCdnAndStaleInBrowser
+            CacheDirective::ForeverInCdnAndStaleInBrowser
         },
     )?)
 }
@@ -878,7 +878,7 @@ pub(crate) async fn badge_handler(
     Ok((
         StatusCode::MOVED_PERMANENTLY,
         [(http::header::LOCATION, url.to_string())],
-        Extension(CachePolicy::ForeverInCdnAndBrowser),
+        Extension(CacheDirective::ForeverInCdnAndBrowser),
     ))
 }
 
@@ -983,7 +983,7 @@ pub(crate) async fn json_download_handler(
     let redirect = |storage_path: &str| {
         super::axum_cached_redirect(
             format!("{}/{}", config.s3_static_root_path, storage_path),
-            CachePolicy::ForeverInCdn,
+            CacheDirective::ForeverInCdn,
         )
     };
 
@@ -1050,7 +1050,7 @@ pub(crate) async fn download_handler(
 
     Ok(super::axum_cached_redirect(
         format!("{}/{}", config.s3_static_root_path, archive_path),
-        CachePolicy::ForeverInCdn,
+        CacheDirective::ForeverInCdn,
     )?)
 }
 
@@ -1081,7 +1081,7 @@ mod test {
         storage::compression::file_extension_for,
         test::*,
         utils::Dependency,
-        web::{cache::CachePolicy, encode_url_path},
+        web::encode_url_path,
     };
     use anyhow::{Context, Result};
     use chrono::{NaiveDate, Utc};
@@ -1099,7 +1099,7 @@ mod test {
     ) -> Result<Option<String>, anyhow::Error> {
         web.assert_success(path).await?;
         let response = web.get(path).await?;
-        response.assert_cache_control(CachePolicy::ForeverInCdnAndStaleInBrowser, config);
+        response.assert_cache_control(CacheDirective::ForeverInCdnAndStaleInBrowser, config);
         let data = response.text().await?;
         info!(
             "fetched path {} and got content {}\nhelp: if this is missing the header, remember to add <html><head></head><body></body></html>",
@@ -1114,7 +1114,7 @@ mod test {
         {
             let link = elem.attributes.borrow().get("href").unwrap().to_string();
             let response = web.get(&link).await?;
-            response.assert_cache_control(CachePolicy::ForeverInCdn, config);
+            response.assert_cache_control(CacheDirective::ForeverInCdn, config);
             assert!(response.status().is_success() || response.status().is_redirection());
             Ok(Some(link))
         } else {
@@ -1148,7 +1148,7 @@ mod test {
             let web = env.web_app().await;
             web.assert_success_cached(
                 "/krate/0.1.0/help.html",
-                CachePolicy::ForeverInCdnAndStaleInBrowser,
+                CacheDirective::ForeverInCdnAndStaleInBrowser,
                 env.config(),
             )
             .await?;
@@ -1188,53 +1188,53 @@ mod test {
                 .create()
                 .await?;
             let web = env.web_app().await;
-            web.assert_success_cached("/", CachePolicy::ShortInCdnAndBrowser, env.config())
+            web.assert_success_cached("/", CacheDirective::ShortInCdnAndBrowser, env.config())
                 .await?;
             web.assert_success_cached(
                 "/crate/buggy/0.1.0",
-                CachePolicy::ForeverInCdnAndStaleInBrowser,
+                CacheDirective::ForeverInCdnAndStaleInBrowser,
                 env.config(),
             )
             .await?;
             web.assert_success_cached(
                 "/buggy/0.1.0/directory_1/index.html",
-                CachePolicy::ForeverInCdnAndStaleInBrowser,
+                CacheDirective::ForeverInCdnAndStaleInBrowser,
                 env.config(),
             )
             .await?;
             web.assert_success_cached(
                 "/buggy/0.1.0/directory_2.html/index.html",
-                CachePolicy::ForeverInCdnAndStaleInBrowser,
+                CacheDirective::ForeverInCdnAndStaleInBrowser,
                 env.config(),
             )
             .await?;
             web.assert_success_cached(
                 "/buggy/0.1.0/directory_3/.gitignore",
-                CachePolicy::ForeverInCdnAndBrowser,
+                CacheDirective::ForeverInCdnAndBrowser,
                 env.config(),
             )
             .await?;
             web.assert_success_cached(
                 "/buggy/0.1.0/settings.html",
-                CachePolicy::ForeverInCdnAndStaleInBrowser,
+                CacheDirective::ForeverInCdnAndStaleInBrowser,
                 env.config(),
             )
             .await?;
             web.assert_success_cached(
                 "/buggy/0.1.0/scrape-examples-help.html",
-                CachePolicy::ForeverInCdnAndStaleInBrowser,
+                CacheDirective::ForeverInCdnAndStaleInBrowser,
                 env.config(),
             )
             .await?;
             web.assert_success_cached(
                 "/buggy/0.1.0/all.html",
-                CachePolicy::ForeverInCdnAndStaleInBrowser,
+                CacheDirective::ForeverInCdnAndStaleInBrowser,
                 env.config(),
             )
             .await?;
             web.assert_success_cached(
                 "/buggy/0.1.0/directory_4/empty_file_no_ext",
-                CachePolicy::ForeverInCdnAndBrowser,
+                CacheDirective::ForeverInCdnAndBrowser,
                 env.config(),
             )
             .await?;
@@ -1260,14 +1260,14 @@ mod test {
             let base = "/dummy/0.1.0/dummy/";
             web.assert_success_cached(
                 base,
-                CachePolicy::ForeverInCdnAndStaleInBrowser,
+                CacheDirective::ForeverInCdnAndStaleInBrowser,
                 env.config(),
             )
             .await?;
             web.assert_redirect_cached(
                 "/dummy/0.1.0/x86_64-unknown-linux-gnu/dummy/",
                 base,
-                CachePolicy::ForeverInCdn,
+                CacheDirective::ForeverInCdn,
                 env.config(),
             )
             .await?;
@@ -1338,7 +1338,7 @@ mod test {
                 .await?
                 .error_for_status()?;
 
-            resp.assert_cache_control(CachePolicy::ForeverInCdn, env.config());
+            resp.assert_cache_control(CacheDirective::ForeverInCdn, env.config());
             let body = resp.text().await?;
             assert!(
                 body.contains("<a href=\"/crate/dummy/latest/source/\""),
@@ -1373,14 +1373,14 @@ mod test {
 
         {
             let resp = web.get("/dummy/latest/dummy/").await?;
-            resp.assert_cache_control(CachePolicy::ForeverInCdn, env.config());
+            resp.assert_cache_control(CacheDirective::ForeverInCdn, env.config());
             web.assert_conditional_get("/dummy/latest/dummy/", &resp)
                 .await?;
         }
 
         {
             let resp = web.get("/dummy/0.1.0/dummy/").await?;
-            resp.assert_cache_control(CachePolicy::ForeverInCdnAndStaleInBrowser, env.config());
+            resp.assert_cache_control(CacheDirective::ForeverInCdnAndStaleInBrowser, env.config());
             web.assert_conditional_get("/dummy/0.1.0/dummy/", &resp)
                 .await?;
         }
@@ -1640,7 +1640,7 @@ mod test {
                 .assert_redirect_cached_unchecked(
                     "/zstd/badge.svg",
                     "https://img.shields.io/docsrs/zstd/latest",
-                    CachePolicy::ForeverInCdnAndBrowser,
+                    CacheDirective::ForeverInCdnAndBrowser,
                     env.config(),
                 )
                 .await?;
@@ -2253,7 +2253,7 @@ mod test {
             web.assert_redirect_cached(
                 "/dummy",
                 "/dummy/latest/dummy/",
-                CachePolicy::ForeverInCdn,
+                CacheDirective::ForeverInCdn,
                 env.config(),
             )
             .await?;
@@ -2677,7 +2677,7 @@ mod test {
                 .get("/crate/hexponent/0.3.1/menus/releases/x86_64-unknown-linux-gnu/hexponent/index.html")
                 .await?;
             assert!(releases_response.status().is_success());
-            releases_response.assert_cache_control(CachePolicy::ForeverInCdn, env.config());
+            releases_response.assert_cache_control(CacheDirective::ForeverInCdn, env.config());
             assert_eq!(
                 parse_release_links_from_menu(&releases_response.text().await?),
                 vec![
@@ -2695,7 +2695,7 @@ mod test {
                 .get("/crate/hexponent/0.3.1/menus/releases/hexponent/something.html")
                 .await?;
             assert!(releases_response.status().is_success());
-            releases_response.assert_cache_control(CachePolicy::ForeverInCdn, env.config());
+            releases_response.assert_cache_control(CacheDirective::ForeverInCdn, env.config());
             assert_eq!(
                 parse_release_links_from_menu(&releases_response.text().await?),
                 vec![
@@ -2998,7 +2998,7 @@ mod test {
             let web = env.web_app().await;
 
             let response = web.get("/crate/dummy/0.1.0/download").await?;
-            response.assert_cache_control(CachePolicy::NoCaching, env.config());
+            response.assert_cache_control(CacheDirective::NoCaching, env.config());
             assert_eq!(response.status(), StatusCode::NOT_FOUND);
             Ok(())
         });
@@ -3018,7 +3018,7 @@ mod test {
             let web = env.web_app().await;
 
             let response = web.get("/crate/dummy/0.1.0/download").await?;
-            response.assert_cache_control(CachePolicy::NoCaching, env.config());
+            response.assert_cache_control(CacheDirective::NoCaching, env.config());
             assert_eq!(response.status(), StatusCode::NOT_FOUND);
             Ok(())
         });
@@ -3046,7 +3046,7 @@ mod test {
         web.assert_redirect_cached_unchecked(
             "/crate/dummy/0.1/download",
             "https://static.docs.rs/rustdoc/dummy/0.1.0.zip",
-            CachePolicy::ForeverInCdn,
+            CacheDirective::ForeverInCdn,
             env.config(),
         )
         .await?;
@@ -3086,7 +3086,7 @@ mod test {
         web.assert_redirect_cached_unchecked(
             "/crate/dummy/0.1.0/download",
             "https://static.docs.rs/rustdoc/dummy/0.1.0.zip",
-            CachePolicy::ForeverInCdn,
+            CacheDirective::ForeverInCdn,
             env.config(),
         )
         .await?;
@@ -3124,7 +3124,7 @@ mod test {
         web.assert_redirect_cached_unchecked(
             "/crate/dummy/latest/download",
             "https://static.docs.rs/rustdoc/dummy/0.2.0.zip",
-            CachePolicy::ForeverInCdn,
+            CacheDirective::ForeverInCdn,
             env.config(),
         )
         .await?;
@@ -3262,7 +3262,7 @@ mod test {
             web.assert_redirect_cached_unchecked(
                 "/clap/2.24.0/i686-pc-windows-gnu/clap/which%20is%20a%20part%20of%20%5B%60Display%60%5D",
                 "/crate/clap/2.24.0/target-redirect/i686-pc-windows-gnu/clap/which%20is%20a%20part%20of%20[%60Display%60]",
-                CachePolicy::ForeverInCdn,
+                CacheDirective::ForeverInCdn,
                 env.config(),
             ).await?;
 
@@ -3285,7 +3285,7 @@ mod test {
             web.assert_redirect_cached_unchecked(
                 "/clap/latest/clapproc%20macro%20%60Parser%60%20not%20expanded:%20Cannot%20create%20expander%20for",
                 "/clap/latest/clap/clapproc%20macro%20%60Parser%60%20not%20expanded:%20Cannot%20create%20expander%20for",
-                CachePolicy::ForeverInCdn,
+                CacheDirective::ForeverInCdn,
                 env.config(),
             ).await?;
 
@@ -3307,7 +3307,7 @@ mod test {
                 .await?;
             let web = env.web_app().await;
 
-            web.assert_redirect_cached(path, expected, CachePolicy::ForeverInCdn, env.config())
+            web.assert_redirect_cached(path, expected, CacheDirective::ForeverInCdn, env.config())
                 .await?;
 
             Ok(())
@@ -3464,7 +3464,7 @@ mod test {
                 &format!("/crate/dummy/{request_path_suffix}"),
                 &format!("https://static.docs.rs/rustdoc-json/dummy/{redirect_version}/{redirect_target}/\
                     dummy_{redirect_version}_{redirect_target}_{redirect_format_version}.json.{compression_ext}"),
-                CachePolicy::ForeverInCdn,
+                CacheDirective::ForeverInCdn,
                 env.config(),
             )
             .await?;
@@ -3534,7 +3534,7 @@ mod test {
                 "https://static.docs.rs/rustdoc-json/{NAME}/{VERSION}/{TARGET}/\
                     {NAME}_{VERSION}_{TARGET}_{FORMAT_VERSION}.json" // without .zstd
             ),
-            CachePolicy::ForeverInCdn,
+            CacheDirective::ForeverInCdn,
             env.config(),
         )
         .await?;

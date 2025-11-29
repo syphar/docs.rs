@@ -5,6 +5,7 @@ use crate::{
     Config,
     error::Result,
     storage::{AsyncStorage, Blob, StreamingBlob},
+    web::cache::CacheDirective,
 };
 use axum::{
     body::Body,
@@ -57,7 +58,8 @@ impl StreamingFile {
     }
 
     pub fn into_response(self, if_none_match: Option<&IfNoneMatch>) -> AxumResponse {
-        const CACHE_POLICY: CachePolicy = CachePolicy::ForeverInCdnAndBrowser;
+        // FIXME: make const again?
+        let cache_policy: CachePolicy = CacheDirective::ForeverInCdnAndBrowser.into();
         let last_modified = LastModified::from(SystemTime::from(self.0.date_updated));
 
         if let Some(if_none_match) = if_none_match
@@ -69,7 +71,7 @@ impl StreamingFile {
                 // it's generally recommended to repeat caching headers on 304 responses
                 TypedHeader(etag.clone()),
                 TypedHeader(last_modified),
-                Extension(CACHE_POLICY),
+                Extension(cache_policy),
             )
                 .into_response()
         } else {
@@ -81,7 +83,7 @@ impl StreamingFile {
                 TypedHeader(ContentType::from(self.0.mime)),
                 TypedHeader(last_modified),
                 self.0.etag.map(TypedHeader),
-                Extension(CACHE_POLICY),
+                Extension(cache_policy),
                 Body::from_stream(stream),
             )
                 .into_response()
@@ -92,7 +94,11 @@ impl StreamingFile {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{storage::CompressionAlgorithm, test::TestEnvironment, web::headers::compute_etag};
+    use crate::{
+        storage::CompressionAlgorithm,
+        test::TestEnvironment,
+        web::{cache::CacheDirective, headers::compute_etag},
+    };
     use axum_extra::headers::{ETag, HeaderMapExt as _};
     use chrono::Utc;
     use http::header::{CACHE_CONTROL, ETAG, LAST_MODIFIED};
@@ -127,7 +133,7 @@ mod tests {
                 .extensions()
                 .get::<CachePolicy>()
                 .expect("missing cache response extension");
-            assert!(matches!(cache, CachePolicy::ForeverInCdnAndBrowser));
+            assert_eq!(cache, &CacheDirective::ForeverInCdnAndBrowser.into());
             assert!(resp.headers().get(LAST_MODIFIED).is_some());
 
             resp.headers().typed_get().unwrap()
@@ -147,7 +153,7 @@ mod tests {
                 .extensions()
                 .get::<CachePolicy>()
                 .expect("missing cache response extension");
-            assert!(matches!(cache, CachePolicy::ForeverInCdnAndBrowser));
+            assert_eq!(cache, &CacheDirective::ForeverInCdnAndBrowser.into());
             assert!(resp.headers().get(LAST_MODIFIED).is_some());
             assert!(resp.headers().get(ETAG).is_some());
         }
@@ -179,7 +185,7 @@ mod tests {
             .extensions()
             .get::<CachePolicy>()
             .expect("missing cache response extension");
-        assert!(matches!(cache, CachePolicy::ForeverInCdnAndBrowser));
+        assert_eq!(cache, &CacheDirective::ForeverInCdnAndBrowser.into());
         assert_eq!(
             resp.headers().get(LAST_MODIFIED).unwrap(),
             &now.format("%a, %d %b %Y %T GMT").to_string(),

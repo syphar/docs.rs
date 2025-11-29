@@ -1,5 +1,8 @@
 use crate::web::{
-    cache::CachePolicy, error::AxumNope, metrics::request_recorder, statics::build_static_router,
+    cache::{CacheDirective, CachePolicy},
+    error::AxumNope,
+    metrics::request_recorder,
+    statics::build_static_router,
 };
 use askama::Template;
 use axum::{
@@ -103,7 +106,7 @@ pub(super) fn build_metric_routes() -> AxumRouter {
 
 fn cached_permanent_redirect(uri: &str) -> impl IntoResponse {
     (
-        Extension(CachePolicy::ForeverInCdnAndBrowser),
+        Extension(CachePolicy::from(CacheDirective::ForeverInCdnAndBrowser)),
         Redirect::permanent(uri),
     )
 }
@@ -290,7 +293,7 @@ pub(super) fn build_axum_routes() -> AxumRouter {
                 struct StorageChangeDetection;
                 crate::impl_axum_webpage!(
                     StorageChangeDetection,
-                    cache_policy = |_| CachePolicy::ForeverInCdnAndBrowser,
+                    cache_policy = |_| CacheDirective::ForeverInCdnAndBrowser.into(),
                 );
                 StorageChangeDetection
             }),
@@ -393,7 +396,7 @@ async fn fallback() -> impl IntoResponse {
 #[cfg(test)]
 mod tests {
     use crate::test::{AxumResponseTestExt, AxumRouterTestExt, async_wrapper};
-    use crate::web::cache::CachePolicy;
+    use crate::web::cache::CacheDirective;
     use reqwest::StatusCode;
 
     #[test]
@@ -406,14 +409,14 @@ mod tests {
             web.assert_redirect_cached(
                 "/favicon.ico",
                 "/-/static/favicon.ico",
-                CachePolicy::ForeverInCdnAndBrowser,
+                CacheDirective::ForeverInCdnAndBrowser,
                 config,
             )
             .await?;
             web.assert_redirect_cached(
                 "/robots.txt",
                 "/-/static/robots.txt",
-                CachePolicy::ForeverInCdnAndBrowser,
+                CacheDirective::ForeverInCdnAndBrowser,
                 config,
             )
             .await?;
@@ -424,7 +427,7 @@ mod tests {
             web.assert_redirect_cached(
                 "/opensearch.xml",
                 "/-/static/opensearch.xml",
-                CachePolicy::ForeverInCdnAndBrowser,
+                CacheDirective::ForeverInCdnAndBrowser,
                 config,
             )
             .await?;
@@ -442,7 +445,7 @@ mod tests {
                 .get("/-/rustdoc.static/style.css")
                 .await?;
             assert_eq!(response.status(), StatusCode::NOT_FOUND);
-            response.assert_cache_control(CachePolicy::NoCaching, env.config());
+            response.assert_cache_control(CacheDirective::NoCaching, env.config());
             Ok(())
         })
     }
@@ -461,7 +464,7 @@ mod tests {
 
             let response = web.get("/-/rustdoc.static/style.css").await?;
             assert!(response.status().is_success());
-            response.assert_cache_control(CachePolicy::ForeverInCdnAndBrowser, env.config());
+            response.assert_cache_control(CacheDirective::ForeverInCdnAndBrowser, env.config());
             assert_eq!(response.text().await?, "content");
 
             assert_eq!(

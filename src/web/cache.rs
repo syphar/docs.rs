@@ -147,7 +147,7 @@ where
 }
 
 /// defines the wanted caching behaviour for a web response.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(test, derive(strum::EnumIter))]
 pub enum CacheDirective {
     /// no browser or CDN caching.
@@ -181,7 +181,7 @@ pub enum CacheDirective {
     ForeverInCdnAndStaleInBrowser,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CachePolicy {
     directive: CacheDirective,
     keys: HashSet<SurrogateKey>,
@@ -310,7 +310,9 @@ pub(crate) async fn cache_middleware(
     let cache_policy = response
         .extensions()
         .get::<CachePolicy>()
-        .unwrap_or(&CachePolicy::NoCaching);
+        .cloned()
+        .unwrap_or_else(|| CacheDirective::NoCaching.into());
+
     let cache_headers = cache_policy.render(&config, target_cdn);
     let resp_status = response.status();
     let resp_headers = response.headers_mut();
@@ -474,7 +476,8 @@ mod tests {
             .cache_control_stale_while_revalidate(stale_while_revalidate)
             .build()?;
 
-        for (policy, target_cdn) in CachePolicy::iter().cartesian_product(TargetCdn::iter()) {
+        for (directive, target_cdn) in CacheDirective::iter().cartesian_product(TargetCdn::iter()) {
+            let policy: CachePolicy = directive.into();
             let headers = policy.render(&config, target_cdn);
 
             if let Some(cache_control) = headers.cache_control {
@@ -499,22 +502,23 @@ mod tests {
         Ok(())
     }
 
-    #[test_case(CachePolicy::NoCaching, Some("max-age=0"))]
+    #[test_case(CacheDirective::NoCaching, Some("max-age=0"))]
     #[test_case(
-        CachePolicy::NoStoreMustRevalidate,
+        CacheDirective::NoStoreMustRevalidate,
         Some("no-cache, no-store, must-revalidate, max-age=0")
     )]
     #[test_case(
-        CachePolicy::ForeverInCdnAndBrowser,
+        CacheDirective::ForeverInCdnAndBrowser,
         Some("public, max-age=31104000, immutable")
     )]
-    #[test_case(CachePolicy::ForeverInCdn, None)]
+    #[test_case(CacheDirective::ForeverInCdn, None)]
     #[test_case(
-        CachePolicy::ForeverInCdnAndStaleInBrowser,
+        CacheDirective::ForeverInCdnAndStaleInBrowser,
         Some("stale-while-revalidate=86400")
     )]
-    fn render(cache: CachePolicy, cache_control: Option<&str>) -> Result<()> {
+    fn render(cache: CacheDirective, cache_control: Option<&str>) -> Result<()> {
         let config = TestEnvironment::base_config().build()?;
+        let cache: CachePolicy = cache.into();
         let headers = cache.render(&config, TargetCdn::CloudFront);
 
         assert_eq!(
@@ -533,8 +537,8 @@ mod tests {
             .cache_control_stale_while_revalidate(None)
             .build()?;
 
-        let headers =
-            CachePolicy::ForeverInCdnAndStaleInBrowser.render(&config, TargetCdn::CloudFront);
+        let headers = CachePolicy::from(CacheDirective::ForeverInCdnAndStaleInBrowser)
+            .render(&config, TargetCdn::CloudFront);
         assert!(headers.cache_control.is_none());
         assert!(headers.surrogate_control.is_none());
 
@@ -547,8 +551,8 @@ mod tests {
             .cache_control_stale_while_revalidate(Some(666))
             .build()?;
 
-        let headers =
-            CachePolicy::ForeverInCdnAndStaleInBrowser.render(&config, TargetCdn::CloudFront);
+        let headers = CachePolicy::from(CacheDirective::ForeverInCdnAndStaleInBrowser)
+            .render(&config, TargetCdn::CloudFront);
         assert_eq!(headers.cache_control.unwrap(), "stale-while-revalidate=666");
         assert!(headers.surrogate_control.is_none());
 
@@ -561,7 +565,8 @@ mod tests {
             .cache_invalidatable_responses(false)
             .build()?;
 
-        let headers = CachePolicy::ForeverInCdn.render(&config, TargetCdn::CloudFront);
+        let headers =
+            CachePolicy::from(CacheDirective::ForeverInCdn).render(&config, TargetCdn::CloudFront);
         assert_eq!(headers.cache_control.unwrap(), "max-age=0");
         assert!(headers.surrogate_control.is_none());
 
@@ -574,37 +579,42 @@ mod tests {
             .cache_invalidatable_responses(false)
             .build()?;
 
-        let headers =
-            CachePolicy::ForeverInCdnAndStaleInBrowser.render(&config, TargetCdn::CloudFront);
+        let headers = CachePolicy::from(CacheDirective::ForeverInCdnAndStaleInBrowser)
+            .render(&config, TargetCdn::CloudFront);
         assert_eq!(headers.cache_control.unwrap(), "max-age=0");
         assert!(headers.surrogate_control.is_none());
 
         Ok(())
     }
 
-    #[test_case(CachePolicy::NoCaching, Some("max-age=0"), None)]
+    #[test_case(CacheDirective::NoCaching, Some("max-age=0"), None)]
     #[test_case(
-        CachePolicy::NoStoreMustRevalidate,
+        CacheDirective::NoStoreMustRevalidate,
         Some("no-cache, no-store, must-revalidate, max-age=0"),
         None
     )]
     #[test_case(
-        CachePolicy::ForeverInCdnAndBrowser,
+        CacheDirective::ForeverInCdnAndBrowser,
         Some("public, max-age=31104000, immutable"),
         None
     )]
-    #[test_case(CachePolicy::ForeverInCdn, Some("max-age=0"), Some("max-age=31536000"))]
     #[test_case(
-        CachePolicy::ForeverInCdnAndStaleInBrowser,
+        CacheDirective::ForeverInCdn,
+        Some("max-age=0"),
+        Some("max-age=31536000")
+    )]
+    #[test_case(
+        CacheDirective::ForeverInCdnAndStaleInBrowser,
         Some("stale-while-revalidate=86400"),
         Some("max-age=31536000")
     )]
     fn render_fastly(
-        cache: CachePolicy,
+        cache: CacheDirective,
         cache_control: Option<&str>,
         surrogate_control: Option<&str>,
     ) -> Result<()> {
         let config = TestEnvironment::base_config().build()?;
+        let cache: CachePolicy = cache.into();
         let headers = cache.render(&config, TargetCdn::Fastly);
 
         assert_eq!(
@@ -626,7 +636,8 @@ mod tests {
             .cache_control_stale_while_revalidate(None)
             .build()?;
 
-        let headers = CachePolicy::ForeverInCdnAndStaleInBrowser.render(&config, TargetCdn::Fastly);
+        let headers = CachePolicy::from(CacheDirective::ForeverInCdnAndStaleInBrowser)
+            .render(&config, TargetCdn::Fastly);
         assert_eq!(headers, FOREVER_IN_FASTLY_CDN);
 
         Ok(())
@@ -638,7 +649,8 @@ mod tests {
             .cache_control_stale_while_revalidate(Some(666))
             .build()?;
 
-        let headers = CachePolicy::ForeverInCdnAndStaleInBrowser.render(&config, TargetCdn::Fastly);
+        let headers = CachePolicy::from(CacheDirective::ForeverInCdnAndStaleInBrowser)
+            .render(&config, TargetCdn::Fastly);
         assert_eq!(headers.cache_control.unwrap(), "stale-while-revalidate=666");
         assert_eq!(
             headers.surrogate_control,
@@ -654,7 +666,8 @@ mod tests {
             .cache_invalidatable_responses(false)
             .build()?;
 
-        let headers = CachePolicy::ForeverInCdn.render(&config, TargetCdn::Fastly);
+        let headers =
+            CachePolicy::from(CacheDirective::ForeverInCdn).render(&config, TargetCdn::Fastly);
         assert_eq!(headers.cache_control.unwrap(), "max-age=0");
         assert!(headers.surrogate_control.is_none());
 
@@ -667,7 +680,8 @@ mod tests {
             .cache_invalidatable_responses(false)
             .build()?;
 
-        let headers = CachePolicy::ForeverInCdnAndStaleInBrowser.render(&config, TargetCdn::Fastly);
+        let headers = CachePolicy::from(CacheDirective::ForeverInCdnAndStaleInBrowser)
+            .render(&config, TargetCdn::Fastly);
         assert_eq!(headers.cache_control.unwrap(), "max-age=0");
         assert!(headers.surrogate_control.is_none());
 
@@ -693,7 +707,7 @@ mod tests {
 
                     (
                         // this cache policy leads to the same result in both CDNs
-                        Extension(CachePolicy::ForeverInCdn),
+                        Extension(CacheDirective::ForeverInCdn),
                         "Hello, World!",
                     )
                 }),
@@ -741,7 +755,7 @@ mod tests {
 
                     (
                         // this cache policy leads to the same result in both CDNs
-                        Extension(CachePolicy::ForeverInCdnAndBrowser),
+                        Extension(CacheDirective::ForeverInCdnAndBrowser),
                         "Hello, World!",
                     )
                 }),

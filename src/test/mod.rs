@@ -17,7 +17,7 @@ use crate::{
     test::test_metrics::CollectedMetrics,
     web::{
         build_axum_app,
-        cache::{self, RenderCacheHeaders as _, TargetCdn, X_RLNG_SOURCE_CDN},
+        cache::{self, TargetCdn, X_RLNG_SOURCE_CDN},
         headers::{IfNoneMatch, SURROGATE_CONTROL},
         page::TemplateData,
     },
@@ -81,7 +81,7 @@ pub(crate) trait AxumResponseTestExt {
     async fn bytes(self) -> Result<Bytes>;
     async fn json<T: DeserializeOwned>(self) -> Result<T>;
     fn redirect_target(&self) -> Option<&str>;
-    fn assert_cache_control(&self, cache_policy: cache::CachePolicy, config: &Config);
+    fn assert_cache_control(&self, cache_policy: impl Into<cache::CachePolicy>, config: &Config);
     fn error_for_status(self) -> Result<Self>
     where
         Self: Sized;
@@ -101,8 +101,9 @@ impl AxumResponseTestExt for axum::response::Response {
     fn redirect_target(&self) -> Option<&str> {
         self.headers().get("Location")?.to_str().ok()
     }
-    fn assert_cache_control(&self, cache_policy: cache::CachePolicy, config: &Config) {
+    fn assert_cache_control(&self, cache_policy: impl Into<cache::CachePolicy>, config: &Config) {
         assert!(config.cache_control_stale_while_revalidate.is_some());
+        let cache_policy = cache_policy.into();
 
         // This method is only about asserting if the handler did set the right _policy_.
         //
@@ -136,7 +137,7 @@ pub(crate) trait AxumRouterTestExt {
         &self,
         path: &str,
         expected_target: &str,
-        cache_policy: cache::CachePolicy,
+        cache_policy: impl Into<cache::CachePolicy>,
         config: &Config,
     ) -> Result<AxumResponse>;
     async fn assert_not_found(&self, path: &str) -> Result<()>;
@@ -150,7 +151,7 @@ pub(crate) trait AxumRouterTestExt {
     async fn assert_success_cached(
         &self,
         path: &str,
-        cache_policy: cache::CachePolicy,
+        cache_policy: impl Into<cache::CachePolicy>,
         config: &Config,
     ) -> Result<()>;
     async fn assert_success(&self, path: &str) -> Result<AxumResponse>;
@@ -171,7 +172,7 @@ pub(crate) trait AxumRouterTestExt {
         &self,
         path: &str,
         expected_target: &str,
-        cache_policy: cache::CachePolicy,
+        cache_policy: impl Into<cache::CachePolicy>,
         config: &Config,
     ) -> Result<AxumResponse>;
 }
@@ -265,7 +266,7 @@ impl AxumRouterTestExt for axum::Router {
     async fn assert_success_cached(
         &self,
         path: &str,
-        cache_policy: cache::CachePolicy,
+        cache_policy: impl Into<cache::CachePolicy>,
         config: &Config,
     ) -> Result<()> {
         let response = self.get(path).await?;
@@ -392,7 +393,7 @@ impl AxumRouterTestExt for axum::Router {
         &self,
         path: &str,
         expected_target: &str,
-        cache_policy: cache::CachePolicy,
+        cache_policy: impl Into<cache::CachePolicy>,
         config: &Config,
     ) -> Result<AxumResponse> {
         let redirect_response = self.assert_redirect_common(path, expected_target).await?;
@@ -411,7 +412,7 @@ impl AxumRouterTestExt for axum::Router {
         &self,
         path: &str,
         expected_target: &str,
-        cache_policy: cache::CachePolicy,
+        cache_policy: impl Into<cache::CachePolicy>,
         config: &Config,
     ) -> Result<AxumResponse> {
         let redirect_response = self.assert_redirect_common(path, expected_target).await?;
