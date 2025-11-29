@@ -878,7 +878,7 @@ pub(crate) async fn badge_handler(
     Ok((
         StatusCode::MOVED_PERMANENTLY,
         [(http::header::LOCATION, url.to_string())],
-        Extension(CacheDirective::ForeverInCdnAndBrowser),
+        Extension(CachePolicy::from(CacheDirective::ForeverInCdnAndBrowser)),
     ))
 }
 

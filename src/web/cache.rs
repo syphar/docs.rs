@@ -249,13 +249,19 @@ impl CachePolicy {
         }
 
         // TODO: should we support already having surrogate keys here?
-        debug_assert!(headers.surrogate_keys.is_none());
-        // FIXME: error when too many keys?
-        headers.surrogate_keys = Some(SurrogateKeys::from_iter_until_full(self.keys.clone()));
-        debug_assert_eq!(
-            headers.surrogate_keys.as_ref().unwrap().key_count(),
-            self.keys.len()
+        debug_assert!(
+            headers.surrogate_keys.is_none()
+                || headers.surrogate_keys.as_ref().unwrap().key_count() == 0,
+            "we don't support pre-defined surrogate keys in CachePolicy yet"
         );
+        if !self.keys.is_empty() {
+            // FIXME: error when too many keys?
+            headers.surrogate_keys = Some(SurrogateKeys::from_iter_until_full(self.keys.clone()));
+            debug_assert_eq!(
+                headers.surrogate_keys.as_ref().unwrap().key_count(),
+                self.keys.len()
+            );
+        }
         headers
     }
 }
@@ -720,7 +726,7 @@ mod tests {
 
                     (
                         // this cache policy leads to the same result in both CDNs
-                        Extension(CacheDirective::ForeverInCdn),
+                        Extension(CachePolicy::from(CacheDirective::ForeverInCdn)),
                         "Hello, World!",
                     )
                 }),
@@ -768,7 +774,7 @@ mod tests {
 
                     (
                         // this cache policy leads to the same result in both CDNs
-                        Extension(CacheDirective::ForeverInCdnAndBrowser),
+                        Extension(CachePolicy::from(CacheDirective::ForeverInCdnAndBrowser)),
                         "Hello, World!",
                     )
                 }),

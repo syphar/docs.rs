@@ -89,7 +89,7 @@ async fn conditional_get(
         return (
             StatusCode::NOT_MODIFIED,
             TypedHeader(etag),
-            Extension(CacheDirective::ForeverInCdnAndBrowser),
+            Extension(CachePolicy::from(CacheDirective::ForeverInCdnAndBrowser)),
         )
             .into_response();
     }
