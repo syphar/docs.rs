@@ -3,7 +3,7 @@ use crate::{
     db::types::krate_name::KrateName,
     web::{
         extractors::Path,
-        headers::{SURROGATE_CONTROL, SURROGATE_KEY, SurrogateKeys},
+        headers::{SURROGATE_CONTROL, SURROGATE_KEY, SurrogateKey, SurrogateKeys},
     },
 };
 use axum::{
@@ -19,7 +19,7 @@ use http::{
     request::Parts,
 };
 use serde::Deserialize;
-use std::{convert::Infallible, sync::Arc};
+use std::{collections::HashSet, convert::Infallible, sync::Arc};
 use tracing::error;
 
 pub const X_RLNG_SOURCE_CDN: HeaderName = HeaderName::from_static("x-rlng-source-cdn");
@@ -28,6 +28,7 @@ pub const X_RLNG_SOURCE_CDN: HeaderName = HeaderName::from_static("x-rlng-source
 pub struct ResponseCacheHeaders {
     pub cache_control: Option<HeaderValue>,
     pub surrogate_control: Option<HeaderValue>,
+    pub surrogate_keys: Option<SurrogateKeys>,
     pub needs_cdn_invalidation: bool,
 }
 
@@ -51,6 +52,7 @@ impl ResponseCacheHeaders {
 pub static NO_CACHING: ResponseCacheHeaders = ResponseCacheHeaders {
     cache_control: Some(HeaderValue::from_static("max-age=0")),
     surrogate_control: None,
+    surrogate_keys: None,
     needs_cdn_invalidation: false,
 };
 
@@ -59,6 +61,7 @@ pub static NO_CACHING: ResponseCacheHeaders = ResponseCacheHeaders {
 pub static SHORT: ResponseCacheHeaders = ResponseCacheHeaders {
     cache_control: Some(HeaderValue::from_static("public, max-age=60")),
     surrogate_control: None,
+    surrogate_keys: None,
     needs_cdn_invalidation: false,
 };
 
@@ -68,6 +71,7 @@ pub static NO_STORE_MUST_REVALIDATE: ResponseCacheHeaders = ResponseCacheHeaders
         "no-cache, no-store, must-revalidate, max-age=0",
     )),
     surrogate_control: None,
+    surrogate_keys: None,
     needs_cdn_invalidation: false,
 };
 
@@ -82,6 +86,7 @@ pub static FOREVER_IN_FASTLY_CDN: ResponseCacheHeaders = ResponseCacheHeaders {
     // especially in combination with our fastly compute service.
     // https://www.fastly.com/documentation/guides/concepts/edge-state/cache/stale/
     surrogate_control: Some(HeaderValue::from_static("max-age=31536000")),
+    surrogate_keys: None,
 
     needs_cdn_invalidation: true,
 };
@@ -101,6 +106,7 @@ pub static FOREVER_IN_CLOUDFRONT_CDN: ResponseCacheHeaders = ResponseCacheHeader
     // when `Cache-Control` is missing.
     cache_control: None,
     surrogate_control: None,
+    surrogate_keys: None,
     needs_cdn_invalidation: true,
 };
 
@@ -114,6 +120,7 @@ pub static FOREVER_IN_CDN_AND_BROWSER: ResponseCacheHeaders = ResponseCacheHeade
         "public, max-age=31104000, immutable",
     )),
     surrogate_control: None,
+    surrogate_keys: None,
     needs_cdn_invalidation: false,
 };
 
@@ -173,9 +180,12 @@ pub enum CachePolicy {
     /// This helps building a PWA.
     ForeverInCdnAndStaleInBrowser,
 }
+pub trait RenderCacheHeaders {
+    fn render(&self, config: &Config, target_cdn: TargetCdn) -> ResponseCacheHeaders;
+}
 
-impl CachePolicy {
-    pub fn render(&self, config: &Config, target_cdn: TargetCdn) -> ResponseCacheHeaders {
+impl RenderCacheHeaders for CachePolicy {
+    fn render(&self, config: &Config, target_cdn: TargetCdn) -> ResponseCacheHeaders {
         match *self {
             CachePolicy::NoCaching => NO_CACHING.clone(),
             CachePolicy::NoStoreMustRevalidate => NO_STORE_MUST_REVALIDATE.clone(),
@@ -209,6 +219,54 @@ impl CachePolicy {
                 forever_in_cdn
             }
         }
+    }
+}
+
+pub trait ExtendSurrogateKeys {
+    // FIXME: fail when too many keys?
+    fn with_surrogate_key(self, key: SurrogateKey) -> CachePolicyWithSurrogateKeys;
+}
+
+impl ExtendSurrogateKeys for CachePolicy {
+    fn with_surrogate_key(self, key: SurrogateKey) -> CachePolicyWithSurrogateKeys {
+        CachePolicyWithSurrogateKeys {
+            policy: self,
+            keys: HashSet::from_iter([key]),
+        }
+    }
+}
+
+impl RenderCacheHeaders for CachePolicyWithSurrogateKeys {
+    fn render(&self, config: &Config, target_cdn: TargetCdn) -> ResponseCacheHeaders {
+        let mut headers = self.policy.render(config, target_cdn);
+
+        if target_cdn == TargetCdn::CloudFront {
+            // CloudFront doesn't support surrogate keys.
+            return headers;
+        }
+
+        // TODO: should we support already having surrogate keys here?
+        debug_assert!(headers.surrogate_keys.is_none());
+        // FIXME: error when too many keys?
+        headers.surrogate_keys = Some(SurrogateKeys::from_iter_until_full(self.keys.clone()));
+        debug_assert_eq!(
+            headers.surrogate_keys.as_ref().unwrap().key_count(),
+            self.keys.len()
+        );
+        headers
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CachePolicyWithSurrogateKeys {
+    policy: CachePolicy,
+    keys: HashSet<SurrogateKey>,
+}
+
+impl ExtendSurrogateKeys for CachePolicyWithSurrogateKeys {
+    fn with_surrogate_key(mut self, key: SurrogateKey) -> CachePolicyWithSurrogateKeys {
+        self.keys.insert(key);
+        self
     }
 }
 
@@ -264,32 +322,35 @@ pub(crate) async fn cache_middleware(
     // While that sounds nice, CloudFront invalidations with path prefixes are suuper slow,
     // and have a concurrency limit.
     if let TargetCdn::CloudFront = target_cdn {
-        debug_assert!(cache_headers.surrogate_control.is_none());
+        debug_assert!(
+            cache_headers.surrogate_control.is_none() && cache_headers.surrogate_control.is_none()
+        );
         cache_headers.set_on_response(resp_headers);
         return response;
     }
 
-    // simple implementation first:
-    // This is for content we need to invalidate in the CDN level.
-    // We don't care about content that is filename-hashed and can be cached
-    // forever, or content that is not cached at all.
-    //
-    // Generally Fastly can either purge single URLs, or a whole service.
-    // When you want to purge the cache for a bigger subset, but not everything, you need to "tag"
-    // your content with surrogate keys when delivering it to Fastly for caching.
-    // https://www.fastly.com/documentation/guides/full-site-delivery/purging/working-with-surrogate-keys/
-    //
-    // At some point we should extend this system and make it explicit, so in all places you return
-    // a cache policy you also return these surrogate keys, probably based on the krate, release
-    // or other things. For now we stick to invalidating the whole crate on all changes.
-    //
-    // For the first version I found an easy "hack" that doesn't need the full refactor across
-    // all our handlers;
-    // If the URL contains a crate name, we create a surrogate key based on that.
-    // Since we always call the crate name (and only the crate name) `{name}` in our routes,
-    // we're safe here. I added some debug assertions to ensure my assumptions are right, and
-    // any change to these in the routes would lead to test failures.
     let cache_headers = if let Some(ref name) = param.name {
+        // simple implementation first:
+        // This is for content we need to invalidate in the CDN level.
+        // We don't care about content that is filename-hashed and can be cached
+        // forever, or content that is not cached at all.
+        //
+        // Generally Fastly can either purge single URLs, or a whole service.
+        // When you want to purge the cache for a bigger subset, but not everything, you need to "tag"
+        // your content with surrogate keys when delivering it to Fastly for caching.
+        // https://www.fastly.com/documentation/guides/full-site-delivery/purging/working-with-surrogate-keys/
+        //
+        // At some point we should extend this system and make it explicit, so in all places you return
+        // a cache policy you also return these surrogate keys, probably based on the krate, release
+        // or other things. For now we stick to invalidating the whole crate on all changes.
+        //
+        // For the first version I found an easy "hack" that doesn't need the full refactor across
+        // all our handlers;
+        // If the URL contains a crate name, we create a surrogate key based on that.
+        // Since we always call the crate name (and only the crate name) `{name}` in our routes,
+        // we're safe here. I added some debug assertions to ensure my assumptions are right, and
+        // any change to these in the routes would lead to test failures.
+        //
         // we could theoretically only run this part when cache_invalidatable_responses and
         // cache_headers.needs_cdn_invalidation are true,
         // but let's always to this validation and add the surrogate-key to know if

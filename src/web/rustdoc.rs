@@ -2,6 +2,7 @@
 
 use crate::{
     AsyncStorage, BUILD_VERSION, Config, InstanceMetrics, RUSTDOC_STATIC_STORAGE_PREFIX,
+    db::types::krate_name::KrateName,
     registry_api::OwnerKind,
     storage::{
         CompressionAlgorithm, RustdocJsonFormatVersion, StreamingBlob,
@@ -10,7 +11,7 @@ use crate::{
     utils::{self, Dependency},
     web::{
         MetaData, ReqVersion, axum_cached_redirect,
-        cache::CachePolicy,
+        cache::{CachePolicy, ExtendSurrogateKeys as _},
         crate_details::CrateDetails,
         csp::Csp,
         error::{AxumNope, AxumResult},
@@ -308,7 +309,10 @@ pub(crate) async fn rustdoc_redirector_handler(
         ?params,
         "parsed params with matched version"
     );
-    let crate_name = matched_release.name.clone();
+    let crate_name: KrateName = matched_release
+        .name
+        .parse()
+        .context("couldn't parse crate name from database")?;
 
     // we might get requests to crate-specific JS/CSS files here.
     if params.inner_path().ends_with(".js") || params.inner_path().ends_with(".css") {
@@ -364,14 +368,15 @@ pub(crate) async fn rustdoc_redirector_handler(
                 CachePolicy::ForeverInCdn
             } else {
                 CachePolicy::ForeverInCdnAndStaleInBrowser
-            },
+            }
+            .with_surrogate_key(crate_name.into()),
             path_in_crate.as_deref(),
         )?
         .into_response())
     } else {
         Ok(axum_cached_redirect(
             params.crate_details_url().append_raw_query(original_query),
-            CachePolicy::ForeverInCdn,
+            CachePolicy::ForeverInCdn.with_surrogate_key(crate_name.into()),
         )?
         .into_response())
     }

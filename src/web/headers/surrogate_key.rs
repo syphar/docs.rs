@@ -74,7 +74,7 @@ impl From<KrateName> for SurrogateKey {
 }
 
 /// A full Fastly Surrogate-Key header, containing one or more keys.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SurrogateKeys(Vec<SurrogateKey>);
 
 impl Display for SurrogateKeys {
