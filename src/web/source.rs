@@ -5,15 +5,14 @@ use crate::{
     storage::PathNotFoundError,
     web::{
         MetaData, ReqVersion,
-        cache::CacheDirective,
+        cache::{CacheDirective, CachePolicy},
         error::{AxumNope, AxumResult},
         extractors::{
             DbConnection,
             rustdoc::{PageKind, RustdocParams},
         },
         file::StreamingFile,
-        headers::CanonicalUrl,
-        headers::IfNoneMatch,
+        headers::{CanonicalUrl, IfNoneMatch},
         match_version,
         page::templates::{RenderBrands, RenderRegular, RenderSolid, filters},
     },
@@ -279,9 +278,9 @@ pub(crate) async fn source_browser_handler(
             // if the file isn't text, serve it directly to the client
             let mut response = StreamingFile(stream).into_response(if_none_match.as_deref());
             response.headers_mut().typed_insert(canonical_url);
-            response
-                .extensions_mut()
-                .insert(CacheDirective::ForeverInCdnAndStaleInBrowser);
+            response.extensions_mut().insert(CachePolicy::from(
+                CacheDirective::ForeverInCdnAndStaleInBrowser,
+            ));
             return Ok(response);
         } else {
             let max_file_size = config.max_file_size_for(&stream.path);
