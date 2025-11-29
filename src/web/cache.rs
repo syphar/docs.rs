@@ -149,7 +149,7 @@ where
 /// defines the wanted caching behaviour for a web response.
 #[derive(Debug, Clone)]
 #[cfg_attr(test, derive(strum::EnumIter))]
-pub enum CachePolicy {
+pub enum CacheDirective {
     /// no browser or CDN caching.
     /// In some cases the browser might still use cached content,
     /// for example when using the "back" button or when it can't
@@ -180,18 +180,30 @@ pub enum CachePolicy {
     /// This helps building a PWA.
     ForeverInCdnAndStaleInBrowser,
 }
-pub trait RenderCacheHeaders {
-    fn render(&self, config: &Config, target_cdn: TargetCdn) -> ResponseCacheHeaders;
+
+#[derive(Debug, Clone)]
+pub struct CachePolicy {
+    directive: CacheDirective,
+    keys: HashSet<SurrogateKey>,
 }
 
-impl RenderCacheHeaders for CachePolicy {
-    fn render(&self, config: &Config, target_cdn: TargetCdn) -> ResponseCacheHeaders {
-        match *self {
-            CachePolicy::NoCaching => NO_CACHING.clone(),
-            CachePolicy::NoStoreMustRevalidate => NO_STORE_MUST_REVALIDATE.clone(),
-            CachePolicy::ShortInCdnAndBrowser => SHORT.clone(),
-            CachePolicy::ForeverInCdnAndBrowser => FOREVER_IN_CDN_AND_BROWSER.clone(),
-            CachePolicy::ForeverInCdn => {
+impl From<CacheDirective> for CachePolicy {
+    fn from(directive: CacheDirective) -> Self {
+        CachePolicy {
+            directive,
+            keys: HashSet::new(),
+        }
+    }
+}
+
+impl CachePolicy {
+    pub fn render(&self, config: &Config, target_cdn: TargetCdn) -> ResponseCacheHeaders {
+        let mut headers = match self.directive {
+            CacheDirective::NoCaching => NO_CACHING.clone(),
+            CacheDirective::NoStoreMustRevalidate => NO_STORE_MUST_REVALIDATE.clone(),
+            CacheDirective::ShortInCdnAndBrowser => SHORT.clone(),
+            CacheDirective::ForeverInCdnAndBrowser => FOREVER_IN_CDN_AND_BROWSER.clone(),
+            CacheDirective::ForeverInCdn => {
                 if config.cache_invalidatable_responses {
                     match target_cdn {
                         TargetCdn::Fastly => FOREVER_IN_FASTLY_CDN.clone(),
@@ -201,9 +213,10 @@ impl RenderCacheHeaders for CachePolicy {
                     NO_CACHING.clone()
                 }
             }
-            CachePolicy::ForeverInCdnAndStaleInBrowser => {
+            CacheDirective::ForeverInCdnAndStaleInBrowser => {
                 // when caching invalidatable responses is disabled, this results in NO_CACHING
-                let mut forever_in_cdn = CachePolicy::ForeverInCdn.render(config, target_cdn);
+                let mut forever_in_cdn =
+                    CachePolicy::from(CacheDirective::ForeverInCdn).render(config, target_cdn);
 
                 if config.cache_invalidatable_responses
                     && let Some(cache_control) =
@@ -218,27 +231,7 @@ impl RenderCacheHeaders for CachePolicy {
 
                 forever_in_cdn
             }
-        }
-    }
-}
-
-pub trait ExtendSurrogateKeys {
-    // FIXME: fail when too many keys?
-    fn with_surrogate_key(self, key: SurrogateKey) -> CachePolicyWithSurrogateKeys;
-}
-
-impl ExtendSurrogateKeys for CachePolicy {
-    fn with_surrogate_key(self, key: SurrogateKey) -> CachePolicyWithSurrogateKeys {
-        CachePolicyWithSurrogateKeys {
-            policy: self,
-            keys: HashSet::from_iter([key]),
-        }
-    }
-}
-
-impl RenderCacheHeaders for CachePolicyWithSurrogateKeys {
-    fn render(&self, config: &Config, target_cdn: TargetCdn) -> ResponseCacheHeaders {
-        let mut headers = self.policy.render(config, target_cdn);
+        };
 
         if target_cdn == TargetCdn::CloudFront {
             // CloudFront doesn't support surrogate keys.
@@ -257,14 +250,19 @@ impl RenderCacheHeaders for CachePolicyWithSurrogateKeys {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct CachePolicyWithSurrogateKeys {
-    policy: CachePolicy,
-    keys: HashSet<SurrogateKey>,
+pub trait ExtendSurrogateKeys {
+    fn with_surrogate_key(self, key: SurrogateKey) -> CachePolicy;
 }
 
-impl ExtendSurrogateKeys for CachePolicyWithSurrogateKeys {
-    fn with_surrogate_key(mut self, key: SurrogateKey) -> CachePolicyWithSurrogateKeys {
+impl ExtendSurrogateKeys for CacheDirective {
+    fn with_surrogate_key(self, key: SurrogateKey) -> CachePolicy {
+        let policy: CachePolicy = self.into();
+        policy.with_surrogate_key(key)
+    }
+}
+
+impl ExtendSurrogateKeys for CachePolicy {
+    fn with_surrogate_key(mut self, key: SurrogateKey) -> CachePolicy {
         self.keys.insert(key);
         self
     }
