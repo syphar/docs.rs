@@ -19,7 +19,7 @@ use http::{
     request::Parts,
 };
 use serde::Deserialize;
-use std::{collections::HashSet, convert::Infallible, sync::Arc};
+use std::{convert::Infallible, sync::Arc};
 use tracing::error;
 
 pub const X_RLNG_SOURCE_CDN: HeaderName = HeaderName::from_static("x-rlng-source-cdn");
@@ -40,6 +40,16 @@ impl ResponseCacheHeaders {
         if let Some(ref surrogate_control) = self.surrogate_control {
             headers.insert(&SURROGATE_CONTROL, surrogate_control.clone());
         }
+        if let Some(ref surrogate_keys) = self.surrogate_keys {
+            headers.typed_insert(surrogate_keys.clone());
+        }
+    }
+
+    fn has_surrogate_keys(&self) -> bool {
+        self.surrogate_keys
+            .as_ref()
+            .map(|sk| sk.key_count() > 0)
+            .unwrap_or(false)
     }
 }
 
@@ -184,14 +194,14 @@ pub enum CacheDirective {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CachePolicy {
     directive: CacheDirective,
-    keys: HashSet<SurrogateKey>,
+    keys: Vec<SurrogateKey>,
 }
 
 impl From<CacheDirective> for CachePolicy {
     fn from(directive: CacheDirective) -> Self {
         CachePolicy {
             directive,
-            keys: HashSet::new(),
+            keys: Vec::new(),
         }
     }
 }
@@ -263,7 +273,7 @@ impl ExtendSurrogateKeys for CacheDirective {
 
 impl ExtendSurrogateKeys for CachePolicy {
     fn with_surrogate_key(mut self, key: SurrogateKey) -> CachePolicy {
-        self.keys.insert(key);
+        self.keys.push(key);
         self
     }
 }
@@ -329,7 +339,10 @@ pub(crate) async fn cache_middleware(
         return response;
     }
 
-    let cache_headers = if let Some(ref name) = param.name {
+    let cache_headers = if cache_headers.has_surrogate_keys() {
+        // when we were given surrogate keys, we assume the handlers knows what they're doing.
+        &cache_headers
+    } else if let Some(ref name) = param.name {
         // simple implementation first:
         // This is for content we need to invalidate in the CDN level.
         // We don't care about content that is filename-hashed and can be cached

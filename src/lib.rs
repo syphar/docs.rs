@@ -1,6 +1,6 @@
 //! [Docs.rs](https://docs.rs) (formerly cratesfyi) is an open source project to host
 //! documentation of crates for the Rust Programming Language.
-#![allow(clippy::cognitive_complexity)]
+#![allow(clippy::cognitive_complexity, clippy::result_large_err)]
 
 pub use self::build_queue::{
     AsyncBuildQueue, BuildQueue, queue_rebuilds, queue_rebuilds_faulty_rustdoc,

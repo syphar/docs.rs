@@ -58,7 +58,6 @@ impl StreamingFile {
     }
 
     pub fn into_response(self, if_none_match: Option<&IfNoneMatch>) -> AxumResponse {
-        // FIXME: make const again?
         let cache_policy: CachePolicy = CacheDirective::ForeverInCdnAndBrowser.into();
         let last_modified = LastModified::from(SystemTime::from(self.0.date_updated));
 

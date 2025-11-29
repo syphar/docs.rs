@@ -13,6 +13,7 @@ use std::borrow::Cow;
 use tracing::error;
 
 #[derive(Debug, thiserror::Error)]
+#[allow(clippy::result_large_err)]
 pub enum AxumNope {
     #[error("Requested resource not found")]
     ResourceNotFound,
