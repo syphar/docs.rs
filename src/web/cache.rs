@@ -323,11 +323,13 @@ pub(crate) async fn cache_middleware(
     // extract cache policy, default to "forbid caching everywhere".
     // We only use cache policies in our successful responses (with content, or redirect),
     // so any errors (4xx, 5xx) should always get "NoCaching".
-    let cache_policy = response
-        .extensions()
-        .get::<CachePolicy>()
-        .cloned()
-        .unwrap_or_else(|| CacheDirective::NoCaching.into());
+    let cache_policy = if let Some(cache_policy) = response.extensions().get::<CachePolicy>() {
+        cache_policy.clone()
+    } else if let Some(cache_directive) = response.extensions().get::<CacheDirective>() {
+        cache_directive.clone().into()
+    } else {
+        CacheDirective::NoCaching.into()
+    };
 
     let cache_headers = cache_policy.render(&config, target_cdn);
     let resp_status = response.status();
