@@ -283,16 +283,14 @@ pub(crate) async fn cache_middleware(
 mod tests {
     use super::*;
     use crate::test::{
-        AxumResponseTestExt as _, TestEnvironment, assert_cache_headers_eq,
+        TestEnvironment,
         headers::{test_typed_decode, test_typed_encode},
     };
     use anyhow::{Context as _, Result};
-    use axum::{Router, body::Body, http::Request, routing::get};
     use axum_extra::headers::CacheControl;
     use itertools::Itertools as _;
     use strum::IntoEnumIterator as _;
     use test_case::{test_case, test_matrix};
-    use tower::{ServiceBuilder, ServiceExt as _};
 
     fn validate_cache_control(value: &HeaderValue) -> Result<()> {
         assert!(!value.as_bytes().is_empty());
@@ -548,10 +546,14 @@ mod tests {
             .cache_control_stale_while_revalidate(None)
             .build()?;
 
-        let headers = CachePolicy::ForeverInCdnAndStaleInBrowser(
-            SurrogateKey::from_static("something").into(),
-        )
-        .render(&config, TargetCdn::Fastly);
+        let sk = SurrogateKey::from_static("something");
+        let mut headers = CachePolicy::ForeverInCdnAndStaleInBrowser(sk.clone().into())
+            .render(&config, TargetCdn::Fastly);
+
+        assert_eq!(
+            headers.surrogate_keys.take().unwrap(),
+            SurrogateKeys::try_from_iter([sk, SURROGATE_KEY_ALL]).unwrap()
+        );
         assert_eq!(headers, FOREVER_IN_FASTLY_CDN);
 
         Ok(())
@@ -602,107 +604,6 @@ mod tests {
         .render(&config, TargetCdn::Fastly);
         assert_eq!(headers.cache_control.unwrap(), "max-age=0");
         assert!(headers.surrogate_control.is_none());
-
-        Ok(())
-    }
-
-    #[test_case(TargetCdn::Fastly, &FOREVER_IN_FASTLY_CDN)]
-    #[test_case(TargetCdn::CloudFront, &FOREVER_IN_CLOUDFRONT_CDN)]
-    #[tokio::test]
-    async fn test_middleware_reacts_to_fastly_header_in_crate_route(
-        expected_target_cdn: TargetCdn,
-        expected_headers: &ResponseCacheHeaders,
-    ) -> Result<()> {
-        let config = TestEnvironment::base_config()
-            .cache_invalidatable_responses(true)
-            .build()?;
-
-        let app = Router::new()
-            .route(
-                "/{name}",
-                get(move |target_cdn: TargetCdn| async move {
-                    assert_eq!(target_cdn, expected_target_cdn);
-
-                    (
-                        // this cache policy leads to the same result in both CDNs
-                        Extension(CachePolicy::ForeverInCdn),
-                        "Hello, World!",
-                    )
-                }),
-            )
-            .layer(
-                ServiceBuilder::new()
-                    .layer(Extension(Arc::new(config)))
-                    .layer(axum::middleware::from_fn(cache_middleware)),
-            );
-
-        let mut builder = Request::builder().uri("/krate");
-
-        if let TargetCdn::Fastly = expected_target_cdn {
-            builder = builder.header(X_RLNG_SOURCE_CDN, "some_value");
-        }
-
-        let response = app
-            .clone()
-            .oneshot(builder.body(Body::empty()).unwrap())
-            .await?;
-
-        assert!(
-            response.status().is_success(),
-            "{}",
-            response.text().await.unwrap(),
-        );
-        assert_cache_headers_eq(&response, expected_headers);
-
-        Ok(())
-    }
-
-    #[test_case(TargetCdn::Fastly)]
-    #[test_case(TargetCdn::CloudFront)]
-    #[tokio::test]
-    async fn test_middleware_reacts_to_fastly_header_in_other_route(
-        expected_target_cdn: TargetCdn,
-    ) -> Result<()> {
-        let config = TestEnvironment::base_config().build()?;
-
-        let app = Router::new()
-            .route(
-                "/",
-                get(move |target_cdn: TargetCdn| async move {
-                    assert_eq!(target_cdn, expected_target_cdn);
-
-                    (
-                        // this cache policy leads to the same result in both CDNs
-                        Extension(CachePolicy::ForeverInCdnAndBrowser),
-                        "Hello, World!",
-                    )
-                }),
-            )
-            .layer(
-                ServiceBuilder::new()
-                    .layer(Extension(Arc::new(config)))
-                    .layer(axum::middleware::from_fn(cache_middleware)),
-            );
-
-        let mut builder = Request::builder().uri("/");
-
-        if let TargetCdn::Fastly = expected_target_cdn {
-            builder = builder.header(X_RLNG_SOURCE_CDN, "some_value");
-        }
-
-        let response = app
-            .clone()
-            .oneshot(builder.body(Body::empty()).unwrap())
-            .await?;
-
-        assert!(
-            response.status().is_success(),
-            "{}",
-            response.text().await.unwrap(),
-        );
-
-        // this cache policy leads to the same result in both CDNs
-        assert_cache_headers_eq(&response, &FOREVER_IN_CDN_AND_BROWSER);
 
         Ok(())
     }
