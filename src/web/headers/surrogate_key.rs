@@ -7,7 +7,7 @@ use axum_extra::headers::{self, Header};
 use derive_more::Deref;
 use http::{HeaderName, HeaderValue};
 use itertools::Itertools as _;
-use std::{collections::HashSet, fmt::Display, iter, str::FromStr};
+use std::{collections::BTreeSet, fmt::Display, iter, str::FromStr};
 
 use crate::db::types::krate_name::KrateName;
 
@@ -98,11 +98,11 @@ impl From<KrateName> for SurrogateKey {
 
 /// A full Fastly Surrogate-Key header, containing one or more keys.
 #[derive(Debug, PartialEq, Clone, Default)]
-pub struct SurrogateKeys(HashSet<SurrogateKey>);
+pub struct SurrogateKeys(BTreeSet<SurrogateKey>);
 
 impl From<SurrogateKey> for SurrogateKeys {
     fn from(key: SurrogateKey) -> Self {
-        SurrogateKeys(HashSet::from_iter(vec![key]))
+        SurrogateKeys(BTreeSet::from_iter(vec![key]))
     }
 }
 
@@ -233,7 +233,7 @@ impl FromStr for SurrogateKeys {
         let keys = s
             .split(' ')
             .map(SurrogateKey::from_str)
-            .collect::<Result<HashSet<_>, _>>()?;
+            .collect::<Result<BTreeSet<_>, _>>()?;
         Ok(SurrogateKeys(keys))
     }
 }
@@ -288,7 +288,7 @@ mod tests {
 
         assert_eq!(
             test_typed_encode(SurrogateKeys::from_iter_until_full([k1, k2, k3])),
-            "key-2 key-1"
+            "key-1 key-2"
         );
 
         Ok(())
