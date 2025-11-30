@@ -68,9 +68,14 @@ pub(crate) async fn build_list_handler(
         .await?
         .assume_exact_name()?
         .into_canonical_req_version_or_else(|version| {
+            let params = params.clone().with_req_version(version);
             AxumNope::Redirect(
-                params.clone().with_req_version(version).builds_url(),
-                CachePolicy::ForeverInCdn,
+                params.builds_url(),
+                CachePolicy::ForeverInCdn(
+                    params
+                        .surrogate_keys()
+                        .expect("after match_version, we know it works"),
+                ),
             )
         })?
         .into_version();

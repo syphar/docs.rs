@@ -171,9 +171,17 @@ impl_axum_webpage! {
     SourcePage,
     canonical_url = |page| Some(page.canonical_url.clone()),
     cache_policy = |page| if page.is_latest_url {
-        CachePolicy::ForeverInCdn
+        CachePolicy::ForeverInCdn(
+            page.params
+                .surrogate_keys()
+                .expect("after match_version, we know it works"),
+        )
     } else {
-        CachePolicy::ForeverInCdnAndStaleInBrowser
+        CachePolicy::ForeverInCdnAndStaleInBrowser(
+            page.params
+                .surrogate_keys()
+                .expect("after match_version, we know it works"),
+        )
     },
     cpu_intensive_rendering = true,
 }
@@ -207,9 +215,14 @@ pub(crate) async fn source_browser_handler(
             )
         })?
         .into_canonical_req_version_or_else(|version| {
+            let params = params.clone().with_req_version(version);
             AxumNope::Redirect(
-                params.clone().with_req_version(version).source_url(),
-                CachePolicy::ForeverInCdn,
+                params.source_url(),
+                CachePolicy::ForeverInCdn(
+                    params
+                        .surrogate_keys()
+                        .expect("after match_version, we know it works"),
+                ),
             )
         })?;
     let params = params.apply_matched_release(&matched_release);

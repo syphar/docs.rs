@@ -484,9 +484,14 @@ pub(crate) async fn crate_details_handler(
         .await?
         .assume_exact_name()?
         .into_canonical_req_version_or_else(|version| {
+            let params = params.clone().with_req_version(version);
             AxumNope::Redirect(
-                params.clone().with_req_version(version).crate_details_url(),
-                CachePolicy::ForeverInCdn,
+                params.crate_details_url(),
+                CachePolicy::ForeverInCdn(
+                    params
+                        .surrogate_keys()
+                        .expect("after match_version, we know it works"),
+                ),
             )
         })?;
     let params = params.apply_matched_release(&matched_release);
@@ -494,7 +499,11 @@ pub(crate) async fn crate_details_handler(
     if params.original_path() != params.crate_details_url().path() {
         return Err(AxumNope::Redirect(
             params.crate_details_url(),
-            CachePolicy::ForeverInCdn,
+            CachePolicy::ForeverInCdn(
+                params
+                    .surrogate_keys()
+                    .expect("after match_version, we know it works"),
+            ),
         ));
     }
 
@@ -562,14 +571,22 @@ pub(crate) async fn crate_details_handler(
                 .with_req_version(ReqVersion::Latest)
                 .crate_details_url(),
         ),
-        params,
+        params: params.clone(),
     }
     .into_response();
     res.extensions_mut()
         .insert::<CachePolicy>(if is_latest_version {
-            CachePolicy::ForeverInCdn
+            CachePolicy::ForeverInCdn(
+                params
+                    .surrogate_keys()
+                    .expect("after match_version, we know it works"),
+            )
         } else {
-            CachePolicy::ForeverInCdnAndStaleInBrowser
+            CachePolicy::ForeverInCdnAndStaleInBrowser(
+                params
+                    .surrogate_keys()
+                    .expect("after match_version, we know it works"),
+            )
         });
     Ok(res)
 }
@@ -584,7 +601,11 @@ struct ReleaseList {
 
 impl_axum_webpage! {
     ReleaseList,
-    cache_policy = |_| CachePolicy::ForeverInCdn,
+    cache_policy = |page| CachePolicy::ForeverInCdn(
+        page.params
+            .surrogate_keys()
+            .expect("after match_version, we know it works"),
+    ),
     cpu_intensive_rendering = true,
 }
 
@@ -626,7 +647,11 @@ struct PlatformList {
 
 impl_axum_webpage! {
     PlatformList,
-    cache_policy = |_| CachePolicy::ForeverInCdn,
+    cache_policy = |page| CachePolicy::ForeverInCdn(
+        page.params
+            .surrogate_keys()
+            .expect("after match_version, we know it works"),
+    ),
     cpu_intensive_rendering = true,
 }
 
@@ -653,12 +678,14 @@ pub(crate) async fn get_all_platforms_inner(
             )
         })?
         .into_canonical_req_version_or_else(|version| {
+            let params = params.clone().with_req_version(version);
             AxumNope::Redirect(
-                params
-                    .clone()
-                    .with_req_version(version)
-                    .platforms_partial_url(),
-                CachePolicy::ForeverInCdn,
+                params.platforms_partial_url(),
+                CachePolicy::ForeverInCdn(
+                    params
+                        .surrogate_keys()
+                        .expect("after match_version, we know it works"),
+                ),
             )
         })?;
     let params = params.apply_matched_release(&matched_release);

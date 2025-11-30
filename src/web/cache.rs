@@ -1,14 +1,10 @@
 use crate::{
     config::Config,
-    db::types::krate_name::KrateName,
-    web::{
-        extractors::Path,
-        headers::{SURROGATE_CONTROL, SURROGATE_KEY, SurrogateKeys},
-    },
+    web::headers::{SURROGATE_CONTROL, SURROGATE_KEY, SurrogateKey, SurrogateKeys},
 };
 use axum::{
     Extension,
-    extract::{FromRequestParts, MatchedPath, Request as AxumHttpRequest},
+    extract::{FromRequestParts, Request as AxumHttpRequest},
     middleware::Next,
     response::Response as AxumResponse,
 };
@@ -18,16 +14,19 @@ use http::{
     header::{CACHE_CONTROL, ETAG},
     request::Parts,
 };
-use serde::Deserialize;
 use std::{convert::Infallible, sync::Arc};
-use tracing::error;
 
 pub const X_RLNG_SOURCE_CDN: HeaderName = HeaderName::from_static("x-rlng-source-cdn");
+
+/// a surrogate key that is attached to _all_ content.
+/// This enables us to use the fastly "soft purge" for everything.
+pub const SURROGATE_KEY_ALL: SurrogateKey = SurrogateKey::from_static("all");
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResponseCacheHeaders {
     pub cache_control: Option<HeaderValue>,
     pub surrogate_control: Option<HeaderValue>,
+    pub surrogate_keys: Option<SurrogateKeys>,
     pub needs_cdn_invalidation: bool,
 }
 
@@ -38,6 +37,9 @@ impl ResponseCacheHeaders {
         }
         if let Some(ref surrogate_control) = self.surrogate_control {
             headers.insert(&SURROGATE_CONTROL, surrogate_control.clone());
+        }
+        if let Some(ref surrogate_keys) = self.surrogate_keys {
+            headers.typed_insert(surrogate_keys.clone());
         }
     }
 }
@@ -51,6 +53,7 @@ impl ResponseCacheHeaders {
 pub static NO_CACHING: ResponseCacheHeaders = ResponseCacheHeaders {
     cache_control: Some(HeaderValue::from_static("max-age=0")),
     surrogate_control: None,
+    surrogate_keys: None,
     needs_cdn_invalidation: false,
 };
 
@@ -59,6 +62,7 @@ pub static NO_CACHING: ResponseCacheHeaders = ResponseCacheHeaders {
 pub static SHORT: ResponseCacheHeaders = ResponseCacheHeaders {
     cache_control: Some(HeaderValue::from_static("public, max-age=60")),
     surrogate_control: None,
+    surrogate_keys: None,
     needs_cdn_invalidation: false,
 };
 
@@ -68,6 +72,7 @@ pub static NO_STORE_MUST_REVALIDATE: ResponseCacheHeaders = ResponseCacheHeaders
         "no-cache, no-store, must-revalidate, max-age=0",
     )),
     surrogate_control: None,
+    surrogate_keys: None,
     needs_cdn_invalidation: false,
 };
 
@@ -82,6 +87,7 @@ pub static FOREVER_IN_FASTLY_CDN: ResponseCacheHeaders = ResponseCacheHeaders {
     // especially in combination with our fastly compute service.
     // https://www.fastly.com/documentation/guides/concepts/edge-state/cache/stale/
     surrogate_control: Some(HeaderValue::from_static("max-age=31536000")),
+    surrogate_keys: None,
 
     needs_cdn_invalidation: true,
 };
@@ -101,6 +107,7 @@ pub static FOREVER_IN_CLOUDFRONT_CDN: ResponseCacheHeaders = ResponseCacheHeader
     // when `Cache-Control` is missing.
     cache_control: None,
     surrogate_control: None,
+    surrogate_keys: None,
     needs_cdn_invalidation: true,
 };
 
@@ -114,6 +121,7 @@ pub static FOREVER_IN_CDN_AND_BROWSER: ResponseCacheHeaders = ResponseCacheHeade
         "public, max-age=31104000, immutable",
     )),
     surrogate_control: None,
+    surrogate_keys: None,
     needs_cdn_invalidation: false,
 };
 
@@ -165,35 +173,39 @@ pub enum CachePolicy {
     /// Since we control the CDN we can actively purge content that is cached like
     /// this, for example after building a crate.
     /// Example usage: `/latest/` rustdoc pages and their redirects.
-    ForeverInCdn,
+    ForeverInCdn(SurrogateKeys),
     /// cache forever in the CDN, but allow stale content in the browser.
     /// Example: rustdoc pages with the version in their URL.
     /// A browser will show the stale content while getting the up-to-date
     /// version from the origin server in the background.
     /// This helps building a PWA.
-    ForeverInCdnAndStaleInBrowser,
+    ForeverInCdnAndStaleInBrowser(SurrogateKeys),
 }
 
 impl CachePolicy {
     pub fn render(&self, config: &Config, target_cdn: TargetCdn) -> ResponseCacheHeaders {
-        match *self {
+        let mut headers = match *self {
             CachePolicy::NoCaching => NO_CACHING.clone(),
             CachePolicy::NoStoreMustRevalidate => NO_STORE_MUST_REVALIDATE.clone(),
             CachePolicy::ShortInCdnAndBrowser => SHORT.clone(),
             CachePolicy::ForeverInCdnAndBrowser => FOREVER_IN_CDN_AND_BROWSER.clone(),
-            CachePolicy::ForeverInCdn => {
+            CachePolicy::ForeverInCdn(ref surrogate_keys) => {
                 if config.cache_invalidatable_responses {
-                    match target_cdn {
+                    let mut policy = match target_cdn {
                         TargetCdn::Fastly => FOREVER_IN_FASTLY_CDN.clone(),
                         TargetCdn::CloudFront => FOREVER_IN_CLOUDFRONT_CDN.clone(),
-                    }
+                    };
+                    debug_assert!(policy.surrogate_keys.is_none());
+                    policy.surrogate_keys = Some(surrogate_keys.clone());
+                    policy
                 } else {
                     NO_CACHING.clone()
                 }
             }
-            CachePolicy::ForeverInCdnAndStaleInBrowser => {
+            CachePolicy::ForeverInCdnAndStaleInBrowser(ref surrogate_keys) => {
                 // when caching invalidatable responses is disabled, this results in NO_CACHING
-                let mut forever_in_cdn = CachePolicy::ForeverInCdn.render(config, target_cdn);
+                let mut forever_in_cdn =
+                    CachePolicy::ForeverInCdn(surrogate_keys.clone()).render(config, target_cdn);
 
                 if config.cache_invalidatable_responses
                     && let Some(cache_control) =
@@ -208,21 +220,19 @@ impl CachePolicy {
 
                 forever_in_cdn
             }
-        }
+        };
+
+        headers
+            .surrogate_keys
+            .get_or_insert_default()
+            .try_extend([SURROGATE_KEY_ALL])
+            .unwrap();
+
+        headers
     }
 }
 
-/// All our routes use `{name}` to identify the crate name
-/// in routes.
-/// With this struct we can extract only that, if it exists.
-#[derive(Deserialize)]
-pub(crate) struct CrateParam {
-    name: Option<String>,
-}
-
 pub(crate) async fn cache_middleware(
-    Path(param): Path<CrateParam>,
-    matched_route: Option<MatchedPath>,
     Extension(config): Extension<Arc<Config>>,
     target_cdn: TargetCdn,
     req: AxumHttpRequest,
@@ -256,7 +266,6 @@ pub(crate) async fn cache_middleware(
         .get::<CachePolicy>()
         .unwrap_or(&CachePolicy::NoCaching);
     let cache_headers = cache_policy.render(&config, target_cdn);
-    let resp_status = response.status();
     let resp_headers = response.headers_mut();
 
     // early return for CloudFront, as it doesn't support the `Surrogate-Control` header,
@@ -266,100 +275,16 @@ pub(crate) async fn cache_middleware(
     if let TargetCdn::CloudFront = target_cdn {
         debug_assert!(cache_headers.surrogate_control.is_none());
         cache_headers.set_on_response(resp_headers);
-        return response;
-    }
-
-    // simple implementation first:
-    // This is for content we need to invalidate in the CDN level.
-    // We don't care about content that is filename-hashed and can be cached
-    // forever, or content that is not cached at all.
-    //
-    // Generally Fastly can either purge single URLs, or a whole service.
-    // When you want to purge the cache for a bigger subset, but not everything, you need to "tag"
-    // your content with surrogate keys when delivering it to Fastly for caching.
-    // https://www.fastly.com/documentation/guides/full-site-delivery/purging/working-with-surrogate-keys/
-    //
-    // At some point we should extend this system and make it explicit, so in all places you return
-    // a cache policy you also return these surrogate keys, probably based on the krate, release
-    // or other things. For now we stick to invalidating the whole crate on all changes.
-    //
-    // For the first version I found an easy "hack" that doesn't need the full refactor across
-    // all our handlers;
-    // If the URL contains a crate name, we create a surrogate key based on that.
-    // Since we always call the crate name (and only the crate name) `{name}` in our routes,
-    // we're safe here. I added some debug assertions to ensure my assumptions are right, and
-    // any change to these in the routes would lead to test failures.
-    let cache_headers = if let Some(ref name) = param.name {
-        // we could theoretically only run this part when cache_invalidatable_responses and
-        // cache_headers.needs_cdn_invalidation are true,
-        // but let's always to this validation and add the surrogate-key to know if
-        // our "hack" still works.
-        //
-        // I didn't think through the possible edge-cases yet, but I feel safer
-        // always adding a surrogate key if we have one.
-        debug_assert!(
-            matched_route
-                .map(|matched_route| {
-                    let matched_route = matched_route.as_str();
-                    matched_route.starts_with("/crate/{name}")
-                        || matched_route.starts_with("/{name}")
-                })
-                .unwrap_or(true),
-            "there shouldn't be a name on any other routes"
-        );
-        if let Ok(krate_name) = name.parse::<KrateName>() {
-            let keys = SurrogateKeys::from_iter_until_full(vec![krate_name.into()]);
-
-            resp_headers.typed_insert(keys);
-
-            // only allow caching in the CDN when we have a surrogate key to invalidate it later.
-            // This is just the default for all routes that include a crate name.
-            // Then we build  build & add the surrugate yet.
-            // It's totally possible that this policy here then states NO_CACHING,
-            // or FOREVER_IN_CDN_AND_BROWSER, where we wouln't need the surrogate key.
-            &cache_headers
-        } else if cache_headers.needs_cdn_invalidation {
-            // This theoretically shouldn't happen, all current crate names would be valid
-            // for surrogate keys, and the `KrateName` validation matches the crates.io crate
-            // publish validation.
-            // But I'll leave this error log here just in case, until I migrated to using the
-            // `KrateName` type in all entrypoints (web, builds).
-            if resp_status.is_success() || resp_status.is_redirection() {
-                error!(
-                    name = param.name,
-                    ?cache_headers,
-                    "failed to create surrogate key for crate, falling back to NO_CACHING"
-                );
-            }
-            &NO_CACHING
-        } else {
-            &cache_headers
-        }
+        response
     } else {
-        debug_assert!(
-            matched_route
-                .map(|matched_route| {
-                    let matched_route = matched_route.as_str();
-                    !(matched_route.starts_with("/crate/{name}")
-                        || matched_route.starts_with("/{name}"))
-                })
-                .unwrap_or(true),
-            "for rustdoc & crate-detail routes the `name` param should always be present"
-        );
-        debug_assert!(
-            !(config.cache_invalidatable_responses && cache_headers.needs_cdn_invalidation),
-            "We got to a route without crate name, and a cache policy that needs invalidation.
-             This doesn't work because Fastly only supports surrogate keys for partial
-             invalidation."
-        );
+        // Generally Fastly can either purge single URLs, or a whole service.
+        // When you want to purge the cache for a bigger subset, but not everything, you need to "tag"
+        // your content with surrogate keys when delivering it to Fastly for caching.
+        // https://www.fastly.com/documentation/guides/full-site-delivery/purging/working-with-surrogate-keys/
+        cache_headers.set_on_response(resp_headers);
 
-        // standard case, just use the cache policy, no surrogate keys needed.
-        &cache_headers
-    };
-
-    cache_headers.set_on_response(resp_headers);
-
-    response
+        response
+    }
 }
 
 #[cfg(test)]
@@ -449,12 +374,7 @@ mod tests {
         CachePolicy::ForeverInCdnAndBrowser,
         Some("public, max-age=31104000, immutable")
     )]
-    #[test_case(CachePolicy::ForeverInCdn, None)]
-    #[test_case(
-        CachePolicy::ForeverInCdnAndStaleInBrowser,
-        Some("stale-while-revalidate=86400")
-    )]
-    fn render(cache: CachePolicy, cache_control: Option<&str>) -> Result<()> {
+    fn test_render(cache: CachePolicy, cache_control: Option<&str>) -> Result<()> {
         let config = TestEnvironment::base_config().build()?;
         let headers = cache.render(&config, TargetCdn::CloudFront);
 
@@ -469,13 +389,44 @@ mod tests {
     }
 
     #[test]
+    fn test_render_cache_in_cdn_with_surrogate_keys() -> Result<()> {
+        let config = TestEnvironment::base_config().build()?;
+        let headers = CachePolicy::ForeverInCdn(SurrogateKey::from_static("something").into())
+            .render(&config, TargetCdn::CloudFront);
+
+        assert!(headers.cache_control.is_none());
+        assert!(headers.surrogate_control.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_render_cache_in_cdn_stale_browser_with_surrogate_keys() -> Result<()> {
+        let config = TestEnvironment::base_config().build()?;
+        let headers = CachePolicy::ForeverInCdnAndStaleInBrowser(
+            SurrogateKey::from_static("something").into(),
+        )
+        .render(&config, TargetCdn::CloudFront);
+
+        assert_eq!(
+            headers.cache_control,
+            Some(HeaderValue::from_static("stale-while-revalidate=86400"))
+        );
+        assert!(headers.surrogate_control.is_none());
+
+        Ok(())
+    }
+
+    #[test]
     fn render_stale_without_config() -> Result<()> {
         let config = TestEnvironment::base_config()
             .cache_control_stale_while_revalidate(None)
             .build()?;
 
-        let headers =
-            CachePolicy::ForeverInCdnAndStaleInBrowser.render(&config, TargetCdn::CloudFront);
+        let headers = CachePolicy::ForeverInCdnAndStaleInBrowser(
+            SurrogateKey::from_static("something").into(),
+        )
+        .render(&config, TargetCdn::CloudFront);
         assert!(headers.cache_control.is_none());
         assert!(headers.surrogate_control.is_none());
 
@@ -488,8 +439,10 @@ mod tests {
             .cache_control_stale_while_revalidate(Some(666))
             .build()?;
 
-        let headers =
-            CachePolicy::ForeverInCdnAndStaleInBrowser.render(&config, TargetCdn::CloudFront);
+        let headers = CachePolicy::ForeverInCdnAndStaleInBrowser(
+            SurrogateKey::from_static("something").into(),
+        )
+        .render(&config, TargetCdn::CloudFront);
         assert_eq!(headers.cache_control.unwrap(), "stale-while-revalidate=666");
         assert!(headers.surrogate_control.is_none());
 
@@ -502,7 +455,8 @@ mod tests {
             .cache_invalidatable_responses(false)
             .build()?;
 
-        let headers = CachePolicy::ForeverInCdn.render(&config, TargetCdn::CloudFront);
+        let headers = CachePolicy::ForeverInCdn(SurrogateKey::from_static("something").into())
+            .render(&config, TargetCdn::CloudFront);
         assert_eq!(headers.cache_control.unwrap(), "max-age=0");
         assert!(headers.surrogate_control.is_none());
 
@@ -515,8 +469,10 @@ mod tests {
             .cache_invalidatable_responses(false)
             .build()?;
 
-        let headers =
-            CachePolicy::ForeverInCdnAndStaleInBrowser.render(&config, TargetCdn::CloudFront);
+        let headers = CachePolicy::ForeverInCdnAndStaleInBrowser(
+            SurrogateKey::from_static("something").into(),
+        )
+        .render(&config, TargetCdn::CloudFront);
         assert_eq!(headers.cache_control.unwrap(), "max-age=0");
         assert!(headers.surrogate_control.is_none());
 
@@ -533,12 +489,6 @@ mod tests {
         CachePolicy::ForeverInCdnAndBrowser,
         Some("public, max-age=31104000, immutable"),
         None
-    )]
-    #[test_case(CachePolicy::ForeverInCdn, Some("max-age=0"), Some("max-age=31536000"))]
-    #[test_case(
-        CachePolicy::ForeverInCdnAndStaleInBrowser,
-        Some("stale-while-revalidate=86400"),
-        Some("max-age=31536000")
     )]
     fn render_fastly(
         cache: CachePolicy,
@@ -561,13 +511,53 @@ mod tests {
         Ok(())
     }
 
+    fn render_fastly_forever_in_cdn() -> Result<()> {
+        let config = TestEnvironment::base_config().build()?;
+        let headers = CachePolicy::ForeverInCdn(SurrogateKey::from_static("something").into())
+            .render(&config, TargetCdn::Fastly);
+
+        assert_eq!(
+            headers.cache_control,
+            Some(HeaderValue::from_static("max-age=0"))
+        );
+
+        assert_eq!(
+            headers.surrogate_control,
+            Some(HeaderValue::from_static("max-age=31536000"))
+        );
+
+        Ok(())
+    }
+
+    fn render_fastly_forever_in_cdn_stale_in_browser() -> Result<()> {
+        let config = TestEnvironment::base_config().build()?;
+        let headers = CachePolicy::ForeverInCdnAndStaleInBrowser(
+            SurrogateKey::from_static("something").into(),
+        )
+        .render(&config, TargetCdn::Fastly);
+
+        assert_eq!(
+            headers.cache_control,
+            Some(HeaderValue::from_static("stale-while-revalidate=86400"))
+        );
+        assert_eq!(
+            headers.surrogate_control,
+            Some(HeaderValue::from_static("max-age=31536000"))
+        );
+
+        Ok(())
+    }
+
     #[test]
     fn render_stale_without_config_fastly() -> Result<()> {
         let config = TestEnvironment::base_config()
             .cache_control_stale_while_revalidate(None)
             .build()?;
 
-        let headers = CachePolicy::ForeverInCdnAndStaleInBrowser.render(&config, TargetCdn::Fastly);
+        let headers = CachePolicy::ForeverInCdnAndStaleInBrowser(
+            SurrogateKey::from_static("something").into(),
+        )
+        .render(&config, TargetCdn::Fastly);
         assert_eq!(headers, FOREVER_IN_FASTLY_CDN);
 
         Ok(())
@@ -579,7 +569,10 @@ mod tests {
             .cache_control_stale_while_revalidate(Some(666))
             .build()?;
 
-        let headers = CachePolicy::ForeverInCdnAndStaleInBrowser.render(&config, TargetCdn::Fastly);
+        let headers = CachePolicy::ForeverInCdnAndStaleInBrowser(
+            SurrogateKey::from_static("something").into(),
+        )
+        .render(&config, TargetCdn::Fastly);
         assert_eq!(headers.cache_control.unwrap(), "stale-while-revalidate=666");
         assert_eq!(
             headers.surrogate_control,
@@ -595,7 +588,8 @@ mod tests {
             .cache_invalidatable_responses(false)
             .build()?;
 
-        let headers = CachePolicy::ForeverInCdn.render(&config, TargetCdn::Fastly);
+        let headers = CachePolicy::ForeverInCdn(SurrogateKey::from_static("something").into())
+            .render(&config, TargetCdn::Fastly);
         assert_eq!(headers.cache_control.unwrap(), "max-age=0");
         assert!(headers.surrogate_control.is_none());
 
@@ -608,7 +602,10 @@ mod tests {
             .cache_invalidatable_responses(false)
             .build()?;
 
-        let headers = CachePolicy::ForeverInCdnAndStaleInBrowser.render(&config, TargetCdn::Fastly);
+        let headers = CachePolicy::ForeverInCdnAndStaleInBrowser(
+            SurrogateKey::from_static("something").into(),
+        )
+        .render(&config, TargetCdn::Fastly);
         assert_eq!(headers.cache_control.unwrap(), "max-age=0");
         assert!(headers.surrogate_control.is_none());
 

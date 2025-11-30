@@ -108,10 +108,13 @@ impl FeaturesPage {
 
 impl_axum_webpage! {
     FeaturesPage,
-    cache_policy = |page| if page.is_latest_url {
-        CachePolicy::ForeverInCdn
-    } else {
-        CachePolicy::ForeverInCdnAndStaleInBrowser
+    cache_policy = |page| {
+        let surrogate_keys = page.params.surrogate_keys().unwrap();
+        if page.is_latest_url {
+            CachePolicy::ForeverInCdn(surrogate_keys)
+        } else {
+            CachePolicy::ForeverInCdnAndStaleInBrowser(surrogate_keys)
+        }
     },
 }
 
@@ -147,9 +150,14 @@ pub(crate) async fn build_features_handler(
         .await?
         .assume_exact_name()?
         .into_canonical_req_version_or_else(|version| {
+            let params = params.clone().with_req_version(version);
             AxumNope::Redirect(
-                params.clone().with_req_version(version).features_url(),
-                CachePolicy::ForeverInCdn,
+                params.features_url(),
+                CachePolicy::ForeverInCdn(
+                    params
+                        .surrogate_keys()
+                        .expect("after match_version, we know it works"),
+                ),
             )
         })?;
     let params = params.apply_matched_release(&matched_release);

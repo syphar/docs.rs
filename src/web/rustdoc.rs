@@ -2,6 +2,7 @@
 
 use crate::{
     AsyncStorage, BUILD_VERSION, Config, InstanceMetrics, RUSTDOC_STATIC_STORAGE_PREFIX,
+    db::types::krate_name::KrateName,
     registry_api::OwnerKind,
     storage::{
         CompressionAlgorithm, RustdocJsonFormatVersion, StreamingBlob,
@@ -20,7 +21,7 @@ use crate::{
             rustdoc::{PageKind, RustdocParams},
         },
         file::StreamingFile,
-        headers::{ETagComputer, IfNoneMatch, X_ROBOTS_TAG},
+        headers::{ETagComputer, IfNoneMatch, SurrogateKey, X_ROBOTS_TAG},
         licenses, match_version,
         metrics::WebMetrics,
         page::{
@@ -291,7 +292,11 @@ pub(crate) async fn rustdoc_redirector_handler(
         return redirect_to_doc(
             params.original_uri(),
             target_uri,
-            CachePolicy::ForeverInCdnAndStaleInBrowser,
+            CachePolicy::ForeverInCdnAndStaleInBrowser(
+                params
+                    .surrogate_keys()
+                    .expect("after match_version, we know it works"),
+            ),
             path_in_crate.as_deref(),
         );
     }
@@ -361,9 +366,17 @@ pub(crate) async fn rustdoc_redirector_handler(
             params.original_uri(),
             params.rustdoc_url().append_raw_query(original_query),
             if matched_release.is_latest_url() {
-                CachePolicy::ForeverInCdn
+                CachePolicy::ForeverInCdn(
+                    params
+                        .surrogate_keys()
+                        .expect("after match_version, we know it works"),
+                )
             } else {
-                CachePolicy::ForeverInCdnAndStaleInBrowser
+                CachePolicy::ForeverInCdnAndStaleInBrowser(
+                    params
+                        .surrogate_keys()
+                        .expect("after match_version, we know it works"),
+                )
             },
             path_in_crate.as_deref(),
         )?
@@ -371,7 +384,11 @@ pub(crate) async fn rustdoc_redirector_handler(
     } else {
         Ok(axum_cached_redirect(
             params.crate_details_url().append_raw_query(original_query),
-            CachePolicy::ForeverInCdn,
+            CachePolicy::ForeverInCdn(
+                params
+                    .surrogate_keys()
+                    .expect("after match_version, we know it works"),
+            ),
         )?
         .into_response())
     }
@@ -610,18 +627,28 @@ pub(crate) async fn rustdoc_html_server_handler(
             )
         })?
         .into_canonical_req_version_or_else(|version| {
+            let params = params.clone().with_req_version(version);
             AxumNope::Redirect(
-                params.clone().with_req_version(version).rustdoc_url(),
-                CachePolicy::ForeverInCdn,
+                params.rustdoc_url(),
+                CachePolicy::ForeverInCdn(
+                    params
+                        .surrogate_keys()
+                        .expect("after match_version, we know it works"),
+                ),
             )
         })?;
     let params = params.apply_matched_release(&matched_release);
 
     if !matched_release.rustdoc_status() {
-        return Ok(
-            axum_cached_redirect(params.crate_details_url(), CachePolicy::ForeverInCdn)?
-                .into_response(),
-        );
+        return Ok(axum_cached_redirect(
+            params.crate_details_url(),
+            CachePolicy::ForeverInCdn(
+                params
+                    .surrogate_keys()
+                    .expect("after match_version, we know it works"),
+            ),
+        )?
+        .into_response());
     }
 
     let krate = CrateDetails::from_matched_release(&mut conn, matched_release).await?;
@@ -641,7 +668,11 @@ pub(crate) async fn rustdoc_html_server_handler(
             params
                 .rustdoc_url()
                 .append_raw_query(original_query.as_deref()),
-            CachePolicy::ForeverInCdn,
+            CachePolicy::ForeverInCdn(
+                params
+                    .surrogate_keys()
+                    .expect("after match_version, we know it works"),
+            ),
         )?);
     }
 
@@ -696,7 +727,11 @@ pub(crate) async fn rustdoc_html_server_handler(
                         params
                             .rustdoc_url()
                             .append_raw_query(original_query.as_deref()),
-                        CachePolicy::ForeverInCdn,
+                        CachePolicy::ForeverInCdn(
+                            params
+                                .surrogate_keys()
+                                .expect("after match_version, we know it works"),
+                        ),
                     )?);
                 }
             }
@@ -709,7 +744,11 @@ pub(crate) async fn rustdoc_html_server_handler(
                 // but only if the first element after the version is a target?
                 return Ok(axum_cached_redirect(
                     params.target_redirect_url(),
-                    CachePolicy::ForeverInCdn,
+                    CachePolicy::ForeverInCdn(
+                        params
+                            .surrogate_keys()
+                            .expect("after match_version, we know it works"),
+                    ),
                 )?);
             }
 
@@ -847,9 +886,17 @@ pub(crate) async fn target_redirect_handler(
     Ok(axum_cached_redirect(
         redirect_uri,
         if params.req_version().is_latest() {
-            CachePolicy::ForeverInCdn
+            CachePolicy::ForeverInCdn(
+                params
+                    .surrogate_keys()
+                    .expect("after match_version, we know it works"),
+            )
         } else {
-            CachePolicy::ForeverInCdnAndStaleInBrowser
+            CachePolicy::ForeverInCdnAndStaleInBrowser(
+                params
+                    .surrogate_keys()
+                    .expect("after match_version, we know it works"),
+            )
         },
     )?)
 }
@@ -976,9 +1023,10 @@ pub(crate) async fn json_download_handler(
     );
 
     let redirect = |storage_path: &str| {
+        let krate_name: KrateName = krate.name.parse().expect("valid crate name");
         super::axum_cached_redirect(
             format!("{}/{}", config.s3_static_root_path, storage_path),
-            CachePolicy::ForeverInCdn,
+            CachePolicy::ForeverInCdn(SurrogateKey::from(krate_name).into()),
         )
     };
 
@@ -1043,9 +1091,11 @@ pub(crate) async fn download_handler(
         storage.set_public_access(&archive_path, true).await?;
     }
 
+    let krate_name: KrateName = name.parse().expect("valid crate name");
+
     Ok(super::axum_cached_redirect(
         format!("{}/{}", config.s3_static_root_path, archive_path),
-        CachePolicy::ForeverInCdn,
+        CachePolicy::ForeverInCdn(SurrogateKey::from(krate_name).into()),
     )?)
 }
 

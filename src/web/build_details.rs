@@ -74,12 +74,14 @@ pub(crate) async fn build_details_handler(
         .await?
         .assume_exact_name()?
         .into_canonical_req_version_or_else(|version| {
+            let params = params.clone().with_req_version(version);
             AxumNope::Redirect(
-                params
-                    .clone()
-                    .with_req_version(version)
-                    .build_details_url(id, build_params.filename.as_deref()),
-                CachePolicy::ForeverInCdn,
+                params.build_details_url(id, build_params.filename.as_deref()),
+                CachePolicy::ForeverInCdn(
+                    params
+                        .surrogate_keys()
+                        .expect("this is after match_version, so we know it works here"),
+                ),
             )
         })?
         .into_version();

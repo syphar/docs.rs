@@ -1,13 +1,17 @@
 //! special rustdoc extractors
 
 use crate::{
-    db::BuildId,
+    db::{BuildId, types::krate_name::KrateName},
     web::{
-        MatchedRelease, MetaData, ReqVersion, error::AxumNope, escaped_uri::EscapedURI,
-        extractors::Path, url_decode,
+        MatchedRelease, MetaData, ReqVersion,
+        error::AxumNope,
+        escaped_uri::EscapedURI,
+        extractors::Path,
+        headers::{SurrogateKey, SurrogateKeys},
+        url_decode,
     },
 };
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use axum::{
     RequestPartsExt,
     extract::{FromRequestParts, MatchedPath},
@@ -420,6 +424,15 @@ impl RustdocParams {
         self.default_target
             .as_deref()
             .is_some_and(|t| self.doc_target() == Some(t))
+    }
+
+    /// generate surrogate keys for this release.
+    ///
+    /// For now just the crate name based key, later
+    /// invalidation for the specific version.
+    pub(crate) fn surrogate_keys(&self) -> Result<SurrogateKeys> {
+        let crate_name: KrateName = self.name().parse().context("coudln't parse crate name")?;
+        Ok(SurrogateKey::from(crate_name).into())
     }
 }
 
