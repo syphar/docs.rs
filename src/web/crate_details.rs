@@ -486,8 +486,11 @@ pub(crate) async fn crate_details_handler(
     let matched_release = match_version(&mut conn, params.name(), params.req_version())
         .await?
         .assume_exact_name()?
-        .into_canonical_req_version_or_else(|version| {
-            let params = params.clone().with_req_version(version);
+        .into_canonical_req_version_or_else(|confirmed_name, version| {
+            let params = params
+                .clone()
+                .with_confirmed_name(confirmed_name)
+                .with_req_version(version);
             AxumNope::Redirect(
                 params.crate_details_url(),
                 CachePolicy::ForeverInCdn(
@@ -621,7 +624,7 @@ pub(crate) async fn get_all_releases(
     // NOTE: we're getting RustDocParams here, where both target and path are optional.
     let matched_release = match_version(&mut conn, params.name(), params.req_version())
         .await?
-        .into_canonical_req_version_or_else(|_| AxumNope::VersionNotFound)?;
+        .into_canonical_req_version_or_else(|_, _| AxumNope::VersionNotFound)?;
     let params = params.apply_matched_release(&matched_release);
 
     if matched_release.build_status() != BuildStatus::Success {
@@ -674,14 +677,17 @@ pub(crate) async fn get_all_platforms_inner(
             AxumNope::Redirect(
                 params
                     .clone()
-                    .with_name(corrected_name)
+                    .with_confirmed_name(corrected_name)
                     .with_req_version(req_version)
                     .platforms_partial_url(),
                 CachePolicy::NoCaching,
             )
         })?
-        .into_canonical_req_version_or_else(|version| {
-            let params = params.clone().with_req_version(version);
+        .into_canonical_req_version_or_else(|confirmed_name, version| {
+            let params = params
+                .clone()
+                .with_confirmed_name(confirmed_name)
+                .with_req_version(version);
             AxumNope::Redirect(
                 params.platforms_partial_url(),
                 CachePolicy::ForeverInCdn(

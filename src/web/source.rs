@@ -208,14 +208,17 @@ pub(crate) async fn source_browser_handler(
             AxumNope::Redirect(
                 params
                     .clone()
-                    .with_name(corrected_name)
+                    .with_confirmed_name(corrected_name)
                     .with_req_version(req_version)
                     .source_url(),
                 CachePolicy::NoCaching,
             )
         })?
-        .into_canonical_req_version_or_else(|version| {
-            let params = params.clone().with_req_version(version);
+        .into_canonical_req_version_or_else(|confirmed_name, version| {
+            let params = params
+                .clone()
+                .with_confirmed_name(confirmed_name)
+                .with_req_version(version);
             AxumNope::Redirect(
                 params.source_url(),
                 CachePolicy::ForeverInCdn(

@@ -11,7 +11,7 @@ use crate::{
         url_decode,
     },
 };
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use axum::{
     RequestPartsExt,
     extract::{FromRequestParts, MatchedPath},
@@ -253,6 +253,9 @@ impl RustdocParams {
     ) -> Self {
         self.update(|mut params| {
             params.confirmed_name = confirmed_name.map(Into::into);
+            if let Some(ref confirmed_name) = params.confirmed_name {
+                params.name = confirmed_name.to_string();
+            }
             params
         })
     }
@@ -451,9 +454,8 @@ impl RustdocParams {
     ///
     /// For now just the crate name based key, later
     /// invalidation for the specific version.
-    pub(crate) fn surrogate_keys(&self) -> Result<SurrogateKeys> {
-        let crate_name: KrateName = self.name().parse().context("coudln't parse crate name")?;
-        Ok(SurrogateKey::from(crate_name).into())
+    pub(crate) fn surrogate_keys(&self) -> Option<SurrogateKeys> {
+        Some(SurrogateKey::from(self.confirmed_name.clone()?).into())
     }
 }
 

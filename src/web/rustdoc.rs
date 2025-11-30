@@ -624,15 +624,18 @@ pub(crate) async fn rustdoc_html_server_handler(
             AxumNope::Redirect(
                 params
                     .clone()
-                    .with_name(corrected_name)
+                    .with_confirmed_name(corrected_name)
                     .with_req_version(req_version)
                     .rustdoc_url()
                     .append_raw_query(original_query.as_deref()),
                 CachePolicy::NoCaching,
             )
         })?
-        .into_canonical_req_version_or_else(|version| {
-            let params = params.clone().with_req_version(version);
+        .into_canonical_req_version_or_else(|confirmed_name, version| {
+            let params = params
+                .clone()
+                .with_confirmed_name(confirmed_name)
+                .with_req_version(version);
             AxumNope::Redirect(
                 params.rustdoc_url(),
                 CachePolicy::ForeverInCdn(
@@ -858,7 +861,7 @@ pub(crate) async fn target_redirect_handler(
 
     let matched_release = match_version(&mut conn, params.name(), params.req_version())
         .await?
-        .into_canonical_req_version_or_else(|_| AxumNope::VersionNotFound)?;
+        .into_canonical_req_version_or_else(|_, _| AxumNope::VersionNotFound)?;
     let params = params.apply_matched_release(&matched_release);
 
     let crate_details = CrateDetails::from_matched_release(&mut conn, matched_release).await?;

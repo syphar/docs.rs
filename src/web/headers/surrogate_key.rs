@@ -256,7 +256,7 @@ mod tests {
     fn test_parse_surrogate_key_too_long_const() {
         const INPUT: [u8; 1025] = [b'X'; 1025];
         let input = std::str::from_utf8(&INPUT).unwrap();
-        SurrogateKey::from_static(&input);
+        SurrogateKey::from_static(input);
     }
 
     #[test_case(""; "empty")]
@@ -272,7 +272,7 @@ mod tests {
     #[test_case("release-some-crate-1.2.3")]
     fn test_parse_surrogate_key_ok(input: &'static str) {
         assert_eq!(SurrogateKey::from_str(input).unwrap(), input);
-        assert_eq!(SurrogateKey::from_static(&input), input);
+        assert_eq!(SurrogateKey::from_static(input), input);
     }
 
     #[test]
