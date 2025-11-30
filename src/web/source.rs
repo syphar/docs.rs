@@ -362,8 +362,6 @@ pub(crate) async fn source_browser_handler(
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr as _;
-
     use crate::{
         db::types::krate_name::KrateName,
         test::{AxumResponseTestExt, AxumRouterTestExt, TestEnvironment, async_wrapper},
@@ -374,6 +372,7 @@ mod tests {
     use kuchikiki::traits::TendrilSink;
     use mime::APPLICATION_PDF;
     use reqwest::StatusCode;
+    use std::str::FromStr as _;
     use test_case::test_case;
 
     fn get_file_list_links(body: &str) -> Vec<String> {

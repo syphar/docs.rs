@@ -270,8 +270,6 @@ fn get_sorted_features(raw_features: Vec<DbFeature>) -> (Vec<Feature>, HashSet<S
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr as _;
-
     use super::*;
     use crate::{
         db::types::krate_name::KrateName,
@@ -279,6 +277,7 @@ mod tests {
     };
     use kuchikiki::traits::TendrilSink;
     use reqwest::StatusCode;
+    use std::str::FromStr as _;
 
     #[test]
     fn test_parsing_raw_features() {
