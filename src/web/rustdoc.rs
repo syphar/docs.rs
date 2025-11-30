@@ -289,14 +289,11 @@ pub(crate) async fn rustdoc_redirector_handler(
     if let Some(description) = DOC_RUST_LANG_ORG_REDIRECTS.get(&*crate_name) {
         let target_uri =
             EscapedURI::from_uri(description.href.clone()).append_raw_query(original_query);
+        let krate_name: KrateName = crate_name.parse().expect("we know these are valid");
         return redirect_to_doc(
             params.original_uri(),
             target_uri,
-            CachePolicy::ForeverInCdnAndStaleInBrowser(
-                params
-                    .surrogate_keys()
-                    .expect("after match_version, we know it works"),
-            ),
+            CachePolicy::ForeverInCdnAndStaleInBrowser(krate_name.into()),
             path_in_crate.as_deref(),
         );
     }
@@ -2339,9 +2336,7 @@ mod test {
             web.assert_redirect_cached(
                 "/dummy",
                 "/dummy/latest/dummy/",
-                CachePolicy::ForeverInCdnAndStaleInBrowser(
-                    KrateName::from_str("dummy").unwrap().into(),
-                ),
+                CachePolicy::ForeverInCdn(KrateName::from_str("dummy").unwrap().into()),
                 env.config(),
             )
             .await?;
