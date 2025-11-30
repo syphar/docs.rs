@@ -294,7 +294,11 @@ pub(crate) async fn source_browser_handler(
             response.headers_mut().typed_insert(canonical_url);
             response
                 .extensions_mut()
-                .insert(CachePolicy::ForeverInCdnAndStaleInBrowser);
+                .insert(CachePolicy::ForeverInCdnAndStaleInBrowser(
+                    params
+                        .surrogate_keys()
+                        .expect("after match_version, we know it works"),
+                ));
             return Ok(response);
         } else {
             let max_file_size = config.max_file_size_for(&stream.path);
