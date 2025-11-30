@@ -585,6 +585,7 @@ pub(crate) async fn crate_details_handler(
 #[template(path = "rustdoc/releases.html")]
 #[derive(Debug, Clone, PartialEq)]
 struct ReleaseList {
+    crate_name: KrateName,
     releases: Vec<Release>,
     params: RustdocParams,
 }
@@ -592,10 +593,7 @@ struct ReleaseList {
 impl_axum_webpage! {
     ReleaseList,
     cache_policy = |page| CachePolicy::ForeverInCdn(
-        page.params
-            .confirmed_name()
-            .expect("after match_version, we know it works")
-            .into(),
+        page.crate_name.clone().into()
     ),
     cpu_intensive_rendering = true,
 }
@@ -621,6 +619,7 @@ pub(crate) async fn get_all_releases(
     }
 
     Ok(ReleaseList {
+        crate_name: matched_release.name.clone(),
         releases: matched_release.all_releases,
         params,
     }
@@ -631,6 +630,7 @@ pub(crate) async fn get_all_releases(
 #[template(path = "rustdoc/platforms.html")]
 #[derive(Debug, Clone, PartialEq)]
 struct PlatformList {
+    crate_name: KrateName,
     use_direct_platform_links: bool,
     current_target: String,
     params: RustdocParams,
@@ -639,10 +639,7 @@ struct PlatformList {
 impl_axum_webpage! {
     PlatformList,
     cache_policy = |page| CachePolicy::ForeverInCdn(
-        page.params
-            .confirmed_name()
-            .expect("after match_version, we know it works")
-            .into(),
+        page.crate_name.clone().into()
     ),
     cpu_intensive_rendering = true,
 }
@@ -685,6 +682,7 @@ pub(crate) async fn get_all_platforms_inner(
         // when the build wasn't finished, we don't have any target platforms
         // we could read from.
         return Ok(PlatformList {
+            crate_name: matched_release.name.clone(),
             use_direct_platform_links: is_crate_root,
             current_target: "".into(),
             params,
@@ -705,6 +703,7 @@ pub(crate) async fn get_all_platforms_inner(
     };
 
     Ok(PlatformList {
+        crate_name: matched_release.name.clone(),
         use_direct_platform_links: is_crate_root,
         current_target,
         params,
