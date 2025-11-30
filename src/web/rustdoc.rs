@@ -1100,6 +1100,7 @@ mod test {
     use tracing::info;
 
     async fn try_latest_version_redirect(
+        krate: &str,
         path: &str,
         web: &axum::Router,
         config: &Config,
@@ -1107,7 +1108,7 @@ mod test {
         web.assert_success(path).await?;
         let response = web.get(path).await?;
         response.assert_cache_control(
-            CachePolicy::ForeverInCdnAndStaleInBrowser(KrateName::from_str("foo").unwrap().into()),
+            CachePolicy::ForeverInCdnAndStaleInBrowser(KrateName::from_str(krate).unwrap().into()),
             config,
         );
         let data = response.text().await?;
@@ -1125,7 +1126,7 @@ mod test {
             let link = elem.attributes.borrow().get("href").unwrap().to_string();
             let response = web.get(&link).await?;
             response.assert_cache_control(
-                CachePolicy::ForeverInCdn(KrateName::from_str("foo").unwrap().into()),
+                CachePolicy::ForeverInCdn(KrateName::from_str(krate).unwrap().into()),
                 config,
             );
             assert!(response.status().is_success() || response.status().is_redirection());
@@ -1136,11 +1137,12 @@ mod test {
     }
 
     async fn latest_version_redirect(
+        krate: &str,
         path: &str,
         web: &axum::Router,
         config: &Config,
     ) -> Result<String, anyhow::Error> {
-        try_latest_version_redirect(path, web, config)
+        try_latest_version_redirect(krate, path, web, config)
             .await?
             .with_context(|| anyhow::anyhow!("no redirect found for {}", path))
     }
@@ -1162,7 +1164,7 @@ mod test {
             web.assert_success_cached(
                 "/krate/0.1.0/help.html",
                 CachePolicy::ForeverInCdnAndStaleInBrowser(
-                    KrateName::from_str("foo").unwrap().into(),
+                    KrateName::from_str("krate").unwrap().into(),
                 ),
                 env.config(),
             )
@@ -1455,17 +1457,22 @@ mod test {
 
             // check it works at all
             let redirect =
-                latest_version_redirect("/dummy/0.1.0/dummy/", &web, env.config()).await?;
+                latest_version_redirect("dummy", "/dummy/0.1.0/dummy/", &web, env.config()).await?;
             assert_eq!(redirect, "/crate/dummy/latest/target-redirect/dummy/");
 
             let redirect =
-                latest_version_redirect("/dummy/0.1.0/dummy/blah/", &web, env.config()).await?;
+                latest_version_redirect("dummy", "/dummy/0.1.0/dummy/blah/", &web, env.config())
+                    .await?;
             assert_eq!(redirect, "/crate/dummy/latest/target-redirect/dummy/blah/");
 
             // check it keeps the subpage
-            let redirect =
-                latest_version_redirect("/dummy/0.1.0/dummy/blah/blah.html", &web, env.config())
-                    .await?;
+            let redirect = latest_version_redirect(
+                "dummy",
+                "/dummy/0.1.0/dummy/blah/blah.html",
+                &web,
+                env.config(),
+            )
+            .await?;
             assert_eq!(
                 redirect,
                 "/crate/dummy/latest/target-redirect/dummy/blah/blah.html"
@@ -1473,6 +1480,7 @@ mod test {
 
             // check it also works for deleted pages
             let redirect = latest_version_redirect(
+                "dummy",
                 "/dummy/0.1.0/dummy/struct.will-be-deleted.html",
                 &web,
                 env.config(),
@@ -1512,6 +1520,7 @@ mod test {
             let web = env.web_app().await;
 
             let redirect = latest_version_redirect(
+                "dummy",
                 "/dummy/0.1.0/x86_64-pc-windows-msvc/dummy/index.html",
                 &web,
                 env.config(),
@@ -1523,6 +1532,7 @@ mod test {
             );
 
             let redirect = latest_version_redirect(
+                "dummy",
                 "/dummy/0.1.0/x86_64-pc-windows-msvc/dummy/",
                 &web,
                 env.config(),
@@ -1534,6 +1544,7 @@ mod test {
             );
 
             let redirect = latest_version_redirect(
+                "dummy",
                 "/dummy/0.1.0/x86_64-pc-windows-msvc/dummy/struct.Blah.html",
                 &web,
                 env.config(),
@@ -1571,7 +1582,7 @@ mod test {
 
             let web = env.web_app().await;
             let redirect =
-                latest_version_redirect("/dummy/0.1.0/dummy/", &web, env.config()).await?;
+                latest_version_redirect("dummy", "/dummy/0.1.0/dummy/", &web, env.config()).await?;
             assert_eq!(redirect, "/crate/dummy/latest");
 
             Ok(())
@@ -1610,11 +1621,11 @@ mod test {
 
             let web = env.web_app().await;
             let redirect =
-                latest_version_redirect("/dummy/0.1.0/dummy/", &web, env.config()).await?;
+                latest_version_redirect("dummy", "/dummy/0.1.0/dummy/", &web, env.config()).await?;
             assert_eq!(redirect, "/crate/dummy/latest/target-redirect/dummy/");
 
             let redirect =
-                latest_version_redirect("/dummy/0.2.1/dummy/", &web, env.config()).await?;
+                latest_version_redirect("dummy", "/dummy/0.2.1/dummy/", &web, env.config()).await?;
             assert_eq!(redirect, "/crate/dummy/latest/target-redirect/dummy/");
 
             Ok(())
@@ -2628,6 +2639,7 @@ mod test {
                 .await?;
             assert_eq!(
                 latest_version_redirect(
+                    "tungstenite",
                     "/tungstenite/0.10.0/tungstenite/?search=String+-%3E+Message",
                     &env.web_app().await,
                     env.config()
@@ -2661,6 +2673,7 @@ mod test {
             let web = env.web_app().await;
             assert_eq!(
                 latest_version_redirect(
+                    "pyo3",
                     "/pyo3/0.2.7/src/pyo3/objects/exc.rs.html",
                     &web,
                     env.config(),
@@ -2718,7 +2731,7 @@ mod test {
                 .await?;
             assert!(releases_response.status().is_success());
             releases_response.assert_cache_control(
-                CachePolicy::ForeverInCdn(KrateName::from_str("dummy").unwrap().into()),
+                CachePolicy::ForeverInCdn(KrateName::from_str("hexponent").unwrap().into()),
                 env.config(),
             );
             assert_eq!(
@@ -2739,7 +2752,7 @@ mod test {
                 .await?;
             assert!(releases_response.status().is_success());
             releases_response.assert_cache_control(
-                CachePolicy::ForeverInCdn(KrateName::from_str("dummy").unwrap().into()),
+                CachePolicy::ForeverInCdn(KrateName::from_str("hexponent").unwrap().into()),
                 env.config(),
             );
             assert_eq!(
@@ -3308,7 +3321,7 @@ mod test {
             web.assert_redirect_cached_unchecked(
                 "/clap/2.24.0/i686-pc-windows-gnu/clap/which%20is%20a%20part%20of%20%5B%60Display%60%5D",
                 "/crate/clap/2.24.0/target-redirect/i686-pc-windows-gnu/clap/which%20is%20a%20part%20of%20[%60Display%60]",
-                CachePolicy::ForeverInCdn(KrateName::from_str("dummy").unwrap().into()),
+                CachePolicy::ForeverInCdn(KrateName::from_str("clap").unwrap().into()),
                 env.config(),
             ).await?;
 
@@ -3331,7 +3344,7 @@ mod test {
             web.assert_redirect_cached_unchecked(
                 "/clap/latest/clapproc%20macro%20%60Parser%60%20not%20expanded:%20Cannot%20create%20expander%20for",
                 "/clap/latest/clap/clapproc%20macro%20%60Parser%60%20not%20expanded:%20Cannot%20create%20expander%20for",
-                CachePolicy::ForeverInCdn(KrateName::from_str("dummy").unwrap().into()),
+                CachePolicy::ForeverInCdn(KrateName::from_str("clap").unwrap().into()),
                 env.config(),
             ).await?;
 
@@ -3356,7 +3369,7 @@ mod test {
             web.assert_redirect_cached(
                 path,
                 expected,
-                CachePolicy::ForeverInCdn(KrateName::from_str("dummy").unwrap().into()),
+                CachePolicy::ForeverInCdn(KrateName::from_str("something").unwrap().into()),
                 env.config(),
             )
             .await?;

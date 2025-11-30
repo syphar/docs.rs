@@ -436,7 +436,7 @@ mod tests {
             web.assert_success_cached(
                 "/crate/fake/0.1.0/source/",
                 CachePolicy::ForeverInCdnAndStaleInBrowser(
-                    KrateName::from_str("dummy").unwrap().into(),
+                    KrateName::from_str("fake").unwrap().into(),
                 ),
                 env.config(),
             )
@@ -449,7 +449,7 @@ mod tests {
             );
             response.assert_cache_control(
                 CachePolicy::ForeverInCdnAndStaleInBrowser(
-                    KrateName::from_str("dummy").unwrap().into(),
+                    KrateName::from_str("fake").unwrap().into(),
                 ),
                 env.config(),
             );
@@ -488,7 +488,7 @@ mod tests {
             );
             response.assert_cache_control(
                 CachePolicy::ForeverInCdnAndStaleInBrowser(
-                    KrateName::from_str("dummy").unwrap().into(),
+                    KrateName::from_str("fake").unwrap().into(),
                 ),
                 env.config(),
             );
@@ -579,7 +579,7 @@ mod tests {
                 .get("/crate/fake/latest/source/")
                 .await?;
             resp.assert_cache_control(
-                CachePolicy::ForeverInCdn(KrateName::from_str("dummy").unwrap().into()),
+                CachePolicy::ForeverInCdn(KrateName::from_str("fake").unwrap().into()),
                 env.config(),
             );
             let body = resp.text().await?;
@@ -627,7 +627,7 @@ mod tests {
             web.assert_redirect_cached(
                 "/crate/mbedtls/*/source/",
                 "/crate/mbedtls/latest/source/",
-                CachePolicy::ForeverInCdn(KrateName::from_str("dummy").unwrap().into()),
+                CachePolicy::ForeverInCdn(KrateName::from_str("mbedtls").unwrap().into()),
                 env.config(),
             )
             .await?;
@@ -652,7 +652,7 @@ mod tests {
             web.assert_redirect_cached(
                 "/crate/mbedtls/~0.2.0/source/",
                 "/crate/mbedtls/0.2.0/source/",
-                CachePolicy::ForeverInCdn(KrateName::from_str("dummy").unwrap().into()),
+                CachePolicy::ForeverInCdn(KrateName::from_str("mbedtls").unwrap().into()),
                 env.config(),
             )
             .await?;
@@ -677,7 +677,7 @@ mod tests {
             web.assert_success_cached(
                 "/crate/rustc-ap-syntax/178.0.0/source/fold.rs",
                 CachePolicy::ForeverInCdnAndStaleInBrowser(
-                    KrateName::from_str("dummy").unwrap().into(),
+                    KrateName::from_str("rustc-ap-syntax").unwrap().into(),
                 ),
                 env.config(),
             )
@@ -799,7 +799,7 @@ mod tests {
             assert!(response.status().is_success());
             response.assert_cache_control(
                 CachePolicy::ForeverInCdnAndStaleInBrowser(
-                    KrateName::from_str("dummy").unwrap().into(),
+                    KrateName::from_str("fake").unwrap().into(),
                 ),
                 env.config(),
             );
@@ -838,7 +838,7 @@ mod tests {
             assert!(response.status().is_success());
             response.assert_cache_control(
                 CachePolicy::ForeverInCdnAndStaleInBrowser(
-                    KrateName::from_str("dummy").unwrap().into(),
+                    KrateName::from_str("fake").unwrap().into(),
                 ),
                 env.config(),
             );

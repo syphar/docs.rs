@@ -50,7 +50,7 @@ impl ResponseCacheHeaders {
 /// or `If-None-Match` (with etag).
 /// Browser might still sometimes use cached content, for example when using
 /// the "back" button.
-pub static NO_CACHING: ResponseCacheHeaders = ResponseCacheHeaders {
+static NO_CACHING: ResponseCacheHeaders = ResponseCacheHeaders {
     cache_control: Some(HeaderValue::from_static("max-age=0")),
     surrogate_control: None,
     surrogate_keys: None,
@@ -187,14 +187,21 @@ pub enum CachePolicy {
 }
 
 impl CachePolicy {
-    pub fn render(&self, config: &Config, target_cdn: TargetCdn) -> ResponseCacheHeaders {
+    pub fn render(&self, config: Option<&Config>, target_cdn: TargetCdn) -> ResponseCacheHeaders {
+        let cache_invalidatable_responses = config
+            .map(|cfg| cfg.cache_invalidatable_responses)
+            .unwrap_or(false);
+
+        let cache_control_stale_while_revalidate =
+            config.and_then(|cfg| cfg.cache_control_stale_while_revalidate);
+
         let mut headers = match *self {
             CachePolicy::NoCaching => NO_CACHING.clone(),
             CachePolicy::NoStoreMustRevalidate => NO_STORE_MUST_REVALIDATE.clone(),
             CachePolicy::ShortInCdnAndBrowser => SHORT.clone(),
             CachePolicy::ForeverInCdnAndBrowser => FOREVER_IN_CDN_AND_BROWSER.clone(),
             CachePolicy::ForeverInCdn(ref surrogate_keys) => {
-                if config.cache_invalidatable_responses {
+                if cache_invalidatable_responses {
                     let mut policy = match target_cdn {
                         TargetCdn::Fastly => FOREVER_IN_FASTLY_CDN.clone(),
                         TargetCdn::CloudFront => FOREVER_IN_CLOUDFRONT_CDN.clone(),
@@ -211,9 +218,9 @@ impl CachePolicy {
                 let mut forever_in_cdn =
                     CachePolicy::ForeverInCdn(surrogate_keys.clone()).render(config, target_cdn);
 
-                if config.cache_invalidatable_responses
+                if cache_invalidatable_responses
                     && let Some(cache_control) =
-                        config.cache_control_stale_while_revalidate.map(|seconds| {
+                        cache_control_stale_while_revalidate.map(|seconds| {
                             format!("stale-while-revalidate={seconds}")
                                 .parse::<HeaderValue>()
                                 .unwrap()
@@ -270,7 +277,7 @@ pub(crate) async fn cache_middleware(
         .get::<CachePolicy>()
         .unwrap_or(&CachePolicy::NoCaching);
 
-    let cache_headers = cache_policy.render(&config, target_cdn);
+    let cache_headers = cache_policy.render(Some(&config), target_cdn);
 
     debug_assert!(
         target_cdn == TargetCdn::Fastly || cache_headers.surrogate_control.is_none(),
@@ -335,7 +342,7 @@ mod tests {
             .build()?;
 
         for (policy, target_cdn) in CachePolicy::iter().cartesian_product(TargetCdn::iter()) {
-            let headers = policy.render(&config, target_cdn);
+            let headers = policy.render(Some(&config), target_cdn);
 
             if let Some(cache_control) = headers.cache_control {
                 validate_cache_control(&cache_control).with_context(|| {
@@ -370,7 +377,7 @@ mod tests {
     )]
     fn test_render(cache: CachePolicy, cache_control: Option<&str>) -> Result<()> {
         let config = TestEnvironment::base_config().build()?;
-        let headers = cache.render(&config, TargetCdn::CloudFront);
+        let headers = cache.render(Some(&config), TargetCdn::CloudFront);
 
         assert_eq!(
             headers.cache_control,
@@ -386,7 +393,7 @@ mod tests {
     fn test_render_cache_in_cdn_with_surrogate_keys() -> Result<()> {
         let config = TestEnvironment::base_config().build()?;
         let headers = CachePolicy::ForeverInCdn(SurrogateKey::from_static("something").into())
-            .render(&config, TargetCdn::CloudFront);
+            .render(Some(&config), TargetCdn::CloudFront);
 
         assert!(headers.cache_control.is_none());
         assert!(headers.surrogate_control.is_none());
@@ -400,7 +407,7 @@ mod tests {
         let headers = CachePolicy::ForeverInCdnAndStaleInBrowser(
             SurrogateKey::from_static("something").into(),
         )
-        .render(&config, TargetCdn::CloudFront);
+        .render(Some(&config), TargetCdn::CloudFront);
 
         assert_eq!(
             headers.cache_control,
@@ -420,7 +427,7 @@ mod tests {
         let headers = CachePolicy::ForeverInCdnAndStaleInBrowser(
             SurrogateKey::from_static("something").into(),
         )
-        .render(&config, TargetCdn::CloudFront);
+        .render(Some(&config), TargetCdn::CloudFront);
         assert!(headers.cache_control.is_none());
         assert!(headers.surrogate_control.is_none());
 
@@ -436,7 +443,7 @@ mod tests {
         let headers = CachePolicy::ForeverInCdnAndStaleInBrowser(
             SurrogateKey::from_static("something").into(),
         )
-        .render(&config, TargetCdn::CloudFront);
+        .render(Some(&config), TargetCdn::CloudFront);
         assert_eq!(headers.cache_control.unwrap(), "stale-while-revalidate=666");
         assert!(headers.surrogate_control.is_none());
 
@@ -450,7 +457,7 @@ mod tests {
             .build()?;
 
         let headers = CachePolicy::ForeverInCdn(SurrogateKey::from_static("something").into())
-            .render(&config, TargetCdn::CloudFront);
+            .render(Some(&config), TargetCdn::CloudFront);
         assert_eq!(headers.cache_control.unwrap(), "max-age=0");
         assert!(headers.surrogate_control.is_none());
 
@@ -466,7 +473,7 @@ mod tests {
         let headers = CachePolicy::ForeverInCdnAndStaleInBrowser(
             SurrogateKey::from_static("something").into(),
         )
-        .render(&config, TargetCdn::CloudFront);
+        .render(Some(&config), TargetCdn::CloudFront);
         assert_eq!(headers.cache_control.unwrap(), "max-age=0");
         assert!(headers.surrogate_control.is_none());
 
@@ -490,7 +497,7 @@ mod tests {
         surrogate_control: Option<&str>,
     ) -> Result<()> {
         let config = TestEnvironment::base_config().build()?;
-        let headers = cache.render(&config, TargetCdn::Fastly);
+        let headers = cache.render(Some(&config), TargetCdn::Fastly);
 
         assert_eq!(
             headers.cache_control,
@@ -509,7 +516,7 @@ mod tests {
     fn render_fastly_forever_in_cdn() -> Result<()> {
         let config = TestEnvironment::base_config().build()?;
         let headers = CachePolicy::ForeverInCdn(SurrogateKey::from_static("something").into())
-            .render(&config, TargetCdn::Fastly);
+            .render(Some(&config), TargetCdn::Fastly);
 
         assert_eq!(
             headers.cache_control,
@@ -530,7 +537,7 @@ mod tests {
         let headers = CachePolicy::ForeverInCdnAndStaleInBrowser(
             SurrogateKey::from_static("something").into(),
         )
-        .render(&config, TargetCdn::Fastly);
+        .render(Some(&config), TargetCdn::Fastly);
 
         assert_eq!(
             headers.cache_control,
@@ -552,7 +559,7 @@ mod tests {
 
         let sk = SurrogateKey::from_static("something");
         let mut headers = CachePolicy::ForeverInCdnAndStaleInBrowser(sk.clone().into())
-            .render(&config, TargetCdn::Fastly);
+            .render(Some(&config), TargetCdn::Fastly);
 
         assert_eq!(
             headers.surrogate_keys.take().unwrap(),
@@ -572,7 +579,7 @@ mod tests {
         let headers = CachePolicy::ForeverInCdnAndStaleInBrowser(
             SurrogateKey::from_static("something").into(),
         )
-        .render(&config, TargetCdn::Fastly);
+        .render(Some(&config), TargetCdn::Fastly);
         assert_eq!(headers.cache_control.unwrap(), "stale-while-revalidate=666");
         assert_eq!(
             headers.surrogate_control,
@@ -589,7 +596,7 @@ mod tests {
             .build()?;
 
         let headers = CachePolicy::ForeverInCdn(SurrogateKey::from_static("something").into())
-            .render(&config, TargetCdn::Fastly);
+            .render(Some(&config), TargetCdn::Fastly);
         assert_eq!(headers.cache_control.unwrap(), "max-age=0");
         assert!(headers.surrogate_control.is_none());
 
@@ -605,7 +612,7 @@ mod tests {
         let headers = CachePolicy::ForeverInCdnAndStaleInBrowser(
             SurrogateKey::from_static("something").into(),
         )
-        .render(&config, TargetCdn::Fastly);
+        .render(Some(&config), TargetCdn::Fastly);
         assert_eq!(headers.cache_control.unwrap(), "max-age=0");
         assert!(headers.surrogate_control.is_none());
 

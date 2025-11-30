@@ -118,7 +118,7 @@ impl AxumResponseTestExt for axum::response::Response {
         // we emit the wrong cache policy in a handler.
         //
         // The fastly specifics are tested in web::cache unittests.
-        assert_cache_headers_eq(self, &cache_policy.render(config, TargetCdn::Fastly));
+        assert_cache_headers_eq(self, &cache_policy.render(Some(config), TargetCdn::Fastly));
     }
 
     fn error_for_status(self) -> Result<Self>
@@ -262,8 +262,10 @@ impl AxumRouterTestExt for axum::Router {
     async fn assert_not_found(&self, path: &str) -> Result<()> {
         let response = self.get(path).await?;
 
+        let no_caching_headers = cache::CachePolicy::NoCaching.render(None, TargetCdn::Fastly);
+
         // for now, 404s should always have `no-cache`
-        assert_cache_headers_eq(&response, &cache::NO_CACHING);
+        assert_cache_headers_eq(&response, &no_caching_headers);
 
         assert_eq!(response.status(), 404, "GET {path} should have been a 404");
         Ok(())
