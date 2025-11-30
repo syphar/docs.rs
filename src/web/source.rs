@@ -334,14 +334,14 @@ pub(crate) async fn source_browser_handler(
     };
     let show_parent_link = !current_folder.is_empty();
 
-    let file_list = FileList::from_path(&mut conn, params.name(), &version, current_folder)
+    let file_list = FileList::from_path(&mut conn, params.name(), version, current_folder)
         .await?
         .unwrap_or_default();
 
     let metadata = MetaData::from_crate(
         &mut conn,
         params.name(),
-        &version,
+        version,
         Some(params.req_version().clone()),
     )
     .await?;

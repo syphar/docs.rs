@@ -310,7 +310,7 @@ pub(crate) async fn rustdoc_redirector_handler(
         ?params,
         "parsed params with matched version"
     );
-    let crate_name = &matched_release.name;
+    let crate_name = matched_release.name.clone();
 
     // we might get requests to crate-specific JS/CSS files here.
     if params.inner_path().ends_with(".js") || params.inner_path().ends_with(".css") {
