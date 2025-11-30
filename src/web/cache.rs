@@ -172,9 +172,13 @@ pub enum CachePolicy {
     /// cache forever in CDN, but not in the browser.
     /// Since we control the CDN we can actively purge content that is cached like
     /// this, for example after building a crate.
+    /// Note: The CDN (Fastly) needs a list of surrogate keys ( = tags )to be able to purge a
+    /// subset of the pages
     /// Example usage: `/latest/` rustdoc pages and their redirects.
     ForeverInCdn(SurrogateKeys),
     /// cache forever in the CDN, but allow stale content in the browser.
+    /// Note: The CDN (Fastly) needs a list of surrogate keys ( = tags )to be able to purge a
+    /// subset of the pages
     /// Example: rustdoc pages with the version in their URL.
     /// A browser will show the stale content while getting the up-to-date
     /// version from the origin server in the background.
