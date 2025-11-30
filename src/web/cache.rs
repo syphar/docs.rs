@@ -6,7 +6,7 @@ use axum::{
     Extension,
     extract::{FromRequestParts, Request as AxumHttpRequest},
     middleware::Next,
-    response::Response as AxumResponse,
+    response::{IntoResponseParts, Response as AxumResponse},
 };
 use axum_extra::headers::HeaderMapExt as _;
 use http::{
@@ -265,26 +265,18 @@ pub(crate) async fn cache_middleware(
         .extensions()
         .get::<CachePolicy>()
         .unwrap_or(&CachePolicy::NoCaching);
+
     let cache_headers = cache_policy.render(&config, target_cdn);
-    let resp_headers = response.headers_mut();
 
-    // early return for CloudFront, as it doesn't support the `Surrogate-Control` header,
-    // but also doesn't need surrogate keys.
-    // While that sounds nice, CloudFront invalidations with path prefixes are suuper slow,
-    // and have a concurrency limit.
-    if let TargetCdn::CloudFront = target_cdn {
-        debug_assert!(cache_headers.surrogate_control.is_none());
-        cache_headers.set_on_response(resp_headers);
-        response
-    } else {
-        // Generally Fastly can either purge single URLs, or a whole service.
-        // When you want to purge the cache for a bigger subset, but not everything, you need to "tag"
-        // your content with surrogate keys when delivering it to Fastly for caching.
-        // https://www.fastly.com/documentation/guides/full-site-delivery/purging/working-with-surrogate-keys/
-        cache_headers.set_on_response(resp_headers);
+    debug_assert!(
+        target_cdn == TargetCdn::Fastly || cache_headers.surrogate_control.is_none(),
+        "Surrogate-Control header is only supported by Fastly, but got Surrogate-Control header for CDN: {:?}\n{:?}",
+        target_cdn,
+        cache_headers,
+    );
 
-        response
-    }
+    cache_headers.set_on_response(response.headers_mut());
+    response
 }
 
 #[cfg(test)]
