@@ -989,10 +989,9 @@ pub(crate) async fn json_download_handler(
     );
 
     let redirect = |storage_path: &str| {
-        let krate_name: KrateName = krate.name.parse().expect("valid crate name");
         super::axum_cached_redirect(
             format!("{}/{}", config.s3_static_root_path, storage_path),
-            CachePolicy::ForeverInCdn(SurrogateKey::from(krate_name).into()),
+            CachePolicy::ForeverInCdn(krate.name.clone().into()),
         )
     };
 
@@ -1029,15 +1028,15 @@ pub(crate) async fn download_handler(
     Extension(storage): Extension<Arc<AsyncStorage>>,
     Extension(config): Extension<Arc<Config>>,
 ) -> AxumResult<impl IntoResponse> {
-    let version = match_version(
+    let matched_release = match_version(
         &mut conn,
         &RustdocParams::new(&name).with_req_version(req_version),
     )
     .await?
-    .assume_exact_name()?
-    .into_version();
+    .assume_exact_name()?;
 
-    let archive_path = rustdoc_archive_path(&name, &version);
+    let version = &matched_release.release.version;
+    let archive_path = rustdoc_archive_path(&name, version);
 
     // not all archives are set for public access yet, so we check if
     // the access is set and fix it if needed.
@@ -1060,11 +1059,9 @@ pub(crate) async fn download_handler(
         storage.set_public_access(&archive_path, true).await?;
     }
 
-    let krate_name: KrateName = name.parse().expect("valid crate name");
-
     Ok(super::axum_cached_redirect(
         format!("{}/{}", config.s3_static_root_path, archive_path),
-        CachePolicy::ForeverInCdn(SurrogateKey::from(krate_name).into()),
+        CachePolicy::ForeverInCdn(matched_release.name.into()),
     )?)
 }
 
