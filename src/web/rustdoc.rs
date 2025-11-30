@@ -534,9 +534,17 @@ impl RustdocPage {
         if_none_match: Option<&IfNoneMatch>,
     ) -> AxumResponse {
         let cache_policy = if self.is_latest_url {
-            CachePolicy::ForeverInCdn
+            CachePolicy::ForeverInCdn(
+                self.params
+                    .surrogate_keys()
+                    .expect("after match_version, we know it works"),
+            )
         } else {
-            CachePolicy::ForeverInCdnAndStaleInBrowser
+            CachePolicy::ForeverInCdnAndStaleInBrowser(
+                self.params
+                    .surrogate_keys()
+                    .expect("after match_version, we know it works"),
+            )
         };
         let robots_tag = (!self.is_latest_url).then_some([(&X_ROBOTS_TAG, "noindex")]);
 
@@ -1133,7 +1141,7 @@ mod test {
     use kuchikiki::traits::TendrilSink;
     use pretty_assertions::assert_eq;
     use reqwest::StatusCode;
-    use std::collections::BTreeMap;
+    use std::{collections::BTreeMap, str::FromStr as _};
     use test_case::test_case;
     use tracing::info;
 
@@ -1144,7 +1152,10 @@ mod test {
     ) -> Result<Option<String>, anyhow::Error> {
         web.assert_success(path).await?;
         let response = web.get(path).await?;
-        response.assert_cache_control(CachePolicy::ForeverInCdnAndStaleInBrowser, config);
+        response.assert_cache_control(
+            CachePolicy::ForeverInCdnAndStaleInBrowser(KrateName::from_str("foo").unwrap().into()),
+            config,
+        );
         let data = response.text().await?;
         info!(
             "fetched path {} and got content {}\nhelp: if this is missing the header, remember to add <html><head></head><body></body></html>",
@@ -1159,7 +1170,10 @@ mod test {
         {
             let link = elem.attributes.borrow().get("href").unwrap().to_string();
             let response = web.get(&link).await?;
-            response.assert_cache_control(CachePolicy::ForeverInCdn, config);
+            response.assert_cache_control(
+                CachePolicy::ForeverInCdn(KrateName::from_str("foo").unwrap().into()),
+                config,
+            );
             assert!(response.status().is_success() || response.status().is_redirection());
             Ok(Some(link))
         } else {
@@ -1193,7 +1207,9 @@ mod test {
             let web = env.web_app().await;
             web.assert_success_cached(
                 "/krate/0.1.0/help.html",
-                CachePolicy::ForeverInCdnAndStaleInBrowser,
+                CachePolicy::ForeverInCdnAndStaleInBrowser(
+                    KrateName::from_str("foo").unwrap().into(),
+                ),
                 env.config(),
             )
             .await?;
@@ -1237,19 +1253,25 @@ mod test {
                 .await?;
             web.assert_success_cached(
                 "/crate/buggy/0.1.0",
-                CachePolicy::ForeverInCdnAndStaleInBrowser,
+                CachePolicy::ForeverInCdnAndStaleInBrowser(
+                    KrateName::from_str("buggy").unwrap().into(),
+                ),
                 env.config(),
             )
             .await?;
             web.assert_success_cached(
                 "/buggy/0.1.0/directory_1/index.html",
-                CachePolicy::ForeverInCdnAndStaleInBrowser,
+                CachePolicy::ForeverInCdnAndStaleInBrowser(
+                    KrateName::from_str("buggy").unwrap().into(),
+                ),
                 env.config(),
             )
             .await?;
             web.assert_success_cached(
                 "/buggy/0.1.0/directory_2.html/index.html",
-                CachePolicy::ForeverInCdnAndStaleInBrowser,
+                CachePolicy::ForeverInCdnAndStaleInBrowser(
+                    KrateName::from_str("buggy").unwrap().into(),
+                ),
                 env.config(),
             )
             .await?;
@@ -1261,19 +1283,25 @@ mod test {
             .await?;
             web.assert_success_cached(
                 "/buggy/0.1.0/settings.html",
-                CachePolicy::ForeverInCdnAndStaleInBrowser,
+                CachePolicy::ForeverInCdnAndStaleInBrowser(
+                    KrateName::from_str("buggy").unwrap().into(),
+                ),
                 env.config(),
             )
             .await?;
             web.assert_success_cached(
                 "/buggy/0.1.0/scrape-examples-help.html",
-                CachePolicy::ForeverInCdnAndStaleInBrowser,
+                CachePolicy::ForeverInCdnAndStaleInBrowser(
+                    KrateName::from_str("buggy").unwrap().into(),
+                ),
                 env.config(),
             )
             .await?;
             web.assert_success_cached(
                 "/buggy/0.1.0/all.html",
-                CachePolicy::ForeverInCdnAndStaleInBrowser,
+                CachePolicy::ForeverInCdnAndStaleInBrowser(
+                    KrateName::from_str("buggy").unwrap().into(),
+                ),
                 env.config(),
             )
             .await?;
@@ -1305,14 +1333,16 @@ mod test {
             let base = "/dummy/0.1.0/dummy/";
             web.assert_success_cached(
                 base,
-                CachePolicy::ForeverInCdnAndStaleInBrowser,
+                CachePolicy::ForeverInCdnAndStaleInBrowser(
+                    KrateName::from_str("dummy").unwrap().into(),
+                ),
                 env.config(),
             )
             .await?;
             web.assert_redirect_cached(
                 "/dummy/0.1.0/x86_64-unknown-linux-gnu/dummy/",
                 base,
-                CachePolicy::ForeverInCdn,
+                CachePolicy::ForeverInCdn(KrateName::from_str("dummy").unwrap().into()),
                 env.config(),
             )
             .await?;
@@ -1383,7 +1413,10 @@ mod test {
                 .await?
                 .error_for_status()?;
 
-            resp.assert_cache_control(CachePolicy::ForeverInCdn, env.config());
+            resp.assert_cache_control(
+                CachePolicy::ForeverInCdn(KrateName::from_str("dummy").unwrap().into()),
+                env.config(),
+            );
             let body = resp.text().await?;
             assert!(
                 body.contains("<a href=\"/crate/dummy/latest/source/\""),
@@ -1418,14 +1451,22 @@ mod test {
 
         {
             let resp = web.get("/dummy/latest/dummy/").await?;
-            resp.assert_cache_control(CachePolicy::ForeverInCdn, env.config());
+            resp.assert_cache_control(
+                CachePolicy::ForeverInCdn(KrateName::from_str("dummy").unwrap().into()),
+                env.config(),
+            );
             web.assert_conditional_get("/dummy/latest/dummy/", &resp)
                 .await?;
         }
 
         {
             let resp = web.get("/dummy/0.1.0/dummy/").await?;
-            resp.assert_cache_control(CachePolicy::ForeverInCdnAndStaleInBrowser, env.config());
+            resp.assert_cache_control(
+                CachePolicy::ForeverInCdnAndStaleInBrowser(
+                    KrateName::from_str("dummy").unwrap().into(),
+                ),
+                env.config(),
+            );
             web.assert_conditional_get("/dummy/0.1.0/dummy/", &resp)
                 .await?;
         }
@@ -2298,7 +2339,9 @@ mod test {
             web.assert_redirect_cached(
                 "/dummy",
                 "/dummy/latest/dummy/",
-                CachePolicy::ForeverInCdn,
+                CachePolicy::ForeverInCdnAndStaleInBrowser(
+                    KrateName::from_str("dummy").unwrap().into(),
+                ),
                 env.config(),
             )
             .await?;
@@ -2722,7 +2765,10 @@ mod test {
                 .get("/crate/hexponent/0.3.1/menus/releases/x86_64-unknown-linux-gnu/hexponent/index.html")
                 .await?;
             assert!(releases_response.status().is_success());
-            releases_response.assert_cache_control(CachePolicy::ForeverInCdn, env.config());
+            releases_response.assert_cache_control(
+                CachePolicy::ForeverInCdn(KrateName::from_str("dummy").unwrap().into()),
+                env.config(),
+            );
             assert_eq!(
                 parse_release_links_from_menu(&releases_response.text().await?),
                 vec![
@@ -2740,7 +2786,10 @@ mod test {
                 .get("/crate/hexponent/0.3.1/menus/releases/hexponent/something.html")
                 .await?;
             assert!(releases_response.status().is_success());
-            releases_response.assert_cache_control(CachePolicy::ForeverInCdn, env.config());
+            releases_response.assert_cache_control(
+                CachePolicy::ForeverInCdn(KrateName::from_str("dummy").unwrap().into()),
+                env.config(),
+            );
             assert_eq!(
                 parse_release_links_from_menu(&releases_response.text().await?),
                 vec![
@@ -3091,7 +3140,7 @@ mod test {
         web.assert_redirect_cached_unchecked(
             "/crate/dummy/0.1/download",
             "https://static.docs.rs/rustdoc/dummy/0.1.0.zip",
-            CachePolicy::ForeverInCdn,
+            CachePolicy::ForeverInCdn(KrateName::from_str("dummy").unwrap().into()),
             env.config(),
         )
         .await?;
@@ -3131,7 +3180,7 @@ mod test {
         web.assert_redirect_cached_unchecked(
             "/crate/dummy/0.1.0/download",
             "https://static.docs.rs/rustdoc/dummy/0.1.0.zip",
-            CachePolicy::ForeverInCdn,
+            CachePolicy::ForeverInCdn(KrateName::from_str("dummy").unwrap().into()),
             env.config(),
         )
         .await?;
@@ -3169,7 +3218,7 @@ mod test {
         web.assert_redirect_cached_unchecked(
             "/crate/dummy/latest/download",
             "https://static.docs.rs/rustdoc/dummy/0.2.0.zip",
-            CachePolicy::ForeverInCdn,
+            CachePolicy::ForeverInCdn(KrateName::from_str("dummy").unwrap().into()),
             env.config(),
         )
         .await?;
@@ -3307,7 +3356,7 @@ mod test {
             web.assert_redirect_cached_unchecked(
                 "/clap/2.24.0/i686-pc-windows-gnu/clap/which%20is%20a%20part%20of%20%5B%60Display%60%5D",
                 "/crate/clap/2.24.0/target-redirect/i686-pc-windows-gnu/clap/which%20is%20a%20part%20of%20[%60Display%60]",
-                CachePolicy::ForeverInCdn,
+                CachePolicy::ForeverInCdn(KrateName::from_str("dummy").unwrap().into()),
                 env.config(),
             ).await?;
 
@@ -3330,7 +3379,7 @@ mod test {
             web.assert_redirect_cached_unchecked(
                 "/clap/latest/clapproc%20macro%20%60Parser%60%20not%20expanded:%20Cannot%20create%20expander%20for",
                 "/clap/latest/clap/clapproc%20macro%20%60Parser%60%20not%20expanded:%20Cannot%20create%20expander%20for",
-                CachePolicy::ForeverInCdn,
+                CachePolicy::ForeverInCdn(KrateName::from_str("dummy").unwrap().into()),
                 env.config(),
             ).await?;
 
@@ -3352,8 +3401,13 @@ mod test {
                 .await?;
             let web = env.web_app().await;
 
-            web.assert_redirect_cached(path, expected, CachePolicy::ForeverInCdn, env.config())
-                .await?;
+            web.assert_redirect_cached(
+                path,
+                expected,
+                CachePolicy::ForeverInCdn(KrateName::from_str("dummy").unwrap().into()),
+                env.config(),
+            )
+            .await?;
 
             Ok(())
         })
@@ -3509,7 +3563,7 @@ mod test {
                 &format!("/crate/dummy/{request_path_suffix}"),
                 &format!("https://static.docs.rs/rustdoc-json/dummy/{redirect_version}/{redirect_target}/\
                     dummy_{redirect_version}_{redirect_target}_{redirect_format_version}.json.{compression_ext}"),
-                CachePolicy::ForeverInCdn,
+                CachePolicy::ForeverInCdn(KrateName::from_str("dummy").unwrap().into()),
                 env.config(),
             )
             .await?;
@@ -3579,7 +3633,7 @@ mod test {
                 "https://static.docs.rs/rustdoc-json/{NAME}/{VERSION}/{TARGET}/\
                     {NAME}_{VERSION}_{TARGET}_{FORMAT_VERSION}.json" // without .zstd
             ),
-            CachePolicy::ForeverInCdn,
+            CachePolicy::ForeverInCdn(KrateName::from_str("dummy").unwrap().into()),
             env.config(),
         )
         .await?;

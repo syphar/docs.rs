@@ -738,6 +738,7 @@ pub(crate) async fn get_all_platforms(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::types::krate_name::KrateName;
     use crate::test::{
         AxumResponseTestExt, AxumRouterTestExt, FakeBuild, TestDatabase, TestEnvironment,
         async_wrapper, fake_release_that_failed_before_build,
@@ -748,6 +749,7 @@ mod tests {
     use kuchikiki::traits::TendrilSink;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
+    use std::str::FromStr as _;
     use test_case::test_case;
 
     async fn release_build_status(
@@ -1187,8 +1189,16 @@ mod tests {
                 .create()
                 .await?;
 
-            let response = env.web_app().await.get("/crate/foo/0.0.1").await?;
-            response.assert_cache_control(CachePolicy::ForeverInCdnAndStaleInBrowser, env.config());
+            let krate: KrateName = "foo".parse().unwrap();
+            let response = env
+                .web_app()
+                .await
+                .get(&format!("/crate/{krate}/0.0.1"))
+                .await?;
+            response.assert_cache_control(
+                CachePolicy::ForeverInCdnAndStaleInBrowser(krate.into()),
+                env.config(),
+            );
 
             assert!(
                 response
@@ -1892,7 +1902,10 @@ mod tests {
                 "{}",
                 response.text().await.unwrap()
             );
-            response.assert_cache_control(CachePolicy::ForeverInCdn, env.config());
+            response.assert_cache_control(
+                CachePolicy::ForeverInCdn(KrateName::from_str("dummy").unwrap().into()),
+                env.config(),
+            );
             let list2 = dbg!(check_links(
                 response.text().await.unwrap(),
                 true,
@@ -2069,7 +2082,10 @@ mod tests {
 
             let resp = web.get("/crate/dummy/latest").await?;
             assert!(resp.status().is_success());
-            resp.assert_cache_control(CachePolicy::ForeverInCdn, env.config());
+            resp.assert_cache_control(
+                CachePolicy::ForeverInCdn(KrateName::from_str("dummy").unwrap().into()),
+                env.config(),
+            );
             let body = resp.text().await?;
             assert!(body.contains("<a href=\"/crate/dummy/latest/features\""));
             assert!(body.contains("<a href=\"/crate/dummy/latest/builds\""));
@@ -2081,7 +2097,7 @@ mod tests {
             web.assert_redirect_cached(
                 "/crate/dummy",
                 "/crate/dummy/latest",
-                CachePolicy::ForeverInCdn,
+                CachePolicy::ForeverInCdn(KrateName::from_str("dummy").unwrap().into()),
                 env.config(),
             )
             .await?;

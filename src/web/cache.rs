@@ -6,7 +6,7 @@ use axum::{
     Extension,
     extract::{FromRequestParts, Request as AxumHttpRequest},
     middleware::Next,
-    response::{IntoResponseParts, Response as AxumResponse},
+    response::Response as AxumResponse,
 };
 use axum_extra::headers::HeaderMapExt as _;
 use http::{
@@ -503,6 +503,7 @@ mod tests {
         Ok(())
     }
 
+    #[test]
     fn render_fastly_forever_in_cdn() -> Result<()> {
         let config = TestEnvironment::base_config().build()?;
         let headers = CachePolicy::ForeverInCdn(SurrogateKey::from_static("something").into())
@@ -521,6 +522,7 @@ mod tests {
         Ok(())
     }
 
+    #[test]
     fn render_fastly_forever_in_cdn_stale_in_browser() -> Result<()> {
         let config = TestEnvironment::base_config().build()?;
         let headers = CachePolicy::ForeverInCdnAndStaleInBrowser(

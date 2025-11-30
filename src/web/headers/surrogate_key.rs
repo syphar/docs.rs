@@ -106,6 +106,12 @@ impl From<SurrogateKey> for SurrogateKeys {
     }
 }
 
+impl From<KrateName> for SurrogateKeys {
+    fn from(name: KrateName) -> Self {
+        SurrogateKey::from(name).into()
+    }
+}
+
 impl Display for SurrogateKeys {
     #[allow(unstable_name_collisions)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -227,7 +233,7 @@ impl FromStr for SurrogateKeys {
         let keys = s
             .split(' ')
             .map(SurrogateKey::from_str)
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<HashSet<_>, _>>()?;
         Ok(SurrogateKeys(keys))
     }
 }

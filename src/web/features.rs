@@ -271,8 +271,13 @@ fn get_sorted_features(raw_features: Vec<DbFeature>) -> (Vec<Feature>, HashSet<S
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr as _;
+
     use super::*;
-    use crate::test::{AxumResponseTestExt, AxumRouterTestExt, async_wrapper};
+    use crate::{
+        db::types::krate_name::KrateName,
+        test::{AxumResponseTestExt, AxumRouterTestExt, async_wrapper},
+    };
     use kuchikiki::traits::TendrilSink;
     use reqwest::StatusCode;
 
@@ -411,7 +416,7 @@ mod tests {
             web.assert_redirect_cached(
                 "/crate/foo/~0.2/features",
                 "/crate/foo/0.2.1/features",
-                CachePolicy::ForeverInCdn,
+                CachePolicy::ForeverInCdn(KrateName::from_str("foo").unwrap().into()),
                 env.config(),
             )
             .await?;
@@ -433,7 +438,12 @@ mod tests {
             let web = env.web_app().await;
             let resp = web.get("/crate/foo/0.2.0/features").await?;
             assert!(resp.status().is_success());
-            resp.assert_cache_control(CachePolicy::ForeverInCdnAndStaleInBrowser, env.config());
+            resp.assert_cache_control(
+                CachePolicy::ForeverInCdnAndStaleInBrowser(
+                    KrateName::from_str("foo").unwrap().into(),
+                ),
+                env.config(),
+            );
             Ok(())
         });
     }
@@ -460,7 +470,10 @@ mod tests {
             let web = env.web_app().await;
             let resp = web.get("/crate/foo/latest/features").await?;
             assert!(resp.status().is_success());
-            resp.assert_cache_control(CachePolicy::ForeverInCdn, env.config());
+            resp.assert_cache_control(
+                CachePolicy::ForeverInCdn(KrateName::from_str("foo").unwrap().into()),
+                env.config(),
+            );
             let body = resp.text().await?;
             assert!(body.contains("<a href=\"/crate/foo/latest/builds\""));
             assert!(body.contains("<a href=\"/crate/foo/latest/source/\""));
