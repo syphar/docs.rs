@@ -142,12 +142,26 @@ impl Header for SurrogateKeys {
         &SURROGATE_KEY
     }
 
-    fn decode<'i, I>(_values: &mut I) -> Result<Self, headers::Error>
+    fn decode<'i, I>(values: &mut I) -> Result<Self, headers::Error>
     where
         Self: Sized,
         I: Iterator<Item = &'i http::HeaderValue>,
     {
-        unimplemented!();
+        let Some(value) = values.next() else {
+            return Err(headers::Error::invalid());
+        };
+
+        let Ok(value) = value.to_str() else {
+            return Err(headers::Error::invalid());
+        };
+
+        let keys = value
+            .split(' ')
+            .map(SurrogateKey::from_str)
+            .collect::<Result<BTreeSet<_>, _>>()
+            .map_err(|_| headers::Error::invalid())?;
+
+        Ok(SurrogateKeys(keys))
     }
 
     fn encode<E: Extend<http::HeaderValue>>(&self, values: &mut E) {
