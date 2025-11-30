@@ -310,7 +310,7 @@ pub(crate) async fn rustdoc_redirector_handler(
         ?params,
         "parsed params with matched version"
     );
-    let crate_name = matched_release.name.clone();
+    let crate_name = &matched_release.name;
 
     // we might get requests to crate-specific JS/CSS files here.
     if params.inner_path().ends_with(".js") || params.inner_path().ends_with(".css") {
@@ -358,18 +358,14 @@ pub(crate) async fn rustdoc_redirector_handler(
         .await;
     }
 
-    let krate_name = params
-        .confirmed_name()
-        .expect("after match_version, we know it works");
-
     if matched_release.rustdoc_status() {
         Ok(redirect_to_doc(
             params.original_uri(),
             params.rustdoc_url().append_raw_query(original_query),
             if matched_release.is_latest_url() {
-                CachePolicy::ForeverInCdn(krate_name.into())
+                CachePolicy::ForeverInCdn(crate_name.into())
             } else {
-                CachePolicy::ForeverInCdnAndStaleInBrowser(krate_name.into())
+                CachePolicy::ForeverInCdnAndStaleInBrowser(crate_name.into())
             },
             path_in_crate.as_deref(),
         )?
@@ -377,7 +373,7 @@ pub(crate) async fn rustdoc_redirector_handler(
     } else {
         Ok(axum_cached_redirect(
             params.crate_details_url().append_raw_query(original_query),
-            CachePolicy::ForeverInCdn(krate_name.into()),
+            CachePolicy::ForeverInCdn(crate_name.into()),
         )?
         .into_response())
     }
@@ -522,15 +518,12 @@ impl RustdocPage {
         max_parse_memory: usize,
         if_none_match: Option<&IfNoneMatch>,
     ) -> AxumResponse {
-        let krate_name = self
-            .params
-            .confirmed_name()
-            .expect("after match_version, we know it works");
+        let crate_name = &self.metadata.name;
 
         let cache_policy = if self.is_latest_url {
-            CachePolicy::ForeverInCdn(krate_name.into())
+            CachePolicy::ForeverInCdn(crate_name.into())
         } else {
-            CachePolicy::ForeverInCdnAndStaleInBrowser(krate_name.into())
+            CachePolicy::ForeverInCdnAndStaleInBrowser(crate_name.into())
         };
         let robots_tag = (!self.is_latest_url).then_some([(&X_ROBOTS_TAG, "noindex")]);
 
@@ -635,12 +628,7 @@ pub(crate) async fn rustdoc_html_server_handler(
     if !matched_release.rustdoc_status() {
         return Ok(axum_cached_redirect(
             params.crate_details_url(),
-            CachePolicy::ForeverInCdn(
-                params
-                    .confirmed_name()
-                    .expect("after match_version, we know it works")
-                    .into(),
-            ),
+            CachePolicy::ForeverInCdn(matched_release.name.into()),
         )?
         .into_response());
     }
@@ -662,12 +650,7 @@ pub(crate) async fn rustdoc_html_server_handler(
             params
                 .rustdoc_url()
                 .append_raw_query(original_query.as_deref()),
-            CachePolicy::ForeverInCdn(
-                params
-                    .confirmed_name()
-                    .expect("after match_version, we know it works")
-                    .into(),
-            ),
+            CachePolicy::ForeverInCdn(krate.name.into()),
         )?);
     }
 
@@ -722,12 +705,7 @@ pub(crate) async fn rustdoc_html_server_handler(
                         params
                             .rustdoc_url()
                             .append_raw_query(original_query.as_deref()),
-                        CachePolicy::ForeverInCdn(
-                            params
-                                .confirmed_name()
-                                .expect("after match_version, we know it works")
-                                .into(),
-                        ),
+                        CachePolicy::ForeverInCdn(krate.name.into()),
                     )?);
                 }
             }
@@ -740,12 +718,7 @@ pub(crate) async fn rustdoc_html_server_handler(
                 // but only if the first element after the version is a target?
                 return Ok(axum_cached_redirect(
                     params.target_redirect_url(),
-                    CachePolicy::ForeverInCdn(
-                        params
-                            .confirmed_name()
-                            .expect("after match_version, we know it works")
-                            .into(),
-                    ),
+                    CachePolicy::ForeverInCdn(krate.name.into()),
                 )?);
             }
 
@@ -883,19 +856,9 @@ pub(crate) async fn target_redirect_handler(
     Ok(axum_cached_redirect(
         redirect_uri,
         if params.req_version().is_latest() {
-            CachePolicy::ForeverInCdn(
-                params
-                    .confirmed_name()
-                    .expect("after match_version, we know it works")
-                    .into(),
-            )
+            CachePolicy::ForeverInCdn(crate_details.name.into())
         } else {
-            CachePolicy::ForeverInCdnAndStaleInBrowser(
-                params
-                    .confirmed_name()
-                    .expect("after match_version, we know it works")
-                    .into(),
-            )
+            CachePolicy::ForeverInCdnAndStaleInBrowser(crate_details.name.into())
         },
     )?)
 }

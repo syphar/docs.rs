@@ -172,15 +172,11 @@ impl_axum_webpage! {
     canonical_url = |page| Some(page.canonical_url.clone()),
     cache_policy = |page| if page.is_latest_url {
         CachePolicy::ForeverInCdn(
-            page.params
-                .confirmed_name()
-                .expect("after match_version, we know it works").into(),
+            page.metadata.name.clone().into()
         )
     } else {
         CachePolicy::ForeverInCdnAndStaleInBrowser(
-            page.params
-                .confirmed_name()
-                .expect("after match_version, we know it works").into(),
+            page.metadata.name.clone().into()
         )
     },
     cpu_intensive_rendering = true,
@@ -225,7 +221,7 @@ pub(crate) async fn source_browser_handler(
             )
         })?;
     let params = params.apply_matched_release(&matched_release);
-    let version = matched_release.into_version();
+    let version = &matched_release.release.version;
 
     let row = sqlx::query!(
         r#"SELECT
@@ -258,7 +254,7 @@ pub(crate) async fn source_browser_handler(
         match storage
             .stream_source_file(
                 params.name(),
-                &version,
+                version,
                 row.latest_build_id,
                 inner_path,
                 row.archive_storage,
@@ -294,10 +290,7 @@ pub(crate) async fn source_browser_handler(
             response
                 .extensions_mut()
                 .insert(CachePolicy::ForeverInCdnAndStaleInBrowser(
-                    params
-                        .confirmed_name()
-                        .expect("after match_version, we know it works")
-                        .into(),
+                    matched_release.name.into(),
                 ));
             return Ok(response);
         } else {

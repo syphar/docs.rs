@@ -109,7 +109,7 @@ impl FeaturesPage {
 impl_axum_webpage! {
     FeaturesPage,
     cache_policy = |page| {
-        let name = page.params.confirmed_name().expect("after match_version, we know it works");
+        let name = &page.metadata.name;
         if page.is_latest_url {
             CachePolicy::ForeverInCdn(name.into())
         } else {
