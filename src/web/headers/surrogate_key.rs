@@ -112,6 +112,12 @@ impl From<KrateName> for SurrogateKeys {
     }
 }
 
+impl From<&KrateName> for SurrogateKeys {
+    fn from(name: &KrateName) -> Self {
+        SurrogateKey::from(name.clone()).into()
+    }
+}
+
 impl Display for SurrogateKeys {
     #[allow(unstable_name_collisions)]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

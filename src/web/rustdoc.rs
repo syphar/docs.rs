@@ -358,22 +358,18 @@ pub(crate) async fn rustdoc_redirector_handler(
         .await;
     }
 
+    let krate_name = params
+        .confirmed_name()
+        .expect("after match_version, we know it works");
+
     if matched_release.rustdoc_status() {
         Ok(redirect_to_doc(
             params.original_uri(),
             params.rustdoc_url().append_raw_query(original_query),
             if matched_release.is_latest_url() {
-                CachePolicy::ForeverInCdn(
-                    params
-                        .surrogate_keys()
-                        .expect("after match_version, we know it works"),
-                )
+                CachePolicy::ForeverInCdn(krate_name.into())
             } else {
-                CachePolicy::ForeverInCdnAndStaleInBrowser(
-                    params
-                        .surrogate_keys()
-                        .expect("after match_version, we know it works"),
-                )
+                CachePolicy::ForeverInCdnAndStaleInBrowser(krate_name.into())
             },
             path_in_crate.as_deref(),
         )?
@@ -381,11 +377,7 @@ pub(crate) async fn rustdoc_redirector_handler(
     } else {
         Ok(axum_cached_redirect(
             params.crate_details_url().append_raw_query(original_query),
-            CachePolicy::ForeverInCdn(
-                params
-                    .surrogate_keys()
-                    .expect("after match_version, we know it works"),
-            ),
+            CachePolicy::ForeverInCdn(krate_name.into()),
         )?
         .into_response())
     }
@@ -530,18 +522,15 @@ impl RustdocPage {
         max_parse_memory: usize,
         if_none_match: Option<&IfNoneMatch>,
     ) -> AxumResponse {
+        let krate_name = self
+            .params
+            .confirmed_name()
+            .expect("after match_version, we know it works");
+
         let cache_policy = if self.is_latest_url {
-            CachePolicy::ForeverInCdn(
-                self.params
-                    .surrogate_keys()
-                    .expect("after match_version, we know it works"),
-            )
+            CachePolicy::ForeverInCdn(krate_name.into())
         } else {
-            CachePolicy::ForeverInCdnAndStaleInBrowser(
-                self.params
-                    .surrogate_keys()
-                    .expect("after match_version, we know it works"),
-            )
+            CachePolicy::ForeverInCdnAndStaleInBrowser(krate_name.into())
         };
         let robots_tag = (!self.is_latest_url).then_some([(&X_ROBOTS_TAG, "noindex")]);
 
@@ -638,11 +627,7 @@ pub(crate) async fn rustdoc_html_server_handler(
                 .with_req_version(version);
             AxumNope::Redirect(
                 params.rustdoc_url(),
-                CachePolicy::ForeverInCdn(
-                    params
-                        .surrogate_keys()
-                        .expect("after match_version, we know it works"),
-                ),
+                CachePolicy::ForeverInCdn(confirmed_name.into()),
             )
         })?;
     let params = params.apply_matched_release(&matched_release);
@@ -652,8 +637,9 @@ pub(crate) async fn rustdoc_html_server_handler(
             params.crate_details_url(),
             CachePolicy::ForeverInCdn(
                 params
-                    .surrogate_keys()
-                    .expect("after match_version, we know it works"),
+                    .confirmed_name()
+                    .expect("after match_version, we know it works")
+                    .into(),
             ),
         )?
         .into_response());
@@ -678,8 +664,9 @@ pub(crate) async fn rustdoc_html_server_handler(
                 .append_raw_query(original_query.as_deref()),
             CachePolicy::ForeverInCdn(
                 params
-                    .surrogate_keys()
-                    .expect("after match_version, we know it works"),
+                    .confirmed_name()
+                    .expect("after match_version, we know it works")
+                    .into(),
             ),
         )?);
     }
@@ -737,8 +724,9 @@ pub(crate) async fn rustdoc_html_server_handler(
                             .append_raw_query(original_query.as_deref()),
                         CachePolicy::ForeverInCdn(
                             params
-                                .surrogate_keys()
-                                .expect("after match_version, we know it works"),
+                                .confirmed_name()
+                                .expect("after match_version, we know it works")
+                                .into(),
                         ),
                     )?);
                 }
@@ -754,8 +742,9 @@ pub(crate) async fn rustdoc_html_server_handler(
                     params.target_redirect_url(),
                     CachePolicy::ForeverInCdn(
                         params
-                            .surrogate_keys()
-                            .expect("after match_version, we know it works"),
+                            .confirmed_name()
+                            .expect("after match_version, we know it works")
+                            .into(),
                     ),
                 )?);
             }
@@ -896,14 +885,16 @@ pub(crate) async fn target_redirect_handler(
         if params.req_version().is_latest() {
             CachePolicy::ForeverInCdn(
                 params
-                    .surrogate_keys()
-                    .expect("after match_version, we know it works"),
+                    .confirmed_name()
+                    .expect("after match_version, we know it works")
+                    .into(),
             )
         } else {
             CachePolicy::ForeverInCdnAndStaleInBrowser(
                 params
-                    .surrogate_keys()
-                    .expect("after match_version, we know it works"),
+                    .confirmed_name()
+                    .expect("after match_version, we know it works")
+                    .into(),
             )
         },
     )?)

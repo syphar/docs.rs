@@ -80,11 +80,7 @@ pub(crate) async fn build_details_handler(
                 .with_req_version(version);
             AxumNope::Redirect(
                 params.build_details_url(id, build_params.filename.as_deref()),
-                CachePolicy::ForeverInCdn(
-                    params
-                        .surrogate_keys()
-                        .expect("this is after match_version, so we know it works here"),
-                ),
+                CachePolicy::ForeverInCdn(confirmed_name.into()),
             )
         })?
         .into_version();

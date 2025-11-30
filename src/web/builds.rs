@@ -74,11 +74,7 @@ pub(crate) async fn build_list_handler(
                 .with_req_version(version);
             AxumNope::Redirect(
                 params.builds_url(),
-                CachePolicy::ForeverInCdn(
-                    params
-                        .surrogate_keys()
-                        .expect("after match_version, we know it works"),
-                ),
+                CachePolicy::ForeverInCdn(confirmed_name.into()),
             )
         })?
         .into_version();

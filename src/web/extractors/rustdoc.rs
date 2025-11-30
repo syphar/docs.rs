@@ -3,12 +3,8 @@
 use crate::{
     db::{BuildId, types::krate_name::KrateName},
     web::{
-        MatchedRelease, MetaData, ReqVersion,
-        error::AxumNope,
-        escaped_uri::EscapedURI,
-        extractors::Path,
-        headers::{SurrogateKey, SurrogateKeys},
-        url_decode,
+        MatchedRelease, MetaData, ReqVersion, error::AxumNope, escaped_uri::EscapedURI,
+        extractors::Path, url_decode,
     },
 };
 use anyhow::Result;
@@ -448,14 +444,6 @@ impl RustdocParams {
         self.default_target
             .as_deref()
             .is_some_and(|t| self.doc_target() == Some(t))
-    }
-
-    /// generate surrogate keys for this release.
-    ///
-    /// For now just the crate name based key, later
-    /// invalidation for the specific version.
-    pub(crate) fn surrogate_keys(&self) -> Option<SurrogateKeys> {
-        Some(SurrogateKey::from(self.confirmed_name.clone()?).into())
     }
 }
 

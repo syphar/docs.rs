@@ -493,11 +493,7 @@ pub(crate) async fn crate_details_handler(
                 .with_req_version(version);
             AxumNope::Redirect(
                 params.crate_details_url(),
-                CachePolicy::ForeverInCdn(
-                    params
-                        .surrogate_keys()
-                        .expect("after match_version, we know it works"),
-                ),
+                CachePolicy::ForeverInCdn(confirmed_name.into()),
             )
         })?;
     let params = params.apply_matched_release(&matched_release);
@@ -507,8 +503,9 @@ pub(crate) async fn crate_details_handler(
             params.crate_details_url(),
             CachePolicy::ForeverInCdn(
                 params
-                    .surrogate_keys()
-                    .expect("after match_version, we know it works"),
+                    .confirmed_name()
+                    .expect("after match_version, we know it works")
+                    .into(),
             ),
         ));
     }
@@ -584,14 +581,16 @@ pub(crate) async fn crate_details_handler(
         .insert::<CachePolicy>(if is_latest_version {
             CachePolicy::ForeverInCdn(
                 params
-                    .surrogate_keys()
-                    .expect("after match_version, we know it works"),
+                    .confirmed_name()
+                    .expect("after match_version, we know it works")
+                    .into(),
             )
         } else {
             CachePolicy::ForeverInCdnAndStaleInBrowser(
                 params
-                    .surrogate_keys()
-                    .expect("after match_version, we know it works"),
+                    .confirmed_name()
+                    .expect("after match_version, we know it works")
+                    .into(),
             )
         });
     Ok(res)
@@ -608,9 +607,10 @@ struct ReleaseList {
 impl_axum_webpage! {
     ReleaseList,
     cache_policy = |page| CachePolicy::ForeverInCdn(
-        page.params
-            .surrogate_keys()
-            .expect("after match_version, we know it works"),
+                page.params
+                    .confirmed_name()
+                    .expect("after match_version, we know it works")
+                    .into(),
     ),
     cpu_intensive_rendering = true,
 }
@@ -654,9 +654,10 @@ struct PlatformList {
 impl_axum_webpage! {
     PlatformList,
     cache_policy = |page| CachePolicy::ForeverInCdn(
-        page.params
-            .surrogate_keys()
-            .expect("after match_version, we know it works"),
+                page.params
+                    .confirmed_name()
+                    .expect("after match_version, we know it works")
+                    .into(),
     ),
     cpu_intensive_rendering = true,
 }
@@ -692,8 +693,9 @@ pub(crate) async fn get_all_platforms_inner(
                 params.platforms_partial_url(),
                 CachePolicy::ForeverInCdn(
                     params
-                        .surrogate_keys()
-                        .expect("after match_version, we know it works"),
+                        .confirmed_name()
+                        .expect("after match_version, we know it works")
+                        .into(),
                 ),
             )
         })?;
