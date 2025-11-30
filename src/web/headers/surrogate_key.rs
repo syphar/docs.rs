@@ -261,7 +261,7 @@ impl FromStr for SurrogateKeys {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::headers::test_typed_encode;
+    use crate::test::headers::{test_typed_decode, test_typed_encode};
     use std::ops::RangeInclusive;
     use test_case::test_case;
 
@@ -309,6 +309,19 @@ mod tests {
         assert_eq!(
             test_typed_encode(SurrogateKeys::from_iter_until_full([k1, k2, k3])),
             "key-1 key-2"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_decode() -> anyhow::Result<()> {
+        let k1 = SurrogateKey::from_str("key-2").unwrap();
+        let k2 = SurrogateKey::from_str("key-1").unwrap();
+
+        assert_eq!(
+            test_typed_decode::<SurrogateKeys, _>("key-1 key-2 key-2")?.unwrap(),
+            SurrogateKeys::from_iter_until_full([k1, k2]),
         );
 
         Ok(())
