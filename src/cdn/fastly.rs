@@ -214,7 +214,7 @@ mod tests {
         let m = fastly_api
             .mock("POST", "/service/test-sid-1/purge")
             .match_header(FASTLY_KEY, "test-token")
-            .match_header(&SURROGATE_KEY, "crate-foo crate-bar")
+            .match_header(&SURROGATE_KEY, "crate-bar crate-foo")
             .with_status(200)
             .create_async()
             .await;
@@ -251,7 +251,7 @@ mod tests {
         let m1 = fastly_api
             .mock("POST", "/service/test-sid-1/purge")
             .match_header(FASTLY_KEY, "test-token")
-            .match_header(&SURROGATE_KEY, "crate-foo crate-bar")
+            .match_header(&SURROGATE_KEY, "crate-bar crate-foo")
             .with_status(200)
             .create_async()
             .await;
@@ -259,7 +259,7 @@ mod tests {
         let m2 = fastly_api
             .mock("POST", "/service/test-sid-2/purge")
             .match_header(FASTLY_KEY, "test-token")
-            .match_header(&SURROGATE_KEY, "crate-foo crate-bar")
+            .match_header(&SURROGATE_KEY, "crate-bar crate-foo")
             .with_status(200)
             .create_async()
             .await;
@@ -296,7 +296,7 @@ mod tests {
         let m = fastly_api
             .mock("POST", "/service/test-sid-1/purge")
             .match_header(FASTLY_KEY, "test-token")
-            .match_header(&SURROGATE_KEY, "crate-foo crate-bar")
+            .match_header(&SURROGATE_KEY, "crate-bar crate-foo")
             .with_status(500)
             .create_async()
             .await;
