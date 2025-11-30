@@ -1,7 +1,7 @@
 //! special rustdoc extractors
 
 use crate::{
-    db::BuildId,
+    db::{BuildId, types::krate_name::KrateName},
     web::{
         MatchedRelease, MetaData, ReqVersion, error::AxumNope, escaped_uri::EscapedURI,
         extractors::Path, url_decode,
@@ -49,6 +49,7 @@ pub(crate) struct RustdocParams {
 
     original_uri: Option<EscapedURI>,
     name: String,
+    confirmed_name: Option<KrateName>,
     req_version: ReqVersion,
     doc_target: Option<String>,
     inner_path: Option<String>,
@@ -67,6 +68,7 @@ impl std::fmt::Debug for RustdocParams {
             .field("page_kind", &self.page_kind)
             .field("original_uri", &self.original_uri)
             .field("name", &self.name)
+            .field("confirmed_name", &self.confirmed_name)
             .field("req_version", &self.req_version)
             .field("doc_target", &self.doc_target)
             .field("inner_path", &self.inner_path)
@@ -165,6 +167,7 @@ impl RustdocParams {
     pub(crate) fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into().trim().into(),
+            confirmed_name: None,
             req_version: ReqVersion::default(),
             original_uri: None,
             doc_target: None,
@@ -199,11 +202,12 @@ impl RustdocParams {
     }
 
     pub(crate) fn from_metadata(metadata: &MetaData) -> Self {
-        RustdocParams::new(&metadata.name).apply_metadata(metadata)
+        RustdocParams::new(metadata.name.to_string()).apply_metadata(metadata)
     }
 
     pub(crate) fn apply_metadata(self, metadata: &MetaData) -> RustdocParams {
-        self.with_name(&metadata.name)
+        self.with_name(metadata.name.to_string())
+            .with_confirmed_name(metadata.name.clone())
             .with_req_version(&metadata.req_version)
             // first set the doc-target list
             .with_maybe_doc_targets(metadata.doc_targets.clone())
@@ -213,12 +217,13 @@ impl RustdocParams {
     }
 
     pub(crate) fn from_matched_release(matched_release: &MatchedRelease) -> Self {
-        RustdocParams::new(&matched_release.name).apply_matched_release(matched_release)
+        RustdocParams::new(matched_release.name.to_string()).apply_matched_release(matched_release)
     }
 
     pub(crate) fn apply_matched_release(self, matched_release: &MatchedRelease) -> RustdocParams {
         let release = &matched_release.release;
-        self.with_name(&matched_release.name)
+        self.with_name(matched_release.name.to_string())
+            .with_confirmed_name(matched_release.name.clone())
             .with_req_version(&matched_release.req_version)
             .with_maybe_doc_targets(release.doc_targets.as_deref())
             .with_maybe_default_target(release.default_target.as_deref())
@@ -233,6 +238,22 @@ impl RustdocParams {
             params.name = name.into().trim().into();
             params
         })
+    }
+
+    pub(crate) fn confirmed_name(&self) -> Option<&KrateName> {
+        self.confirmed_name.as_ref()
+    }
+    pub(crate) fn with_maybe_confirmed_name(
+        self,
+        confirmed_name: Option<impl Into<KrateName>>,
+    ) -> Self {
+        self.update(|mut params| {
+            params.confirmed_name = confirmed_name.map(Into::into);
+            params
+        })
+    }
+    pub(crate) fn with_confirmed_name(self, confirmed_name: impl Into<KrateName>) -> Self {
+        self.with_maybe_confirmed_name(Some(confirmed_name))
     }
 
     pub(crate) fn req_version(&self) -> &ReqVersion {
