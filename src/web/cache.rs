@@ -59,7 +59,7 @@ static NO_CACHING: ResponseCacheHeaders = ResponseCacheHeaders {
 
 /// Cache for a short time in the browser & in the CDN.
 /// Helps protecting against traffic spikes.
-pub static SHORT: ResponseCacheHeaders = ResponseCacheHeaders {
+static SHORT: ResponseCacheHeaders = ResponseCacheHeaders {
     cache_control: Some(HeaderValue::from_static("public, max-age=60")),
     surrogate_control: None,
     surrogate_keys: None,
@@ -67,7 +67,7 @@ pub static SHORT: ResponseCacheHeaders = ResponseCacheHeaders {
 };
 
 /// don't cache, don't even store. Never. Ever.
-pub static NO_STORE_MUST_REVALIDATE: ResponseCacheHeaders = ResponseCacheHeaders {
+static NO_STORE_MUST_REVALIDATE: ResponseCacheHeaders = ResponseCacheHeaders {
     cache_control: Some(HeaderValue::from_static(
         "no-cache, no-store, must-revalidate, max-age=0",
     )),
@@ -76,7 +76,7 @@ pub static NO_STORE_MUST_REVALIDATE: ResponseCacheHeaders = ResponseCacheHeaders
     needs_cdn_invalidation: false,
 };
 
-pub static FOREVER_IN_FASTLY_CDN: ResponseCacheHeaders = ResponseCacheHeaders {
+static FOREVER_IN_FASTLY_CDN: ResponseCacheHeaders = ResponseCacheHeaders {
     // explicitly forbid browser caching, same as NO_CACHING above.
     cache_control: Some(HeaderValue::from_static("max-age=0")),
 
@@ -92,7 +92,7 @@ pub static FOREVER_IN_FASTLY_CDN: ResponseCacheHeaders = ResponseCacheHeaders {
     needs_cdn_invalidation: true,
 };
 
-pub static FOREVER_IN_CLOUDFRONT_CDN: ResponseCacheHeaders = ResponseCacheHeaders {
+static FOREVER_IN_CLOUDFRONT_CDN: ResponseCacheHeaders = ResponseCacheHeaders {
     // A missing `max-age` or `s-maxage` in the Cache-Control header will lead to
     // CloudFront using the default TTL, while the browser not seeing any caching header.
     //
@@ -116,7 +116,7 @@ pub static FOREVER_IN_CLOUDFRONT_CDN: ResponseCacheHeaders = ResponseCacheHeader
 ///
 /// We use this policy mostly for static files, rustdoc toolchain assets,
 /// or build assets.
-pub static FOREVER_IN_CDN_AND_BROWSER: ResponseCacheHeaders = ResponseCacheHeaders {
+static FOREVER_IN_CDN_AND_BROWSER: ResponseCacheHeaders = ResponseCacheHeaders {
     cache_control: Some(HeaderValue::from_static(
         "public, max-age=31104000, immutable",
     )),
