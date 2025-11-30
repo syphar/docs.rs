@@ -569,7 +569,7 @@ pub(crate) async fn crate_details_handler(
                 .with_req_version(ReqVersion::Latest)
                 .crate_details_url(),
         ),
-        params: params.clone(),
+        params,
     }
     .into_response();
     res.extensions_mut()
