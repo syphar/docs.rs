@@ -70,7 +70,7 @@ pub(crate) async fn build_details_handler(
         .map(BuildId)
         .map_err(|_| AxumNope::BuildNotFound)?;
 
-    let version = match_version(&mut conn, params.name(), params.req_version())
+    let version = match_version(&mut conn, &params)
         .await?
         .assume_exact_name()?
         .into_canonical_req_version_or_else(|confirmed_name, version| {

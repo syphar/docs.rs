@@ -559,7 +559,7 @@ pub(crate) async fn search_handler(
         // since we never pass a version into `match_version` here, we'll never get
         // `MatchVersion::Exact`, so the distinction between `Exact` and `Semver` doesn't
         // matter
-        if let Ok(matchver) = match_version(&mut conn, krate, &ReqVersion::Latest)
+        if let Ok(matchver) = match_version(&mut conn, &RustdocParams::new(krate))
             .await
             .map(|matched_release| matched_release.into_exactly_named())
         {

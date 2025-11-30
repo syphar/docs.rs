@@ -18,7 +18,7 @@ pub(crate) async fn status_handler(
         // We use an async block to emulate a try block so that we can apply the above CORS header
         // and cache policy to both successful and failed responses
         async move {
-            let matched_release = match_version(&mut conn, params.name(), params.req_version())
+            let matched_release = match_version(&mut conn, &params)
                 .await?
                 .assume_exact_name()?;
 

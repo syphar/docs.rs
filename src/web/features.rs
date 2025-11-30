@@ -146,7 +146,7 @@ pub(crate) async fn build_features_handler(
     params: RustdocParams,
     mut conn: DbConnection,
 ) -> AxumResult<impl IntoResponse> {
-    let matched_release = match_version(&mut conn, params.name(), params.req_version())
+    let matched_release = match_version(&mut conn, &params)
         .await?
         .assume_exact_name()?
         .into_canonical_req_version_or_else(|confirmed_name, version| {

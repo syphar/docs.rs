@@ -9,6 +9,7 @@ use crate::{
     },
     utils::{get_correct_docsrs_style_file, report_error},
     web::{
+        extractors::rustdoc::RustdocParams,
         metrics::WebMetrics,
         page::templates::{RenderBrands, RenderSolid, filters},
     },
@@ -341,9 +342,11 @@ fn semver_match<'a, F: Fn(&Release) -> bool>(
 #[instrument(skip(conn))]
 async fn match_version(
     conn: &mut sqlx::PgConnection,
-    name: &str,
-    input_version: &ReqVersion,
+    params: &RustdocParams,
 ) -> Result<MatchedRelease, AxumNope> {
+    let name = params.name();
+    let input_version = params.req_version();
+
     let (crate_id, name, corrected_name) = {
         let row = sqlx::query!(
             r#"
@@ -817,8 +820,10 @@ mod test {
         let mut conn = db.async_conn().await;
         let version = match_version(
             &mut conn,
-            "foo",
-            &ReqVersion::from_str(v.unwrap_or_default()).unwrap(),
+            &RustdocParams::new("foo").with_req_version(
+                v.map(|s| s.parse::<ReqVersion>().unwrap())
+                    .unwrap_or_default(),
+            ),
         )
         .await
         .ok()?

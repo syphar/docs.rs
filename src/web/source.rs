@@ -198,7 +198,7 @@ pub(crate) async fn source_browser_handler(
     if_none_match: Option<TypedHeader<IfNoneMatch>>,
 ) -> AxumResult<impl IntoResponse> {
     let params = params.with_page_kind(PageKind::Source);
-    let matched_release = match_version(&mut conn, params.name(), params.req_version())
+    let matched_release = match_version(&mut conn, &params)
         .await?
         .into_exactly_named_or_else(|corrected_name, req_version| {
             AxumNope::Redirect(

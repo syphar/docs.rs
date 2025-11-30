@@ -226,7 +226,7 @@ pub(crate) async fn rustdoc_redirector_handler(
     if_none_match: Option<TypedHeader<IfNoneMatch>>,
     RawQuery(original_query): RawQuery,
 ) -> AxumResult<impl IntoResponse> {
-    let params = params.with_page_kind(PageKind::Rustdoc);
+    let mut params = params.with_page_kind(PageKind::Rustdoc);
 
     fn redirect_to_doc(
         original_uri: Option<&EscapedURI>,
@@ -285,6 +285,7 @@ pub(crate) async fn rustdoc_redirector_handler(
         Some((krate, path)) => (krate.to_owned(), Some(path.to_owned())),
         None => (params.name().to_owned(), None),
     };
+    params = params.with_name(&crate_name);
 
     if let Some(description) = DOC_RUST_LANG_ORG_REDIRECTS.get(&*crate_name) {
         let target_uri =
@@ -300,7 +301,7 @@ pub(crate) async fn rustdoc_redirector_handler(
 
     // it doesn't matter if the version that was given was exact or not, since we're redirecting
     // anyway
-    let matched_release = match_version(&mut conn, &crate_name, &params.req_version().clone())
+    let matched_release = match_version(&mut conn, &params)
         .await?
         .into_exactly_named()
         .into_canonical_req_version();
@@ -600,7 +601,7 @@ pub(crate) async fn rustdoc_html_server_handler(
     // * If both the name and the version are an exact match, return the version of the crate.
     // * If there is an exact match, but the requested crate name was corrected (dashes vs. underscores), redirect to the corrected name.
     // * If there is a semver (but not exact) match, redirect to the exact version.
-    let matched_release = match_version(&mut conn, params.name(), params.req_version())
+    let matched_release = match_version(&mut conn, &params)
         .await?
         .into_exactly_named_or_else(|corrected_name, req_version| {
             AxumNope::Redirect(
@@ -821,7 +822,7 @@ pub(crate) async fn target_redirect_handler(
 
     trace!(params=?params, "target redirect endpoint with params");
 
-    let matched_release = match_version(&mut conn, params.name(), params.req_version())
+    let matched_release = match_version(&mut conn, &params)
         .await?
         .into_canonical_req_version_or_else(|_, _| AxumNope::VersionNotFound)?;
     let params = params.apply_matched_release(&matched_release);
@@ -916,9 +917,12 @@ pub(crate) async fn json_download_handler(
             None
         };
 
-    let matched_release = match_version(&mut conn, &params.name, &params.version)
-        .await?
-        .assume_exact_name()?;
+    let matched_release = match_version(
+        &mut conn,
+        &RustdocParams::new(params.name).with_req_version(params.version),
+    )
+    .await?
+    .assume_exact_name()?;
 
     if !matched_release.rustdoc_status() {
         // without docs we'll never have JSON docs too
@@ -1025,10 +1029,13 @@ pub(crate) async fn download_handler(
     Extension(storage): Extension<Arc<AsyncStorage>>,
     Extension(config): Extension<Arc<Config>>,
 ) -> AxumResult<impl IntoResponse> {
-    let version = match_version(&mut conn, &name, &req_version)
-        .await?
-        .assume_exact_name()?
-        .into_version();
+    let version = match_version(
+        &mut conn,
+        &RustdocParams::new(&name).with_req_version(req_version),
+    )
+    .await?
+    .assume_exact_name()?
+    .into_version();
 
     let archive_path = rustdoc_archive_path(&name, &version);
 
