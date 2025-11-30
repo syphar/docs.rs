@@ -316,12 +316,12 @@ mod tests {
 
     #[test]
     fn test_decode() -> anyhow::Result<()> {
-        let k1 = SurrogateKey::from_str("key-2").unwrap();
-        let k2 = SurrogateKey::from_str("key-1").unwrap();
-
         assert_eq!(
             test_typed_decode::<SurrogateKeys, _>("key-1 key-2 key-2")?.unwrap(),
-            SurrogateKeys::from_iter_until_full([k1, k2]),
+            SurrogateKeys::from_iter_until_full([
+                SurrogateKey::from_str("key-2").unwrap(),
+                SurrogateKey::from_str("key-1").unwrap(),
+            ]),
         );
 
         Ok(())
