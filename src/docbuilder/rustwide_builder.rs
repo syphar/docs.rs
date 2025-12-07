@@ -822,7 +822,7 @@ impl RustwideBuilder {
                         .with_context(|| {
                             format!("could not fetch releases-data for {name}-{version}")
                         }) {
-                        Ok(data) => Some(data),
+                        Ok(data) => data,
                         Err(err) => {
                             report_error(&err);
                             None
