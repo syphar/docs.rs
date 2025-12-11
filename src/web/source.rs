@@ -201,19 +201,12 @@ pub(crate) async fn source_browser_handler(
         .await?
         .into_exactly_named_or_else(|corrected_name, req_version| {
             AxumNope::Redirect(
-                params
-                    .clone()
-                    .with_confirmed_name(Some(corrected_name))
-                    .with_req_version(req_version)
-                    .source_url(),
+                params.clone().with_req_version(req_version).source_url(),
                 CachePolicy::NoCaching,
             )
         })?
         .into_canonical_req_version_or_else(|confirmed_name, version| {
-            let params = params
-                .clone()
-                .with_confirmed_name(Some(confirmed_name))
-                .with_req_version(version);
+            let params = params.clone().with_req_version(version);
             AxumNope::Redirect(
                 params.source_url(),
                 CachePolicy::ForeverInCdn(confirmed_name.into()),

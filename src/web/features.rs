@@ -1,5 +1,5 @@
 use crate::{
-    db::types::Feature as DbFeature,
+    db::types::{Feature as DbFeature, krate_name::KrateName},
     impl_axum_webpage,
     web::{
         MetaData, ReqVersion,
@@ -52,10 +52,10 @@ enum SubFeature {
     /// A normal feature, like `"feature-name"`.
     Feature(String),
     /// A dependency, like `"dep:package-name"`.
-    Dependency(String),
+    Dependency(KrateName),
     /// A dependency feature, like `"package-name?/feature-name"`.
     DependencyFeature {
-        dependency: String,
+        dependency: KrateName,
         optional: bool,
         feature: String,
     },
@@ -64,7 +64,7 @@ enum SubFeature {
 impl SubFeature {
     fn parse(s: &str) -> Self {
         if let Some(dep) = s.strip_prefix("dep:") {
-            return Self::Dependency(dep.into());
+            return Self::Dependency(dep.parse().unwrap());
         }
         let Some((dependency, feature)) = s.split_once('/') else {
             return Self::Feature(s.into());
@@ -75,7 +75,7 @@ impl SubFeature {
         };
 
         Self::DependencyFeature {
-            dependency: dependency.into(),
+            dependency: dependency.parse().unwrap(),
             optional,
             feature: feature.into(),
         }
@@ -87,7 +87,7 @@ impl SubFeature {
 #[derive(Debug, Clone)]
 struct FeaturesPage {
     metadata: MetaData,
-    dependencies: HashMap<String, ReqVersion>,
+    dependencies: HashMap<KrateName, ReqVersion>,
     sorted_features: Option<Vec<Feature>>,
     default_features: HashSet<String>,
     canonical_url: CanonicalUrl,
@@ -99,7 +99,7 @@ impl FeaturesPage {
     fn is_default_feature(&self, feature: &str) -> bool {
         self.default_features.contains(feature)
     }
-    fn dependency_version(&self, dependency: &str) -> &ReqVersion {
+    fn dependency_version(&self, dependency: &KrateName) -> &ReqVersion {
         self.dependencies
             .get(dependency)
             .unwrap_or(&ReqVersion::Latest)
@@ -150,10 +150,7 @@ pub(crate) async fn build_features_handler(
         .await?
         .assume_exact_name()?
         .into_canonical_req_version_or_else(|confirmed_name, version| {
-            let params = params
-                .clone()
-                .with_confirmed_name(Some(confirmed_name))
-                .with_req_version(version);
+            let params = params.clone().with_req_version(version);
             AxumNope::Redirect(
                 params.features_url(),
                 CachePolicy::ForeverInCdn(confirmed_name.into()),
@@ -211,7 +208,7 @@ pub(crate) async fn build_features_handler(
 }
 
 /// Turns the raw JSON `dependencies` into a [`HashMap`] of dependencies and their versions.
-fn get_dependency_versions(raw_dependencies: Option<Value>) -> HashMap<String, ReqVersion> {
+fn get_dependency_versions(raw_dependencies: Option<Value>) -> HashMap<KrateName, ReqVersion> {
     let mut map = HashMap::new();
 
     if let Some(deps) = raw_dependencies.as_ref().and_then(Value::as_array) {
@@ -220,7 +217,7 @@ fn get_dependency_versions(raw_dependencies: Option<Value>) -> HashMap<String, R
             let version = value.get(1).and_then(Value::as_str);
             if let (Some(name), Some(version)) = (name, version) {
                 let req_version = version.parse().unwrap_or(ReqVersion::Latest);
-                map.insert(name.into(), req_version);
+                map.insert(name.parse().unwrap(), req_version);
             }
         }
     }

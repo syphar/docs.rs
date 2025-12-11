@@ -1,4 +1,9 @@
-use crate::{APP_USER_AGENT, db::types::version::Version, error::Result, utils::retry_async};
+use crate::{
+    APP_USER_AGENT,
+    db::types::{krate_name::KrateName, version::Version},
+    error::Result,
+    utils::retry_async,
+};
 use anyhow::{Context, anyhow, bail};
 use chrono::{DateTime, Utc};
 use reqwest::header::{ACCEPT, HeaderValue, USER_AGENT};
@@ -75,7 +80,7 @@ impl fmt::Display for OwnerKind {
 #[derive(Deserialize, Debug)]
 
 pub(crate) struct SearchCrate {
-    pub(crate) name: String,
+    pub(crate) name: KrateName,
 }
 
 #[derive(Deserialize, Debug)]

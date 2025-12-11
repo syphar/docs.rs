@@ -1,5 +1,5 @@
 use super::data::Crate;
-use crate::db::types::version::Version;
+use crate::db::types::{krate_name::KrateName, version::Version};
 use itertools::{
     EitherOrBoth::{Both, Left, Right},
     Itertools,
@@ -8,11 +8,11 @@ use std::fmt::Display;
 
 #[derive(Debug, PartialEq)]
 pub(super) enum Difference {
-    CrateNotInIndex(String),
-    CrateNotInDb(String, Vec<Version>),
-    ReleaseNotInIndex(String, Version),
-    ReleaseNotInDb(String, Version),
-    ReleaseYank(String, Version, bool),
+    CrateNotInIndex(KrateName),
+    CrateNotInDb(KrateName, Vec<Version>),
+    ReleaseNotInIndex(KrateName, Version),
+    ReleaseNotInDb(KrateName, Version),
+    ReleaseYank(KrateName, Version, bool),
 }
 
 impl Display for Difference {

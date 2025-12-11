@@ -6,7 +6,7 @@ use sqlx::{
     Decode, Encode, Postgres,
     encode::IsNull,
     error::BoxDynError,
-    postgres::{PgArgumentBuffer, PgTypeInfo, PgValueRef},
+    postgres::{PgArgumentBuffer, PgHasArrayType, PgTypeInfo, PgValueRef},
     prelude::*,
 };
 use std::{io::Write, str::FromStr};
@@ -69,6 +69,16 @@ impl<'r> Decode<'r, Postgres> for KrateName {
     fn decode(value: PgValueRef<'r>) -> Result<Self, BoxDynError> {
         let s: &str = Decode::<Postgres>::decode(value)?;
         Ok(Self(s.parse()?))
+    }
+}
+
+impl PgHasArrayType for KrateName {
+    fn array_type_info() -> PgTypeInfo {
+        <&str as PgHasArrayType>::array_type_info()
+    }
+
+    fn array_compatible(ty: &PgTypeInfo) -> bool {
+        <&str as PgHasArrayType>::array_compatible(ty)
     }
 }
 

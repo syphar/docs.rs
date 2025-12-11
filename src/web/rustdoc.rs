@@ -619,7 +619,6 @@ pub(crate) async fn rustdoc_html_server_handler(
             AxumNope::Redirect(
                 params
                     .clone()
-                    .with_confirmed_name(Some(corrected_name))
                     .with_req_version(req_version)
                     .rustdoc_url()
                     .append_raw_query(original_query.as_deref()),
@@ -627,10 +626,7 @@ pub(crate) async fn rustdoc_html_server_handler(
             )
         })?
         .into_canonical_req_version_or_else(|confirmed_name, version| {
-            let params = params
-                .clone()
-                .with_confirmed_name(Some(confirmed_name))
-                .with_req_version(version);
+            let params = params.clone().with_req_version(version);
             AxumNope::Redirect(
                 params.rustdoc_url(),
                 CachePolicy::ForeverInCdn(confirmed_name.into()),
@@ -914,10 +910,7 @@ pub(crate) async fn json_download_handler(
         .await?
         .assume_exact_name()?
         .into_canonical_req_version_or_else(|confirmed_name, version| {
-            let params = params
-                .clone()
-                .with_confirmed_name(Some(confirmed_name))
-                .with_req_version(version);
+            let params = params.clone().with_req_version(version);
 
             AxumNope::Redirect(
                 params.json_download_url(
@@ -1043,10 +1036,7 @@ pub(crate) async fn download_handler(
         .await?
         .assume_exact_name()?
         .into_canonical_req_version_or_else(|confirmed_name, version| {
-            let params = params
-                .clone()
-                .with_confirmed_name(Some(confirmed_name))
-                .with_req_version(version);
+            let params = params.clone().with_req_version(version);
             AxumNope::Redirect(
                 params.zip_download_url(),
                 CachePolicy::ForeverInCdn(confirmed_name.into()),

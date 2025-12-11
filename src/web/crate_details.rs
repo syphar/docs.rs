@@ -487,10 +487,7 @@ pub(crate) async fn crate_details_handler(
         .await?
         .assume_exact_name()?
         .into_canonical_req_version_or_else(|confirmed_name, version| {
-            let params = params
-                .clone()
-                .with_confirmed_name(Some(confirmed_name))
-                .with_req_version(version);
+            let params = params.clone().with_req_version(version);
             AxumNope::Redirect(
                 params.crate_details_url(),
                 CachePolicy::ForeverInCdn(confirmed_name.into()),
@@ -660,17 +657,13 @@ pub(crate) async fn get_all_platforms_inner(
             AxumNope::Redirect(
                 params
                     .clone()
-                    .with_confirmed_name(Some(corrected_name))
                     .with_req_version(req_version)
                     .platforms_partial_url(),
                 CachePolicy::NoCaching,
             )
         })?
         .into_canonical_req_version_or_else(|confirmed_name, version| {
-            let params = params
-                .clone()
-                .with_confirmed_name(Some(confirmed_name))
-                .with_req_version(version);
+            let params = params.clone().with_req_version(version);
             AxumNope::Redirect(
                 params.platforms_partial_url(),
                 CachePolicy::ForeverInCdn(confirmed_name.into()),

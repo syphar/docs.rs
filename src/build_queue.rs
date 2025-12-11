@@ -60,7 +60,7 @@ pub(crate) const PRIORITY_CONTINUOUS: i32 = 20;
 pub(crate) struct QueuedCrate {
     #[serde(skip)]
     id: i32,
-    pub(crate) name: String,
+    pub(crate) name: KrateName,
     pub(crate) version: Version,
     pub(crate) priority: i32,
     pub(crate) registry: Option<String>,
@@ -130,7 +130,7 @@ impl AsyncBuildQueue {
     #[context("error trying to add {name}-{version} to build queue")]
     pub async fn add_crate(
         &self,
-        name: &str,
+        name: &KrateName,
         version: &Version,
         priority: i32,
         registry: Option<&str>,
@@ -146,7 +146,7 @@ impl AsyncBuildQueue {
                     attempt = 0,
                     last_attempt = NULL
             ;",
-            name,
+            name as _,
             version as _,
             priority,
             registry,
@@ -212,7 +212,7 @@ impl AsyncBuildQueue {
             QueuedCrate,
             r#"SELECT
                 id,
-                name,
+                name as "name: KrateName",
                 version as "version: Version",
                 priority,
                 registry,
@@ -465,7 +465,8 @@ impl AsyncBuildQueue {
             .version
             .parse()
             .context("couldn't parse release version as semver")?;
-        self.add_crate(&release.name, version, priority, registry)
+        let name: KrateName = release.name.parse().context("couldn't parse crate name")?;
+        self.add_crate(&name, version, priority, registry)
             .await
             .with_context(|| {
                 format!(
@@ -603,7 +604,7 @@ pub struct BuildQueue {
 impl BuildQueue {
     pub fn add_crate(
         &self,
-        name: &str,
+        name: &KrateName,
         version: &Version,
         priority: i32,
         registry: Option<&str>,
@@ -678,7 +679,7 @@ impl BuildQueue {
                 QueuedCrate,
                 r#"SELECT
                     id,
-                    name,
+                    name as "name: KrateName",
                     version as "version: Version",
                     priority,
                     registry,
@@ -847,7 +848,7 @@ pub async fn queue_rebuilds(
     let mut results = sqlx::query!(
         r#"SELECT i.* FROM (
              SELECT
-                 c.name,
+                 c.name as "name: KrateName",
                  r.version as "version: Version",
                  (
                     SELECT MAX(COALESCE(b.build_finished, b.build_started))
@@ -900,7 +901,7 @@ pub async fn queue_rebuilds_faulty_rustdoc(
         end_nightly_date.unwrap_or_else(|| start_nightly_date.succ_opt().unwrap());
     let mut results = sqlx::query!(
         r#"
-SELECT c.name,
+SELECT c.name as "name: KrateName",
        r.version AS "version: Version"
 FROM crates AS c
          JOIN releases AS r

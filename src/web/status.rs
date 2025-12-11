@@ -27,11 +27,7 @@ pub(crate) async fn status_handler(
             let version = matched_release
                 .into_canonical_req_version_or_else(|confirmed_name, version| {
                     AxumNope::Redirect(
-                        params
-                            .clone()
-                            .with_confirmed_name(Some(confirmed_name))
-                            .with_req_version(version)
-                            .build_status_url(),
+                        params.clone().with_req_version(version).build_status_url(),
                         CachePolicy::NoCaching,
                     )
                 })?

@@ -1,12 +1,15 @@
 use super::data::{Crate, Crates, Release, Releases};
-use crate::{Config, db::types::version::Version};
+use crate::{
+    Config,
+    db::types::{krate_name::KrateName, version::Version},
+};
 use anyhow::Result;
 use itertools::Itertools;
 
 pub(super) async fn load(conn: &mut sqlx::PgConnection, config: &Config) -> Result<Crates> {
     let rows = sqlx::query!(
         r#"SELECT
-            name as "name!",
+            name as "name!: KrateName",
             version as "version!: Version",
             yanked
          FROM (

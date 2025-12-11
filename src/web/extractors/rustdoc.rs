@@ -49,8 +49,7 @@ pub(crate) struct RustdocParams {
     page_kind: Option<PageKind>,
 
     original_uri: Option<EscapedURI>,
-    name: String,
-    confirmed_name: Option<KrateName>,
+    name: KrateName,
     req_version: ReqVersion,
     doc_target: Option<String>,
     inner_path: Option<String>,
@@ -69,7 +68,6 @@ impl std::fmt::Debug for RustdocParams {
             .field("page_kind", &self.page_kind)
             .field("original_uri", &self.original_uri)
             .field("name", &self.name)
-            .field("confirmed_name", &self.confirmed_name)
             .field("req_version", &self.req_version)
             .field("doc_target", &self.doc_target)
             .field("inner_path", &self.inner_path)
@@ -110,7 +108,7 @@ impl std::fmt::Debug for RustdocParams {
 /// specificity of the route.
 #[derive(Deserialize, Debug)]
 struct UrlParams {
-    pub name: String,
+    pub name: KrateName,
     #[serde(default)]
     pub version: ReqVersion,
     pub target: Option<String>,
@@ -165,10 +163,9 @@ where
 /// Builder-style methods to create & update the parameters.
 #[allow(dead_code)]
 impl RustdocParams {
-    pub(crate) fn new(name: impl Into<String>) -> Self {
+    pub(crate) fn new(name: impl Into<KrateName>) -> Self {
         Self {
-            name: name.into().trim().into(),
-            confirmed_name: None,
+            name: name.into(),
             req_version: ReqVersion::default(),
             original_uri: None,
             doc_target: None,
@@ -203,12 +200,11 @@ impl RustdocParams {
     }
 
     pub(crate) fn from_metadata(metadata: &MetaData) -> Self {
-        RustdocParams::new(metadata.name.to_string()).apply_metadata(metadata)
+        RustdocParams::new(metadata.name.clone()).apply_metadata(metadata)
     }
 
     pub(crate) fn apply_metadata(self, metadata: &MetaData) -> RustdocParams {
-        self.with_name(metadata.name.to_string())
-            .with_confirmed_name(Some(metadata.name.clone()))
+        self.with_name(metadata.name.clone())
             .with_req_version(&metadata.req_version)
             // first set the doc-target list
             .with_maybe_doc_targets(metadata.doc_targets.clone())
@@ -218,13 +214,12 @@ impl RustdocParams {
     }
 
     pub(crate) fn from_matched_release(matched_release: &MatchedRelease) -> Self {
-        RustdocParams::new(matched_release.name.to_string()).apply_matched_release(matched_release)
+        RustdocParams::new(matched_release.name.clone()).apply_matched_release(matched_release)
     }
 
     pub(crate) fn apply_matched_release(self, matched_release: &MatchedRelease) -> RustdocParams {
         let release = &matched_release.release;
-        self.with_name(matched_release.name.to_string())
-            .with_confirmed_name(Some(matched_release.name.clone()))
+        self.with_name(matched_release.name.clone())
             .with_req_version(&matched_release.req_version)
             .with_maybe_doc_targets(release.doc_targets.as_deref())
             .with_maybe_default_target(release.default_target.as_deref())
@@ -234,25 +229,9 @@ impl RustdocParams {
     pub(crate) fn name(&self) -> &str {
         &self.name
     }
-    pub(crate) fn with_name(self, name: impl Into<String>) -> Self {
+    pub(crate) fn with_name(self, name: impl Into<KrateName>) -> Self {
         self.update(|mut params| {
-            params.name = name.into().trim().into();
-            params
-        })
-    }
-
-    pub(crate) fn confirmed_name(&self) -> Option<&KrateName> {
-        self.confirmed_name.as_ref()
-    }
-    pub(crate) fn with_confirmed_name(self, confirmed_name: Option<impl Into<KrateName>>) -> Self {
-        self.update(|mut params| {
-            let confirmed_name = confirmed_name.map(Into::into);
-
-            if let Some(ref confirmed_name) = confirmed_name {
-                params.name = confirmed_name.to_string();
-            }
-
-            params.confirmed_name = confirmed_name;
+            params.name = name.into();
             params
         })
     }
@@ -919,9 +898,10 @@ mod tests {
         test::{AxumResponseTestExt, AxumRouterTestExt, V1},
     };
     use axum::{Router, routing::get};
+    use std::sync::LazyLock;
     use test_case::test_case;
 
-    static KRATE: &str = "krate";
+    static KRATE: LazyLock<KrateName> = LazyLock::new(|| "krate".parse().unwrap());
     const VERSION: Version = Version::new(0, 1, 0);
     static DEFAULT_TARGET: &str = "x86_64-unknown-linux-gnu";
     static OTHER_TARGET: &str = "x86_64-pc-windows-msvc";

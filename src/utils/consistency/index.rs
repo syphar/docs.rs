@@ -43,7 +43,7 @@ pub(super) async fn load(config: &Config) -> Result<Crates> {
                     releases.sort_by(|lhs, rhs| lhs.version.cmp(&rhs.version));
 
                     Crate {
-                        name: krate.name().into(),
+                        name: krate.name().parse().unwrap(),
                         releases,
                     }
                 })

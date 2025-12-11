@@ -1,8 +1,8 @@
-use crate::db::types::version::Version;
+use crate::db::types::{krate_name::KrateName, version::Version};
 
 #[derive(Clone, PartialEq, Debug)]
 pub(super) struct Crate {
-    pub(super) name: String,
+    pub(super) name: KrateName,
     pub(super) releases: Releases,
 }
 

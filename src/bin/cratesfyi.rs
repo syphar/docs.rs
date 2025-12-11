@@ -3,7 +3,10 @@ use chrono::NaiveDate;
 use clap::{Parser, Subcommand, ValueEnum};
 use docs_rs::{
     Config, Context, Index, PackageKind, RustwideBuilder,
-    db::{self, CrateId, Overrides, add_path_into_database, types::version::Version},
+    db::{
+        self, CrateId, Overrides, add_path_into_database,
+        types::{krate_name::KrateName, version::Version},
+    },
     queue_rebuilds_faulty_rustdoc, start_web_server,
     utils::{
         ConfigName, daemon::start_background_service_metric_collector, get_config,
@@ -222,7 +225,7 @@ enum QueueSubcommand {
     Add {
         /// Name of crate to build
         #[arg(name = "CRATE_NAME")]
-        crate_name: String,
+        crate_name: KrateName,
         /// Version of crate to build
         #[arg(name = "CRATE_VERSION")]
         crate_version: Version,

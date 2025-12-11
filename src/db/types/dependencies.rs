@@ -1,4 +1,4 @@
-use crate::utils::Dependency;
+use crate::{db::types::krate_name::KrateName, utils::Dependency};
 use derive_more::Deref;
 use semver::VersionReq;
 use serde::{Deserialize, Serialize};
@@ -20,11 +20,11 @@ impl<'de> Deserialize<'de> for ReleaseDependency {
         #[serde(untagged)]
         enum Repr {
             /// just [name, version]``
-            Basic((String, VersionReq)),
+            Basic((KrateName, VersionReq)),
             /// [name, version, kind]
-            WithKind((String, VersionReq, String)),
+            WithKind((KrateName, VersionReq, String)),
             /// [name, version, kind, optional]
-            Full((String, VersionReq, String, bool)),
+            Full((KrateName, VersionReq, String, bool)),
         }
 
         let src = Repr::deserialize(deserializer)?;

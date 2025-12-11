@@ -74,10 +74,7 @@ pub(crate) async fn build_details_handler(
         .await?
         .assume_exact_name()?
         .into_canonical_req_version_or_else(|confirmed_name, version| {
-            let params = params
-                .clone()
-                .with_confirmed_name(Some(confirmed_name))
-                .with_req_version(version);
+            let params = params.clone().with_req_version(version);
             AxumNope::Redirect(
                 params.build_details_url(id, build_params.filename.as_deref()),
                 CachePolicy::ForeverInCdn(confirmed_name.into()),

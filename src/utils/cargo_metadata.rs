@@ -1,3 +1,4 @@
+use crate::db::types::krate_name::KrateName;
 use crate::{db::types::version::Version, error::Result};
 use anyhow::{Context, bail};
 use rustwide::{Toolchain, Workspace, cmd::Command};
@@ -128,7 +129,7 @@ impl Target {
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub(crate) struct Dependency {
-    pub(crate) name: String,
+    pub(crate) name: KrateName,
     pub(crate) req: VersionReq,
     pub(crate) kind: Option<String>,
     pub(crate) rename: Option<String>,
@@ -160,7 +161,7 @@ impl bincode::Encode for Dependency {
 
 impl Dependency {
     #[cfg(test)]
-    pub fn new(name: String, req: VersionReq) -> Dependency {
+    pub fn new(name: KrateName, req: VersionReq) -> Dependency {
         Dependency {
             name,
             req,
