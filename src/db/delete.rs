@@ -1,6 +1,6 @@
 use crate::{
     Config,
-    db::types::version::Version,
+    db::types::{krate_name::KrateName, version::Version},
     error::Result,
     storage::{AsyncStorage, rustdoc_archive_path, source_archive_path},
 };
@@ -20,7 +20,7 @@ pub async fn delete_crate(
     conn: &mut sqlx::PgConnection,
     storage: &AsyncStorage,
     config: &Config,
-    name: &str,
+    name: &KrateName,
 ) -> Result<()> {
     let Some(crate_id) = get_id(conn, name).await? else {
         return Ok(());
@@ -62,7 +62,7 @@ pub async fn delete_version(
     conn: &mut sqlx::PgConnection,
     storage: &AsyncStorage,
     config: &Config,
-    name: &str,
+    name: &KrateName,
     version: &Version,
 ) -> Result<()> {
     let Some(crate_id) = get_id(conn, name).await? else {
@@ -106,14 +106,14 @@ pub async fn delete_version(
     Ok(())
 }
 
-async fn get_id(conn: &mut sqlx::PgConnection, name: &str) -> Result<Option<CrateId>> {
+async fn get_id(conn: &mut sqlx::PgConnection, name: &KrateName) -> Result<Option<CrateId>> {
     Ok(sqlx::query_scalar!(
         r#"
         SELECT id as "id: CrateId"
         FROM crates
         WHERE normalize_crate_name(name) = normalize_crate_name($1)
         "#,
-        name
+        name as _
     )
     .fetch_optional(&mut *conn)
     .await?)
@@ -158,14 +158,17 @@ async fn delete_version_from_database(
 /// Returns whether any release in this crate was a library
 async fn delete_crate_from_database(
     conn: &mut sqlx::PgConnection,
-    name: &str,
+    name: &KrateName,
     crate_id: CrateId,
 ) -> Result<bool> {
     let mut transaction = conn.begin().await?;
 
-    sqlx::query!("DELETE FROM sandbox_overrides WHERE crate_name = $1", name,)
-        .execute(&mut *transaction)
-        .await?;
+    sqlx::query!(
+        "DELETE FROM sandbox_overrides WHERE crate_name = $1",
+        name as _
+    )
+    .execute(&mut *transaction)
+    .await?;
 
     for &(table, column) in METADATA {
         sqlx::query(
@@ -212,11 +215,13 @@ mod tests {
     use crate::test::{KRATE, V1, V2, async_wrapper, fake_release_that_failed_before_build};
     use test_case::test_case;
 
-    async fn crate_exists(conn: &mut sqlx::PgConnection, name: &str) -> Result<bool> {
-        Ok(sqlx::query!("SELECT id FROM crates WHERE name = $1;", name)
-            .fetch_optional(conn)
-            .await?
-            .is_some())
+    async fn crate_exists(conn: &mut sqlx::PgConnection, name: &KrateName) -> Result<bool> {
+        Ok(
+            sqlx::query!("SELECT id FROM crates WHERE name = $1;", name as _)
+                .fetch_optional(conn)
+                .await?
+                .is_some(),
+        )
     }
 
     async fn release_exists(conn: &mut sqlx::PgConnection, id: ReleaseId) -> Result<bool> {
@@ -535,10 +540,10 @@ mod tests {
         let db = env.async_db();
         let mut conn = db.async_conn().await;
 
-        assert!(!crate_exists(&mut conn, KRATE).await?);
+        assert!(!crate_exists(&mut conn, &KRATE).await?);
         delete_crate(&mut conn, env.async_storage(), env.config(), KRATE).await?;
 
-        assert!(!crate_exists(&mut conn, KRATE).await?);
+        assert!(!crate_exists(&mut conn, &KRATE).await?);
 
         Ok(())
     }
@@ -550,11 +555,11 @@ mod tests {
         let db = env.async_db();
         let mut conn = db.async_conn().await;
 
-        assert!(!crate_exists(&mut conn, KRATE).await?);
+        assert!(!crate_exists(&mut conn, &KRATE).await?);
 
-        delete_version(&mut conn, env.async_storage(), env.config(), KRATE, &V1).await?;
+        delete_version(&mut conn, env.async_storage(), env.config(), &KRATE, &V1).await?;
 
-        assert!(!crate_exists(&mut conn, KRATE).await?);
+        assert!(!crate_exists(&mut conn, &KRATE).await?);
 
         Ok(())
     }

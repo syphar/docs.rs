@@ -279,9 +279,13 @@ pub(crate) async fn rustdoc_redirector_handler(
             .binary_search(&extension)
             .is_ok()
     {
-        return try_serve_legacy_toolchain_asset(storage, params.name(), if_none_match.as_deref())
-            .instrument(info_span!("serve static asset"))
-            .await;
+        return try_serve_legacy_toolchain_asset(
+            storage,
+            params.name().to_string(),
+            if_none_match.as_deref(),
+        )
+        .instrument(info_span!("serve static asset"))
+        .await;
     }
 
     if let Some(extension) = params.file_extension()
@@ -298,7 +302,7 @@ pub(crate) async fn rustdoc_redirector_handler(
 
     let (crate_name, path_in_crate) = match params.name().split_once("::") {
         Some((krate, path)) => (krate.to_owned(), Some(path.to_owned())),
-        None => (params.name().to_owned(), None),
+        None => (params.name().to_string(), None),
     };
 
     if let Some(description) = DOC_RUST_LANG_ORG_REDIRECTS.get(&*crate_name) {
@@ -740,7 +744,7 @@ pub(crate) async fn rustdoc_html_server_handler(
                 )
             {
                 error!(
-                    krate = params.name(),
+                    krate = %params.name(),
                     version = %krate.version,
                     original_path = params.original_path(),
                     storage_path,
@@ -2928,7 +2932,7 @@ mod test {
                 .version("0.1.0")
                 .rustdoc_file("testing/index.html")
                 .add_dependency(
-                    Dependency::new("optional-dep".to_string(), "1.2.3".parse().unwrap())
+                    Dependency::new("optional-dep".parse().unwrap(), "1.2.3".parse().unwrap())
                         .set_optional(true),
                 )
                 .create()

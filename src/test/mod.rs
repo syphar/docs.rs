@@ -9,7 +9,10 @@ pub(crate) use self::{
 use crate::{
     AsyncBuildQueue, BuildQueue, Config, Context,
     config::ConfigBuilder,
-    db::{self, AsyncPoolClient, Pool, types::version::Version},
+    db::{
+        self, AsyncPoolClient, Pool,
+        types::{krate_name::KrateName, version::Version},
+    },
     error::Result,
     metrics::otel::AnyMeterProvider,
     storage::{AsyncStorage, Storage, StorageKind},
@@ -34,13 +37,22 @@ use http_body_util::BodyExt;
 use opentelemetry_sdk::metrics::InMemoryMetricExporter;
 use serde::de::DeserializeOwned;
 use sqlx::Connection as _;
-use std::{collections::HashMap, fs, future::Future, panic, rc::Rc, str::FromStr, sync::Arc};
+use std::{
+    collections::HashMap,
+    fs,
+    future::Future,
+    panic,
+    rc::Rc,
+    str::FromStr,
+    sync::{Arc, LazyLock},
+};
 use tokio::{runtime, task::block_in_place};
 use tower::ServiceExt;
 use tracing::error;
 
 // testing krate name constants
-pub(crate) const KRATE: &str = "krate";
+pub(crate) static KRATE: LazyLock<KrateName> = LazyLock::new(|| "krate".parse().unwrap());
+
 // some versions as constants for tests
 pub(crate) const V0_1: Version = Version::new(0, 1, 0);
 pub(crate) const V1: Version = Version::new(1, 0, 0);

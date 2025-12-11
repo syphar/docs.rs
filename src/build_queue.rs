@@ -226,7 +226,11 @@ impl AsyncBuildQueue {
         .await?)
     }
 
-    pub(crate) async fn has_build_queued(&self, name: &str, version: &Version) -> Result<bool> {
+    pub(crate) async fn has_build_queued(
+        &self,
+        name: &KrateName,
+        version: &Version,
+    ) -> Result<bool> {
         let mut conn = self.db.get_async().await?;
         Ok(sqlx::query_scalar!(
             "SELECT id
@@ -245,7 +249,7 @@ impl AsyncBuildQueue {
         .is_some())
     }
 
-    async fn remove_crate_from_queue(&self, name: &str) -> Result<()> {
+    async fn remove_crate_from_queue(&self, name: &KrateName) -> Result<()> {
         let mut conn = self.db.get_async().await?;
         sqlx::query!(
             "DELETE
@@ -260,7 +264,7 @@ impl AsyncBuildQueue {
         Ok(())
     }
 
-    async fn remove_version_from_queue(&self, name: &str, version: &Version) -> Result<()> {
+    async fn remove_version_from_queue(&self, name: &KrateName, version: &Version) -> Result<()> {
         let mut conn = self.db.get_async().await?;
         sqlx::query!(
             "DELETE
@@ -281,7 +285,7 @@ impl AsyncBuildQueue {
     /// Decreases the priority of all releases currently present in the queue not matching the version passed to *at least* new_priority.
     pub(crate) async fn deprioritize_other_releases(
         &self,
-        name: &str,
+        name: &KrateName,
         latest_version: &Version,
         new_priority: i32,
     ) -> Result<()> {
@@ -332,18 +336,7 @@ impl AsyncBuildQueue {
 
 /// Index methods.
 impl AsyncBuildQueue {
-    async fn queue_crate_invalidation(&self, krate: &str) {
-        let krate = match krate
-            .parse::<KrateName>()
-            .with_context(|| format!("can't parse crate name '{}'", krate))
-        {
-            Ok(krate) => krate,
-            Err(err) => {
-                report_error(&err);
-                return;
-            }
-        };
-
+    async fn queue_crate_invalidation(&self, krate: &KrateName) {
         if let Err(err) =
             cdn::queue_crate_invalidation(&self.config, &self.cdn_metrics, &krate).await
         {
@@ -415,17 +408,40 @@ impl AsyncBuildQueue {
         change: &Change,
         registry: Option<&str>,
     ) -> Result<bool> {
+        let name_version = |crate_version: &CrateVersion| -> Result<_> {
+            Ok((
+                crate_version
+                    .name
+                    .parse::<KrateName>()
+                    .context("couldn't parse crate name")?,
+                crate_version
+                    .version
+                    .parse::<Version>()
+                    .context("couldn't parse release version as semver")?,
+            ))
+        };
+
         match change {
-            Change::Added(release) => self.process_version_added(conn, release, registry).await?,
+            Change::Added(release) => {
+                let (name, version) = name_version(&release)?;
+                self.process_version_added(conn, &name, &version, registry)
+                    .await?
+            }
             Change::AddedAndYanked(release) => {
-                self.process_version_added(conn, release, registry).await?;
-                self.process_version_yank_status(conn, release).await?;
+                let (name, version) = name_version(&release)?;
+                self.process_version_added(conn, &name, &version, registry)
+                    .await?;
+                self.process_version_yank_status(conn, &name, &version, release.yanked)
+                    .await?;
             }
             Change::Unyanked(release) | Change::Yanked(release) => {
-                self.process_version_yank_status(conn, release).await?
+                let (name, version) = name_version(&release)?;
+                self.process_version_yank_status(conn, &name, &version, release.yanked)
+                    .await?
             }
             Change::CrateDeleted { name, .. } => {
-                self.process_crate_deleted(conn, name.as_str()).await?
+                let name: KrateName = name.parse()?;
+                self.process_crate_deleted(conn, &name).await?
             }
             Change::VersionDeleted(release) => self.process_version_deleted(conn, release).await?,
         };
@@ -436,51 +452,37 @@ impl AsyncBuildQueue {
     async fn process_version_yank_status(
         &self,
         conn: &mut AsyncPoolClient,
-        release: &CrateVersion,
+        name: &KrateName,
+        version: &Version,
+        yanked: bool,
     ) -> Result<()> {
         // FIXME: delay yanks of crates that have not yet finished building
         // https://github.com/rust-lang/docs.rs/issues/1934
-        if let Ok(release_version) = Version::parse(&release.version) {
-            self.set_yanked_inner(
-                conn,
-                release.name.as_str(),
-                &release_version,
-                release.yanked,
-            )
-            .await?;
-        }
 
-        self.queue_crate_invalidation(&release.name).await;
+        self.set_yanked_inner(conn, name, version, yanked).await?;
+
+        self.queue_crate_invalidation(&name).await;
         Ok(())
     }
 
     async fn process_version_added(
         &self,
         conn: &mut AsyncPoolClient,
-        release: &CrateVersion,
+        name: &KrateName,
+        version: &Version,
         registry: Option<&str>,
     ) -> Result<()> {
-        let priority = get_crate_priority(conn, &release.name).await?;
-        let version = &release
-            .version
-            .parse()
-            .context("couldn't parse release version as semver")?;
-        let name: KrateName = release.name.parse().context("couldn't parse crate name")?;
+        let priority = get_crate_priority(conn, &name).await?;
         self.add_crate(&name, version, priority, registry)
             .await
-            .with_context(|| {
-                format!(
-                    "failed adding {}-{} into build queue",
-                    release.name, release.version
-                )
-            })?;
+            .with_context(|| format!("failed adding {}-{} into build queue", name, version))?;
         debug!(
-            name=%release.name,
-            version=%release.version,
+            name=%name,
+            version=%version,
             "added into build queue",
         );
         self.queue_metrics.queued_builds.add(1, &[]);
-        self.deprioritize_other_releases(&release.name, version, PRIORITY_MANUAL_FROM_CRATES_IO)
+        self.deprioritize_other_releases(&name, version, PRIORITY_MANUAL_FROM_CRATES_IO)
             .await
             .unwrap_or_else(|err| report_error(&err));
         Ok(())
@@ -491,12 +493,13 @@ impl AsyncBuildQueue {
         conn: &mut AsyncPoolClient,
         release: &CrateVersion,
     ) -> Result<()> {
+        let name: KrateName = release.name.parse().context("couldn't parse crate name")?;
         let version: Version = release
             .version
             .parse()
             .context("couldn't parse release version as semver")?;
 
-        delete_version(conn, &self.storage, &self.config, &release.name, &version)
+        delete_version(conn, &self.storage, &self.config, &name, &version)
             .await
             .with_context(|| {
                 format!(
@@ -509,13 +512,16 @@ impl AsyncBuildQueue {
             version=%release.version,
             "release was deleted from the index and the database",
         );
-        self.queue_crate_invalidation(&release.name).await;
-        self.remove_version_from_queue(&release.name, &version)
-            .await?;
+        self.queue_crate_invalidation(&name).await;
+        self.remove_version_from_queue(&name, &version).await?;
         Ok(())
     }
 
-    async fn process_crate_deleted(&self, conn: &mut AsyncPoolClient, krate: &str) -> Result<()> {
+    async fn process_crate_deleted(
+        &self,
+        conn: &mut AsyncPoolClient,
+        krate: &KrateName,
+    ) -> Result<()> {
         delete_crate(conn, &self.storage, &self.config, krate)
             .await
             .with_context(|| format!("failed to delete crate {krate}"))?;
@@ -527,7 +533,12 @@ impl AsyncBuildQueue {
         self.remove_crate_from_queue(krate).await
     }
 
-    pub async fn set_yanked(&self, name: &str, version: &Version, yanked: bool) -> Result<()> {
+    pub async fn set_yanked(
+        &self,
+        name: &KrateName,
+        version: &Version,
+        yanked: bool,
+    ) -> Result<()> {
         let mut conn = self.db.get_async().await?;
         self.set_yanked_inner(&mut conn, name, version, yanked)
             .await
@@ -537,7 +548,7 @@ impl AsyncBuildQueue {
     async fn set_yanked_inner(
         &self,
         conn: &mut sqlx::PgConnection,
-        name: &str,
+        name: &KrateName,
         version: &Version,
         yanked: bool,
     ) -> Result<()> {
@@ -613,7 +624,7 @@ impl BuildQueue {
             .block_on(self.inner.add_crate(name, version, priority, registry))
     }
 
-    pub fn set_yanked(&self, name: &str, version: &Version, yanked: bool) -> Result<()> {
+    pub fn set_yanked(&self, name: &KrateName, version: &Version, yanked: bool) -> Result<()> {
         self.runtime
             .block_on(self.inner.set_yanked(name, version, yanked))
     }
@@ -951,7 +962,11 @@ mod tests {
     use crate::db::types::BuildStatus;
     use crate::test::{FakeBuild, KRATE, TestEnvironment, V1, V2};
     use chrono::Utc;
+    use std::sync::LazyLock;
     use std::time::Duration;
+
+    static FOO1: LazyLock<KrateName> = LazyLock::new(|| "foo1".parse().unwrap());
+    static FOO2: LazyLock<KrateName> = LazyLock::new(|| "foo2".parse().unwrap());
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_process_version_added() -> Result<()> {

@@ -1,7 +1,7 @@
 use crate::{
     db::types::{
         BuildId, BuildStatus, CrateId, Feature, ReleaseId, dependencies::ReleaseDependencyList,
-        version::Version,
+        krate_name::KrateName, version::Version,
     },
     docbuilder::DocCoverage,
     error::Result,
@@ -326,7 +326,10 @@ pub(crate) async fn update_build_with_error(
     Ok(build_id)
 }
 
-pub(crate) async fn initialize_crate(conn: &mut sqlx::PgConnection, name: &str) -> Result<CrateId> {
+pub(crate) async fn initialize_crate(
+    conn: &mut sqlx::PgConnection,
+    name: &KrateName,
+) -> Result<CrateId> {
     sqlx::query_scalar!(
         "INSERT INTO crates (name)
          VALUES ($1)
@@ -334,7 +337,7 @@ pub(crate) async fn initialize_crate(conn: &mut sqlx::PgConnection, name: &str) 
          SET -- this `SET` is needed so the id is always returned.
             name = EXCLUDED.name
          RETURNING id",
-        name
+        name as _
     )
     .fetch_one(&mut *conn)
     .await
@@ -525,13 +528,13 @@ async fn add_keywords_into_database(
 #[instrument(skip(conn))]
 pub async fn update_crate_data_in_database(
     conn: &mut sqlx::PgConnection,
-    name: &str,
+    name: &KrateName,
     registry_data: &CrateData,
 ) -> Result<()> {
     info!("Updating crate data for {}", name);
     let crate_id = sqlx::query_scalar!(
         r#"SELECT id as "id: CrateId" FROM crates WHERE crates.name = $1"#,
-        name
+        name as _
     )
     .fetch_one(&mut *conn)
     .await?;

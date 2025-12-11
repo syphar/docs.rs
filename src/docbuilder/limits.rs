@@ -1,4 +1,8 @@
-use crate::{Config, db::Overrides, error::Result};
+use crate::{
+    Config,
+    db::{Overrides, types::krate_name::KrateName},
+    error::Result,
+};
 use serde::Serialize;
 use std::time::Duration;
 
@@ -28,7 +32,7 @@ impl Limits {
     pub(crate) async fn for_crate(
         config: &Config,
         conn: &mut sqlx::PgConnection,
-        name: &str,
+        name: &KrateName,
     ) -> Result<Self> {
         let default = Self::new(config);
         let overrides = Overrides::for_crate(conn, name).await?.unwrap_or_default();

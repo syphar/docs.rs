@@ -15,7 +15,7 @@ use crate::{
         BuildId, Pool,
         file::{FileEntry, detect_mime},
         mimes,
-        types::version::Version,
+        types::{krate_name::KrateName, version::Version},
     },
     error::Result,
     metrics::otel::AnyMeterProvider,
@@ -303,7 +303,7 @@ impl AsyncStorage {
     #[instrument]
     pub(crate) async fn stream_rustdoc_file(
         &self,
-        name: &str,
+        name: &KrateName,
         version: &Version,
         latest_build_id: Option<BuildId>,
         path: &str,
@@ -323,7 +323,7 @@ impl AsyncStorage {
     #[context("fetching {path} from {name} {version} (archive: {archive_storage})")]
     pub(crate) async fn fetch_source_file(
         &self,
-        name: &str,
+        name: &KrateName,
         version: &Version,
         latest_build_id: Option<BuildId>,
         path: &str,
@@ -338,7 +338,7 @@ impl AsyncStorage {
     #[instrument]
     pub(crate) async fn stream_source_file(
         &self,
-        name: &str,
+        name: &KrateName,
         version: &Version,
         latest_build_id: Option<BuildId>,
         path: &str,
@@ -357,7 +357,7 @@ impl AsyncStorage {
     #[instrument]
     pub(crate) async fn rustdoc_file_exists(
         &self,
-        name: &str,
+        name: &KrateName,
         version: &Version,
         latest_build_id: Option<BuildId>,
         path: &str,
@@ -947,7 +947,7 @@ impl Storage {
 
     pub(crate) fn fetch_source_file(
         &self,
-        name: &str,
+        name: &KrateName,
         version: &Version,
         latest_build_id: Option<BuildId>,
         path: &str,
@@ -964,7 +964,7 @@ impl Storage {
 
     pub(crate) fn rustdoc_file_exists(
         &self,
-        name: &str,
+        name: &KrateName,
         version: &Version,
         latest_build_id: Option<BuildId>,
         path: &str,
@@ -1115,7 +1115,7 @@ impl std::fmt::Debug for Storage {
     }
 }
 
-pub(crate) fn rustdoc_archive_path(name: &str, version: &Version) -> String {
+pub(crate) fn rustdoc_archive_path(name: &KrateName, version: &Version) -> String {
     format!("rustdoc/{name}/{version}.zip")
 }
 
@@ -1139,7 +1139,7 @@ impl FromStr for RustdocJsonFormatVersion {
 }
 
 pub(crate) fn rustdoc_json_path(
-    name: &str,
+    name: &KrateName,
     version: &Version,
     target: &str,
     format_version: RustdocJsonFormatVersion,
@@ -1157,7 +1157,7 @@ pub(crate) fn rustdoc_json_path(
     path
 }
 
-pub(crate) fn source_archive_path(name: &str, version: &Version) -> String {
+pub(crate) fn source_archive_path(name: &KrateName, version: &Version) -> String {
     format!("sources/{name}/{version}.zip")
 }
 

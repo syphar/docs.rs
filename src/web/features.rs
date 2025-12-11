@@ -282,13 +282,16 @@ mod tests {
         assert_eq!(feature, SubFeature::Feature("a-feature".into()));
 
         let feature = SubFeature::parse("dep:a-dependency");
-        assert_eq!(feature, SubFeature::Dependency("a-dependency".into()));
+        assert_eq!(
+            feature,
+            SubFeature::Dependency("a-dependency".parse().unwrap())
+        );
 
         let feature = SubFeature::parse("a-dependency/sub-feature");
         assert_eq!(
             feature,
             SubFeature::DependencyFeature {
-                dependency: "a-dependency".into(),
+                dependency: "a-dependency".parse().unwrap(),
                 optional: false,
                 feature: "sub-feature".into()
             }
@@ -298,7 +301,7 @@ mod tests {
         assert_eq!(
             feature,
             SubFeature::DependencyFeature {
-                dependency: "a-dependency".into(),
+                dependency: "a-dependency".parse().unwrap(),
                 optional: true,
                 feature: "sub-feature".into()
             }

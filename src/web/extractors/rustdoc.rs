@@ -226,7 +226,7 @@ impl RustdocParams {
             .with_maybe_target_name(release.target_name.as_deref())
     }
 
-    pub(crate) fn name(&self) -> &str {
+    pub(crate) fn name(&self) -> &KrateName {
         &self.name
     }
     pub(crate) fn with_name(self, name: impl Into<KrateName>) -> Self {
@@ -902,6 +902,8 @@ mod tests {
     use test_case::test_case;
 
     static KRATE: LazyLock<KrateName> = LazyLock::new(|| "krate".parse().unwrap());
+    static DUMMY: LazyLock<KrateName> = LazyLock::new(|| "dummy".parse().unwrap());
+    static CLAP: LazyLock<KrateName> = LazyLock::new(|| "clap".parse().unwrap());
     const VERSION: Version = Version::new(0, 1, 0);
     static DEFAULT_TARGET: &str = "x86_64-unknown-linux-gnu";
     static OTHER_TARGET: &str = "x86_64-pc-windows-msvc";
@@ -934,32 +936,32 @@ mod tests {
 
     #[test_case(
         "/{name}",
-        RustdocParams::new(KRATE)
+        RustdocParams::new(&*KRATE)
             .try_with_original_uri("/krate").unwrap();
         "just name"
     )]
     #[test_case(
         "/{name}/",
-        RustdocParams::new(KRATE)
+        RustdocParams::new(&*KRATE)
             .try_with_original_uri("/krate/").unwrap();
         "just name with trailing slash"
     )]
     #[test_case(
         "/{name}/{version}",
-        RustdocParams::new(KRATE)
+        RustdocParams::new(&*KRATE)
             .try_with_original_uri("/krate/latest").unwrap();
         "just name and version"
     )]
     #[test_case(
         "/{name}/{version}/{*path}",
-        RustdocParams::new(KRATE)
+        RustdocParams::new(&*KRATE)
             .try_with_original_uri("/krate/latest/static.html").unwrap()
             .with_inner_path("static.html");
         "name, version, path extract"
     )]
     #[test_case(
         "/{name}/{version}/{path}/static.html",
-        RustdocParams::new(KRATE)
+        RustdocParams::new(&*KRATE)
             .try_with_original_uri("/krate/latest/path_add/static.html").unwrap()
             .with_inner_path("path_add")
             .with_static_route_suffix("static.html");
@@ -967,21 +969,21 @@ mod tests {
     )]
     #[test_case(
         "/{name}/{version}/clapproc%20%60macro.html",
-        RustdocParams::new("clap")
+        RustdocParams::new(&*CLAP)
             .try_with_original_uri("/clap/latest/clapproc%20%60macro.html").unwrap()
             .with_static_route_suffix("clapproc `macro.html");
         "name, version, static suffix with some urlencoding"
     )]
     #[test_case(
         "/{name}/{version}/static.html",
-        RustdocParams::new(KRATE)
+        RustdocParams::new(&*KRATE)
             .try_with_original_uri("/krate/latest/static.html").unwrap()
             .with_static_route_suffix("static.html");
         "name, version, static suffix"
     )]
     #[test_case(
         "/{name}/{version}/{target}",
-        RustdocParams::new(KRATE)
+        RustdocParams::new(&*KRATE)
             .try_with_req_version("1.2.3").unwrap()
             .try_with_original_uri(format!("/krate/1.2.3/{OTHER_TARGET}")).unwrap()
             .with_doc_target(OTHER_TARGET);
@@ -989,7 +991,7 @@ mod tests {
     )]
     #[test_case(
         "/{name}/{version}/{target}/folder/something.html",
-        RustdocParams::new(KRATE)
+        RustdocParams::new(&*KRATE)
             .try_with_req_version("1.2.3").unwrap()
             .try_with_original_uri(format!("/krate/1.2.3/{OTHER_TARGET}/folder/something.html")).unwrap()
             .with_doc_target(OTHER_TARGET)
@@ -998,7 +1000,7 @@ mod tests {
     )]
     #[test_case(
         "/{name}/{version}/{target}/",
-        RustdocParams::new(KRATE)
+        RustdocParams::new(&*KRATE)
             .try_with_req_version("1.2.3").unwrap()
             .try_with_original_uri(format!("/krate/1.2.3/{OTHER_TARGET}/")).unwrap()
             .with_doc_target(OTHER_TARGET);
@@ -1006,7 +1008,7 @@ mod tests {
     )]
     #[test_case(
         "/{name}/{version}/{target}/{*path}",
-        RustdocParams::new(KRATE)
+        RustdocParams::new(&*KRATE)
             .try_with_req_version("1.2.3").unwrap()
             .try_with_original_uri(format!("/krate/1.2.3/{OTHER_TARGET}/some/path/to/a/file.html")).unwrap()
             .with_doc_target(OTHER_TARGET)
@@ -1015,7 +1017,7 @@ mod tests {
     )]
     #[test_case(
         "/{name}/{version}/{target}/{path}/path/to/a/file.html",
-        RustdocParams::new(KRATE)
+        RustdocParams::new(&*KRATE)
             .try_with_req_version("1.2.3").unwrap()
             .try_with_original_uri(format!("/krate/1.2.3/{OTHER_TARGET}/path_add/path/to/a/file.html")).unwrap()
             .with_doc_target(OTHER_TARGET)
@@ -1189,7 +1191,7 @@ mod tests {
             dummy_path.push('/');
         }
 
-        let parsed = RustdocParams::new(KRATE)
+        let parsed = RustdocParams::new(&*KRATE)
             .with_page_kind(PageKind::Rustdoc)
             .with_req_version(ReqVersion::Latest)
             .with_maybe_doc_target(target)
@@ -1197,10 +1199,10 @@ mod tests {
             .try_with_original_uri(&dummy_path[..])
             .unwrap()
             .with_default_target(DEFAULT_TARGET)
-            .with_target_name(KRATE)
+            .with_target_name(KRATE.to_string())
             .with_doc_targets(TARGETS.iter().cloned());
 
-        assert_eq!(parsed.name(), KRATE);
+        assert_eq!(parsed.name(), &*KRATE);
         assert_eq!(parsed.req_version(), &ReqVersion::Latest);
         assert_eq!(parsed.doc_target(), expected_target);
         assert_eq!(parsed.inner_path(), expected_path);
@@ -1221,7 +1223,7 @@ mod tests {
     #[test_case("something.html", Some("html"); "plain file")]
     #[test_case("", None)]
     fn test_generate_fallback_search(path: &str, search: Option<&str>) {
-        let mut params = RustdocParams::new("dummy")
+        let mut params = RustdocParams::new(&*DUMMY)
             .try_with_req_version("0.4.0")
             .unwrap()
             // non-default target, target stays in the url
@@ -1255,7 +1257,7 @@ mod tests {
 
     #[test]
     fn test_parse_source() {
-        let params = RustdocParams::new("dummy")
+        let params = RustdocParams::new(&*DUMMY)
             .try_with_req_version("0.4.0")
             .unwrap()
             .with_inner_path("README.md")
@@ -1346,7 +1348,7 @@ mod tests {
 
     #[test]
     fn test_case_1() {
-        let params = RustdocParams::new("dummy")
+        let params = RustdocParams::new(&*DUMMY)
             .try_with_req_version("0.2.0")
             .unwrap()
             .with_doc_target("dummy")
@@ -1419,7 +1421,7 @@ mod tests {
         expected_target: Option<&str>,
         expected_path: &str,
     ) {
-        let params = RustdocParams::new(KRATE)
+        let params = RustdocParams::new(&*KRATE)
             .try_with_req_version("0.4.0")
             .unwrap()
             .try_with_original_uri(original_uri)
@@ -1465,47 +1467,52 @@ mod tests {
         "just other target"
     )]
     #[test_case(
-        Some(KRATE), Some(DEFAULT_TARGET),
+        Some(&*KRATE), Some(DEFAULT_TARGET),
         Some(DEFAULT_TARGET), None
-        => format!("{KRATE}/");
+        => format!("{}/", &*KRATE);
         "full with default target, target name is used"
     )]
     #[test_case(
-        Some(KRATE), Some(DEFAULT_TARGET),
+        Some(&*KRATE), Some(DEFAULT_TARGET),
         Some(OTHER_TARGET), None
-        => format!("{OTHER_TARGET}/{KRATE}/");
+        => format!("{OTHER_TARGET}/{}/", &*KRATE);
         "full with other target, target name is used"
     )]
     #[test_case(
-        Some(KRATE), Some(DEFAULT_TARGET),
+        Some(&*KRATE), Some(DEFAULT_TARGET),
         Some(DEFAULT_TARGET), Some("inner/something.html")
         => "inner/something.html";
         "full with default target, target name is ignored"
     )]
     #[test_case(
-        Some(KRATE), Some(DEFAULT_TARGET),
+        Some(&*KRATE), Some(DEFAULT_TARGET),
         Some(OTHER_TARGET), Some("inner/something.html")
         => format!("{OTHER_TARGET}/inner/something.html");
         "full with other target, target name is ignored"
     )]
     fn test_rustdoc_path_for_url(
-        target_name: Option<&str>,
+        target_name: Option<&KrateName>,
         default_target: Option<&str>,
         doc_target: Option<&str>,
         inner_path: Option<&str>,
     ) -> String {
-        generate_rustdoc_path_for_url(target_name, default_target, doc_target, inner_path)
+        generate_rustdoc_path_for_url(
+            target_name.map(|n| n.as_str()),
+            default_target,
+            doc_target,
+            inner_path,
+        )
     }
 
     #[test]
     fn test_override_page_kind() {
-        let params = RustdocParams::new(KRATE)
+        let params = RustdocParams::new(&*KRATE)
             .try_with_original_uri("/krate/latest/path_add/static.html")
             .unwrap()
             .with_inner_path("path_add")
             .with_static_route_suffix("static.html")
             .with_default_target(DEFAULT_TARGET)
-            .with_target_name(KRATE)
+            .with_target_name(KRATE.to_string())
             .with_doc_targets(TARGETS.iter().cloned());
 
         // without page kind, rustdoc path doesn' thave a path, and static suffix ignored
@@ -1536,14 +1543,14 @@ mod tests {
 
     #[test]
     fn test_override_page_kind_with_target() {
-        let params = RustdocParams::new(KRATE)
+        let params = RustdocParams::new(&*KRATE)
             .try_with_original_uri(format!("/krate/latest/{OTHER_TARGET}/path_add/static.html"))
             .unwrap()
             .with_inner_path("path_add")
             .with_static_route_suffix("static.html")
             .with_doc_target(OTHER_TARGET)
             .with_default_target(DEFAULT_TARGET)
-            .with_target_name(KRATE)
+            .with_target_name(KRATE.to_string())
             .with_doc_targets(TARGETS.iter().cloned());
 
         // without page kind, rustdoc path doesn' thave a path, and static suffix ignored
@@ -1585,7 +1592,7 @@ mod tests {
 
     #[test]
     fn test_debug_output() {
-        let params = RustdocParams::new("dummy")
+        let params = RustdocParams::new(&*DUMMY)
             .try_with_req_version("0.2.0")
             .unwrap()
             .with_inner_path("struct.Dummy.html")
@@ -1609,7 +1616,7 @@ mod tests {
         // params as if they would have come from a route like
         // `/{name}/{version}/{target}/{*path}`,
         // where in the `{target}` place we have part of the path.
-        let params = RustdocParams::new(KRATE)
+        let params = RustdocParams::new(&*KRATE)
             .with_req_version(ReqVersion::Exact(VERSION))
             .try_with_original_uri("/dummy/0.1.0/dummy/struct.Dummy.html")
             .unwrap()
@@ -1626,7 +1633,7 @@ mod tests {
         // it to the inner_path.
         let params = params
             .with_default_target(DEFAULT_TARGET)
-            .with_target_name(KRATE)
+            .with_target_name(KRATE.to_string())
             .with_doc_targets(TARGETS.iter().cloned());
 
         dbg!(&params);
@@ -1646,13 +1653,13 @@ mod tests {
 
     #[test]
     fn test_if_order_matters_1() {
-        let params = RustdocParams::new(KRATE)
+        let params = RustdocParams::new(&*KRATE)
             .with_req_version(ReqVersion::Exact(VERSION))
             .try_with_original_uri("/dummy/0.1.0/dummy/struct.Dummy.html")
             .unwrap()
             .with_inner_path("dummy/struct.Dummy.html")
             .with_default_target(DEFAULT_TARGET)
-            .with_target_name(KRATE)
+            .with_target_name(KRATE.to_string())
             .with_doc_targets(TARGETS.iter().cloned());
 
         assert_eq!(params.doc_target(), None);
@@ -1665,7 +1672,7 @@ mod tests {
 
     #[test]
     fn test_if_order_matters_2() {
-        let params = RustdocParams::new(KRATE)
+        let params = RustdocParams::new(&*KRATE)
             .with_req_version(ReqVersion::Exact(VERSION))
             .try_with_original_uri(format!(
                 "/dummy/0.1.0/{OTHER_TARGET}/dummy/struct.Dummy.html"
@@ -1673,7 +1680,7 @@ mod tests {
             .unwrap()
             .with_inner_path(format!("{OTHER_TARGET}/dummy/struct.Dummy.html"))
             .with_default_target(DEFAULT_TARGET)
-            .with_target_name(KRATE)
+            .with_target_name(KRATE.to_string())
             .with_doc_targets(TARGETS.iter().cloned());
 
         assert_eq!(params.doc_target(), Some(OTHER_TARGET));
@@ -1688,19 +1695,19 @@ mod tests {
     fn test_parse_something() {
         // test for https://github.com/rust-lang/docs.rs/issues/2989
         let params = dbg!(
-            RustdocParams::new(KRATE)
+            RustdocParams::new(&*KRATE)
                 .with_page_kind(PageKind::Rustdoc)
-                .try_with_original_uri(format!("/{KRATE}/latest/{KRATE}"))
+                .try_with_original_uri(format!("/{0}/latest/{0}", &*KRATE))
                 .unwrap()
                 .with_req_version(ReqVersion::Latest)
-                .with_doc_target(KRATE)
+                .with_doc_target(KRATE.to_string())
         );
 
         assert_eq!(params.rustdoc_url(), "/krate/latest/krate/");
 
         let params = dbg!(
             params
-                .with_target_name(KRATE)
+                .with_target_name(KRATE.to_string())
                 .with_default_target(DEFAULT_TARGET)
                 .with_doc_targets(TARGETS.iter().cloned())
         );
@@ -1712,18 +1719,18 @@ mod tests {
     #[test_case("other_path", "/krate/latest/krate/other_path"; "without .html")]
     #[test_case("other_path.html", "/krate/latest/krate/other_path.html"; "with .html")]
     #[test_case("settings.html", "/krate/latest/settings.html"; "static routes")]
-    #[test_case(KRATE, "/krate/latest/krate/"; "same as target name, without slash")]
+    #[test_case("krate", "/krate/latest/krate/"; "same as target name, without slash")]
     fn test_redirect_some_odd_paths_we_saw(inner_path: &str, expected_url: &str) {
         // test for https://github.com/rust-lang/docs.rs/issues/2989
-        let params = RustdocParams::new(KRATE)
+        let params = RustdocParams::new(&*KRATE)
             .with_page_kind(PageKind::Rustdoc)
-            .try_with_original_uri(format!("/{KRATE}/latest/{inner_path}"))
+            .try_with_original_uri(format!("/{}/latest/{inner_path}", &*KRATE))
             .unwrap()
             .with_req_version(ReqVersion::Latest)
             .with_maybe_doc_target(None::<String>)
             .with_inner_path(inner_path)
             .with_default_target(DEFAULT_TARGET)
-            .with_target_name(KRATE)
+            .with_target_name(KRATE.to_string())
             .with_doc_targets(TARGETS.iter().cloned());
 
         dbg!(&params);
@@ -1739,17 +1746,17 @@ mod tests {
         // to the exact version, coming from a semver version.
 
         let ver: Version = "0.14.0".parse().unwrap();
-        let params = RustdocParams::new(KRATE)
+        let params = RustdocParams::new(&*KRATE)
             .with_page_kind(PageKind::Rustdoc)
             .with_req_version(ReqVersion::Exact(ver))
-            .with_doc_target(KRATE)
+            .with_doc_target(KRATE.to_string())
             .with_inner_path("trait.Itertools.html");
 
         dbg!(&params);
 
         assert_eq!(
             params.rustdoc_url(),
-            format!("/{KRATE}/0.14.0/{KRATE}/trait.Itertools.html")
+            format!("/{0}/0.14.0/{0}/trait.Itertools.html", &*KRATE)
         )
     }
 
@@ -1757,14 +1764,15 @@ mod tests {
     #[test_case(Some(CompressionAlgorithm::Gzip))]
     #[test_case(Some(CompressionAlgorithm::Zstd))]
     fn test_plain_json_url(wanted_compression: Option<CompressionAlgorithm>) {
-        let mut params = RustdocParams::new(KRATE)
+        let mut params = RustdocParams::new(&*KRATE)
             .with_page_kind(PageKind::Rustdoc)
             .with_req_version(ReqVersion::Exact(V1));
 
         assert_eq!(
             params.json_download_url(wanted_compression, None),
             format!(
-                "/crate/{KRATE}/{V1}/json{}",
+                "/crate/{}/{V1}/json{}",
+                &*KRATE,
                 wanted_compression
                     .map(|c| format!(".{}", c.file_extension()))
                     .unwrap_or_default()
@@ -1776,7 +1784,8 @@ mod tests {
         assert_eq!(
             params.json_download_url(wanted_compression, None),
             format!(
-                "/crate/{KRATE}/{V1}/some-target/json{}",
+                "/crate/{}/{V1}/some-target/json{}",
+                &*KRATE,
                 wanted_compression
                     .map(|c| format!(".{}", c.file_extension()))
                     .unwrap_or_default()
@@ -1788,14 +1797,15 @@ mod tests {
     #[test_case(Some(CompressionAlgorithm::Gzip))]
     #[test_case(Some(CompressionAlgorithm::Zstd))]
     fn test_plain_json_url_with_format(wanted_compression: Option<CompressionAlgorithm>) {
-        let mut params = RustdocParams::new(KRATE)
+        let mut params = RustdocParams::new(&*KRATE)
             .with_page_kind(PageKind::Rustdoc)
             .with_req_version(ReqVersion::Exact(V1));
 
         assert_eq!(
             params.json_download_url(wanted_compression, Some("42")),
             format!(
-                "/crate/{KRATE}/{V1}/json/42{}",
+                "/crate/{}/{V1}/json/42{}",
+                &*KRATE,
                 wanted_compression
                     .map(|c| format!(".{}", c.file_extension()))
                     .unwrap_or_default()
@@ -1807,7 +1817,8 @@ mod tests {
         assert_eq!(
             params.json_download_url(wanted_compression, Some("42")),
             format!(
-                "/crate/{KRATE}/{V1}/some-target/json/42{}",
+                "/crate/{}/{V1}/some-target/json/42{}",
+                &*KRATE,
                 wanted_compression
                     .map(|c| format!(".{}", c.file_extension()))
                     .unwrap_or_default()
@@ -1817,10 +1828,10 @@ mod tests {
 
     #[test]
     fn test_zip_download_url() {
-        let params = RustdocParams::new(KRATE).with_req_version(ReqVersion::Exact(V1));
+        let params = RustdocParams::new(&*KRATE).with_req_version(ReqVersion::Exact(V1));
         assert_eq!(
             params.zip_download_url(),
-            format!("/crate/{KRATE}/{V1}/download")
+            format!("/crate/{}/{V1}/download", &*KRATE)
         );
     }
 }

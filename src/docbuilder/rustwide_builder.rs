@@ -5,7 +5,7 @@ use crate::{
         blacklist::is_blacklisted,
         file::{add_path_into_database, file_list_to_json},
         finish_build, finish_release, initialize_build, initialize_crate, initialize_release,
-        types::{BuildStatus, version::Version},
+        types::{BuildStatus, krate_name::KrateName, version::Version},
         update_build_with_error, update_crate_data_in_database,
     },
     docbuilder::Limits,
@@ -38,7 +38,7 @@ use std::{
     fs::{self, File},
     io::BufReader,
     path::Path,
-    sync::Arc,
+    sync::{Arc, LazyLock},
     time::Instant,
 };
 use tokio::runtime;
@@ -46,7 +46,7 @@ use tracing::{debug, error, info, info_span, instrument, warn};
 
 const USER_AGENT: &str = "docs.rs builder (https://github.com/rust-lang/docs.rs)";
 const COMPONENTS: &[&str] = &["llvm-tools-preview", "rustc-dev", "rustfmt"];
-const DUMMY_CRATE_NAME: &str = "empty-library";
+static DUMMY_CRATE_NAME: LazyLock<KrateName> = LazyLock::new(|| "empty-library".parse().unwrap());
 const DUMMY_CRATE_VERSION: Version = Version::new(1, 0, 0);
 
 pub const RUSTDOC_JSON_COMPRESSION_ALGORITHMS: &[CompressionAlgorithm] =
@@ -429,7 +429,7 @@ impl RustwideBuilder {
     }
 
     #[instrument(skip(self))]
-    fn get_limits(&self, krate: &str) -> Result<Limits> {
+    fn get_limits(&self, krate: &KrateName) -> Result<Limits> {
         self.runtime.block_on({
             let db = self.db.clone();
             let config = self.config.clone();
@@ -446,7 +446,7 @@ impl RustwideBuilder {
 
         info!("building a dummy crate to get essential files");
 
-        let limits = self.get_limits(DUMMY_CRATE_NAME)?;
+        let limits = self.get_limits(&*DUMMY_CRATE_NAME)?;
 
         // FIXME: for now, purge all build dirs before each build.
         // Currently we have some error situations where the build directory wouldn't be deleted
@@ -464,7 +464,7 @@ impl RustwideBuilder {
             .build_dir(&format!("essential-files-{parsed_rustc_version}"));
 
         // This is an empty library crate that is supposed to always build.
-        let krate = Crate::crates_io(DUMMY_CRATE_NAME, &DUMMY_CRATE_VERSION.to_string());
+        let krate = Crate::crates_io(&DUMMY_CRATE_NAME.as_str(), &DUMMY_CRATE_VERSION.to_string());
         krate.fetch(&self.workspace)?;
 
         build_dir
@@ -474,7 +474,7 @@ impl RustwideBuilder {
 
                 let res = self.execute_build(
                     BuildId(0),
-                    DUMMY_CRATE_NAME,
+                    &*DUMMY_CRATE_NAME,
                     &DUMMY_CRATE_VERSION,
                     HOST_TARGET,
                     true,
@@ -531,18 +531,20 @@ impl RustwideBuilder {
                 err.context(format!("failed to load local package {}", path.display()))
             })?;
         let package = metadata.root();
-        self.build_package(
-            &package.name,
-            &package.version,
-            PackageKind::Local(path),
-            false,
-        )
+        let name: KrateName = package.name.parse().map_err(|err| {
+            anyhow!(
+                "invalid crate name '{}' for local package {}: {err}",
+                package.name,
+                path.display()
+            )
+        })?;
+        self.build_package(&name, &package.version, PackageKind::Local(path), false)
     }
 
-    #[instrument(name = "docbuilder.build_package", parent = None, skip(self, name), fields(krate=name))]
+    #[instrument(name = "docbuilder.build_package", parent = None, skip(self, name), fields(krate=%name))]
     pub fn build_package(
         &mut self,
-        name: &str,
+        name: &KrateName,
         version: &Version,
         kind: PackageKind<'_>,
         collect_metrics: bool,
@@ -588,7 +590,7 @@ impl RustwideBuilder {
     #[allow(clippy::too_many_arguments)]
     fn build_package_inner(
         &mut self,
-        name: &str,
+        name: &KrateName,
         version: &Version,
         kind: PackageKind<'_>,
         crate_id: CrateId,
@@ -930,7 +932,7 @@ impl RustwideBuilder {
     fn build_target(
         &self,
         build_id: BuildId,
-        name: &str,
+        name: &KrateName,
         version: &Version,
         target: &str,
         build: &Build,
@@ -975,7 +977,7 @@ impl RustwideBuilder {
     fn execute_json_build(
         &self,
         build_id: BuildId,
-        name: &str,
+        name: &KrateName,
         version: &Version,
         target: &str,
         is_default_target: bool,
@@ -1133,7 +1135,7 @@ impl RustwideBuilder {
     fn execute_build(
         &self,
         build_id: BuildId,
-        name: &str,
+        name: &KrateName,
         version: &Version,
         target: &str,
         is_default_target: bool,
@@ -1429,6 +1431,7 @@ impl Default for BuildPackageSummary {
 mod tests {
     use super::*;
     use crate::db::types::Feature;
+    use crate::db::types::krate_name::KrateName;
     use crate::registry_api::ReleaseData;
     use crate::storage::{CompressionAlgorithm, compression};
     use crate::test::{AxumRouterTestExt, TestEnvironment};
@@ -1438,7 +1441,7 @@ mod tests {
 
     fn get_features(
         env: &TestEnvironment,
-        name: &str,
+        name: &KrateName,
         version: &Version,
     ) -> Result<Option<Vec<Feature>>, sqlx::Error> {
         env.runtime().block_on(async {
@@ -1457,7 +1460,11 @@ mod tests {
         })
     }
 
-    fn remove_cache_files(env: &TestEnvironment, crate_: &str, version: &Version) -> Result<()> {
+    fn remove_cache_files(
+        env: &TestEnvironment,
+        crate_: &KrateName,
+        version: &Version,
+    ) -> Result<()> {
         let paths = [
             format!("cache/index.crates.io-6f17d22bba15001f/{crate_}-{version}.crate"),
             format!("src/index.crates.io-6f17d22bba15001f/{crate_}-{version}"),
@@ -1691,7 +1698,7 @@ mod tests {
         builder.update_toolchain()?;
         assert!(
             builder
-                .build_package(crate_, &version, PackageKind::CratesIo, true)?
+                .build_package(&crate_, &version, PackageKind::CratesIo, true)?
                 .successful
         );
 
@@ -1713,7 +1720,7 @@ mod tests {
         let env = TestEnvironment::new_with_runtime()?;
 
         // some binary crate
-        let crate_ = "heater";
+        let crate_: KrateName = "heater".parse().unwrap();
         let version = Version::new(0, 2, 3);
 
         let storage = env.storage();
@@ -1726,7 +1733,7 @@ mod tests {
         builder.update_toolchain()?;
         assert!(
             !builder
-                .build_package(crate_, &version, PackageKind::CratesIo, false)?
+                .build_package(&crate_, &version, PackageKind::CratesIo, false)?
                 .successful
         );
 
@@ -1776,13 +1783,13 @@ mod tests {
 
         // rand 0.8.5 fails to build with recent nightly versions
         // https://github.com/rust-lang/docs.rs/issues/26750
-        let crate_ = "rand";
+        let crate_: KrateName = "rand".parse().unwrap();
         let version = Version::new(0, 8, 5);
 
         // create a successful release & build in the database
         let release_id = env.runtime().block_on(async {
             let mut conn = env.async_db().async_conn().await;
-            let crate_id = initialize_crate(&mut conn, crate_).await?;
+            let crate_id = initialize_crate(&mut conn, &crate_).await?;
             let release_id = initialize_release(&mut conn, crate_id, &version).await?;
             let build_id = initialize_build(&mut conn, release_id).await?;
             finish_build(
@@ -1857,7 +1864,7 @@ mod tests {
         assert!(
             // not successful build
             !builder
-                .build_package(crate_, &version, PackageKind::CratesIo, false)?
+                .build_package(&crate_, &version, PackageKind::CratesIo, false)?
                 .successful
         );
 
@@ -1870,13 +1877,15 @@ mod tests {
     #[test_case("thiserror-impl", Version::new(1, 0, 26))]
     #[ignore]
     fn test_proc_macro(crate_: &str, version: Version) -> Result<()> {
+        let crate_: KrateName = crate_.parse().unwrap();
+
         let env = TestEnvironment::new_with_runtime()?;
 
         let mut builder = RustwideBuilder::init(&env.context).unwrap();
         builder.update_toolchain()?;
         assert!(
             builder
-                .build_package(crate_, &version, PackageKind::CratesIo, false)?
+                .build_package(&crate_, &version, PackageKind::CratesIo, false)?
                 .successful
         );
 
@@ -1898,7 +1907,7 @@ mod tests {
     fn test_cross_compile_non_host_default() -> Result<()> {
         let env = TestEnvironment::new_with_runtime()?;
 
-        let crate_ = "windows-win";
+        let crate_: KrateName = "windows-win".parse().unwrap();
         let version = Version::new(2, 4, 1);
         let mut builder = RustwideBuilder::init(&env.context).unwrap();
         builder.update_toolchain()?;
@@ -1907,7 +1916,7 @@ mod tests {
         }
         assert!(
             builder
-                .build_package(crate_, &version, PackageKind::CratesIo, false)?
+                .build_package(&crate_, &version, PackageKind::CratesIo, false)?
                 .successful
         );
 
@@ -1950,7 +1959,7 @@ mod tests {
         )?;
 
         // if the corrected dependency of the crate was already downloaded we need to remove it
-        remove_cache_files(&env, "rand_core", &Version::new(0, 5, 1))?;
+        remove_cache_files(&env, &"rand_core".parse().unwrap(), &Version::new(0, 5, 1))?;
 
         // Specific setup required:
         //  * crate has a binary so that it is published with a lockfile
@@ -1980,7 +1989,11 @@ mod tests {
         )?;
 
         // if the corrected dependency of the crate was already downloaded we need to remove it
-        remove_cache_files(&env, "value-bag-sval2", &Version::new(1, 4, 1))?;
+        remove_cache_files(
+            &env,
+            &"value-bag-sval2".parse().unwrap(),
+            &Version::new(1, 4, 1),
+        )?;
 
         // Similar to above, this crate fails to build with the published
         // lockfile, but generating a new working lockfile requires
@@ -2002,13 +2015,13 @@ mod tests {
     fn test_rustflags_are_passed_to_build_script() -> Result<()> {
         let env = TestEnvironment::new_with_runtime()?;
 
-        let crate_ = "proc-macro2";
+        let crate_: KrateName = "proc-macro2".parse().unwrap();
         let version = Version::new(1, 0, 95);
         let mut builder = RustwideBuilder::init(&env.context).unwrap();
         builder.update_toolchain()?;
         assert!(
             builder
-                .build_package(crate_, &version, PackageKind::CratesIo, false)?
+                .build_package(&crate_, &version, PackageKind::CratesIo, false)?
                 .successful
         );
         Ok(())
@@ -2023,7 +2036,7 @@ mod tests {
         // package with invalid cargo metadata.
         // Will succeed in the crate fetch step, so sources are
         // added. Will fail when we try to build.
-        let crate_ = "simconnect-sys";
+        let crate_: KrateName = "simconnect-sys".parse().unwrap();
         let version = Version::new(0, 23, 1);
         let mut builder = RustwideBuilder::init(&env.context).unwrap();
         builder.update_toolchain()?;
@@ -2031,7 +2044,7 @@ mod tests {
         // `Result` is `Ok`, but the build-result is `false`
         assert!(
             !builder
-                .build_package(crate_, &version, PackageKind::CratesIo, false)?
+                .build_package(&crate_, &version, PackageKind::CratesIo, false)?
                 .successful
         );
 
@@ -2052,13 +2065,13 @@ mod tests {
 
         // https://github.com/rust-lang/docs.rs/issues/2491
         // package without Cargo.toml, so fails directly in the fetch stage.
-        let crate_ = "emheap";
+        let crate_: KrateName = "emheap".parse().unwrap();
         let version = Version::new(0, 1, 0);
         let mut builder = RustwideBuilder::init(&env.context).unwrap();
         builder.update_toolchain()?;
 
         // `Result` is `Ok`, but the build-result is `false`
-        let summary = builder.build_package(crate_, &version, PackageKind::CratesIo, false)?;
+        let summary = builder.build_package(&crate_, &version, PackageKind::CratesIo, false)?;
 
         assert!(!summary.successful);
         assert!(summary.should_reattempt);
@@ -2096,18 +2109,18 @@ mod tests {
     fn test_implicit_features_for_optional_dependencies() -> Result<()> {
         let env = TestEnvironment::new_with_runtime()?;
 
-        let crate_ = "serde";
+        let crate_: KrateName = "serde".parse().unwrap();
         let version = Version::new(1, 0, 152);
         let mut builder = RustwideBuilder::init(&env.context).unwrap();
         builder.update_toolchain()?;
         assert!(
             builder
-                .build_package(crate_, &version, PackageKind::CratesIo, false)?
+                .build_package(&crate_, &version, PackageKind::CratesIo, false)?
                 .successful
         );
 
         assert!(
-            get_features(&env, crate_, &version)?
+            get_features(&env, &crate_, &version)?
                 .unwrap()
                 .iter()
                 .any(|f| f.name == "serde_derive")
@@ -2130,12 +2143,16 @@ mod tests {
         );
 
         assert_eq!(
-            get_features(&env, "optional-dep", &Version::new(0, 0, 1))?
-                .unwrap()
-                .iter()
-                .map(|f| f.name.to_owned())
-                .sorted()
-                .collect_vec(),
+            get_features(
+                &env,
+                &"optional-dep".parse().unwrap(),
+                &Version::new(0, 0, 1)
+            )?
+            .unwrap()
+            .iter()
+            .map(|f| f.name.to_owned())
+            .sorted()
+            .collect_vec(),
             // "regex" feature is not in the list,
             // because we don't have implicit features for optional dependencies
             // with `dep` syntax any more.
@@ -2221,7 +2238,7 @@ mod tests {
         assert!(
             builder
                 .build_package(
-                    DUMMY_CRATE_NAME,
+                    &&DUMMY_CRATE_NAME,
                     &DUMMY_CRATE_VERSION,
                     PackageKind::CratesIo,
                     false

@@ -103,7 +103,7 @@ pub(crate) async fn build_list_handler(
 
 async fn crate_version_exists(
     conn: &mut sqlx::PgConnection,
-    name: &String,
+    name: &KrateName,
     version: &Version,
 ) -> Result<bool, anyhow::Error> {
     let row = sqlx::query!(
@@ -123,7 +123,7 @@ async fn crate_version_exists(
 
 async fn build_trigger_check(
     conn: &mut sqlx::PgConnection,
-    name: &String,
+    name: &KrateName,
     version: &Version,
     build_queue: &Arc<AsyncBuildQueue>,
 ) -> AxumResult<impl IntoResponse> {
