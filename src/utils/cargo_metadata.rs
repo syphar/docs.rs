@@ -62,7 +62,7 @@ impl CargoMetadata {
 #[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct Package {
     pub(crate) id: String,
-    pub(crate) name: KrateName,
+    pub(crate) name: String,
     pub(crate) version: Version,
     pub(crate) license: Option<String>,
     pub(crate) repository: Option<String>,
