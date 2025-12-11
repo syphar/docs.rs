@@ -25,7 +25,7 @@ pub(crate) async fn status_handler(
             let rustdoc_status = matched_release.rustdoc_status();
 
             let version = matched_release
-                .into_canonical_req_version_or_else(|confirmed_name, version| {
+                .into_canonical_req_version_or_else(|_confirmed_name, version| {
                     AxumNope::Redirect(
                         params.clone().with_req_version(version).build_status_url(),
                         CachePolicy::NoCaching,

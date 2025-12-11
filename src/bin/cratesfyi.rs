@@ -332,7 +332,7 @@ enum PrioritySubcommand {
     /// Get priority for a crate
     ///
     /// (returns only the first matching pattern, there may be other matching patterns)
-    Get { crate_name: String },
+    Get { crate_name: KrateName },
 
     /// List priorities for all patterns
     List,
@@ -405,7 +405,7 @@ enum BuildSubcommand {
     Crate {
         /// Crate name
         #[arg(name = "CRATE_NAME", requires("CRATE_VERSION"))]
-        crate_name: Option<String>,
+        crate_name: Option<KrateName>,
 
         /// Version of crate
         #[arg(name = "CRATE_VERSION")]
@@ -540,7 +540,7 @@ enum DatabaseSubcommand {
     /// Updates info for a crate from the registry's API
     UpdateCrateRegistryFields {
         #[arg(name = "CRATE")]
-        name: String,
+        name: KrateName,
     },
 
     AddDirectory {
@@ -670,14 +670,14 @@ impl DatabaseSubcommand {
 #[derive(Debug, Clone, PartialEq, Eq, Subcommand)]
 enum LimitsSubcommand {
     /// Get sandbox limit overrides for a crate
-    Get { crate_name: String },
+    Get { crate_name: KrateName },
 
     /// List sandbox limit overrides for all crates
     List,
 
     /// Set sandbox limits overrides for a crate
     Set {
-        crate_name: String,
+        crate_name: KrateName,
         #[arg(long)]
         memory: Option<usize>,
         #[arg(long)]
@@ -687,7 +687,7 @@ enum LimitsSubcommand {
     },
 
     /// Remove sandbox limits overrides for a crate
-    Remove { crate_name: String },
+    Remove { crate_name: KrateName },
 }
 
 impl LimitsSubcommand {
@@ -746,14 +746,14 @@ enum BlacklistSubcommand {
     Add {
         /// Crate name
         #[arg(name = "CRATE_NAME")]
-        crate_name: String,
+        crate_name: KrateName,
     },
 
     /// Remove a crate from the blacklist
     Remove {
         /// Crate name
         #[arg(name = "CRATE_NAME")]
-        crate_name: String,
+        crate_name: KrateName,
     },
 }
 
@@ -789,13 +789,13 @@ enum DeleteSubcommand {
     Crate {
         /// Name of the crate to delete
         #[arg(name = "CRATE_NAME")]
-        name: String,
+        name: KrateName,
     },
     /// Delete a single version of a crate (which may include multiple builds)
     Version {
         /// Name of the crate to delete
         #[arg(name = "CRATE_NAME")]
-        name: String,
+        name: KrateName,
 
         /// The version of the crate to delete
         #[arg(name = "VERSION")]

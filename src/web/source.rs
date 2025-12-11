@@ -199,7 +199,7 @@ pub(crate) async fn source_browser_handler(
     let params = params.with_page_kind(PageKind::Source);
     let matched_release = match_version(&mut conn, params.name(), params.req_version())
         .await?
-        .into_exactly_named_or_else(|corrected_name, req_version| {
+        .into_exactly_named_or_else(|_corrected_name, req_version| {
             AxumNope::Redirect(
                 params.clone().with_req_version(req_version).source_url(),
                 CachePolicy::NoCaching,
