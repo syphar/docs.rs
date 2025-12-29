@@ -1,8 +1,8 @@
-use docs_rs_types::Version;
+use docs_rs_types::{KrateName, Version};
 
 #[derive(Clone, PartialEq, Debug)]
 pub(super) struct Crate {
-    pub(super) name: String,
+    pub(super) name: KrateName,
     pub(super) releases: Releases,
 }
 

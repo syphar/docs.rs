@@ -1,22 +1,22 @@
 use super::data::Crate;
-use docs_rs_types::Version;
+use docs_rs_types::{KrateName, Version};
 use itertools::{
     EitherOrBoth::{Both, Left, Right},
     Itertools,
 };
-use std::fmt::Display;
+use std::fmt::{self, Display};
 
 #[derive(Debug, PartialEq)]
 pub(super) enum Difference {
-    CrateNotInIndex(String),
-    CrateNotInDb(String, Vec<Version>),
-    ReleaseNotInIndex(String, Version),
-    ReleaseNotInDb(String, Version),
-    ReleaseYank(String, Version, bool),
+    CrateNotInIndex(KrateName),
+    CrateNotInDb(KrateName, Vec<Version>),
+    ReleaseNotInIndex(KrateName, Version),
+    ReleaseNotInDb(KrateName, Version),
+    ReleaseYank(KrateName, Version, bool),
 }
 
 impl Display for Difference {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Difference::CrateNotInIndex(name) => {
                 write!(f, "Crate in db not in index: {name}")?;
@@ -103,10 +103,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::test::{V2, V3};
-
     use super::super::data::Release;
     use super::*;
+    use docs_rs_types::testing::{KRATE, V2, V3};
     use std::iter;
 
     #[test]
@@ -117,20 +116,20 @@ mod tests {
     #[test]
     fn test_crate_not_in_index() {
         let db_releases = [Crate {
-            name: "krate".into(),
+            name: KRATE,
             releases: vec![],
         }];
 
         assert_eq!(
             calculate_diff(db_releases.iter(), [].iter()),
-            vec![Difference::CrateNotInIndex("krate".into())]
+            vec![Difference::CrateNotInIndex(KRATE)]
         );
     }
 
     #[test]
     fn test_crate_not_in_db() {
         let index_releases = [Crate {
-            name: "krate".into(),
+            name: KRATE,
             releases: vec![
                 Release {
                     version: V2,
@@ -145,14 +144,14 @@ mod tests {
 
         assert_eq!(
             calculate_diff([].iter(), index_releases.iter()),
-            vec![Difference::CrateNotInDb("krate".into(), vec![V2, V3])]
+            vec![Difference::CrateNotInDb(KRATE, vec![V2, V3])]
         );
     }
 
     #[test]
     fn test_yank_diff() {
         let db_releases = [Crate {
-            name: "krate".into(),
+            name: KRATE,
             releases: vec![
                 Release {
                     version: V2,
@@ -165,7 +164,7 @@ mod tests {
             ],
         }];
         let index_releases = [Crate {
-            name: "krate".into(),
+            name: KRATE,
             releases: vec![
                 Release {
                     version: V2,
@@ -180,21 +179,21 @@ mod tests {
 
         assert_eq!(
             calculate_diff(db_releases.iter(), index_releases.iter()),
-            vec![Difference::ReleaseYank("krate".into(), V2, false,)]
+            vec![Difference::ReleaseYank(KRATE, V2, false,)]
         );
     }
 
     #[test]
     fn test_yank_diff_without_db_data() {
         let db_releases = [Crate {
-            name: "krate".into(),
+            name: KRATE,
             releases: vec![Release {
                 version: V2,
                 yanked: None,
             }],
         }];
         let index_releases = [Crate {
-            name: "krate".into(),
+            name: KRATE,
             releases: vec![Release {
                 version: V2,
                 yanked: Some(false),

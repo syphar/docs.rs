@@ -1,5 +1,5 @@
-use crate::{Config, error::Result, utils::report_error};
-use anyhow::Context as _;
+use crate::Config;
+use anyhow::{Context as _, Result};
 use crates_index_diff::{Change, gix, index::diff::Order};
 use docs_rs_utils::run_blocking;
 use std::{
@@ -7,6 +7,7 @@ use std::{
     sync::{Arc, Mutex, atomic::AtomicBool},
 };
 use tokio::process::Command;
+use tracing::error;
 
 const THREAD_NAME: &str = "crates-index-diff";
 
@@ -72,18 +73,14 @@ impl Index {
             .arg(&self.path)
             .args(["gc", "--auto"])
             .output()
-            .await
-            .with_context(|| format!("failed to run `git gc --auto`\npath: {:#?}", &self.path));
+            .await;
 
         if let Err(err) = gc {
-            report_error(&err);
+            error!(path=%self.path.display(), ?err, "failed to run `git gc --auto`");
         }
     }
 
-    async fn peek_changes_with_order(
-        &self,
-        order: Order,
-    ) -> Result<(Vec<Change>, gix::hash::ObjectId)> {
+    async fn peek_changes_with_order(&self, order: Order) -> Result<(Vec<Change>, gix::ObjectId)> {
         let index = self.index.clone();
         run_blocking(THREAD_NAME, move || {
             let index = index.lock().unwrap();
@@ -94,16 +91,16 @@ impl Index {
         .await
     }
 
-    pub async fn peek_changes(&self) -> Result<(Vec<Change>, gix::hash::ObjectId)> {
+    pub async fn peek_changes(&self) -> Result<(Vec<Change>, gix::ObjectId)> {
         self.peek_changes_with_order(Order::ImplementationDefined)
             .await
     }
 
-    pub async fn peek_changes_ordered(&self) -> Result<(Vec<Change>, gix::hash::ObjectId)> {
+    pub async fn peek_changes_ordered(&self) -> Result<(Vec<Change>, gix::ObjectId)> {
         self.peek_changes_with_order(Order::AsInCratesIndex).await
     }
 
-    pub async fn set_last_seen_reference(&self, to: gix::hash::ObjectId) -> Result<()> {
+    pub async fn set_last_seen_reference(&self, to: gix::ObjectId) -> Result<()> {
         let index = self.index.clone();
         run_blocking(THREAD_NAME, move || {
             let index = index.lock().unwrap();

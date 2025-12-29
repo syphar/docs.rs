@@ -1,12 +1,11 @@
-use crate::error::Result;
-use anyhow::{Context, bail};
+use anyhow::{Context as _, Result, bail};
 use base64::{Engine, engine::general_purpose::STANDARD as b64};
 use chrono::{DateTime, Utc};
 use docs_rs_builder::RUSTDOC_JSON_COMPRESSION_ALGORITHMS;
 use docs_rs_cargo_metadata::{Dependency, MetadataPackage, Target};
 use docs_rs_database::{
+    Pool,
     releases::{initialize_build, initialize_crate, initialize_release, update_build_status},
-    testing::TestDatabase,
 };
 use docs_rs_registry_api::{CrateData, CrateOwner, ReleaseData};
 use docs_rs_storage::{
@@ -27,7 +26,7 @@ use tracing::debug;
 /// Create a fake release in the database that failed before the build.
 /// This is a temporary small factory function only until we refactored the
 /// `FakeRelease` and `FakeBuild` factories to be more flexible.
-pub(crate) async fn fake_release_that_failed_before_build<V>(
+pub async fn fake_release_that_failed_before_build<V>(
     conn: &mut sqlx::PgConnection,
     name: &str,
     version: V,
@@ -60,8 +59,8 @@ where
 }
 
 #[must_use = "FakeRelease does nothing until you call .create()"]
-pub(crate) struct FakeRelease<'a> {
-    db: &'a TestDatabase,
+pub struct FakeRelease<'a> {
+    pool: Pool,
     storage: Arc<AsyncStorage>,
     package: MetadataPackage,
     builds: Option<Vec<FakeBuild>>,
@@ -83,7 +82,7 @@ pub(crate) struct FakeRelease<'a> {
     no_cargo_toml: bool,
 }
 
-pub(crate) struct FakeBuild {
+pub struct FakeBuild {
     s3_build_log: Option<String>,
     other_build_logs: HashMap<String, String>,
     db_build_log: Option<String>,
@@ -96,9 +95,9 @@ const DEFAULT_CONTENT: &[u8] =
     b"<html><head></head><body>default content for test/fakes</body></html>";
 
 impl<'a> FakeRelease<'a> {
-    pub(super) fn new(db: &'a TestDatabase, storage: Arc<AsyncStorage>) -> Self {
+    pub fn new(pool: Pool, storage: Arc<AsyncStorage>) -> Self {
         FakeRelease {
-            db,
+            pool,
             storage,
             package: MetadataPackage {
                 id: "fake-package-id".into(),
@@ -150,29 +149,29 @@ impl<'a> FakeRelease<'a> {
         }
     }
 
-    pub(crate) fn description(mut self, new: impl Into<String>) -> Self {
+    pub fn description(mut self, new: impl Into<String>) -> Self {
         self.package.description = Some(new.into());
         self
     }
 
-    pub(crate) fn add_dependency(mut self, dependency: Dependency) -> Self {
+    pub fn add_dependency(mut self, dependency: Dependency) -> Self {
         self.package.dependencies.push(dependency);
         self
     }
 
-    pub(crate) fn release_time(mut self, new: DateTime<Utc>) -> Self {
+    pub fn release_time(mut self, new: DateTime<Utc>) -> Self {
         self.registry_release_data.release_time = new;
         self
     }
 
-    pub(crate) fn name(mut self, new: &str) -> Self {
+    pub fn name(mut self, new: &str) -> Self {
         self.package.name = new.into();
         self.package.id = format!("{new}-id");
         self.package.targets[0].name = new.into();
         self
     }
 
-    pub(crate) fn version<V>(mut self, new: V) -> Self
+    pub fn version<V>(mut self, new: V) -> Self
     where
         V: TryInto<Version>,
         V::Error: fmt::Debug,
@@ -181,14 +180,14 @@ impl<'a> FakeRelease<'a> {
         self
     }
 
-    pub(crate) fn repo(mut self, repo: impl Into<String>) -> Self {
+    pub fn repo(mut self, repo: impl Into<String>) -> Self {
         self.package.repository = Some(repo.into());
         self
     }
 
     /// Shortcut to add a single unsuccessful build with default data
     // TODO: How should `has_docs` actually be handled?
-    pub(crate) fn build_result_failed(self) -> Self {
+    pub fn build_result_failed(self) -> Self {
         assert!(
             self.builds.is_none(),
             "cannot use custom builds with build_result_failed"
@@ -200,7 +199,7 @@ impl<'a> FakeRelease<'a> {
         }
     }
 
-    pub(crate) fn builds(self, builds: Vec<FakeBuild>) -> Self {
+    pub fn builds(self, builds: Vec<FakeBuild>) -> Self {
         assert!(self.builds.is_none());
         assert!(!builds.is_empty());
         Self {
@@ -209,7 +208,7 @@ impl<'a> FakeRelease<'a> {
         }
     }
 
-    pub(crate) fn no_builds(self) -> Self {
+    pub fn no_builds(self) -> Self {
         assert!(self.builds.is_none());
         Self {
             builds: Some(vec![]),
@@ -217,57 +216,57 @@ impl<'a> FakeRelease<'a> {
         }
     }
 
-    pub(crate) fn yanked(mut self, new: bool) -> Self {
+    pub fn yanked(mut self, new: bool) -> Self {
         self.registry_release_data.yanked = new;
         self
     }
 
-    pub(crate) fn archive_storage(mut self, new: bool) -> Self {
+    pub fn archive_storage(mut self, new: bool) -> Self {
         self.archive_storage = new;
         self
     }
 
     /// Since we switched to LOL HTML, all data must have a valid <head> and <body>.
     /// To avoid duplicating them in every test, this just makes up some content.
-    pub(crate) fn rustdoc_file(mut self, path: &'a str) -> Self {
+    pub fn rustdoc_file(mut self, path: &'a str) -> Self {
         self.rustdoc_files.push((path, DEFAULT_CONTENT));
         self
     }
 
-    pub(crate) fn rustdoc_file_with(mut self, path: &'a str, data: &'a [u8]) -> Self {
+    pub fn rustdoc_file_with(mut self, path: &'a str, data: &'a [u8]) -> Self {
         self.rustdoc_files.push((path, data));
         self
     }
 
-    pub(crate) fn source_file(mut self, path: &'a str, data: &'a [u8]) -> Self {
+    pub fn source_file(mut self, path: &'a str, data: &'a [u8]) -> Self {
         self.source_files.push((path, data));
         self
     }
 
-    pub(crate) fn target_source(mut self, path: &'a str) -> Self {
+    pub fn target_source(mut self, path: &'a str) -> Self {
         if let Some(target) = self.package.targets.first_mut() {
             target.src_path = Some(path.into());
         }
         self
     }
 
-    pub(crate) fn no_cargo_toml(mut self) -> Self {
+    pub fn no_cargo_toml(mut self) -> Self {
         self.no_cargo_toml = true;
         self
     }
 
-    pub(crate) fn default_target(mut self, target: &'a str) -> Self {
+    pub fn default_target(mut self, target: &'a str) -> Self {
         self = self.add_target(target);
         self.default_target = Some(target);
         self
     }
 
-    pub(crate) fn add_target(mut self, target: &str) -> Self {
+    pub fn add_target(mut self, target: &str) -> Self {
         self.doc_targets.push(target.into());
         self
     }
 
-    pub(crate) fn binary(mut self, bin: bool) -> Self {
+    pub fn binary(mut self, bin: bool) -> Self {
         self.has_docs = !bin;
         if bin {
             for target in self.package.targets.iter_mut() {
@@ -277,7 +276,7 @@ impl<'a> FakeRelease<'a> {
         self
     }
 
-    pub(crate) fn add_platform<S: Into<String>>(mut self, platform: S) -> Self {
+    pub fn add_platform<S: Into<String>>(mut self, platform: S) -> Self {
         let platform = platform.into();
         let name = self.package.targets[0].name.clone();
         let target = Target::dummy_lib(name, Some(platform.clone()));
@@ -287,35 +286,35 @@ impl<'a> FakeRelease<'a> {
     }
 
     /// NOTE: this should be markdown. It will be rendered as HTML when served.
-    pub(crate) fn readme(mut self, content: &'a str) -> Self {
+    pub fn readme(mut self, content: &'a str) -> Self {
         self.readme = Some(content);
         self.source_file("README.md", content.as_bytes())
     }
 
     /// NOTE: this should be markdown. It will be rendered as HTML when served.
-    pub(crate) fn readme_only_database(mut self, content: &'a str) -> Self {
+    pub fn readme_only_database(mut self, content: &'a str) -> Self {
         self.readme = Some(content);
         self
     }
 
-    pub(crate) fn add_owner(mut self, owner: CrateOwner) -> Self {
+    pub fn add_owner(mut self, owner: CrateOwner) -> Self {
         self.registry_crate_data.owners.push(owner);
         self
     }
 
-    pub(crate) fn doc_coverage(self, doc_coverage: DocCoverage) -> Self {
+    pub fn doc_coverage(self, doc_coverage: DocCoverage) -> Self {
         Self {
             doc_coverage: Some(doc_coverage),
             ..self
         }
     }
 
-    pub(crate) fn features(mut self, features: BTreeMap<String, Vec<String>>) -> Self {
+    pub fn features(mut self, features: BTreeMap<String, Vec<String>>) -> Self {
         self.package.features = features;
         self
     }
 
-    pub(crate) fn github_stats(
+    pub fn github_stats(
         mut self,
         repo: impl Into<String>,
         stars: i32,
@@ -331,18 +330,18 @@ impl<'a> FakeRelease<'a> {
         self
     }
 
-    pub(crate) fn documentation_url(mut self, documentation_url: Option<String>) -> Self {
+    pub fn documentation_url(mut self, documentation_url: Option<String>) -> Self {
         self.package.documentation = documentation_url;
         self
     }
 
     /// Returns the release_id
-    pub(crate) async fn create(mut self) -> Result<ReleaseId> {
+    pub async fn create(mut self) -> Result<ReleaseId> {
         use std::fs;
         use std::path::Path;
 
         let package = self.package;
-        let db = self.db;
+        let pool = self.pool;
         let mut rustdoc_files = self.rustdoc_files;
         let storage = self.storage;
         let archive_storage = self.archive_storage;
@@ -497,7 +496,7 @@ impl<'a> FakeRelease<'a> {
             debug!(?files, "uploaded rustdoc files");
         }
 
-        let mut async_conn = db.async_conn().await?;
+        let mut async_conn = pool.get_async().await?;
 
         let repository = match self.github_stats {
             Some(stats) => Some(stats.create(&mut async_conn).await?),
@@ -547,7 +546,7 @@ impl<'a> FakeRelease<'a> {
         // Many tests rely on the default-target being linux, so it should not
         // be set to docsrs_metadata::HOST_TARGET, because then tests fail on all
         // non-linux platforms.
-        let mut async_conn = db.async_conn().await?;
+        let mut async_conn = pool.get_async().await?;
         let crate_id = initialize_crate(&mut async_conn, &package.name).await?;
         let release_id = initialize_release(&mut async_conn, crate_id, &package.version).await?;
 
@@ -616,28 +615,28 @@ impl FakeGithubStats {
 }
 
 impl FakeBuild {
-    pub(crate) fn rustc_version(self, rustc_version: impl Into<String>) -> Self {
+    pub fn rustc_version(self, rustc_version: impl Into<String>) -> Self {
         Self {
             rustc_version: rustc_version.into(),
             ..self
         }
     }
 
-    pub(crate) fn docsrs_version(self, docsrs_version: impl Into<String>) -> Self {
+    pub fn docsrs_version(self, docsrs_version: impl Into<String>) -> Self {
         Self {
             docsrs_version: docsrs_version.into(),
             ..self
         }
     }
 
-    pub(crate) fn s3_build_log(self, build_log: impl Into<String>) -> Self {
+    pub fn s3_build_log(self, build_log: impl Into<String>) -> Self {
         Self {
             s3_build_log: Some(build_log.into()),
             ..self
         }
     }
 
-    pub(crate) fn build_log_for_other_target(
+    pub fn build_log_for_other_target(
         mut self,
         target: impl Into<String>,
         build_log: impl Into<String>,
@@ -647,21 +646,21 @@ impl FakeBuild {
         self
     }
 
-    pub(crate) fn db_build_log(self, build_log: impl Into<String>) -> Self {
+    pub fn db_build_log(self, build_log: impl Into<String>) -> Self {
         Self {
             db_build_log: Some(build_log.into()),
             ..self
         }
     }
 
-    pub(crate) fn no_s3_build_log(self) -> Self {
+    pub fn no_s3_build_log(self) -> Self {
         Self {
             s3_build_log: None,
             ..self
         }
     }
 
-    pub(crate) fn successful(self, successful: bool) -> Self {
+    pub fn successful(self, successful: bool) -> Self {
         self.build_status(if successful {
             BuildStatus::Success
         } else {
@@ -669,7 +668,7 @@ impl FakeBuild {
         })
     }
 
-    pub(crate) fn build_status(self, build_status: BuildStatus) -> Self {
+    pub fn build_status(self, build_status: BuildStatus) -> Self {
         Self {
             build_status,
             ..self
