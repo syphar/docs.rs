@@ -1,3 +1,4 @@
+mod build;
 mod build_status;
 mod compression_algorithm;
 pub mod doc_coverage;
@@ -9,6 +10,7 @@ mod req_version;
 pub mod testing;
 mod version;
 
+pub use build::Build;
 pub use build_status::BuildStatus;
 pub use compression_algorithm::{CompressionAlgorithm, compression_from_file_extension};
 pub use doc_coverage::{DocCoverage, RawFileCoverage};

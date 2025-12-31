@@ -21,19 +21,9 @@ use constant_time_eq::constant_time_eq;
 use docs_rs_build_limits::Limits;
 use docs_rs_build_queue::{AsyncBuildQueue, PRIORITY_MANUAL_FROM_CRATES_IO};
 use docs_rs_headers::CanonicalUrl;
-use docs_rs_types::{BuildId, BuildStatus, KrateName, ReqVersion, Version};
+use docs_rs_types::{Build, BuildId, BuildStatus, KrateName, ReqVersion, Version};
 use http::StatusCode;
 use std::sync::Arc;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Build {
-    id: BuildId,
-    rustc_version: Option<String>,
-    docsrs_version: Option<String>,
-    build_status: BuildStatus,
-    build_time: Option<DateTime<Utc>>,
-    errors: Option<String>,
-}
 
 #[derive(Template)]
 #[template(path = "crate/builds.html")]
