@@ -19,23 +19,19 @@ constant_time_eq = "0.4.2"
 derive_more = { workspace = true }
 docs_rs_build_limits = { path = "../../lib/docs_rs_build_limits" }
 docs_rs_build_queue = { path = "../../lib/docs_rs_build_queue" }
-docs_rs_builder = { path = "../docs_rs_builder" }
 docs_rs_cargo_metadata = { path = "../../lib/docs_rs_cargo_metadata" }
 docs_rs_context = { path = "../../lib/docs_rs_context" }
 docs_rs_database = { path = "../../lib/docs_rs_database" }
 docs_rs_env_vars = { path = "../../lib/docs_rs_env_vars" }
-docs_rs_fastly = { path = "../../lib/docs_rs_fastly" }
 docs_rs_headers = { path = "../../lib/docs_rs_headers" }
 docs_rs_logging = { path = "../../lib/docs_rs_logging" }
 docs_rs_mimes = { path = "../../lib/docs_rs_mimes" }
 docs_rs_opentelemetry = { path = "../../lib/docs_rs_opentelemetry" }
 docs_rs_registry_api = { path = "../../lib/docs_rs_registry_api" }
-docs_rs_repository_stats = { path = "../../lib/docs_rs_repository_stats" }
 docs_rs_storage = { path = "../../lib/docs_rs_storage" }
 docs_rs_types = { path = "../../lib/docs_rs_types" }
 docs_rs_uri = { path = "../../lib/docs_rs_uri" }
 docs_rs_utils = { path = "../../lib/docs_rs_utils" }
-docs_rs_watcher = { path = "../docs_rs_watcher" }
 font-awesome-as-a-crate = { path = "../../lib/font-awesome-as-a-crate" }
 futures-util = { workspace = true }
 getrandom = "0.3.1"
@@ -45,7 +41,6 @@ lol_html = "2.0.0"
 mime = { workspace = true }
 num_cpus = "1.15.0"
 opentelemetry = { workspace = true }
-opentelemetry_sdk = { workspace = true }
 phf = "0.13.1"
 postcard = { workspace = true }
 rayon = { workspace = true }
@@ -65,7 +60,6 @@ tower-http = { version = "0.6.0", features = ["fs", "trace", "timeout", "catch-p
 tracing = { workspace = true }
 tracing-futures= { version = "0.2.5", features = ["std-future", "futures-03"] }
 url = { workspace = true }
-walkdir = { workspace = true }
 
 [build-dependencies]
 anyhow = { version = "1.0.42", features = ["backtrace"] }
@@ -77,8 +71,13 @@ time = "0.3"
 walkdir = "2"
 
 [dev-dependencies]
-kuchikiki = "0.8"
+docs_rs_database = { path = "../../lib/docs_rs_database", features = ["testing"] }
+docs_rs_storage = { path = "../../lib/docs_rs_storage", features = ["testing"] }
+docs_rs_test_fakes = { path = "../../lib/docs_rs_test_fakes" }
+docs_rs_types = { path = "../../lib/docs_rs_types", features = ["testing"] }
 http-body-util = "0.1.0"
+kuchikiki = "0.8"
+test-case = { workspace = true }
 
 [package.metadata.cargo-machete]
 ignored = [

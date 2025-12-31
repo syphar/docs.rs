@@ -65,41 +65,27 @@ walkdir = "2"
 docs_rs_build_limits = { path = "crates/lib/docs_rs_build_limits" }
 docs_rs_build_queue = { path = "crates/lib/docs_rs_build_queue" }
 docs_rs_builder = { path = "crates/bin/docs_rs_builder" }
-docs_rs_cargo_metadata = { path = "crates/lib/docs_rs_cargo_metadata" }
 docs_rs_context = { path = "crates/lib/docs_rs_context" }
 docs_rs_database = { path = "crates/lib/docs_rs_database" }
-docs_rs_env_vars = { path = "crates/lib/docs_rs_env_vars" }
 docs_rs_fastly = { path = "crates/lib/docs_rs_fastly" }
-docs_rs_headers = { path = "crates/lib/docs_rs_headers" }
 docs_rs_logging = { path = "crates/lib/docs_rs_logging" }
-docs_rs_mimes = { path = "crates/lib/docs_rs_mimes" }
 docs_rs_opentelemetry = { path = "crates/lib/docs_rs_opentelemetry" }
 docs_rs_registry_api = { path = "crates/lib/docs_rs_registry_api" }
 docs_rs_repository_stats = { path = "crates/lib/docs_rs_repository_stats" }
 docs_rs_storage = { path = "crates/lib/docs_rs_storage" }
 docs_rs_types = { path = "crates/lib/docs_rs_types" }
-docs_rs_uri = { path = "crates/lib/docs_rs_uri" }
 docs_rs_utils = { path = "crates/lib/docs_rs_utils" }
 docs_rs_watcher = { path = "crates/bin/docs_rs_watcher" }
 docs_rs_web = { path = "crates/bin/docs_rs_web" }
 
 anyhow = { workspace = true }
 tracing = { workspace = true }
-async-stream = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
-base64 = { workspace = true }
 tokio = { workspace = true }
 derive_builder = "0.20.2"
-derive_more = { workspace = true }
 futures-util = { workspace = true }
-http = { workspace = true }
-reqwest = { workspace = true }
-sentry = { workspace = true }
-slug = { workspace = true }
 sqlx = { workspace = true }
-thiserror = { workspace = true }
-url = { workspace = true }
 
 [dev-dependencies]
 docs_rs_build_queue = { path = "crates/lib/docs_rs_build_queue", features = ["testing"] }

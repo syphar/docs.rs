@@ -60,4 +60,9 @@ impl Config {
             build_limits_config: docs_rs_build_limits::Config::from_environment()?,
         })
     }
+
+    #[cfg(test)]
+    pub fn test_config() -> anyhow::Result<Self> {
+        Self::from_environment()
+    }
 }
