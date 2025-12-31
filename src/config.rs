@@ -1,7 +1,6 @@
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Context as _, Result};
 use docs_rs_context::Config as NewConfig;
-use docs_rs_env_vars::{env, maybe_env, require_env};
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::sync::Arc;
 
 #[derive(Debug, derive_builder::Builder)]
 #[builder(pattern = "owned")]
@@ -34,8 +33,6 @@ impl From<&Config> for NewConfig {
 
 impl Config {
     pub fn from_env() -> Result<ConfigBuilder> {
-        let prefix: PathBuf = require_env("DOCSRS_PREFIX")?;
-
         Ok(ConfigBuilder::default()
             .fastly(Arc::new(
                 docs_rs_fastly::Config::from_environment()

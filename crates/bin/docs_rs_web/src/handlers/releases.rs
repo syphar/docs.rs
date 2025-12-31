@@ -11,7 +11,7 @@ use crate::{
     metrics::WebMetrics,
     page::templates::{RenderBrands, RenderRegular, RenderSolid, filters},
 };
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use askama::Template;
 use axum::{
     extract::{Extension, Query},

@@ -1,35 +1,8 @@
 use crate::error::AxumNope;
-use crate::page::TemplateData;
-use crate::{
-    impl_axum_webpage,
-    metrics::WebMetrics,
-    page::templates::{RenderBrands, RenderSolid, filters},
-};
-use anyhow::{Context as _, Error, Result, anyhow, bail};
-use askama::Template;
-use axum::{
-    Router as AxumRouter,
-    extract::{Extension, MatchedPath, Request as AxumRequest},
-    http::StatusCode,
-    middleware,
-    middleware::Next,
-    response::{IntoResponse, Response as AxumResponse},
-};
-use axum_extra::middleware::option_layer;
-use chrono::{DateTime, NaiveDate, Utc};
-use docs_rs_database::crate_details::{Release, parse_doc_targets};
+use anyhow::{Context as _, Result};
+use docs_rs_database::crate_details::Release;
 use docs_rs_types::{BuildStatus, CrateId, KrateName, ReqVersion, Version, VersionReq};
-use docs_rs_utils::rustc_version::parse_rustc_date;
-use sentry::integrations::tower as sentry_tower;
-use serde::Serialize;
-use std::{
-    borrow::Cow,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
-    sync::Arc,
-};
-use tower::ServiceBuilder;
-use tower_http::{catch_panic::CatchPanicLayer, timeout::TimeoutLayer, trace::TraceLayer};
-use tracing::{info, instrument};
+use tracing::instrument;
 
 #[derive(Debug)]
 pub(crate) struct MatchedRelease {

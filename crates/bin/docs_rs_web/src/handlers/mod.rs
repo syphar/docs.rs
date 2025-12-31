@@ -12,17 +12,11 @@ pub(crate) mod statics;
 pub(crate) mod status;
 
 use crate::Config;
-use crate::error::AxumNope;
 use crate::middleware::{csp, security};
 use crate::page::{self, TemplateData};
 use crate::{cache, routes};
-use crate::{
-    impl_axum_webpage,
-    metrics::WebMetrics,
-    page::templates::{RenderBrands, RenderSolid, filters},
-};
+use crate::metrics::WebMetrics;
 use anyhow::{Context as _, Error, Result, anyhow, bail};
-use askama::Template;
 use axum::{
     Router as AxumRouter,
     extract::{Extension, MatchedPath, Request as AxumRequest},
@@ -32,15 +26,9 @@ use axum::{
     response::{IntoResponse, Response as AxumResponse},
 };
 use axum_extra::middleware::option_layer;
-use chrono::{DateTime, NaiveDate, Utc};
 use docs_rs_context::Context;
-use docs_rs_database::crate_details::{Release, parse_doc_targets};
-use docs_rs_types::{BuildStatus, CrateId, KrateName, ReqVersion, Version, VersionReq};
-use docs_rs_utils::rustc_version::parse_rustc_date;
 use sentry::integrations::tower as sentry_tower;
-use serde::Serialize;
 use std::{
-    borrow::Cow,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
 };

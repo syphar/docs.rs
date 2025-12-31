@@ -1,3 +1,9 @@
+#![allow(
+    // clippy::cognitive_complexity,
+    // TODO: `AxumNope::Redirect(EscapedURI, CachePolicy)` is too big.
+    clippy::result_large_err,
+)]
+
 mod cache;
 mod config;
 mod error;

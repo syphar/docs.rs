@@ -14,5 +14,4 @@ pub use docs_rs_utils::{APP_USER_AGENT, BUILD_VERSION, RUSTDOC_STATIC_STORAGE_PR
 
 mod config;
 mod context;
-mod error;
 pub mod utils;

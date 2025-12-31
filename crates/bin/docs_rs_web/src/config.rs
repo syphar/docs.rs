@@ -41,7 +41,7 @@ pub struct Config {
 
 impl Config {
     pub fn from_environment() -> anyhow::Result<Self> {
-        let prefix: PathBuf = require_env("DOCSRS_PREFIX")?;
+        let _prefix: PathBuf = require_env("DOCSRS_PREFIX")?;
         Ok(Self {
             cratesio_token: maybe_env("DOCSRS_CRATESIO_TOKEN")?,
             // LOL HTML only uses as much memory as the size of the start tag!
