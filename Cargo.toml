@@ -113,7 +113,6 @@ mockito = { workspace = true }
 test-case = { workspace = true }
 tower = { version = "0.5.1", features = ["util"] }
 opentelemetry_sdk = { version = "0.31.0", features = ["rt-tokio", "testing"] }
-indoc = "2.0.0"
 pretty_assertions = { workspace = true }
 
 [[bin]]

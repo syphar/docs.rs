@@ -6,7 +6,6 @@ pub(crate) mod crate_details;
 pub(crate) mod features;
 pub(crate) mod releases;
 pub(crate) mod rustdoc;
-pub(crate) mod security;
 pub(crate) mod sitemap;
 pub(crate) mod source;
 pub(crate) mod statics;
@@ -14,7 +13,7 @@ pub(crate) mod status;
 
 use crate::Config;
 use crate::error::AxumNope;
-use crate::middleware::csp;
+use crate::middleware::{csp, security};
 use crate::page::{self, TemplateData};
 use crate::{cache, routes};
 use crate::{
