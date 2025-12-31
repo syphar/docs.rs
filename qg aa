@@ -1,0 +1,13 @@
+  libs-watcher-bin                [m a7f4fe88 [[34morigin/libs-watcher-bin[m] move registry watcher ( & related) to new binary crate
+* [32mnew-fake-release                [m a7f4fe88 move registry watcher ( & related) to new binary crate
++ [36mmain                            [m 08361ab2 ([36m/Users/syphar/src/rust-lang/docs.rs[m) [[34morigin/main[m] Update `askama` to `0.15.1`
++ [36mseparate-binary-all             [m 6546f897 ([36m/Users/syphar/src/rust-lang/docs.rs-separate-binaries[m) [[34morigin/separate-binary-all[m] kk
+  validation                      [m 92fc7a5e [[34morigin/validation[m] wip
+  separate-binary-watcher         [m a3172cfc [[34morigin/separate-binary-watcher[m] check
+  dont-retry-404                  [m 62815f5e [[34morigin/dont-retry-404[m] gracefully handle 404 from crates.io
+  cargo-metadata                  [m 090f841e [[34morigin/cargo-metadata[m] merge mainMerge branch 'main' into cargo-metadata
+  archive-file-lock-with-cleanup  [m d9e09e91 [[34morigin/archive-file-lock-with-cleanup[m] WIP
+  proc-macro-test                 [m 5533c58f [[34morigin/proc-macro-test[m] assert JSON success in proc macro build tests
+  separate-binaries               [m c42f0693 [[34morigin/separate-binaries[m] start
+  consistency-check-separate-crate[m 5558c09f [[34morigin/consistency-check-separate-crate[m] kk
+  get-publisher                   [m 70771d51 [[34morigin/get-publisher[m] add config var for free disk space goal
