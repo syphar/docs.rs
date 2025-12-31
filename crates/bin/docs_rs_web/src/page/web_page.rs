@@ -1,4 +1,4 @@
-use crate::web::{TemplateData, csp::Csp, error::AxumNope};
+use crate::{error::AxumNope, middleware::csp::Csp, page::templates::TemplateData};
 use axum::{
     body::Body,
     extract::Request as AxumRequest,
@@ -24,7 +24,7 @@ macro_rules! impl_axum_webpage {
         $(, cpu_intensive_rendering = $cpu_intensive_rendering:expr)?
         $(,)?
     ) => {
-        impl $crate::web::page::web_page::AddCspNonce for $page {
+        impl $crate::page::web_page::AddCspNonce for $page {
             fn render_with_csp_nonce(&mut self, csp_nonce: String) -> askama::Result<String> {
                 let values: (&str, &dyn std::any::Any) = ("csp_nonce", &csp_nonce);
                 self.render_with_values(&values)
@@ -62,7 +62,7 @@ macro_rules! impl_axum_webpage {
 
                 $(
                     response.extensions_mut().insert({
-                        let cache_policy: fn(&$page) -> $crate::web::cache::CachePolicy = $cache_policy;
+                        let cache_policy: fn(&$page) -> $crate::cache::CachePolicy = $cache_policy;
                         (cache_policy)(&self)
                     });
                 )?
@@ -80,7 +80,7 @@ macro_rules! impl_axum_webpage {
                 )?
 
 
-                response.extensions_mut().insert($crate::web::page::web_page::DelayedTemplateRender {
+                response.extensions_mut().insert($crate::page::web_page::DelayedTemplateRender {
                     template: std::sync::Arc::new(Box::new(self)),
                     cpu_intensive_rendering,
                 });

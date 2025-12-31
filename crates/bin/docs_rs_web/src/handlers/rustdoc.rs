@@ -1,25 +1,25 @@
 //! rustdoc handlerr
 
 use crate::{
-    BUILD_VERSION, Config, RUSTDOC_STATIC_STORAGE_PREFIX, utils,
-    web::{
-        MetaData, axum_cached_redirect,
-        cache::{CachePolicy, STATIC_ASSET_CACHE_POLICY},
-        crate_details::CrateDetails,
-        csp::Csp,
-        error::{AxumNope, AxumResult},
-        extractors::{
-            DbConnection, Path, WantedCompression,
-            rustdoc::{PageKind, RustdocParams, UrlParams},
-        },
-        file::StreamingFile,
-        licenses, match_version,
-        metrics::WebMetrics,
-        page::{
-            TemplateData,
-            templates::{RenderBrands, RenderRegular, RenderSolid, filters},
-        },
+    BUILD_VERSION, Config, RUSTDOC_STATIC_STORAGE_PREFIX,
+    cache::{CachePolicy, STATIC_ASSET_CACHE_POLICY},
+    error::{AxumNope, AxumResult},
+    extractors::{
+        DbConnection, Path, WantedCompression,
+        rustdoc::{PageKind, RustdocParams, UrlParams},
     },
+    file::StreamingFile,
+    handlers::{axum_cached_redirect, crate_details::CrateDetails},
+    match_release::match_version,
+    metadata::MetaData,
+    metrics::WebMetrics,
+    middleware::csp::Csp,
+    page::{
+        TemplateData,
+        templates::{RenderBrands, RenderRegular, RenderSolid, filters},
+    },
+    utils,
+    utils::licenses,
 };
 use anyhow::{Context as _, anyhow};
 use askama::Template;
@@ -517,7 +517,7 @@ impl RustdocPage {
                 etag.map(TypedHeader),
                 Extension(cache_policy),
                 TypedHeader(ContentType::from(mime::TEXT_HTML_UTF_8)),
-                Body::from_stream(utils::rewrite_rustdoc_html_stream(
+                Body::from_stream(utils::html_rewrite::rewrite_rustdoc_html_stream(
                     template_data,
                     rustdoc_html.content,
                     max_parse_memory,

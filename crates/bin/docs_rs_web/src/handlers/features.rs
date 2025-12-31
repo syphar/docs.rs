@@ -1,16 +1,14 @@
 use crate::{
-    impl_axum_webpage,
-    web::{
-        MetaData,
-        cache::CachePolicy,
-        error::{AxumNope, AxumResult},
-        extractors::{
-            DbConnection,
-            rustdoc::{PageKind, RustdocParams},
-        },
-        filters, match_version,
-        page::templates::{RenderBrands, RenderRegular, RenderSolid},
+    cache::CachePolicy,
+    error::{AxumNope, AxumResult},
+    extractors::{
+        DbConnection,
+        rustdoc::{PageKind, RustdocParams},
     },
+    impl_axum_webpage,
+    match_release::match_version,
+    metadata::MetaData,
+    page::templates::{RenderBrands, RenderRegular, RenderSolid, filters},
 };
 use anyhow::anyhow;
 use askama::Template;

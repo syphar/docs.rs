@@ -29,11 +29,11 @@ impl Csp {
         }
     }
 
-    pub(super) fn suppress(&self, suppress: bool) {
+    pub(crate) fn suppress(&self, suppress: bool) {
         self.suppress.store(suppress, Ordering::Relaxed);
     }
 
-    pub(super) fn nonce(&self) -> &str {
+    pub(crate) fn nonce(&self) -> &str {
         &self.nonce
     }
 

@@ -1,13 +1,12 @@
 use crate::{
-    Config, impl_axum_webpage,
-    web::{
-        MetaData,
-        cache::CachePolicy,
-        error::{AxumNope, AxumResult, JsonAxumNope, JsonAxumResult},
-        extractors::{DbConnection, Path, rustdoc::RustdocParams},
-        filters, match_version,
-        page::templates::{RenderBrands, RenderRegular, RenderSolid},
-    },
+    Config,
+    cache::CachePolicy,
+    error::{AxumNope, AxumResult, JsonAxumNope, JsonAxumResult},
+    extractors::{DbConnection, Path, rustdoc::RustdocParams},
+    impl_axum_webpage,
+    match_release::match_version,
+    metadata::MetaData,
+    page::templates::{RenderBrands, RenderRegular, RenderSolid, filters},
 };
 use anyhow::{Result, anyhow};
 use askama::Template;
@@ -86,7 +85,7 @@ pub(crate) async fn build_list_handler(
     Ok(BuildsPage {
         metadata,
         builds: get_builds(&mut conn, params.name(), &version).await?,
-        limits: Limits::for_crate(&config.build_limits, &mut conn, params.name()).await?,
+        limits: Limits::for_crate(&config.build_limits_config, &mut conn, params.name()).await?,
         canonical_url: CanonicalUrl::from_uri(
             params
                 .clone()

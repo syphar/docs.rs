@@ -52,7 +52,7 @@ pub(crate) struct MatchedRelease {
 }
 
 impl MatchedRelease {
-    fn assume_exact_name(self) -> Result<Self, AxumNope> {
+    pub(crate) fn assume_exact_name(self) -> Result<Self, AxumNope> {
         if self.corrected_name.is_none() {
             Ok(self)
         } else {
@@ -60,7 +60,7 @@ impl MatchedRelease {
         }
     }
 
-    fn into_exactly_named(self) -> Self {
+    pub(crate) fn into_exactly_named(self) -> Self {
         if let Some(corrected_name) = self.corrected_name {
             Self {
                 name: corrected_name.to_owned(),
@@ -72,7 +72,7 @@ impl MatchedRelease {
         }
     }
 
-    fn into_exactly_named_or_else<F>(self, f: F) -> Result<Self, AxumNope>
+    pub(crate) fn into_exactly_named_or_else<F>(self, f: F) -> Result<Self, AxumNope>
     where
         F: FnOnce(&KrateName, &ReqVersion) -> AxumNope,
     {
@@ -88,7 +88,7 @@ impl MatchedRelease {
     /// Mainly:
     /// * "newest"/"*" or empty -> "latest" in the URL
     /// * any other semver requirement -> specific version in the URL
-    fn into_canonical_req_version(self) -> Self {
+    pub(crate) fn into_canonical_req_version(self) -> Self {
         match self.req_version {
             ReqVersion::Exact(_) | ReqVersion::Latest => self,
             ReqVersion::Semver(version_req) => {
@@ -109,7 +109,7 @@ impl MatchedRelease {
 
     /// translate this MatchRelease into a specific semver::Version while canonicalizing the
     /// version specification.
-    fn into_canonical_req_version_or_else<F>(self, f: F) -> Result<Self, AxumNope>
+    pub(crate) fn into_canonical_req_version_or_else<F>(self, f: F) -> Result<Self, AxumNope>
     where
         F: FnOnce(&KrateName, &ReqVersion) -> AxumNope,
     {
@@ -123,19 +123,19 @@ impl MatchedRelease {
         }
     }
 
-    fn into_version(self) -> Version {
+    pub(crate) fn into_version(self) -> Version {
         self.release.version
     }
 
-    fn build_status(&self) -> BuildStatus {
+    pub(crate) fn build_status(&self) -> BuildStatus {
         self.release.build_status
     }
 
-    fn rustdoc_status(&self) -> bool {
+    pub(crate) fn rustdoc_status(&self) -> bool {
         self.release.rustdoc_status.unwrap_or(false)
     }
 
-    fn is_latest_url(&self) -> bool {
+    pub(crate) fn is_latest_url(&self) -> bool {
         matches!(self.req_version, ReqVersion::Latest)
     }
 }
@@ -172,7 +172,7 @@ fn semver_match<'a, F: Fn(&Release) -> bool>(
 /// underscores (`_`) and vice-versa. The return value will indicate whether the crate name has
 /// been matched exactly, or if there has been a "correction" in the name that matched instead.
 #[instrument(skip(conn))]
-async fn match_version(
+pub(crate) async fn match_version(
     conn: &mut sqlx::PgConnection,
     name: &str,
     input_version: &ReqVersion,

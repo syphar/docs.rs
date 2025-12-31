@@ -1,7 +1,8 @@
 //! Database based file handler
 
 use super::cache::CachePolicy;
-use crate::{Config, error::Result};
+use crate::Config;
+use anyhow::Result;
 use axum::{
     body::Body,
     extract::Extension,

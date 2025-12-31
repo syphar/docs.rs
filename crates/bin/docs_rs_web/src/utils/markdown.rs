@@ -1,4 +1,4 @@
-use crate::web::highlight;
+use crate::utils::highlight;
 use comrak::{Options, adapters::SyntaxHighlighterAdapter, options};
 use std::{borrow::Cow, collections::HashMap, fmt};
 

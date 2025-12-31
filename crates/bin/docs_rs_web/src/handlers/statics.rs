@@ -1,5 +1,7 @@
-use super::{cache::CachePolicy, metrics::request_recorder, routes::get_static};
-use crate::web::cache::STATIC_ASSET_CACHE_POLICY;
+use crate::{
+    cache::CachePolicy, cache::STATIC_ASSET_CACHE_POLICY, metrics::request_recorder,
+    routes::get_static,
+};
 use axum::{
     Router as AxumRouter,
     extract::{Extension, Request},

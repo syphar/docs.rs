@@ -36,7 +36,7 @@ pub struct Config {
     pub(crate) cache_invalidatable_responses: bool,
 
     pub(crate) storage: docs_rs_storage::Config,
-    pub(crate) build_utils_config: docs_rs_build_utils::Config,
+    pub(crate) build_limits_config: docs_rs_build_limits::Config,
 }
 
 impl Config {
@@ -57,7 +57,7 @@ impl Config {
             )?,
             cache_invalidatable_responses: env("DOCSRS_CACHE_INVALIDATEABLE_RESPONSES", true)?,
             storage: docs_rs_storage::Config::from_environment()?,
-            build_utils_config: docs_rs_build_utils::Config::from_environment()?,
+            build_limits_config: docs_rs_build_limits::Config::from_environment()?,
         })
     }
 }

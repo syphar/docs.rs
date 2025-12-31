@@ -1,6 +1,6 @@
 //! special rustdoc extractors
 
-use crate::{MetaData, error::AxumNope, extractors::Path};
+use crate::{error::AxumNope, extractors::Path, match_release::MatchedRelease, metadata::MetaData};
 use anyhow::Result;
 use axum::{
     RequestPartsExt,

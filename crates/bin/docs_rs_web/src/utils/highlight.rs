@@ -1,4 +1,4 @@
-use crate::error::Result;
+use anyhow::Result;
 use std::sync::LazyLock;
 use syntect::{
     html::{ClassStyle, ClassedHTMLGenerator},
@@ -83,7 +83,7 @@ pub fn with_lang(lang: Option<&str>, code: &str, default: Option<&str>) -> Strin
             } else {
                 error!(?err, "failed while highlighting code");
             }
-            crate::web::page::templates::filters::escape_html_inner(code)
+            crate::page::templates::filters::escape_html_inner(code)
                 .map(|s| s.to_string())
                 .unwrap_or_default()
         }

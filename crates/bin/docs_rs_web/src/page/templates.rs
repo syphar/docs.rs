@@ -1,6 +1,5 @@
-use crate::error::Result;
-use crate::web::rustdoc::RustdocPage;
-use anyhow::Context;
+use crate::handlers::rustdoc::RustdocPage;
+use anyhow::{Context as _, Result};
 use askama::Template;
 use std::sync::Arc;
 use tracing::trace;
@@ -147,7 +146,7 @@ pub mod filters {
     // TODO: This can be replaced by chrono
     #[askama::filter_fn]
     pub fn timeformat(value: &DateTime<Utc>, _: &dyn Values) -> askama::Result<String> {
-        Ok(crate::web::duration_to_str(*value))
+        Ok(crate::utils::duration_to_str(*value))
     }
 
     #[askama::filter_fn]
@@ -221,7 +220,7 @@ pub mod filters {
         lang: &str,
     ) -> askama::Result<Safe<String>> {
         let highlighted_code =
-            crate::web::highlight::with_lang(Some(lang), &code.to_string(), None);
+            crate::utils::highlight::with_lang(Some(lang), &code.to_string(), None);
         Ok(Safe(format!("<pre><code>{highlighted_code}</code></pre>")))
     }
 

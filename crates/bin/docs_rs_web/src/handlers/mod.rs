@@ -1,24 +1,22 @@
 //! Web interface of docs.rs
 
-mod build_details;
-mod builds;
+pub(crate) mod build_details;
+pub(crate) mod builds;
 pub(crate) mod crate_details;
-mod csp;
-mod features;
-mod file;
-mod highlight;
-mod licenses;
-mod markdown;
+pub(crate) mod features;
 pub(crate) mod releases;
 pub(crate) mod rustdoc;
-mod security;
-mod sitemap;
-mod source;
-mod statics;
-mod status;
+pub(crate) mod security;
+pub(crate) mod sitemap;
+pub(crate) mod source;
+pub(crate) mod statics;
+pub(crate) mod status;
 
+use crate::Config;
 use crate::error::AxumNope;
-use crate::page::TemplateData;
+use crate::middleware::csp;
+use crate::page::{self, TemplateData};
+use crate::{cache, routes};
 use crate::{
     impl_axum_webpage,
     metrics::WebMetrics,
@@ -36,6 +34,7 @@ use axum::{
 };
 use axum_extra::middleware::option_layer;
 use chrono::{DateTime, NaiveDate, Utc};
+use docs_rs_context::Context;
 use docs_rs_database::crate_details::{Release, parse_doc_targets};
 use docs_rs_types::{BuildStatus, CrateId, KrateName, ReqVersion, Version, VersionReq};
 use docs_rs_utils::rustc_version::parse_rustc_date;
@@ -49,23 +48,6 @@ use std::{
 use tower::ServiceBuilder;
 use tower_http::{catch_panic::CatchPanicLayer, timeout::TimeoutLayer, trace::TraceLayer};
 use tracing::{info, instrument};
-
-/// Picks the correct "rustdoc.css" static file depending on which rustdoc version was used to
-/// generate this version of this crate.
-pub fn get_correct_docsrs_style_file(version: &str) -> Result<String> {
-    let date = parse_rustc_date(version)?;
-    // This is the date where https://github.com/rust-lang/rust/pull/144476 was merged.
-    if NaiveDate::from_ymd_opt(2025, 8, 20).unwrap() < date {
-        Ok("rustdoc-2025-08-20.css".to_owned())
-    // This is the date where https://github.com/rust-lang/rust/pull/91356 was merged.
-    } else if NaiveDate::from_ymd_opt(2021, 12, 5).unwrap() < date {
-        // If this is the new rustdoc layout, we need the newer docs.rs CSS file.
-        Ok("rustdoc-2021-12-05.css".to_owned())
-    } else {
-        // By default, we return the old docs.rs CSS file.
-        Ok("rustdoc.css".to_owned())
-    }
-}
 
 const DEFAULT_BIND: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 3000);
 
@@ -100,6 +82,7 @@ async fn set_sentry_transaction_name_from_axum_route(
 
 async fn apply_middleware(
     router: AxumRouter,
+    config: Arc<Config>,
     context: &Context,
     template_data: Option<Arc<TemplateData>>,
 ) -> Result<AxumRouter> {
@@ -118,39 +101,49 @@ async fn apply_middleware(
             .layer(CatchPanicLayer::new())
             .layer(middleware::from_fn(security::security_middleware))
             .layer(option_layer(
-                context
-                    .config
+                config
                     .report_request_timeouts
                     .then_some(middleware::from_fn(log_timeouts_to_sentry)),
             ))
-            .layer(option_layer(context.config.request_timeout.map(|to| {
+            .layer(option_layer(config.request_timeout.map(|to| {
                 TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, to)
             })))
-            .layer(Extension(context.pool.clone()))
-            .layer(Extension(context.async_build_queue.clone()))
+            .layer(Extension(context.pool()?.clone()))
+            .layer(Extension(context.build_queue()?.clone()))
             .layer(Extension(web_metrics))
-            .layer(Extension(context.config.clone()))
-            .layer(Extension(context.registry_api.clone()))
-            .layer(Extension(context.async_storage.clone()))
+            .layer(Extension(config.clone()))
+            .layer(Extension(context.registry_api()?.clone()))
+            .layer(Extension(context.storage()?.clone()))
             .layer(option_layer(template_data.map(Extension)))
             .layer(middleware::from_fn(csp::csp_middleware))
             .layer(option_layer(has_templates.then_some(middleware::from_fn(
                 page::web_page::render_templates_middleware,
             ))))
-            .layer(middleware::from_fn(cache::cache_middleware)),
+            .layer(middleware::from_fn(crate::cache::cache_middleware)),
     ))
 }
 
 pub(crate) async fn build_axum_app(
+    config: Arc<Config>,
     context: &Context,
     template_data: Arc<TemplateData>,
 ) -> Result<AxumRouter, Error> {
-    apply_middleware(routes::build_axum_routes(), context, Some(template_data)).await
+    apply_middleware(
+        routes::build_axum_routes(),
+        config,
+        context,
+        Some(template_data),
+    )
+    .await
 }
 
 #[instrument(skip_all)]
-pub fn start_web_server(addr: Option<SocketAddr>, context: &Context) -> Result<(), Error> {
-    let template_data = Arc::new(TemplateData::new(context.config.render_threads)?);
+pub fn start_web_server(
+    addr: Option<SocketAddr>,
+    config: Arc<Config>,
+    context: &Context,
+) -> Result<(), Error> {
+    let template_data = Arc::new(TemplateData::new(config.render_threads)?);
 
     let axum_addr = addr.unwrap_or(DEFAULT_BIND);
 
@@ -161,7 +154,7 @@ pub fn start_web_server(addr: Option<SocketAddr>, context: &Context) -> Result<(
     );
 
     context.runtime.block_on(async {
-        let app = build_axum_app(context, template_data)
+        let app = build_axum_app(config, context, template_data)
             .await?
             .into_make_service();
         let listener = tokio::net::TcpListener::bind(axum_addr)
@@ -203,36 +196,8 @@ async fn shutdown_signal() {
     info!("signal received, starting graceful shutdown");
 }
 
-/// Converts Timespec to nice readable relative time string
-fn duration_to_str(init: DateTime<Utc>) -> String {
-    let now = Utc::now();
-    let delta = now.signed_duration_since(init);
-
-    let delta = (
-        delta.num_days(),
-        delta.num_hours(),
-        delta.num_minutes(),
-        delta.num_seconds(),
-    );
-
-    match delta {
-        (days, ..) if days > 5 => format!("{}", init.format("%b %d, %Y")),
-        (days @ 2..=5, ..) => format!("{days} days ago"),
-        (1, ..) => "one day ago".to_string(),
-
-        (_, hours, ..) if hours > 1 => format!("{hours} hours ago"),
-        (_, 1, ..) => "an hour ago".to_string(),
-
-        (_, _, minutes, _) if minutes > 1 => format!("{minutes} minutes ago"),
-        (_, _, 1, _) => "one minute ago".to_string(),
-
-        (_, _, _, seconds) if seconds > 0 => format!("{seconds} seconds ago"),
-        _ => "just now".to_string(),
-    }
-}
-
 #[instrument]
-fn axum_redirect<U>(uri: U) -> Result<impl IntoResponse, Error>
+pub(crate) fn axum_redirect<U>(uri: U) -> Result<impl IntoResponse, Error>
 where
     U: TryInto<http::Uri> + std::fmt::Debug,
     <U as TryInto<http::Uri>>::Error: std::fmt::Debug,
@@ -260,7 +225,7 @@ where
 }
 
 #[instrument]
-fn axum_cached_redirect<U>(
+pub(crate) fn axum_cached_redirect<U>(
     uri: U,
     cache_policy: cache::CachePolicy,
 ) -> Result<axum::response::Response, Error>
@@ -271,82 +236,6 @@ where
     let mut resp = axum_redirect(uri)?.into_response();
     resp.extensions_mut().insert(cache_policy);
     Ok(resp)
-}
-
-/// MetaData used in header
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) struct MetaData {
-    pub(crate) name: KrateName,
-    /// The exact version of the release being shown.
-    pub(crate) version: Version,
-    /// The version identifier in the request that was used to request this page.
-    /// This might be any of the variants of `ReqVersion`, but
-    /// due to a canonicalization step, it is either an Exact version, or `/latest/`
-    /// most of the time.
-    pub(crate) req_version: ReqVersion,
-    pub(crate) description: Option<String>,
-    pub(crate) target_name: Option<String>,
-    pub(crate) rustdoc_status: Option<bool>,
-    pub(crate) default_target: Option<String>,
-    pub(crate) doc_targets: Option<Vec<String>>,
-    pub(crate) yanked: Option<bool>,
-    /// CSS file to use depending on the rustdoc version used to generate this version of this
-    /// crate.
-    pub(crate) rustdoc_css_file: Option<String>,
-}
-
-impl MetaData {
-    #[fn_error_context::context("getting metadata for {name} {version}")]
-    async fn from_crate(
-        conn: &mut sqlx::PgConnection,
-        name: &str,
-        version: &Version,
-        req_version: Option<ReqVersion>,
-    ) -> Result<MetaData> {
-        let row = sqlx::query!(
-            r#"SELECT
-                crates.name as "name: KrateName",
-                releases.version,
-                releases.description,
-                releases.target_name,
-                releases.rustdoc_status,
-                releases.default_target,
-                releases.doc_targets,
-                releases.yanked,
-                builds.rustc_version as "rustc_version?"
-            FROM releases
-            INNER JOIN crates ON crates.id = releases.crate_id
-            LEFT JOIN LATERAL (
-                SELECT * FROM builds
-                WHERE builds.rid = releases.id
-                ORDER BY builds.build_finished
-                DESC LIMIT 1
-            ) AS builds ON true
-            WHERE crates.name = $1 AND releases.version = $2"#,
-            name,
-            version.to_string(),
-        )
-        .fetch_one(&mut *conn)
-        .await
-        .context("error fetching crate metadata")?;
-
-        Ok(MetaData {
-            name: row.name,
-            version: version.clone(),
-            req_version: req_version.unwrap_or_else(|| ReqVersion::Exact(version.clone())),
-            description: row.description,
-            target_name: row.target_name,
-            rustdoc_status: row.rustdoc_status,
-            default_target: row.default_target,
-            doc_targets: row.doc_targets.map(parse_doc_targets),
-            yanked: row.yanked,
-            rustdoc_css_file: row
-                .rustc_version
-                .as_deref()
-                .map(get_correct_docsrs_style_file)
-                .transpose()?,
-        })
-    }
 }
 
 // #[cfg(test)]

@@ -1,16 +1,15 @@
 use crate::{
-    impl_axum_webpage,
-    web::{
-        MatchedRelease, MetaData,
-        cache::CachePolicy,
-        error::{AxumNope, AxumResult},
-        extractors::{
-            DbConnection,
-            rustdoc::{PageKind, RustdocParams},
-        },
-        get_correct_docsrs_style_file, match_version,
-        page::templates::{RenderBrands, RenderRegular, RenderSolid, filters},
+    cache::CachePolicy,
+    error::{AxumNope, AxumResult},
+    extractors::{
+        DbConnection,
+        rustdoc::{PageKind, RustdocParams},
     },
+    impl_axum_webpage,
+    match_release::{MatchedRelease, match_version},
+    metadata::MetaData,
+    page::templates::{RenderBrands, RenderRegular, RenderSolid, filters},
+    utils::{get_correct_docsrs_style_file, licenses},
 };
 use anyhow::{Context, Result, anyhow};
 use askama::Template;
@@ -56,7 +55,7 @@ pub(crate) struct CrateDetails {
     pub(crate) metadata: MetaData,
     is_library: Option<bool>,
     pub(crate) license: Option<String>,
-    pub(crate) parsed_license: Option<Vec<super::licenses::LicenseSegment>>,
+    pub(crate) parsed_license: Option<Vec<licenses::LicenseSegment>>,
     pub(crate) documentation_url: Option<String>,
     pub(crate) total_items: Option<i32>,
     pub(crate) documented_items: Option<i32>,
@@ -202,7 +201,7 @@ impl CrateDetails {
             None => None,
         };
 
-        let parsed_license = krate.license.as_deref().map(super::licenses::parse_license);
+        let parsed_license = krate.license.as_deref().map(licenses::parse_license);
 
         let dependencies: Vec<Dependency> = krate
             .dependencies
@@ -280,7 +279,6 @@ impl CrateDetails {
         Ok(Some(crate_details))
     }
 
-    #[fn_error_context::context("fetching readme for {} {}", self.name, self.version)]
     async fn fetch_readme(&self, storage: &AsyncStorage) -> anyhow::Result<Option<String>> {
         let manifest = match storage
             .fetch_source_file(
@@ -712,9 +710,6 @@ mod tests {
             .unwrap()
     }
 
-    #[fn_error_context::context(
-        "assert_last_successful_build_equals({package}, {version}, {expected_last_successful_build:?})"
-    )]
     async fn assert_last_successful_build_equals(
         db: &TestDatabase,
         package: &str,

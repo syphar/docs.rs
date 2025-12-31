@@ -1,18 +1,15 @@
 //! Releases web handlersrelease
 
 use crate::{
-    Config, impl_axum_webpage,
-    utils::report_error,
-    web::{
-        axum_redirect,
-        cache::CachePolicy,
-        error::{AxumNope, AxumResult},
-        extractors::{DbConnection, Path, rustdoc::RustdocParams},
-        match_version,
-        metrics::WebMetrics,
-        page::templates::{RenderBrands, RenderRegular, RenderSolid, filters},
-        rustdoc::OfficialCrateDescription,
-    },
+    Config,
+    cache::CachePolicy,
+    error::{AxumNope, AxumResult},
+    extractors::{DbConnection, Path, rustdoc::RustdocParams},
+    handlers::{axum_redirect, rustdoc::OfficialCrateDescription},
+    impl_axum_webpage,
+    match_release::match_version,
+    metrics::WebMetrics,
+    page::templates::{RenderBrands, RenderRegular, RenderSolid, filters},
 };
 use anyhow::{Context as _, Result, anyhow};
 use askama::Template;
@@ -35,7 +32,7 @@ use std::{
     str,
     sync::Arc,
 };
-use tracing::{trace, warn};
+use tracing::{error, trace, warn};
 use url::form_urlencoded;
 
 /// Number of release in home page
@@ -432,16 +429,16 @@ pub(crate) async fn owner_handler(Path(owner): Path<String>) -> AxumResult<impl 
 #[derive(Template)]
 #[template(path = "releases/search_results.html")]
 #[derive(Debug, Clone, PartialEq)]
-pub(super) struct Search {
-    pub(super) title: String,
-    pub(super) releases: Vec<ReleaseStatus>,
-    pub(super) search_query: Option<String>,
-    pub(super) search_sort_by: Option<String>,
-    pub(super) previous_page_link: Option<String>,
-    pub(super) next_page_link: Option<String>,
+pub(crate) struct Search {
+    pub(crate) title: String,
+    pub(crate) releases: Vec<ReleaseStatus>,
+    pub(crate) search_query: Option<String>,
+    pub(crate) search_sort_by: Option<String>,
+    pub(crate) previous_page_link: Option<String>,
+    pub(crate) next_page_link: Option<String>,
     /// This should always be `ReleaseType::Search`
-    pub(super) release_type: ReleaseType,
-    pub(super) status: http::StatusCode,
+    pub(crate) release_type: ReleaseType,
+    pub(crate) status: http::StatusCode,
 }
 
 impl Default for Search {
@@ -508,7 +505,7 @@ async fn redirect_to_random_crate(
 
         Ok(axum_redirect(params.rustdoc_url())?)
     } else {
-        report_error(&anyhow!("found no result in random crate search"));
+        error!("found no result in random crate search");
         Err(AxumNope::NoResults)
     }
 }

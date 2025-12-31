@@ -1,4 +1,9 @@
-use crate::{cache::CachePolicy, handlers::releases::Search, impl_axum_webpage};
+use crate::{
+    cache::CachePolicy,
+    handlers::releases::Search,
+    impl_axum_webpage,
+    page::templates::{RenderBrands, RenderSolid},
+};
 use anyhow::{Result, anyhow};
 use askama::Template;
 use axum::{
@@ -10,6 +15,7 @@ use docs_rs_database::PoolError;
 use docs_rs_storage::PathNotFoundError;
 use docs_rs_uri::EscapedURI;
 use std::borrow::Cow;
+use tracing::error;
 
 #[derive(Template)]
 #[template(path = "error.html")]
@@ -121,7 +127,7 @@ impl AxumNope {
                 status: StatusCode::UNAUTHORIZED,
             },
             AxumNope::InternalError(source) => {
-                crate::utils::report_error(&source);
+                error!(?source, "internal server error");
                 ErrorInfo {
                     title: "Internal Server Error",
                     message: Cow::Owned(source.to_string()),
@@ -143,7 +149,7 @@ struct ErrorInfo {
 }
 
 fn redirect_with_policy(target: EscapedURI, cache_policy: CachePolicy) -> AxumResponse {
-    match super::axum_cached_redirect(target, cache_policy) {
+    match crate::handlers::axum_cached_redirect(target, cache_policy) {
         Ok(response) => response.into_response(),
         Err(err) => AxumNope::InternalError(err).into_response(),
     }
