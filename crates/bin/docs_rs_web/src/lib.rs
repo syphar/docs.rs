@@ -10,6 +10,8 @@ mod metrics;
 pub(crate) mod middleware;
 mod page;
 mod routes;
+#[cfg(test)]
+pub(crate) mod testing;
 mod utils;
 
 pub use config::Config;

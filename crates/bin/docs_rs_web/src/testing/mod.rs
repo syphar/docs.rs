@@ -1,5 +1,3 @@
-pub(crate) mod headers;
-
 pub(crate) use docs_rs_test_fakes::{FakeBuild, fake_release_that_failed_before_build};
 
 use crate::{
