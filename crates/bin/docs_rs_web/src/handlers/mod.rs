@@ -138,7 +138,7 @@ pub(crate) async fn build_axum_app(
 }
 
 #[instrument(skip_all)]
-pub fn start_web_server(
+pub async fn run_web_server(
     addr: Option<SocketAddr>,
     config: Arc<Config>,
     context: &Context,
@@ -153,19 +153,16 @@ pub fn start_web_server(
         axum_addr.port()
     );
 
-    context.runtime.block_on(async {
-        let app = build_axum_app(config, context, template_data)
-            .await?
-            .into_make_service();
-        let listener = tokio::net::TcpListener::bind(axum_addr)
-            .await
-            .context("error binding socket for web server")?;
+    let app = build_axum_app(config, context, template_data)
+        .await?
+        .into_make_service();
+    let listener = tokio::net::TcpListener::bind(axum_addr)
+        .await
+        .context("error binding socket for web server")?;
 
-        axum::serve(listener, app)
-            .with_graceful_shutdown(shutdown_signal())
-            .await?;
-        Ok::<(), Error>(())
-    })?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
 
     Ok(())
 }

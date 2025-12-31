@@ -85,7 +85,6 @@ docs_rs_watcher = { path = "crates/bin/docs_rs_watcher" }
 anyhow = { workspace = true }
 async-stream = { workspace = true }
 base64 = { workspace = true }
-clap = { workspace = true }
 derive_builder = "0.20.2"
 derive_more = { workspace = true }
 futures-util = { workspace = true }
