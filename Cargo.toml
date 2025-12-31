@@ -81,10 +81,15 @@ docs_rs_types = { path = "crates/lib/docs_rs_types" }
 docs_rs_uri = { path = "crates/lib/docs_rs_uri" }
 docs_rs_utils = { path = "crates/lib/docs_rs_utils" }
 docs_rs_watcher = { path = "crates/bin/docs_rs_watcher" }
+docs_rs_web = { path = "crates/bin/docs_rs_web" }
 
 anyhow = { workspace = true }
+tracing = { workspace = true }
 async-stream = { workspace = true }
+chrono = { workspace = true }
+clap = { workspace = true }
 base64 = { workspace = true }
+tokio = { workspace = true }
 derive_builder = "0.20.2"
 derive_more = { workspace = true }
 futures-util = { workspace = true }

@@ -8,7 +8,6 @@
 
 pub use self::config::Config;
 pub use self::context::Context;
-pub use self::web::start_web_server;
 
 pub use docs_rs_build_limits::DEFAULT_MAX_TARGETS;
 pub use docs_rs_utils::{APP_USER_AGENT, BUILD_VERSION, RUSTDOC_STATIC_STORAGE_PREFIX};

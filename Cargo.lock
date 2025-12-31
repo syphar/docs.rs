@@ -1932,6 +1932,8 @@ dependencies = [
  "anyhow",
  "async-stream",
  "base64",
+ "chrono",
+ "clap",
  "derive_builder",
  "derive_more 2.1.1",
  "docs_rs_build_limits",
@@ -1954,6 +1956,7 @@ dependencies = [
  "docs_rs_uri",
  "docs_rs_utils",
  "docs_rs_watcher",
+ "docs_rs_web",
  "futures-util",
  "http 1.4.0",
  "mockito",
@@ -1966,7 +1969,9 @@ dependencies = [
  "sqlx",
  "test-case",
  "thiserror 2.0.17",
+ "tokio",
  "tower",
+ "tracing",
  "url",
 ]
 
