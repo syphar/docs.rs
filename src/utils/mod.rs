@@ -1,10 +1,8 @@
 //! Various utilities for docs.rs
 
 pub use self::daemon::start_daemon;
-pub(crate) use self::html::rewrite_rustdoc_html_stream;
 
 pub mod daemon;
-mod html;
 
 use tracing::error;
 

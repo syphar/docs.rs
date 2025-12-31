@@ -1,0 +1,70 @@
+[package]
+name = "docs_rs_web"
+version = "0.1.0"
+edition = "2024"
+build = "build.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+askama = { workspace = true }
+axum = { version = "0.8.1", features = ["macros"] }
+axum-extra = { workspace = true }
+chrono = { workspace = true }
+constant_time_eq = "0.4.2"
+derive_more = { workspace = true }
+docs_rs_build_limits = { path = "../../lib/docs_rs_build_limits" }
+docs_rs_build_queue = { path = "../../lib/docs_rs_build_queue" }
+docs_rs_builder = { path = "../docs_rs_builder" }
+docs_rs_cargo_metadata = { path = "../../lib/docs_rs_cargo_metadata" }
+docs_rs_context = { path = "../../lib/docs_rs_context" }
+docs_rs_database = { path = "../../lib/docs_rs_database" }
+docs_rs_env_vars = { path = "../../lib/docs_rs_env_vars" }
+docs_rs_fastly = { path = "../../lib/docs_rs_fastly" }
+docs_rs_headers = { path = "../../lib/docs_rs_headers" }
+docs_rs_logging = { path = "../../lib/docs_rs_logging" }
+docs_rs_mimes = { path = "../../lib/docs_rs_mimes" }
+docs_rs_opentelemetry = { path = "../../lib/docs_rs_opentelemetry" }
+docs_rs_registry_api = { path = "../../lib/docs_rs_registry_api" }
+docs_rs_repository_stats = { path = "../../lib/docs_rs_repository_stats" }
+docs_rs_storage = { path = "../../lib/docs_rs_storage" }
+docs_rs_types = { path = "../../lib/docs_rs_types" }
+docs_rs_uri = { path = "../../lib/docs_rs_uri" }
+docs_rs_utils = { path = "../../lib/docs_rs_utils" }
+docs_rs_watcher = { path = "../docs_rs_watcher" }
+font-awesome-as-a-crate = { path = "../../lib/font-awesome-as-a-crate" }
+itertools = { workspace = true }
+mime = { workspace = true }
+num_cpus = "1.15.0"
+tracing = { workspace = true }
+phf = "0.13.1"
+postcard = { workspace = true }
+sentry = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+slug = { workspace = true }
+sqlx = { workspace = true }
+syntect = { version = "5.0.0", default-features = false, features = ["parsing", "html", "dump-load", "regex-onig"] }
+thiserror = { workspace = true }
+tower = "0.5.1"
+tower-http = { version = "0.6.0", features = ["fs", "trace", "timeout", "catch-panic"] }
+walkdir = { workspace = true }
+
+[build-dependencies]
+anyhow = { version = "1.0.42", features = ["backtrace"] }
+grass = { version = "0.13.1", default-features = false }
+md5 = "0.8.0"
+phf_codegen = "0.13"
+syntect = { version = "5.0.0", default-features = false, features = ["parsing", "dump-create", "yaml-load", "regex-onig"] }
+time = "0.3"
+walkdir = "2"
+
+[dev-dependencies]
+kuchikiki = "0.8"
+http-body-util = "0.1.0"
+
+[package.metadata.cargo-machete]
+ignored = [
+    "phf", # used in build script output
+    "slug", # used in askama templates, can be moved to web binary
+]
+
