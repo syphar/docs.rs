@@ -2,6 +2,7 @@ pub(crate) mod axum_helpers;
 pub(crate) mod headers;
 mod test_env;
 
+pub(crate) use axum_helpers::{AxumResponseTestExt, AxumRouterTestExt, assert_cache_headers_eq};
 pub(crate) use test_env::TestEnvironment;
 
 // pub(crate) fn async_wrapper<F, Fut>(f: F)
