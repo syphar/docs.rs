@@ -247,3 +247,178 @@ pub(crate) async fn match_version(
     // This can only happen when all versions are yanked.
     Err(AxumNope::VersionNotFound)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::{TestEnvironment, async_wrapper};
+    use docs_rs_database::testing::TestDatabase;
+    use docs_rs_test_fakes::FakeBuild;
+    use docs_rs_types::ReleaseId;
+    use std::str::FromStr as _;
+
+    async fn release(version: &str, env: &TestEnvironment) -> ReleaseId {
+        let version = Version::parse(version).unwrap();
+        env.fake_release()
+            .await
+            .name("foo")
+            .version(version)
+            .create()
+            .await
+            .unwrap()
+    }
+
+    async fn version(v: Option<&str>, db: &TestDatabase) -> Option<Version> {
+        let mut conn = db.async_conn().await.unwrap();
+        let version = match_version(
+            &mut conn,
+            "foo",
+            &ReqVersion::from_str(v.unwrap_or_default()).unwrap(),
+        )
+        .await
+        .ok()?
+        .assume_exact_name()
+        .ok()?
+        .into_version();
+        Some(version)
+    }
+
+    #[allow(clippy::unnecessary_wraps)]
+    fn exact(version: &'static str) -> Option<Version> {
+        version.parse().ok()
+    }
+
+    #[allow(clippy::unnecessary_wraps)]
+    fn semver(version: &'static str) -> Option<Version> {
+        version.parse().ok()
+    }
+
+    #[test]
+    // https://github.com/rust-lang/docs.rs/issues/223
+    fn prereleases_are_not_considered_for_semver() {
+        async_wrapper(|env| async move {
+            let db = &env.db;
+            let version = |v| version(v, db);
+            let release = |v| release(v, &env);
+
+            release("0.3.1-pre").await;
+            for search in &["*", "newest", "latest"] {
+                assert_eq!(version(Some(search)).await, semver("0.3.1-pre"));
+            }
+
+            release("0.3.1-alpha").await;
+            assert_eq!(version(Some("0.3.1-alpha")).await, exact("0.3.1-alpha"));
+
+            release("0.3.0").await;
+            let three = semver("0.3.0");
+            assert_eq!(version(None).await, three);
+            // same thing but with "*"
+            assert_eq!(version(Some("*")).await, three);
+            // make sure exact matches still work
+            assert_eq!(version(Some("0.3.0")).await, exact("0.3.0"));
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    // https://github.com/rust-lang/docs.rs/issues/1682
+    fn prereleases_are_considered_when_others_dont_match() {
+        async_wrapper(|env| async move {
+            let db = &env.db;
+
+            // normal release
+            release("1.0.0", &env).await;
+            // prereleases
+            release("2.0.0-alpha.1", &env).await;
+            release("2.0.0-alpha.2", &env).await;
+
+            // STAR gives me the prod release
+            assert_eq!(version(Some("*"), db).await, exact("1.0.0"));
+
+            // prerelease query gives me the latest prerelease
+            assert_eq!(
+                version(Some(">=2.0.0-alpha"), db).await,
+                exact("2.0.0-alpha.2")
+            );
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    // vaguely related to https://github.com/rust-lang/docs.rs/issues/395
+    fn metadata_has_no_effect() {
+        async_wrapper(|env| async move {
+            let db = &env.db;
+
+            release("0.1.0+4.1", &env).await;
+            release("0.1.1", &env).await;
+            assert_eq!(version(None, db).await, semver("0.1.1"));
+            release("0.5.1+zstd.1.4.4", &env).await;
+            assert_eq!(version(None, db).await, semver("0.5.1+zstd.1.4.4"));
+            assert_eq!(version(Some("0.5"), db).await, semver("0.5.1+zstd.1.4.4"));
+            assert_eq!(
+                version(Some("0.5.1+zstd.1.4.4"), db).await,
+                exact("0.5.1+zstd.1.4.4")
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn in_progress_releases_are_ignored_when_others_match() {
+        async_wrapper(|env| async move {
+            let db = &env.db;
+
+            // normal release
+            release("1.0.0", &env).await;
+
+            // in progress release
+            env.fake_release()
+                .await
+                .name("foo")
+                .version("1.1.0")
+                .builds(vec![
+                    FakeBuild::default().build_status(BuildStatus::InProgress),
+                ])
+                .create()
+                .await?;
+
+            // STAR gives me the prod release
+            assert_eq!(version(Some("*"), db).await, exact("1.0.0"));
+
+            // exact-match query gives me the in progress release
+            assert_eq!(version(Some("=1.1.0"), db).await, exact("1.1.0"));
+
+            Ok(())
+        })
+    }
+
+    #[test]
+    // https://github.com/rust-lang/docs.rs/issues/221
+    fn yanked_crates_are_not_considered() {
+        async_wrapper(|env| async move {
+            let db = &env.db;
+
+            let release_id = release("0.3.0", &env).await;
+
+            sqlx::query!(
+                "UPDATE releases SET yanked = true WHERE id = $1 AND version = '0.3.0'",
+                release_id.0
+            )
+            .execute(&mut *db.async_conn().await?)
+            .await?;
+
+            assert_eq!(version(None, db).await, None);
+            assert_eq!(version(Some("0.3"), db).await, None);
+
+            release("0.1.0+4.1", &env).await;
+            assert_eq!(version(Some("0.1.0+4.1"), db).await, exact("0.1.0+4.1"));
+            assert_eq!(version(None, db).await, semver("0.1.0+4.1"));
+
+            Ok(())
+        });
+    }
+}

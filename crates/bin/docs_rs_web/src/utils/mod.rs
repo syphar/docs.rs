@@ -51,3 +51,21 @@ pub(crate) fn duration_to_str(init: DateTime<Utc>) -> String {
         _ => "just now".to_string(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_correct_docsrs_style_file() {
+        assert_eq!(
+            get_correct_docsrs_style_file("rustc 1.10.0-nightly (57ef01513 2016-05-23)").unwrap(),
+            "rustdoc.css"
+        );
+        assert_eq!(
+            get_correct_docsrs_style_file("docsrs 0.2.0 (ba9ae23 2022-05-26)").unwrap(),
+            "rustdoc-2021-12-05.css"
+        );
+        assert!(get_correct_docsrs_style_file("docsrs 0.2.0").is_err(),);
+    }
+}

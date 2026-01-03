@@ -224,21 +224,12 @@ where
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
-    use crate::{
-        match_release::match_version,
-        metadata::MetaData,
-        testing::{AxumResponseTestExt, AxumRouterTestExt, TestEnvironment, async_wrapper},
-        utils::get_correct_docsrs_style_file,
-    };
-    use docs_rs_database::testing::TestDatabase;
-    use docs_rs_test_fakes::FakeBuild;
-    use docs_rs_types::{BuildStatus, DocCoverage, ReleaseId, ReqVersion, Version};
+    use crate::testing::{AxumResponseTestExt, AxumRouterTestExt, TestEnvironment, async_wrapper};
+    use docs_rs_types::{DocCoverage, ReleaseId, Version};
     use kuchikiki::traits::TendrilSink;
     use pretty_assertions::assert_eq;
-    use serde_json::json;
-    use std::str::FromStr as _;
     use test_case::test_case;
 
     async fn release(version: &str, env: &TestEnvironment) -> ReleaseId {
@@ -252,48 +243,10 @@ mod test {
             .unwrap()
     }
 
-    async fn version(v: Option<&str>, db: &TestDatabase) -> Option<Version> {
-        let mut conn = db.async_conn().await.unwrap();
-        let version = match_version(
-            &mut conn,
-            "foo",
-            &ReqVersion::from_str(v.unwrap_or_default()).unwrap(),
-        )
-        .await
-        .ok()?
-        .assume_exact_name()
-        .ok()?
-        .into_version();
-        Some(version)
-    }
-
-    #[allow(clippy::unnecessary_wraps)]
-    fn semver(version: &'static str) -> Option<Version> {
-        version.parse().ok()
-    }
-
-    #[allow(clippy::unnecessary_wraps)]
-    fn exact(version: &'static str) -> Option<Version> {
-        version.parse().ok()
-    }
-
     async fn clipboard_is_present_for_path(path: &str, web: &axum::Router) -> bool {
         let data = web.get(path).await.unwrap().text().await.unwrap();
         let node = kuchikiki::parse_html().one(data);
         node.select("#clipboard").unwrap().count() == 1
-    }
-
-    #[test]
-    fn test_get_correct_docsrs_style_file() {
-        assert_eq!(
-            get_correct_docsrs_style_file("rustc 1.10.0-nightly (57ef01513 2016-05-23)").unwrap(),
-            "rustdoc.css"
-        );
-        assert_eq!(
-            get_correct_docsrs_style_file("docsrs 0.2.0 (ba9ae23 2022-05-26)").unwrap(),
-            "rustdoc-2021-12-05.css"
-        );
-        assert!(get_correct_docsrs_style_file("docsrs 0.2.0").is_err(),);
     }
 
     #[test]
@@ -501,34 +454,6 @@ mod test {
     }
 
     #[test]
-    // https://github.com/rust-lang/docs.rs/issues/223
-    fn prereleases_are_not_considered_for_semver() {
-        async_wrapper(|env| async move {
-            let db = &env.db;
-            let version = |v| version(v, db);
-            let release = |v| release(v, &env);
-
-            release("0.3.1-pre").await;
-            for search in &["*", "newest", "latest"] {
-                assert_eq!(version(Some(search)).await, semver("0.3.1-pre"));
-            }
-
-            release("0.3.1-alpha").await;
-            assert_eq!(version(Some("0.3.1-alpha")).await, exact("0.3.1-alpha"));
-
-            release("0.3.0").await;
-            let three = semver("0.3.0");
-            assert_eq!(version(None).await, three);
-            // same thing but with "*"
-            assert_eq!(version(Some("*")).await, three);
-            // make sure exact matches still work
-            assert_eq!(version(Some("0.3.0")).await, exact("0.3.0"));
-
-            Ok(())
-        });
-    }
-
-    #[test]
     fn platform_dropdown_not_shown_with_no_targets() {
         async_wrapper(|env| async move {
             release("0.1.0", &env).await;
@@ -558,213 +483,6 @@ mod test {
             assert_eq!(platform, 1);
             Ok(())
         });
-    }
-
-    #[test]
-    // https://github.com/rust-lang/docs.rs/issues/221
-    fn yanked_crates_are_not_considered() {
-        async_wrapper(|env| async move {
-            let db = &env.db;
-
-            let release_id = release("0.3.0", &env).await;
-
-            sqlx::query!(
-                "UPDATE releases SET yanked = true WHERE id = $1 AND version = '0.3.0'",
-                release_id.0
-            )
-            .execute(&mut *db.async_conn().await?)
-            .await?;
-
-            assert_eq!(version(None, db).await, None);
-            assert_eq!(version(Some("0.3"), db).await, None);
-
-            release("0.1.0+4.1", &env).await;
-            assert_eq!(version(Some("0.1.0+4.1"), db).await, exact("0.1.0+4.1"));
-            assert_eq!(version(None, db).await, semver("0.1.0+4.1"));
-
-            Ok(())
-        });
-    }
-
-    #[test]
-    fn in_progress_releases_are_ignored_when_others_match() {
-        async_wrapper(|env| async move {
-            let db = &env.db;
-
-            // normal release
-            release("1.0.0", &env).await;
-
-            // in progress release
-            env.fake_release()
-                .await
-                .name("foo")
-                .version("1.1.0")
-                .builds(vec![
-                    FakeBuild::default().build_status(BuildStatus::InProgress),
-                ])
-                .create()
-                .await?;
-
-            // STAR gives me the prod release
-            assert_eq!(version(Some("*"), db).await, exact("1.0.0"));
-
-            // exact-match query gives me the in progress release
-            assert_eq!(version(Some("=1.1.0"), db).await, exact("1.1.0"));
-
-            Ok(())
-        })
-    }
-
-    #[test]
-    // https://github.com/rust-lang/docs.rs/issues/1682
-    fn prereleases_are_considered_when_others_dont_match() {
-        async_wrapper(|env| async move {
-            let db = &env.db;
-
-            // normal release
-            release("1.0.0", &env).await;
-            // prereleases
-            release("2.0.0-alpha.1", &env).await;
-            release("2.0.0-alpha.2", &env).await;
-
-            // STAR gives me the prod release
-            assert_eq!(version(Some("*"), db).await, exact("1.0.0"));
-
-            // prerelease query gives me the latest prerelease
-            assert_eq!(
-                version(Some(">=2.0.0-alpha"), db).await,
-                exact("2.0.0-alpha.2")
-            );
-
-            Ok(())
-        })
-    }
-
-    #[test]
-    // vaguely related to https://github.com/rust-lang/docs.rs/issues/395
-    fn metadata_has_no_effect() {
-        async_wrapper(|env| async move {
-            let db = &env.db;
-
-            release("0.1.0+4.1", &env).await;
-            release("0.1.1", &env).await;
-            assert_eq!(version(None, db).await, semver("0.1.1"));
-            release("0.5.1+zstd.1.4.4", &env).await;
-            assert_eq!(version(None, db).await, semver("0.5.1+zstd.1.4.4"));
-            assert_eq!(version(Some("0.5"), db).await, semver("0.5.1+zstd.1.4.4"));
-            assert_eq!(
-                version(Some("0.5.1+zstd.1.4.4"), db).await,
-                exact("0.5.1+zstd.1.4.4")
-            );
-
-            Ok(())
-        });
-    }
-
-    #[test]
-    fn serialize_metadata() {
-        let mut metadata = MetaData {
-            name: "serde".parse().unwrap(),
-            version: "1.0.0".parse().unwrap(),
-            req_version: ReqVersion::Latest,
-            description: Some("serde does stuff".to_string()),
-            target_name: None,
-            rustdoc_status: Some(true),
-            default_target: Some("x86_64-unknown-linux-gnu".to_string()),
-            doc_targets: Some(vec![
-                "x86_64-unknown-linux-gnu".to_string(),
-                "arm64-unknown-linux-gnu".to_string(),
-            ]),
-            yanked: Some(false),
-            rustdoc_css_file: Some("rustdoc.css".to_string()),
-        };
-
-        let correct_json = json!({
-            "name": "serde",
-            "version": "1.0.0",
-            "req_version": "latest",
-            "description": "serde does stuff",
-            "target_name": null,
-            "rustdoc_status": true,
-            "default_target": "x86_64-unknown-linux-gnu",
-            "doc_targets": [
-                "x86_64-unknown-linux-gnu",
-                "arm64-unknown-linux-gnu",
-            ],
-            "yanked": false,
-            "rustdoc_css_file": "rustdoc.css",
-        });
-
-        assert_eq!(correct_json, serde_json::to_value(&metadata).unwrap());
-
-        metadata.target_name = Some("serde_lib_name".to_string());
-        let correct_json = json!({
-            "name": "serde",
-            "version": "1.0.0",
-            "req_version": "latest",
-            "description": "serde does stuff",
-            "target_name": "serde_lib_name",
-            "rustdoc_status": true,
-            "default_target": "x86_64-unknown-linux-gnu",
-            "doc_targets": [
-                "x86_64-unknown-linux-gnu",
-                "arm64-unknown-linux-gnu",
-            ],
-            "yanked": false,
-            "rustdoc_css_file": "rustdoc.css",
-        });
-
-        assert_eq!(correct_json, serde_json::to_value(&metadata).unwrap());
-
-        metadata.description = None;
-        let correct_json = json!({
-            "name": "serde",
-            "version": "1.0.0",
-            "req_version": "latest",
-            "description": null,
-            "target_name": "serde_lib_name",
-            "rustdoc_status": true,
-            "default_target": "x86_64-unknown-linux-gnu",
-            "doc_targets": [
-                "x86_64-unknown-linux-gnu",
-                "arm64-unknown-linux-gnu",
-            ],
-            "yanked": false,
-            "rustdoc_css_file": "rustdoc.css",
-        });
-
-        assert_eq!(correct_json, serde_json::to_value(&metadata).unwrap());
-    }
-
-    #[test]
-    fn metadata_from_crate() {
-        async_wrapper(|env| async move {
-            release("0.1.0", &env).await;
-            let mut conn = env.async_conn().await?;
-            let metadata = MetaData::from_crate(
-                &mut conn,
-                "foo",
-                &"0.1.0".parse().unwrap(),
-                Some(ReqVersion::Latest),
-            )
-            .await;
-            assert_eq!(
-                metadata.unwrap(),
-                MetaData {
-                    name: "foo".parse().unwrap(),
-                    version: "0.1.0".parse().unwrap(),
-                    req_version: ReqVersion::Latest,
-                    description: Some("Fake package".to_string()),
-                    target_name: Some("foo".to_string()),
-                    rustdoc_status: Some(true),
-                    default_target: Some("x86_64-unknown-linux-gnu".to_string()),
-                    doc_targets: Some(vec!["x86_64-unknown-linux-gnu".to_string()]),
-                    yanked: Some(false),
-                    rustdoc_css_file: Some("rustdoc.css".to_string()),
-                },
-            );
-            Ok(())
-        })
     }
 
     #[test]

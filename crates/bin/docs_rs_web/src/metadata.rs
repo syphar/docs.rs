@@ -78,3 +78,123 @@ impl MetaData {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::testing::TestEnvironment;
+
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn serialize_metadata() {
+        let mut metadata = MetaData {
+            name: "serde".parse().unwrap(),
+            version: "1.0.0".parse().unwrap(),
+            req_version: ReqVersion::Latest,
+            description: Some("serde does stuff".to_string()),
+            target_name: None,
+            rustdoc_status: Some(true),
+            default_target: Some("x86_64-unknown-linux-gnu".to_string()),
+            doc_targets: Some(vec![
+                "x86_64-unknown-linux-gnu".to_string(),
+                "arm64-unknown-linux-gnu".to_string(),
+            ]),
+            yanked: Some(false),
+            rustdoc_css_file: Some("rustdoc.css".to_string()),
+        };
+
+        let correct_json = json!({
+            "name": "serde",
+            "version": "1.0.0",
+            "req_version": "latest",
+            "description": "serde does stuff",
+            "target_name": null,
+            "rustdoc_status": true,
+            "default_target": "x86_64-unknown-linux-gnu",
+            "doc_targets": [
+                "x86_64-unknown-linux-gnu",
+                "arm64-unknown-linux-gnu",
+            ],
+            "yanked": false,
+            "rustdoc_css_file": "rustdoc.css",
+        });
+
+        assert_eq!(correct_json, serde_json::to_value(&metadata).unwrap());
+
+        metadata.target_name = Some("serde_lib_name".to_string());
+        let correct_json = json!({
+            "name": "serde",
+            "version": "1.0.0",
+            "req_version": "latest",
+            "description": "serde does stuff",
+            "target_name": "serde_lib_name",
+            "rustdoc_status": true,
+            "default_target": "x86_64-unknown-linux-gnu",
+            "doc_targets": [
+                "x86_64-unknown-linux-gnu",
+                "arm64-unknown-linux-gnu",
+            ],
+            "yanked": false,
+            "rustdoc_css_file": "rustdoc.css",
+        });
+
+        assert_eq!(correct_json, serde_json::to_value(&metadata).unwrap());
+
+        metadata.description = None;
+        let correct_json = json!({
+            "name": "serde",
+            "version": "1.0.0",
+            "req_version": "latest",
+            "description": null,
+            "target_name": "serde_lib_name",
+            "rustdoc_status": true,
+            "default_target": "x86_64-unknown-linux-gnu",
+            "doc_targets": [
+                "x86_64-unknown-linux-gnu",
+                "arm64-unknown-linux-gnu",
+            ],
+            "yanked": false,
+            "rustdoc_css_file": "rustdoc.css",
+        });
+
+        assert_eq!(correct_json, serde_json::to_value(&metadata).unwrap());
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn metadata_from_crate() -> Result<()> {
+        let env = TestEnvironment::new().await?;
+
+        env.fake_release()
+            .await
+            .name("foo")
+            .version("0.1.0")
+            .create()
+            .await?;
+
+        let mut conn = env.async_conn().await?;
+        let metadata = MetaData::from_crate(
+            &mut conn,
+            "foo",
+            &"0.1.0".parse().unwrap(),
+            Some(ReqVersion::Latest),
+        )
+        .await;
+        assert_eq!(
+            metadata.unwrap(),
+            MetaData {
+                name: "foo".parse().unwrap(),
+                version: "0.1.0".parse().unwrap(),
+                req_version: ReqVersion::Latest,
+                description: Some("Fake package".to_string()),
+                target_name: Some("foo".to_string()),
+                rustdoc_status: Some(true),
+                default_target: Some("x86_64-unknown-linux-gnu".to_string()),
+                doc_targets: Some(vec!["x86_64-unknown-linux-gnu".to_string()]),
+                yanked: Some(false),
+                rustdoc_css_file: Some("rustdoc.css".to_string()),
+            },
+        );
+        Ok(())
+    }
+}
