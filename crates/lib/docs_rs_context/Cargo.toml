@@ -15,3 +15,6 @@ docs_rs_registry_api = { path = "../docs_rs_registry_api" }
 docs_rs_repository_stats = { path = "../docs_rs_repository_stats" }
 docs_rs_storage = { path = "../docs_rs_storage" }
 tokio = { workspace = true }
+
+[features]
+testing = []

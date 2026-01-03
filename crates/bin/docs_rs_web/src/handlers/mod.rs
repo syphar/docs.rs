@@ -95,6 +95,7 @@ async fn apply_middleware(
             .layer(option_layer(config.request_timeout.map(|to| {
                 TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, to)
             })))
+            .layer(Extension(context.clone()))
             .layer(Extension(context.pool()?.clone()))
             .layer(Extension(context.build_queue()?.clone()))
             .layer(Extension(web_metrics))

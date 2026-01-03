@@ -463,8 +463,12 @@ mod tests {
 
             let web = env.web_app().await;
 
-            let page = kuchikiki::parse_html()
-                .one(web.get("/crate/foo/0.1.0/builds").await?.text().await?);
+            let page = kuchikiki::parse_html().one(
+                web.assert_success("/crate/foo/0.1.0/builds")
+                    .await?
+                    .text()
+                    .await?,
+            );
 
             let node = page.select("ul > li a.release").unwrap().next().unwrap();
             let url = {

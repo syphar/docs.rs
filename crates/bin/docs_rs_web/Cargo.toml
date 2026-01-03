@@ -74,6 +74,7 @@ walkdir = { workspace = true }
 
 [dev-dependencies]
 docs_rs_builder = { path = "../docs_rs_builder" }
+docs_rs_context = { path = "../../lib/docs_rs_context", features = ["testing"] }
 docs_rs_database = { path = "../../lib/docs_rs_database", features = ["testing"] }
 docs_rs_headers = { path = "../../lib/docs_rs_headers", features = ["testing"] }
 docs_rs_storage = { path = "../../lib/docs_rs_storage", features = ["testing"] }

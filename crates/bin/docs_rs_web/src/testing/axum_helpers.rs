@@ -140,8 +140,12 @@ impl AxumRouterTestExt for axum::Router {
                 response.redirect_target()
             );
         }
-        assert!(status.is_success(), "failed to GET {path}: {status}");
-        Ok(response)
+        if status.is_success() {
+            Ok(response)
+        } else {
+            let body = response.text().await?;
+            panic!("failed to GET {path}: {status}\n{body}");
+        }
     }
 
     async fn assert_conditional_get(

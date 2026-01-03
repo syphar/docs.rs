@@ -54,13 +54,17 @@ impl Context {
     pub async fn builder() -> Result<ContextBuilder> {
         // this method is async to make it clear to the caller that
         // it needs the runtime context.
-        Context::builder_with_runtime(runtime::Handle::try_current()?)
+        Ok(Context::builder_internal(
+            runtime::Handle::try_current()?,
+            get_meter_provider(&docs_rs_opentelemetry::Config::from_environment()?)?,
+        ))
     }
 
-    pub fn builder_with_runtime(runtime: runtime::Handle) -> Result<ContextBuilder> {
+    #[cfg(feature = "testing")]
+    pub async fn builder_with_metrics(meter_provider: AnyMeterProvider) -> Result<ContextBuilder> {
         Ok(Context::builder_internal(
-            runtime,
-            get_meter_provider(&docs_rs_opentelemetry::Config::from_environment()?)?,
+            runtime::Handle::try_current()?,
+            meter_provider,
         ))
     }
 }
