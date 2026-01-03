@@ -70,7 +70,7 @@ async fn set_sentry_transaction_name_from_axum_route(
 async fn apply_middleware(
     router: AxumRouter,
     config: Arc<Config>,
-    context: &Context,
+    context: Arc<Context>,
     template_data: Option<Arc<TemplateData>>,
 ) -> Result<AxumRouter> {
     let has_templates = template_data.is_some();
@@ -112,7 +112,7 @@ async fn apply_middleware(
 
 pub(crate) async fn build_axum_app(
     config: Arc<Config>,
-    context: &Context,
+    context: Arc<Context>,
     template_data: Arc<TemplateData>,
 ) -> Result<AxumRouter, Error> {
     apply_middleware(
@@ -128,7 +128,7 @@ pub(crate) async fn build_axum_app(
 pub async fn run_web_server(
     addr: Option<SocketAddr>,
     config: Arc<Config>,
-    context: &Context,
+    context: Arc<Context>,
 ) -> Result<(), Error> {
     let template_data = Arc::new(TemplateData::new(config.render_threads)?);
 

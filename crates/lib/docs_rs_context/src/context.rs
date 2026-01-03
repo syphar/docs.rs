@@ -269,6 +269,16 @@ impl<S: State> ContextBuilder<S> {
 
         Ok(self.repository_stats(config, updater.into()))
     }
+
+    pub fn build_limits(mut self, config: Arc<docs_rs_build_limits::Config>) -> ContextBuilder<S> {
+        self.config.build_limits = Some(config);
+        self
+    }
+
+    pub fn with_build_limits(self) -> Result<ContextBuilder<S>> {
+        let config = docs_rs_build_limits::Config::from_environment()?;
+        Ok(self.build_limits(config.into()))
+    }
 }
 
 // accessors

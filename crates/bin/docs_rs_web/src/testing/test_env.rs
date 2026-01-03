@@ -10,7 +10,7 @@ use docs_rs_test_fakes::FakeRelease;
 use std::sync::Arc;
 
 pub(crate) struct TestEnvironment {
-    pub(crate) context: Context,
+    pub(crate) context: Arc<Context>,
     pub(crate) config: Arc<WebConfig>,
     #[allow(dead_code)] // so we can allow asserting collected metrics later.
     pub(crate) metrics: TestMetrics,
@@ -47,7 +47,8 @@ impl TestEnvironment {
                 .await?
                 .with_registry_api()
                 .await?
-                .build()?,
+                .build()?
+                .into(),
             db,
             storage: test_storage,
             metrics,
@@ -72,7 +73,7 @@ impl TestEnvironment {
 
     pub(crate) async fn web_app(&self) -> Router {
         let template_data = Arc::new(TemplateData::new(1).unwrap());
-        build_axum_app(self.config.clone(), &self.context, template_data)
+        build_axum_app(self.config.clone(), self.context.clone(), template_data)
             .await
             .expect("could not build axum app")
     }

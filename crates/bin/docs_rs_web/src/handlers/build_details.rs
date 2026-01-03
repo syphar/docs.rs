@@ -1,5 +1,4 @@
 use crate::{
-    Config,
     cache::CachePolicy,
     error::{AxumNope, AxumResult},
     extractors::{DbConnection, Path, rustdoc::RustdocParams},
@@ -60,7 +59,6 @@ pub(crate) async fn build_details_handler(
     params: RustdocParams,
     Path(build_params): Path<BuildDetailsParams>,
     mut conn: DbConnection,
-    Extension(config): Extension<Arc<Config>>,
     Extension(storage): Extension<Arc<AsyncStorage>>,
 ) -> AxumResult<impl IntoResponse> {
     let id = build_params
@@ -146,7 +144,7 @@ pub(crate) async fn build_details_handler(
         };
 
         let file_content = if let Some(ref filename) = current_filename {
-            let file = File::from_path(&storage, &format!("{prefix}{filename}"), &config).await?;
+            let file = File::from_path(&storage, &format!("{prefix}{filename}")).await?;
             String::from_utf8(file.0.content).context("non utf8")?
         } else {
             "".to_string()

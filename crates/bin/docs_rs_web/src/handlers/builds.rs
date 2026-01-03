@@ -19,6 +19,7 @@ use chrono::{DateTime, Utc};
 use constant_time_eq::constant_time_eq;
 use docs_rs_build_limits::Limits;
 use docs_rs_build_queue::{AsyncBuildQueue, PRIORITY_MANUAL_FROM_CRATES_IO};
+use docs_rs_context::Context;
 use docs_rs_headers::CanonicalUrl;
 use docs_rs_types::{BuildId, BuildStatus, KrateName, ReqVersion, Version};
 use http::StatusCode;
@@ -56,7 +57,7 @@ impl BuildsPage {
 pub(crate) async fn build_list_handler(
     params: RustdocParams,
     mut conn: DbConnection,
-    Extension(config): Extension<Arc<Config>>,
+    Extension(context): Extension<Arc<Context>>,
 ) -> AxumResult<impl IntoResponse> {
     let version = match_version(&mut conn, params.name(), params.req_version())
         .await?
@@ -85,7 +86,8 @@ pub(crate) async fn build_list_handler(
     Ok(BuildsPage {
         metadata,
         builds: get_builds(&mut conn, params.name(), &version).await?,
-        limits: Limits::for_crate(&config.build_limits, &mut conn, params.name()).await?,
+        limits: Limits::for_crate(context.config().build_limits()?, &mut conn, params.name())
+            .await?,
         canonical_url: CanonicalUrl::from_uri(
             params
                 .clone()

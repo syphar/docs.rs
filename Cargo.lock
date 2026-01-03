@@ -2058,6 +2058,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bon",
+ "docs_rs_build_limits",
  "docs_rs_build_queue",
  "docs_rs_database",
  "docs_rs_fastly",

@@ -293,7 +293,7 @@ pub(crate) async fn source_browser_handler(
                 ));
             return Ok(response);
         } else {
-            let max_file_size = config.storage.max_file_size_for(&stream.path);
+            let max_file_size = storage.config().max_file_size_for(&stream.path);
 
             // otherwise we'll now download the content to render it into our template.
             match stream.materialize(max_file_size).await {

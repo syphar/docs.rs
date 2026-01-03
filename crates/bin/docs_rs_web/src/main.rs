@@ -20,21 +20,24 @@ async fn main() -> anyhow::Result<()> {
 
     let args = Cli::parse();
 
-    let context = docs_rs_context::Context::builder()
-        .await?
-        .with_pool()
-        .await?
-        .with_build_queue()
-        .await?
-        .with_storage()
-        .await?
-        .with_registry_api()
-        .await?
-        .build()?;
+    let context = Arc::new(
+        docs_rs_context::Context::builder()
+            .await?
+            .with_pool()
+            .await?
+            .with_build_queue()
+            .await?
+            .with_storage()
+            .await?
+            .with_registry_api()
+            .await?
+            .with_build_limits()?
+            .build()?,
+    );
 
     let config = Arc::new(Config::from_environment()?);
 
-    run_web_server(Some(args.socket_addr), config, &context).await?;
+    run_web_server(Some(args.socket_addr), config, context).await?;
 
     Ok(())
 }

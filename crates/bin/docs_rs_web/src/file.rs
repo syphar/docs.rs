@@ -1,7 +1,6 @@
 //! Database based file handler
 
 use super::cache::CachePolicy;
-use crate::Config;
 use anyhow::Result;
 use axum::{
     body::Body,
@@ -29,14 +28,10 @@ pub(crate) struct File(pub(crate) Blob);
 
 impl File {
     /// Gets file from database
-    pub(super) async fn from_path(
-        storage: &AsyncStorage,
-        path: &str,
-        config: &Config,
-    ) -> Result<File> {
+    pub(super) async fn from_path(storage: &AsyncStorage, path: &str) -> Result<File> {
         Ok(File(
             storage
-                .get(path, config.storage.max_file_size_for(path))
+                .get(path, storage.config().max_file_size_for(path))
                 .await?,
         ))
     }
@@ -131,7 +126,7 @@ impl StreamingFile {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{cache::STATIC_ASSET_CACHE_POLICY, testing::TestEnvironment};
+    use crate::{Config, cache::STATIC_ASSET_CACHE_POLICY, testing::TestEnvironment};
     use axum_extra::headers::{ETag, HeaderMapExt as _};
     use chrono::Utc;
     use docs_rs_headers::compute_etag;
@@ -225,7 +220,6 @@ mod tests {
         let mut file = File::from_path(
             env.storage()?,
             "rustdoc/fake-package/1.0.0/fake-package/index.html",
-            env.config(),
         )
         .await?;
 
@@ -285,14 +279,7 @@ mod tests {
 
         let file = |path| {
             let env = env.clone();
-            async move {
-                File::from_path(
-                    env.storage()?,
-                    &format!("rustdoc/dummy/0.1.0/{path}"),
-                    env.config(),
-                )
-                .await
-            }
+            async move { File::from_path(env.storage()?, &format!("rustdoc/dummy/0.1.0/{path}")).await }
         };
         let assert_len = |len, path| async move {
             assert_eq!(len, file(path).await.unwrap().0.content.len());

@@ -49,18 +49,12 @@ pub struct Config {
     // This only affects pages that depend on invalidations to work.
     #[builder(default = true)]
     pub(crate) cache_invalidatable_responses: bool,
-
-    pub(crate) storage: docs_rs_storage::Config,
-    pub(crate) build_limits: docs_rs_build_limits::Config,
-    pub(crate) registry_api: docs_rs_registry_api::Config,
 }
 
-use config_builder::{SetBuildLimits, SetRegistryApi, SetStorage, State};
+use config_builder::State;
 
 impl<S: State> ConfigBuilder<S> {
-    pub(crate) fn load_environment(
-        self,
-    ) -> Result<ConfigBuilder<SetRegistryApi<SetStorage<SetBuildLimits<S>>>>> {
+    pub(crate) fn load_environment(self) -> Result<ConfigBuilder<S>> {
         Ok(self
             .maybe_cratesio_token(maybe_env("DOCSRS_CRATESIO_TOKEN")?)
             .maybe_max_parse_memory(maybe_env("DOCSRS_MAX_PARSE_MEMORY")?)
@@ -74,22 +68,14 @@ impl<S: State> ConfigBuilder<S> {
             )?)
             .maybe_cache_invalidatable_responses(maybe_env(
                 "DOCSRS_CACHE_INVALIDATEABLE_RESPONSES",
-            )?)
-            .build_limits(docs_rs_build_limits::Config::from_environment()?)
-            .storage(docs_rs_storage::Config::from_environment()?)
-            .registry_api(docs_rs_registry_api::Config::from_environment()?))
+            )?))
     }
 
     #[cfg(test)]
     #[allow(clippy::type_complexity)]
-    pub(crate) fn test_config(
-        self,
-    ) -> Result<ConfigBuilder<SetStorage<SetRegistryApi<SetStorage<SetBuildLimits<S>>>>>> {
+    pub(crate) fn test_config(self) -> Result<ConfigBuilder<S>> {
         Ok(self
             .load_environment()?
-            .storage(docs_rs_storage::Config::test_config(
-                docs_rs_storage::StorageKind::Memory,
-            )?)
             // set stale content serving so Cache::ForeverInCdn and Cache::ForeverInCdnAndStaleInBrowser
             // are actually different.
             .cache_control_stale_while_revalidate(86400))
