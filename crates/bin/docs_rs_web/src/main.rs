@@ -22,15 +22,15 @@ async fn main() -> anyhow::Result<()> {
 
     let context = Arc::new(
         docs_rs_context::Context::builder()
+            .with_runtime()
             .await?
+            .with_meter_provider()?
             .with_pool()
             .await?
-            .with_build_queue()
-            .await?
+            .with_build_queue()?
             .with_storage()
             .await?
-            .with_registry_api()
-            .await?
+            .with_registry_api()?
             .with_build_limits()?
             .build()?,
     );

@@ -72,12 +72,13 @@ impl TestEnvironment {
 
         Ok(Self {
             config: web_config,
-            context: Context::builder_with_metrics(metrics.provider().clone())
+            context: Context::builder()
+                .with_runtime()
                 .await?
+                .meter_provider(metrics.provider().clone())
                 .pool(db_config.into(), db.pool().clone())
                 .storage(storage_config.clone(), test_storage.storage())
-                .with_build_queue()
-                .await?
+                .with_build_queue()?
                 .registry_api(registry_api_config, registry_api.into())
                 .with_build_limits()?
                 .build()?
