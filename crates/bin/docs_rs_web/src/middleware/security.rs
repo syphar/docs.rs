@@ -27,47 +27,47 @@ pub(crate) async fn security_middleware(
     next.run(req).await
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use crate::{
-//         test::{AxumResponseTestExt as _, AxumRouterTestExt as _},
-//         web::extractors::Path,
-//     };
-//     use anyhow::Result;
-//     use axum::{Router, middleware, routing::get};
-//     use test_case::test_case;
-//     use tower::ServiceBuilder;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        test::{AxumResponseTestExt as _, AxumRouterTestExt as _},
+        web::extractors::Path,
+    };
+    use anyhow::Result;
+    use axum::{Router, middleware, routing::get};
+    use test_case::test_case;
+    use tower::ServiceBuilder;
 
-//     #[tokio::test]
-//     #[test_case("/%80"; "invalid UTF8, continuation byte without a leading byte")]
-//     #[test_case("/../"; "relative path with slash")]
-//     #[test_case("/.."; "relative path")]
-//     #[test_case("/asdf/../"; "relative path 2")]
-//     async fn test_invalid_path(path: &str) -> Result<()> {
-//         let app = Router::new()
-//             .route("/{*inner}", get(|| async { StatusCode::OK }))
-//             .layer(ServiceBuilder::new().layer(middleware::from_fn(security_middleware)));
+    #[tokio::test]
+    #[test_case("/%80"; "invalid UTF8, continuation byte without a leading byte")]
+    #[test_case("/../"; "relative path with slash")]
+    #[test_case("/.."; "relative path")]
+    #[test_case("/asdf/../"; "relative path 2")]
+    async fn test_invalid_path(path: &str) -> Result<()> {
+        let app = Router::new()
+            .route("/{*inner}", get(|| async { StatusCode::OK }))
+            .layer(ServiceBuilder::new().layer(middleware::from_fn(security_middleware)));
 
-//         let response = app.get(path).await?;
-//         assert_eq!(response.status(), StatusCode::NOT_ACCEPTABLE);
-//         assert!(response.text().await?.is_empty());
+        let response = app.get(path).await?;
+        assert_eq!(response.status(), StatusCode::NOT_ACCEPTABLE);
+        assert!(response.text().await?.is_empty());
 
-//         Ok(())
-//     }
+        Ok(())
+    }
 
-//     #[tokio::test]
-//     async fn test_pass() -> Result<()> {
-//         let app = Router::new()
-//             .route(
-//                 "/{*inner}",
-//                 get(|Path(inner): Path<String>| async { inner }),
-//             )
-//             .layer(ServiceBuilder::new().layer(middleware::from_fn(security_middleware)));
+    #[tokio::test]
+    async fn test_pass() -> Result<()> {
+        let app = Router::new()
+            .route(
+                "/{*inner}",
+                get(|Path(inner): Path<String>| async { inner }),
+            )
+            .layer(ServiceBuilder::new().layer(middleware::from_fn(security_middleware)));
 
-//         let response = app.assert_success("/some/path").await?;
-//         assert_eq!(response.text().await?, "some/path");
+        let response = app.assert_success("/some/path").await?;
+        assert_eq!(response.text().await?, "some/path");
 
-//         Ok(())
-//     }
-// }
+        Ok(())
+    }
+}

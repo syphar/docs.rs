@@ -251,7 +251,7 @@ pub(crate) async fn cache_middleware(
 mod tests {
     use super::*;
     use crate::testing::{
-        AxumResponseTestExt as _, TestEnvironment, assert_cache_headers_eq,
+        AxumResponseTestExt as _, assert_cache_headers_eq,
         headers::{test_typed_decode, test_typed_encode},
     };
     use anyhow::{Context as _, Result};
@@ -293,10 +293,11 @@ mod tests {
         cache_invalidatable_responses: bool,
         stale_while_revalidate: Option<u32>,
     ) -> Result<()> {
-        let config = TestEnvironment::base_config()
+        let config = Config::builder()
+            .test_config()?
             .cache_invalidatable_responses(cache_invalidatable_responses)
-            .cache_control_stale_while_revalidate(stale_while_revalidate)
-            .build()?;
+            .maybe_cache_control_stale_while_revalidate(stale_while_revalidate)
+            .build();
 
         fn validate_headers(headers: &ResponseCacheHeaders) -> Result<()> {
             if let Some(ref cache_control) = headers.cache_control {
@@ -349,7 +350,7 @@ mod tests {
         surrogate_control: Option<&str>,
         needs_global_surrogate_key: bool,
     ) -> Result<()> {
-        let config = TestEnvironment::base_config().build()?;
+        let config = Config::test_config()?;
         let headers = cache.render(&config)?;
 
         assert_eq!(
@@ -373,7 +374,7 @@ mod tests {
 
     #[test]
     fn render_fastly_forever_in_cdn() -> Result<()> {
-        let config = TestEnvironment::base_config().build()?;
+        let config = Config::test_config()?;
         // this surrogate key is user-defined, identifies the crate.
         let key = SurrogateKey::from_static("something");
         let headers = CachePolicy::ForeverInCdn(key.clone().into()).render(&config)?;
@@ -403,7 +404,7 @@ mod tests {
 
     #[test]
     fn render_fastly_forever_in_cdn_stale_in_browser() -> Result<()> {
-        let config = TestEnvironment::base_config().build()?;
+        let config = Config::test_config()?;
         let key = SurrogateKey::from_static("something");
         let headers =
             CachePolicy::ForeverInCdnAndStaleInBrowser(key.clone().into()).render(&config)?;
@@ -427,9 +428,10 @@ mod tests {
 
     #[test]
     fn render_stale_without_config_fastly() -> Result<()> {
-        let config = TestEnvironment::base_config()
-            .cache_control_stale_while_revalidate(None)
-            .build()?;
+        let config = Config::builder()
+            .test_config()?
+            .maybe_cache_control_stale_while_revalidate(None)
+            .build();
 
         let key = SurrogateKey::from_static("something");
         let mut headers =
@@ -445,9 +447,10 @@ mod tests {
 
     #[test]
     fn render_stale_with_config_fastly() -> Result<()> {
-        let config = TestEnvironment::base_config()
-            .cache_control_stale_while_revalidate(Some(666))
-            .build()?;
+        let config = Config::builder()
+            .test_config()?
+            .cache_control_stale_while_revalidate(666)
+            .build();
 
         let key = SurrogateKey::from_static("something");
         let headers =
@@ -467,9 +470,10 @@ mod tests {
 
     #[test]
     fn render_forever_in_cdn_disabled_fastly() -> Result<()> {
-        let config = TestEnvironment::base_config()
+        let config = Config::builder()
+            .test_config()?
             .cache_invalidatable_responses(false)
-            .build()?;
+            .build();
 
         let key = SurrogateKey::from_static("something");
         let headers = CachePolicy::ForeverInCdn(key.into()).render(&config)?;
@@ -482,9 +486,10 @@ mod tests {
 
     #[test]
     fn render_forever_in_cdn_or_stale_disabled_fastly() -> Result<()> {
-        let config = TestEnvironment::base_config()
+        let config = Config::builder()
+            .test_config()?
             .cache_invalidatable_responses(false)
-            .build()?;
+            .build();
 
         let key = SurrogateKey::from_static("something");
         let headers = CachePolicy::ForeverInCdnAndStaleInBrowser(key.into()).render(&config)?;
@@ -497,9 +502,10 @@ mod tests {
     #[tokio::test]
     async fn test_middleware_reacts_to_fastly_header_in_crate_route() -> Result<()> {
         let config = Arc::new(
-            TestEnvironment::base_config()
+            Config::builder()
+                .test_config()?
                 .cache_invalidatable_responses(true)
-                .build()?,
+                .build(),
         );
 
         let key = SurrogateKey::from_static("krate");
@@ -537,7 +543,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_middleware_reacts_to_fastly_header_in_other_route() -> Result<()> {
-        let config = Arc::new(TestEnvironment::base_config().build()?);
+        let config = Arc::new(Config::test_config()?);
 
         let app = Router::new()
             .route(

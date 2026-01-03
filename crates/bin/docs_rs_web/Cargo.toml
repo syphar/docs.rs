@@ -73,6 +73,7 @@ walkdir = "2"
 
 [dev-dependencies]
 docs_rs_database = { path = "../../lib/docs_rs_database", features = ["testing"] }
+docs_rs_headers = { path = "../../lib/docs_rs_headers", features = ["testing"] }
 docs_rs_storage = { path = "../../lib/docs_rs_storage", features = ["testing"] }
 docs_rs_test_fakes = { path = "../../lib/docs_rs_test_fakes" }
 docs_rs_types = { path = "../../lib/docs_rs_types", features = ["testing"] }

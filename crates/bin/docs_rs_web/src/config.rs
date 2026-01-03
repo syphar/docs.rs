@@ -18,7 +18,7 @@ pub struct Config {
     // The most memory that can be used to parse an HTML file
     // LOL HTML only uses as much memory as the size of the start tag!
     // https://github.com/rust-lang/docs.rs/pull/930#issuecomment-667729380
-    #[builder(default = 5 * 1024 * 1024 as usize)]
+    #[builder(default = 5 * 1024 * 1024usize)]
     pub(crate) max_parse_memory: usize,
 
     /// amount of threads for CPU intensive rendering
@@ -49,12 +49,15 @@ pub struct Config {
     // This only affects pages that depend on invalidations to work.
     #[builder(default = true)]
     pub(crate) cache_invalidatable_responses: bool,
+
+    pub(crate) storage: docs_rs_storage::Config,
+    pub(crate) build_limits: docs_rs_build_limits::Config,
 }
 
 use config_builder::{IsComplete, State};
 
 impl<S: State> ConfigBuilder<S> {
-    fn load_environment(self) -> Result<ConfigBuilder<impl IsComplete>> {
+    pub(crate) fn load_environment(self) -> Result<ConfigBuilder<impl IsComplete>> {
         Ok(self
             .maybe_cratesio_token(maybe_env("DOCSRS_CRATESIO_TOKEN")?)
             .maybe_max_parse_memory(maybe_env("DOCSRS_MAX_PARSE_MEMORY")?)
@@ -68,12 +71,19 @@ impl<S: State> ConfigBuilder<S> {
             )?)
             .maybe_cache_invalidatable_responses(maybe_env(
                 "DOCSRS_CACHE_INVALIDATEABLE_RESPONSES",
-            )?))
+            )?)
+            .build_limits(docs_rs_build_limits::Config::from_environment()?)
+            .storage(docs_rs_storage::Config::from_environment()?))
     }
 
     #[cfg(test)]
-    fn test_config(self) -> Result<ConfigBuilder<impl IsComplete>> {
-        Ok(self.load_environment()?)
+    pub(crate) fn test_config(self) -> Result<ConfigBuilder<impl IsComplete>> {
+        Ok(self
+            .load_environment()?
+            .storage(docs_rs_storage::Config::test_config(
+                docs_rs_storage::StorageKind::Memory,
+            )?)
+            .build_limits(docs_rs_build_limits::Config::from_environment()?))
     }
 }
 
@@ -83,7 +93,7 @@ impl Config {
     }
 
     #[cfg(test)]
-    pub fn test_config(self) -> Result<Self> {
+    pub fn test_config() -> Result<Self> {
         Ok(Self::builder().test_config()?.build())
     }
 }
