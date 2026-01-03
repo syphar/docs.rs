@@ -293,7 +293,7 @@ pub(crate) async fn source_browser_handler(
                 ));
             return Ok(response);
         } else {
-            let max_file_size = config.storage.max_file_size_for(&stream.path);
+            let max_file_size = config.storage()?.max_file_size_for(&stream.path);
 
             // otherwise we'll now download the content to render it into our template.
             match stream.materialize(max_file_size).await {
@@ -362,8 +362,9 @@ pub(crate) async fn source_browser_handler(
 #[cfg(test)]
 mod tests {
     use crate::{
-        test::{AxumResponseTestExt, AxumRouterTestExt, TestEnvironment, async_wrapper},
-        web::cache::CachePolicy,
+        Config,
+        cache::CachePolicy,
+        testing::{AxumResponseTestExt, AxumRouterTestExt, TestEnvironment, async_wrapper},
     };
     use anyhow::Result;
     use axum_extra::headers::{ContentType, ETag, HeaderMapExt as _};
@@ -546,7 +547,7 @@ mod tests {
             let web = env.web_app().await;
             web.assert_success(path).await?;
 
-            let mut conn = env.async_db().async_conn().await?;
+            let mut conn = env.async_conn().await?;
             sqlx::query!(
                 "UPDATE releases
                      SET files = NULL
@@ -855,17 +856,16 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn large_file_test() -> Result<()> {
         let env = TestEnvironment::with_config(
-            TestEnvironment::base_config()
+            Config::builder()
+                .test_config()?
                 .storage(
-                    docs_rs_storage::Config::test_config(StorageKind::Memory)?
-                        .set(|mut cfg| {
-                            cfg.max_file_size = 1;
-                            cfg.max_file_size_html = 1;
-                            cfg
-                        })
-                        .into(),
+                    docs_rs_storage::Config::test_config(StorageKind::Memory)?.set(|mut cfg| {
+                        cfg.max_file_size = 1;
+                        cfg.max_file_size_html = 1;
+                        cfg
+                    }),
                 )
-                .build()?,
+                .build(),
         )
         .await?;
 

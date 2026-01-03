@@ -1,9 +1,10 @@
-use crate::Config as WebConfig;
+use crate::{Config as WebConfig, handlers::build_axum_app, page::TemplateData};
 use anyhow::Result;
+use axum::Router;
 use docs_rs_build_queue::AsyncBuildQueue;
 use docs_rs_context::Context;
 use docs_rs_database::{AsyncPoolClient, Config as DatabaseConfig, testing::TestDatabase};
-use docs_rs_opentelemetry::testing::TestMetrics;
+use docs_rs_opentelemetry::testing::{CollectedMetrics, TestMetrics};
 use docs_rs_storage::{AsyncStorage, Config as StorageConfig, StorageKind, testing::TestStorage};
 use docs_rs_test_fakes::FakeRelease;
 use std::sync::Arc;
@@ -67,10 +68,21 @@ impl TestEnvironment {
         self.context.storage()
     }
 
+    pub(crate) async fn web_app(&self) -> Router {
+        let template_data = Arc::new(TemplateData::new(1).unwrap());
+        build_axum_app(self.config.clone(), &self.context, template_data)
+            .await
+            .expect("could not build axum app")
+    }
+
     pub async fn fake_release(&self) -> FakeRelease<'_> {
         FakeRelease::new(
             self.context.pool().unwrap().clone(),
             self.context.storage().unwrap().clone(),
         )
+    }
+
+    pub fn collected_metrics(&self) -> CollectedMetrics {
+        self.metrics.collected_metrics()
     }
 }

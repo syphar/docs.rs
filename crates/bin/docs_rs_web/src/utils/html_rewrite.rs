@@ -229,7 +229,8 @@ where
 
 #[cfg(test)]
 mod test {
-    use crate::test::{AxumResponseTestExt, AxumRouterTestExt, V1, async_wrapper};
+    use crate::testing::{AxumResponseTestExt, AxumRouterTestExt, async_wrapper};
+    use docs_rs_types::testing::V1;
 
     #[test]
     fn rewriting_only_injects_css_once() {

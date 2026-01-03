@@ -36,7 +36,7 @@ impl File {
     ) -> Result<File> {
         Ok(File(
             storage
-                .get(path, config.storage.max_file_size_for(path))
+                .get(path, config.storage()?.max_file_size_for(path))
                 .await?,
         ))
     }
@@ -131,7 +131,7 @@ impl StreamingFile {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{test::TestEnvironment, web::cache::STATIC_ASSET_CACHE_POLICY};
+    use crate::{cache::STATIC_ASSET_CACHE_POLICY, testing::TestEnvironment};
     use axum_extra::headers::{ETag, HeaderMapExt as _};
     use chrono::Utc;
     use docs_rs_headers::compute_etag;
@@ -223,7 +223,7 @@ mod tests {
         env.fake_release().await.create().await?;
 
         let mut file = File::from_path(
-            env.async_storage(),
+            env.storage()?,
             "rustdoc/fake-package/1.0.0/fake-package/index.html",
             env.config(),
         )
@@ -254,17 +254,18 @@ mod tests {
 
         let env = Rc::new(
             TestEnvironment::with_config(
-                TestEnvironment::base_config()
+                Config::builder()
+                    .test_config()?
                     .storage(
-                        docs_rs_storage::Config::test_config(StorageKind::Memory)?
-                            .set(|mut cfg| {
+                        docs_rs_storage::Config::test_config(StorageKind::Memory)?.set(
+                            |mut cfg| {
                                 cfg.max_file_size = MAX_SIZE;
                                 cfg.max_file_size_html = MAX_HTML_SIZE;
                                 cfg
-                            })
-                            .into(),
+                            },
+                        ),
                     )
-                    .build()?,
+                    .build(),
             )
             .await?,
         );
@@ -286,7 +287,7 @@ mod tests {
             let env = env.clone();
             async move {
                 File::from_path(
-                    env.async_storage(),
+                    env.storage()?,
                     &format!("rustdoc/dummy/0.1.0/{path}"),
                     env.config(),
                 )

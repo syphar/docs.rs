@@ -354,8 +354,8 @@ async fn fallback() -> impl IntoResponse {
 
 #[cfg(test)]
 mod tests {
-    use crate::test::{AxumResponseTestExt, AxumRouterTestExt, async_wrapper};
-    use crate::web::cache::CachePolicy;
+    use crate::cache::CachePolicy;
+    use crate::testing::{AxumResponseTestExt, AxumRouterTestExt, async_wrapper};
     use reqwest::StatusCode;
 
     #[test]
@@ -413,7 +413,7 @@ mod tests {
     fn serve_rustdoc_content() {
         async_wrapper(|env| async move {
             let web = env.web_app().await;
-            let storage = env.async_storage();
+            let storage = env.storage()?;
             storage
                 .store_one("/rustdoc-static/style.css", "content".as_bytes())
                 .await?;

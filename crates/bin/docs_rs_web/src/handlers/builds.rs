@@ -85,7 +85,7 @@ pub(crate) async fn build_list_handler(
     Ok(BuildsPage {
         metadata,
         builds: get_builds(&mut conn, params.name(), &version).await?,
-        limits: Limits::for_crate(&config.build_limits, &mut conn, params.name()).await?,
+        limits: Limits::for_crate(config.build_limits()?, &mut conn, params.name()).await?,
         canonical_url: CanonicalUrl::from_uri(
             params
                 .clone()
@@ -211,16 +211,18 @@ async fn get_builds(
 #[cfg(test)]
 mod tests {
     use crate::{
-        test::{
-            AxumResponseTestExt, AxumRouterTestExt, FakeBuild, TestEnvironment, V1, V2,
-            async_wrapper, fake_release_that_failed_before_build,
-        },
-        web::cache::CachePolicy,
+        Config,
+        cache::CachePolicy,
+        testing::{AxumResponseTestExt, AxumRouterTestExt, TestEnvironment, async_wrapper},
     };
     use anyhow::Result;
     use axum::{body::Body, http::Request};
     use docs_rs_build_limits::Overrides;
-    use docs_rs_types::{BuildStatus, testing::FOO};
+    use docs_rs_test_fakes::{FakeBuild, fake_release_that_failed_before_build};
+    use docs_rs_types::{
+        BuildStatus,
+        testing::{FOO, V1, V2},
+    };
     use kuchikiki::traits::TendrilSink;
     use reqwest::StatusCode;
     use tower::ServiceExt;
@@ -228,7 +230,7 @@ mod tests {
     #[test]
     fn build_list_empty_build() {
         async_wrapper(|env| async move {
-            let mut conn = env.async_db().async_conn().await?;
+            let mut conn = env.async_conn().await?;
             fake_release_that_failed_before_build(&mut conn, "foo", "0.1.0", "some errors").await?;
 
             let response = env
@@ -304,9 +306,10 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn build_trigger_rebuild_missing_config() -> Result<()> {
         let env = TestEnvironment::with_config(
-            TestEnvironment::base_config()
-                .cratesio_token(None)
-                .build()?,
+            Config::builder()
+                .test_config()?
+                .maybe_cratesio_token(None)
+                .build(),
         )
         .await?;
 
@@ -351,9 +354,10 @@ mod tests {
     async fn build_trigger_rebuild_with_config() -> Result<()> {
         let correct_token = "foo137";
         let env = TestEnvironment::with_config(
-            TestEnvironment::base_config()
-                .cratesio_token(Some(correct_token.into()))
-                .build()?,
+            Config::builder()
+                .test_config()?
+                .cratesio_token(correct_token.into())
+                .build(),
         )
         .await?;
 
@@ -404,7 +408,7 @@ mod tests {
             );
         }
 
-        let build_queue = env.async_build_queue();
+        let build_queue = env.build_queue()?;
 
         assert_eq!(build_queue.pending_count().await?, 0);
         assert!(!build_queue.has_build_queued(&FOO, &V1).await?);
@@ -509,7 +513,7 @@ mod tests {
                 .create()
                 .await?;
 
-            let mut conn = env.async_db().async_conn().await?;
+            let mut conn = env.async_conn().await?;
             let limits = Overrides {
                 memory: Some(6 * 1024 * 1024 * 1024),
                 targets: Some(1),

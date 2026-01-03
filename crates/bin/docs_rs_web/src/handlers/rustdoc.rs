@@ -1040,7 +1040,7 @@ pub(crate) async fn static_asset_handler(
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{Config, test::*, web::cache::CachePolicy};
+    use crate::{Config, cache::CachePolicy, testing::*};
     use anyhow::{Context, Result};
     use chrono::{NaiveDate, Utc};
     use docs_rs_builder::{
@@ -1347,9 +1347,10 @@ mod test {
     #[tokio::test(flavor = "multi_thread")]
     async fn cache_headers_on_version() -> Result<()> {
         let env = TestEnvironment::with_config(
-            TestEnvironment::base_config()
-                .cache_control_stale_while_revalidate(Some(2592000))
-                .build()?,
+            Config::builder()
+                .test_config()?
+                .cache_control_stale_while_revalidate(2592000)
+                .build(),
         )
         .await?;
 
@@ -2394,7 +2395,7 @@ mod test {
                 .create()
                 .await?;
 
-            let mut conn = env.async_db().async_conn().await?;
+            let mut conn = env.async_conn().await?;
             // https://stackoverflow.com/questions/18209625/how-do-i-modify-fields-inside-the-new-postgresql-json-datatype
             sqlx::query!(
                     r#"UPDATE releases SET dependencies = dependencies::jsonb #- '{0,2}' WHERE id = $1"#, id.0
@@ -3040,7 +3041,7 @@ mod test {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn download_semver() -> Result<()> {
-        let env = TestEnvironment::with_config(TestEnvironment::base_config().build()?).await?;
+        let env = TestEnvironment::new().await?;
 
         env.fake_release()
             .await
@@ -3172,7 +3173,7 @@ mod test {
     async fn test_static_asset_handler(path: &str) -> Result<()> {
         let env = TestEnvironment::new().await?;
 
-        let storage = env.async_storage();
+        let storage = env.storage()?;
         storage
             .store_one(
                 format!("{RUSTDOC_STATIC_STORAGE_PREFIX}{path}"),
@@ -3219,7 +3220,7 @@ mod test {
 
             const ROOT_ASSET: &str = "normalize-20200403-1.44.0-nightly-74bd074ee.css";
 
-            let storage = env.async_storage();
+            let storage = env.storage()?;
             storage.store_one(ROOT_ASSET, *b"content").await?;
             storage.store_one(path, *b"more_content").await?;
 
@@ -3540,7 +3541,7 @@ mod test {
             .create()
             .await?;
 
-        let storage = env.async_storage();
+        let storage = env.storage()?;
 
         let zstd_blob = storage
             .get(

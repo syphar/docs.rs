@@ -31,8 +31,8 @@ pub(crate) async fn security_middleware(
 mod tests {
     use super::*;
     use crate::{
-        test::{AxumResponseTestExt as _, AxumRouterTestExt as _},
-        web::extractors::Path,
+        extractors::Path,
+        testing::{AxumResponseTestExt as _, AxumRouterTestExt as _},
     };
     use anyhow::Result;
     use axum::{Router, middleware, routing::get};

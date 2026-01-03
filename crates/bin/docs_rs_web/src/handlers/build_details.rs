@@ -184,11 +184,9 @@ pub(crate) async fn build_details_handler(
 
 #[cfg(test)]
 mod tests {
-    use crate::test::{
-        AxumResponseTestExt, AxumRouterTestExt, FakeBuild, TestEnvironment, V0_1, async_wrapper,
-        fake_release_that_failed_before_build,
-    };
-    use docs_rs_types::{BuildId, ReleaseId};
+    use crate::testing::{AxumResponseTestExt, AxumRouterTestExt, TestEnvironment, async_wrapper};
+    use docs_rs_test_fakes::{FakeBuild, fake_release_that_failed_before_build};
+    use docs_rs_types::{BuildId, ReleaseId, testing::V0_1};
     use kuchikiki::traits::TendrilSink;
     use test_case::test_case;
 
@@ -224,7 +222,7 @@ mod tests {
     #[test]
     fn test_partial_build_result() {
         async_wrapper(|env| async move {
-            let mut conn = env.async_db().async_conn().await?;
+            let mut conn = env.async_conn().await?;
             let (_, build_id) = fake_release_that_failed_before_build(
                 &mut conn,
                 "foo",
@@ -255,7 +253,7 @@ mod tests {
     #[test]
     fn test_partial_build_result_plus_default_target_from_previous_build() {
         async_wrapper(|env| async move {
-            let mut conn = env.async_db().async_conn().await?;
+            let mut conn = env.async_conn().await?;
             let (release_id, build_id) = fake_release_that_failed_before_build(
                 &mut conn,
                 "foo",
@@ -521,7 +519,7 @@ mod tests {
             .create()
             .await?;
 
-        let mut conn = env.async_db().async_conn().await?;
+        let mut conn = env.async_conn().await?;
         let build_id = {
             let ids = build_ids_for_release(&mut conn, rid).await;
             assert_eq!(ids.len(), 1);

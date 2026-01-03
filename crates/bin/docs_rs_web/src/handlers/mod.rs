@@ -225,11 +225,15 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::test::{
-        AxumResponseTestExt, AxumRouterTestExt, FakeBuild, TestEnvironment, async_wrapper,
+    use crate::{
+        match_release::match_version,
+        metadata::MetaData,
+        testing::{AxumResponseTestExt, AxumRouterTestExt, TestEnvironment, async_wrapper},
+        utils::get_correct_docsrs_style_file,
     };
     use docs_rs_database::testing::TestDatabase;
-    use docs_rs_types::{DocCoverage, ReleaseId};
+    use docs_rs_test_fakes::FakeBuild;
+    use docs_rs_types::{BuildStatus, DocCoverage, ReleaseId, ReqVersion, Version};
     use kuchikiki::traits::TendrilSink;
     use pretty_assertions::assert_eq;
     use serde_json::json;
@@ -499,7 +503,7 @@ mod test {
     // https://github.com/rust-lang/docs.rs/issues/223
     fn prereleases_are_not_considered_for_semver() {
         async_wrapper(|env| async move {
-            let db = env.async_db();
+            let db = &env.db;
             let version = |v| version(v, db);
             let release = |v| release(v, &env);
 
@@ -559,7 +563,7 @@ mod test {
     // https://github.com/rust-lang/docs.rs/issues/221
     fn yanked_crates_are_not_considered() {
         async_wrapper(|env| async move {
-            let db = env.async_db();
+            let db = &env.db;
 
             let release_id = release("0.3.0", &env).await;
 
@@ -584,7 +588,7 @@ mod test {
     #[test]
     fn in_progress_releases_are_ignored_when_others_match() {
         async_wrapper(|env| async move {
-            let db = env.async_db();
+            let db = &env.db;
 
             // normal release
             release("1.0.0", &env).await;
@@ -614,7 +618,7 @@ mod test {
     // https://github.com/rust-lang/docs.rs/issues/1682
     fn prereleases_are_considered_when_others_dont_match() {
         async_wrapper(|env| async move {
-            let db = env.async_db();
+            let db = &env.db;
 
             // normal release
             release("1.0.0", &env).await;
@@ -639,7 +643,7 @@ mod test {
     // vaguely related to https://github.com/rust-lang/docs.rs/issues/395
     fn metadata_has_no_effect() {
         async_wrapper(|env| async move {
-            let db = env.async_db();
+            let db = &env.db;
 
             release("0.1.0+4.1", &env).await;
             release("0.1.1", &env).await;
@@ -735,7 +739,7 @@ mod test {
     fn metadata_from_crate() {
         async_wrapper(|env| async move {
             release("0.1.0", &env).await;
-            let mut conn = env.async_db().async_conn().await?;
+            let mut conn = env.async_conn().await?;
             let metadata = MetaData::from_crate(
                 &mut conn,
                 "foo",
