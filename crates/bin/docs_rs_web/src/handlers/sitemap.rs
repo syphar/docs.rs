@@ -169,7 +169,7 @@ pub(crate) async fn about_builds_handler(
 ) -> AxumResult<impl IntoResponse> {
     Ok(AboutBuilds {
         rustc_version: get_config::<String>(&mut conn, ConfigName::RustcVersion).await?,
-        limits: Limits::new(config.build_limits()?),
+        limits: Limits::new(&config.build_limits),
         active_tab: "builds",
     })
 }

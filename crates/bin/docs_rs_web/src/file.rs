@@ -36,7 +36,7 @@ impl File {
     ) -> Result<File> {
         Ok(File(
             storage
-                .get(path, config.storage()?.max_file_size_for(path))
+                .get(path, config.storage.max_file_size_for(path))
                 .await?,
         ))
     }

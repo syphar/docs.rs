@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use docs_rs_env_vars::maybe_env;
 use std::time::Duration;
 
@@ -50,15 +50,17 @@ pub struct Config {
     #[builder(default = true)]
     pub(crate) cache_invalidatable_responses: bool,
 
-    storage: Option<docs_rs_storage::Config>,
-    build_limits: Option<docs_rs_build_limits::Config>,
-    registry_api: Option<docs_rs_registry_api::Config>,
+    pub(crate) storage: docs_rs_storage::Config,
+    pub(crate) build_limits: docs_rs_build_limits::Config,
+    pub(crate) registry_api: docs_rs_registry_api::Config,
 }
 
-use config_builder::{IsComplete, State};
+use config_builder::{SetBuildLimits, SetRegistryApi, SetStorage, State};
 
 impl<S: State> ConfigBuilder<S> {
-    pub(crate) fn load_environment(self) -> Result<ConfigBuilder<impl IsComplete>> {
+    pub(crate) fn load_environment(
+        self,
+    ) -> Result<ConfigBuilder<SetRegistryApi<SetStorage<SetBuildLimits<S>>>>> {
         Ok(self
             .maybe_cratesio_token(maybe_env("DOCSRS_CRATESIO_TOKEN")?)
             .maybe_max_parse_memory(maybe_env("DOCSRS_MAX_PARSE_MEMORY")?)
@@ -79,7 +81,9 @@ impl<S: State> ConfigBuilder<S> {
     }
 
     #[cfg(test)]
-    pub(crate) fn test_config(self) -> Result<ConfigBuilder<impl IsComplete>> {
+    pub(crate) fn test_config(
+        self,
+    ) -> Result<ConfigBuilder<SetStorage<SetRegistryApi<SetStorage<SetBuildLimits<S>>>>>> {
         Ok(self
             .load_environment()?
             .storage(docs_rs_storage::Config::test_config(
@@ -99,29 +103,5 @@ impl Config {
     #[cfg(test)]
     pub fn test_config() -> Result<Self> {
         Ok(Self::builder().test_config()?.build())
-    }
-
-    pub fn storage(&self) -> Result<&docs_rs_storage::Config> {
-        if let Some(ref storage) = self.storage {
-            Ok(storage)
-        } else {
-            Err(anyhow!("missing storage config"))
-        }
-    }
-
-    pub fn build_limits(&self) -> Result<&docs_rs_build_limits::Config> {
-        if let Some(ref build_limits) = self.build_limits {
-            Ok(build_limits)
-        } else {
-            Err(anyhow!("missing build limits config"))
-        }
-    }
-
-    pub fn registry_api(&self) -> Result<&docs_rs_registry_api::Config> {
-        if let Some(ref registry_api) = self.registry_api {
-            Ok(registry_api)
-        } else {
-            Err(anyhow!("missing registry api config"))
-        }
     }
 }
