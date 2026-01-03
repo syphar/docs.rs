@@ -17,6 +17,7 @@ use axum::{
     routing::{MethodRouter, get, post},
 };
 use axum_extra::routing::RouterExt;
+use docs_rs_context::axum_context::AppContext;
 use std::convert::Infallible;
 use tracing::{debug, instrument};
 
@@ -98,7 +99,7 @@ fn cached_permanent_redirect(uri: &str) -> impl IntoResponse {
     )
 }
 
-pub(crate) fn build_axum_routes() -> AxumRouter {
+pub(crate) fn build_axum_routes() -> AxumRouter<AppContext> {
     // hint for naming axum routes:
     // when routes overlap, the route parameters at the same position
     // have to use the same name:

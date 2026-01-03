@@ -3,7 +3,7 @@ use anyhow::Result;
 use axum::Router;
 use bon::bon;
 use docs_rs_build_queue::AsyncBuildQueue;
-use docs_rs_context::Context;
+use docs_rs_context::{Context, axum_context::AppContext};
 use docs_rs_database::{AsyncPoolClient, Config as DatabaseConfig, testing::TestDatabase};
 use docs_rs_opentelemetry::testing::{CollectedMetrics, TestMetrics};
 use docs_rs_registry_api::RegistryApi;
@@ -105,11 +105,12 @@ impl TestEnvironment {
         self.context.storage()
     }
 
-    pub(crate) async fn web_app(&self) -> Router {
+    pub(crate) async fn web_app(&self) -> Router<AppContext> {
         let template_data = Arc::new(TemplateData::new(1).unwrap());
         build_axum_app(self.config.clone(), self.context.clone(), template_data)
             .await
             .expect("could not build axum app")
+            .with_state(self.context.clone())
     }
 
     pub async fn fake_release(&self) -> FakeRelease<'_> {

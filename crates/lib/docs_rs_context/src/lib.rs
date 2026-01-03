@@ -1,3 +1,5 @@
+#[cfg(feature = "axum")]
+pub mod axum_context;
 mod config;
 mod context;
 

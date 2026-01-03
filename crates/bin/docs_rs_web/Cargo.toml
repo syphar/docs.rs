@@ -8,7 +8,7 @@ build = "build.rs"
 anyhow = { workspace = true }
 askama = { workspace = true }
 async-stream = { workspace = true }
-axum = { version = "0.8.1", features = ["macros"] }
+axum = { workspace = true }
 axum-extra = { workspace = true }
 base64 = { workspace = true }
 bon = { workspace = true }
@@ -20,7 +20,7 @@ derive_more = { workspace = true }
 docs_rs_build_limits = { path = "../../lib/docs_rs_build_limits" }
 docs_rs_build_queue = { path = "../../lib/docs_rs_build_queue" }
 docs_rs_cargo_metadata = { path = "../../lib/docs_rs_cargo_metadata" }
-docs_rs_context = { path = "../../lib/docs_rs_context" }
+docs_rs_context = { path = "../../lib/docs_rs_context", features = ["axum"] }
 docs_rs_database = { path = "../../lib/docs_rs_database" }
 docs_rs_env_vars = { path = "../../lib/docs_rs_env_vars" }
 docs_rs_headers = { path = "../../lib/docs_rs_headers" }
@@ -74,7 +74,7 @@ walkdir = { workspace = true }
 
 [dev-dependencies]
 docs_rs_builder = { path = "../docs_rs_builder" }
-docs_rs_context = { path = "../../lib/docs_rs_context", features = ["testing"] }
+docs_rs_context = { path = "../../lib/docs_rs_context", features = ["axum", "testing"] }
 docs_rs_database = { path = "../../lib/docs_rs_database", features = ["testing"] }
 docs_rs_headers = { path = "../../lib/docs_rs_headers", features = ["testing"] }
 docs_rs_storage = { path = "../../lib/docs_rs_storage", features = ["testing"] }

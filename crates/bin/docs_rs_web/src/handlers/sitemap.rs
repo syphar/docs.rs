@@ -8,7 +8,7 @@ use askama::Template;
 use async_stream::stream;
 use axum::{
     body::{Body, Bytes},
-    extract::Extension,
+    extract::{Extension, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -165,11 +165,11 @@ impl_axum_webpage!(AboutBuilds);
 
 pub(crate) async fn about_builds_handler(
     mut conn: DbConnection,
-    Extension(context): Extension<Arc<Context>>,
+    // State(global_config): State<Arc<docs_rs_context::Config>>,
 ) -> AxumResult<impl IntoResponse> {
     Ok(AboutBuilds {
         rustc_version: get_config::<String>(&mut conn, ConfigName::RustcVersion).await?,
-        limits: Limits::new(context.config().build_limits()?),
+        limits: Limits::new(global_config.build_limits()?),
         active_tab: "builds",
     })
 }

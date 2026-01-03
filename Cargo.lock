@@ -2057,6 +2057,7 @@ name = "docs_rs_context"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "bon",
  "docs_rs_build_limits",
  "docs_rs_build_queue",

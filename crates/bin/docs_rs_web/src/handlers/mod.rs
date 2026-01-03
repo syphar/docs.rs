@@ -26,7 +26,7 @@ use axum::{
     response::{IntoResponse, Response as AxumResponse},
 };
 use axum_extra::middleware::option_layer;
-use docs_rs_context::Context;
+use docs_rs_context::axum_context::AppContext;
 use sentry::integrations::tower as sentry_tower;
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -68,11 +68,11 @@ async fn set_sentry_transaction_name_from_axum_route(
 }
 
 async fn apply_middleware(
-    router: AxumRouter,
+    router: AxumRouter<AppContext>,
     config: Arc<Config>,
-    context: Arc<Context>,
+    context: AppContext,
     template_data: Option<Arc<TemplateData>>,
-) -> Result<AxumRouter> {
+) -> Result<AxumRouter<AppContext>> {
     let has_templates = template_data.is_some();
 
     let web_metrics = Arc::new(WebMetrics::new(&context.meter_provider));
@@ -113,9 +113,9 @@ async fn apply_middleware(
 
 pub(crate) async fn build_axum_app(
     config: Arc<Config>,
-    context: Arc<Context>,
+    context: AppContext,
     template_data: Arc<TemplateData>,
-) -> Result<AxumRouter, Error> {
+) -> Result<AxumRouter<AppContext>, Error> {
     apply_middleware(
         routes::build_axum_routes(),
         config,
@@ -129,7 +129,7 @@ pub(crate) async fn build_axum_app(
 pub async fn run_web_server(
     addr: Option<SocketAddr>,
     config: Arc<Config>,
-    context: Arc<Context>,
+    context: AppContext,
 ) -> Result<(), Error> {
     let template_data = Arc::new(TemplateData::new(config.render_threads)?);
 
@@ -141,9 +141,10 @@ pub async fn run_web_server(
         axum_addr.port()
     );
 
-    let app = build_axum_app(config, context, template_data)
+    let app = build_axum_app(config, context.clone(), template_data)
         .await?
-        .into_make_service();
+        .with_state(context);
+
     let listener = tokio::net::TcpListener::bind(axum_addr)
         .await
         .context("error binding socket for web server")?;

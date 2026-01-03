@@ -3,6 +3,7 @@ use anyhow::{Context as _, Result, anyhow};
 use axum::body::Bytes;
 use axum::{body::Body, http::Request, response::Response as AxumResponse};
 use axum_extra::headers::{ETag, HeaderMapExt as _};
+use docs_rs_context::axum_context::AppContext;
 use docs_rs_headers::{IfNoneMatch, SURROGATE_CONTROL, SurrogateKeys};
 use http::{
     HeaderMap, HeaderName, HeaderValue, StatusCode,
@@ -128,7 +129,7 @@ pub(crate) trait AxumRouterTestExt {
     ) -> Result<AxumResponse>;
 }
 
-impl AxumRouterTestExt for axum::Router {
+impl AxumRouterTestExt for axum::Router<AppContext> {
     /// Make sure that a URL returns a status code between 200-299
     async fn assert_success(&self, path: &str) -> Result<AxumResponse> {
         let response = self.get(path).await?;
