@@ -150,7 +150,7 @@ impl CommandLine {
                 ctx.runtime.block_on(run_web_server(
                     Some(socket_addr),
                     ctx.config.web.clone(),
-                    &new_context,
+                    new_context,
                 ))?;
             }
             Self::Daemon { registry_watcher } => {

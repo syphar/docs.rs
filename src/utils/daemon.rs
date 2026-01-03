@@ -46,7 +46,7 @@ pub fn start_daemon(context: Context, enable_registry_watcher: bool) -> Result<(
             context.runtime.block_on(run_web_server(
                 None,
                 context.config.web.clone(),
-                &new_context,
+                new_context,
             ))
         }
     });

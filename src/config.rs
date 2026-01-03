@@ -12,6 +12,7 @@ pub struct Config {
     pub(crate) repository_stats: Arc<docs_rs_repository_stats::Config>,
     pub(crate) storage: Arc<docs_rs_storage::Config>,
     pub(crate) build_queue: Arc<docs_rs_build_queue::Config>,
+    pub(crate) build_limits: Arc<docs_rs_build_limits::Config>,
     pub builder: Arc<docs_rs_builder::Config>,
     pub watcher: Arc<docs_rs_watcher::Config>,
     pub web: Arc<docs_rs_web::Config>,
@@ -26,6 +27,7 @@ impl From<&Config> for NewConfig {
             registry_api: Some(value.registry_api.clone()),
             cdn: value.fastly.is_valid().then(|| value.fastly.clone()),
             repository_stats: Some(value.repository_stats.clone()),
+            build_limits: Some(value.build_limits.clone()),
         }
     }
 }
@@ -45,6 +47,7 @@ impl Config {
             ))
             .storage(Arc::new(docs_rs_storage::Config::from_environment()?))
             .build_queue(Arc::new(docs_rs_build_queue::Config::from_environment()?))
+            .build_limits(Arc::new(docs_rs_build_limits::Config::from_environment()?))
             .builder(Arc::new(docs_rs_builder::Config::from_environment()?))
             .watcher(Arc::new(docs_rs_watcher::Config::from_environment()?))
             .web(Arc::new(docs_rs_web::Config::from_environment()?)))
