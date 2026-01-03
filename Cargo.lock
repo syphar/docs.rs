@@ -2367,6 +2367,7 @@ dependencies = [
  "axum",
  "axum-extra",
  "base64",
+ "bon",
  "chrono",
  "clap",
  "comrak",
