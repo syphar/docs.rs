@@ -126,7 +126,7 @@ impl StreamingFile {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Config, cache::STATIC_ASSET_CACHE_POLICY, testing::TestEnvironment};
+    use crate::{cache::STATIC_ASSET_CACHE_POLICY, testing::TestEnvironment};
     use axum_extra::headers::{ETag, HeaderMapExt as _};
     use chrono::Utc;
     use docs_rs_headers::compute_etag;
@@ -247,21 +247,16 @@ mod tests {
         const MAX_HTML_SIZE: usize = 128;
 
         let env = Rc::new(
-            TestEnvironment::with_config(
-                Config::builder()
-                    .test_config()?
-                    .storage(
-                        docs_rs_storage::Config::test_config(StorageKind::Memory)?.set(
-                            |mut cfg| {
-                                cfg.max_file_size = MAX_SIZE;
-                                cfg.max_file_size_html = MAX_HTML_SIZE;
-                                cfg
-                            },
-                        ),
-                    )
-                    .build(),
-            )
-            .await?,
+            TestEnvironment::builder()
+                .storage_config(
+                    docs_rs_storage::Config::test_config(StorageKind::Memory)?.set(|mut cfg| {
+                        cfg.max_file_size = MAX_SIZE;
+                        cfg.max_file_size_html = MAX_HTML_SIZE;
+                        cfg
+                    }),
+                )
+                .build()
+                .await?,
         );
 
         env.fake_release()

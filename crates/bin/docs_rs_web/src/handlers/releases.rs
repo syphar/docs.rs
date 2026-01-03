@@ -1045,16 +1045,14 @@ mod tests {
     async fn search_result_can_retrieve_sort_by_from_pagination() -> Result<()> {
         let mut crates_io = mockito::Server::new_async().await;
 
-        let config = Config::builder()
-            .test_config()?
-            .registry_api(
+        let env = TestEnvironment::builder()
+            .registry_api_config(
                 docs_rs_registry_api::Config::builder()
                     .registry_api_host(crates_io.url().parse().unwrap())
                     .build(),
             )
-            .build();
-
-        let env = TestEnvironment::with_config(config).await?;
+            .build()
+            .await?;
 
         let web = env.web_app().await;
         env.fake_release()
@@ -1114,15 +1112,14 @@ mod tests {
     async fn search_result_passes_cratesio_pagination_links() -> Result<()> {
         let mut crates_io = mockito::Server::new_async().await;
 
-        let config = Config::builder()
-            .test_config()?
-            .registry_api(
+        let env = TestEnvironment::builder()
+            .registry_api_config(
                 docs_rs_registry_api::Config::builder()
                     .registry_api_host(crates_io.url().parse().unwrap())
                     .build(),
             )
-            .build();
-        let env = TestEnvironment::with_config(config).await?;
+            .build()
+            .await?;
 
         let web = env.web_app().await;
         env.fake_release()
@@ -1208,15 +1205,14 @@ mod tests {
     async fn crates_io_errors_as_status_code_200() -> Result<()> {
         let mut crates_io = mockito::Server::new_async().await;
 
-        let config = Config::builder()
-            .test_config()?
-            .registry_api(
+        let env = TestEnvironment::builder()
+            .registry_api_config(
                 docs_rs_registry_api::Config::builder()
                     .registry_api_host(crates_io.url().parse().unwrap())
                     .build(),
             )
-            .build();
-        let env = TestEnvironment::with_config(config).await?;
+            .build()
+            .await?;
 
         let _m = crates_io
             .mock("GET", "/api/v1/crates")
@@ -1263,16 +1259,15 @@ mod tests {
     ) -> Result<()> {
         let mut crates_io = mockito::Server::new_async().await;
 
-        let config = Config::builder()
-            .test_config()?
-            .registry_api(
+        let env = TestEnvironment::builder()
+            .registry_api_config(
                 docs_rs_registry_api::Config::builder()
                     .registry_api_host(crates_io.url().parse().unwrap())
                     .crates_io_api_call_retries(0)
                     .build(),
             )
-            .build();
-        let env = TestEnvironment::with_config(config).await?;
+            .build()
+            .await?;
 
         let _m = crates_io
             .mock("GET", "/api/v1/crates")
@@ -1299,15 +1294,14 @@ mod tests {
     async fn search_encoded_pagination_passed_to_cratesio() -> Result<()> {
         let mut crates_io = mockito::Server::new_async().await;
 
-        let config = Config::builder()
-            .test_config()?
-            .registry_api(
+        let env = TestEnvironment::builder()
+            .registry_api_config(
                 docs_rs_registry_api::Config::builder()
                     .registry_api_host(crates_io.url().parse().unwrap())
                     .build(),
             )
-            .build();
-        let env = TestEnvironment::with_config(config).await?;
+            .build()
+            .await?;
 
         let web = env.web_app().await;
         env.fake_release()
@@ -1357,15 +1351,14 @@ mod tests {
     async fn search_lucky_with_unknown_crate() -> Result<()> {
         let mut crates_io = mockito::Server::new_async().await;
 
-        let config = Config::builder()
-            .test_config()?
-            .registry_api(
+        let env = TestEnvironment::builder()
+            .registry_api_config(
                 docs_rs_registry_api::Config::builder()
                     .registry_api_host(crates_io.url().parse().unwrap())
                     .build(),
             )
-            .build();
-        let env = TestEnvironment::with_config(config).await?;
+            .build()
+            .await?;
 
         let web = env.web_app().await;
         env.fake_release()
@@ -1415,15 +1408,14 @@ mod tests {
     async fn search() -> Result<()> {
         let mut crates_io = mockito::Server::new_async().await;
 
-        let config = Config::builder()
-            .test_config()?
-            .registry_api(
+        let env = TestEnvironment::builder()
+            .registry_api_config(
                 docs_rs_registry_api::Config::builder()
                     .registry_api_host(crates_io.url().parse().unwrap())
                     .build(),
             )
-            .build();
-        let env = TestEnvironment::with_config(config).await?;
+            .build()
+            .await?;
 
         let web = env.web_app().await;
         env.fake_release()
@@ -2137,16 +2129,14 @@ mod tests {
     async fn crates_not_on_docsrs() -> Result<()> {
         let mut crates_io = mockito::Server::new_async().await;
 
-        let config = Config::builder()
-            .test_config()?
-            .registry_api(
+        let env = TestEnvironment::builder()
+            .registry_api_config(
                 docs_rs_registry_api::Config::builder()
                     .registry_api_host(crates_io.url().parse().unwrap())
                     .build(),
             )
-            .build();
-
-        let env = TestEnvironment::with_config(config).await?;
+            .build()
+            .await?;
 
         let web = env.web_app().await;
         env.fake_release()

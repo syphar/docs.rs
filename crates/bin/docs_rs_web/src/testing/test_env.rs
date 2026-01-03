@@ -1,10 +1,12 @@
 use crate::{Config as WebConfig, handlers::build_axum_app, page::TemplateData};
 use anyhow::Result;
 use axum::Router;
+use bon::bon;
 use docs_rs_build_queue::AsyncBuildQueue;
 use docs_rs_context::Context;
 use docs_rs_database::{AsyncPoolClient, Config as DatabaseConfig, testing::TestDatabase};
 use docs_rs_opentelemetry::testing::{CollectedMetrics, TestMetrics};
+use docs_rs_registry_api::RegistryApi;
 use docs_rs_storage::{AsyncStorage, Config as StorageConfig, StorageKind, testing::TestStorage};
 use docs_rs_test_fakes::FakeRelease;
 use std::sync::Arc;
@@ -20,33 +22,63 @@ pub(crate) struct TestEnvironment {
     pub(crate) db: TestDatabase,
 }
 
+#[bon]
 impl TestEnvironment {
     pub(crate) async fn new() -> Result<Self> {
-        Self::with_config(WebConfig::test_config()?).await
+        // NOTE: compiler crashes when I change the return to
+        // `Self::builder().build().await
+        #[allow(clippy::needless_question_mark)]
+        Ok(Self::builder().build().await?)
     }
 
-    pub(crate) async fn with_config(config: WebConfig) -> Result<Self> {
+    #[builder(finish_fn = build)]
+    pub(crate) async fn builder(
+        web_config: Option<WebConfig>,
+        registry_api_config: Option<docs_rs_registry_api::Config>,
+        storage_config: Option<StorageConfig>,
+    ) -> Result<Self> {
         docs_rs_logging::testing::init();
+
+        let web_config = Arc::new(if let Some(web_config) = web_config {
+            web_config
+        } else {
+            WebConfig::test_config()?
+        });
+
+        let registry_api_config =
+            Arc::new(if let Some(registry_api_config) = registry_api_config {
+                registry_api_config
+            } else {
+                docs_rs_registry_api::Config::from_environment()?
+            });
+
+        // FIXME: can we get rid of the repetion of the registry api creation between
+        // here and the context builder?
+        let registry_api = RegistryApi::from_config(&registry_api_config)?;
 
         let metrics = TestMetrics::new();
 
         let db_config = DatabaseConfig::test_config()?;
         let db = TestDatabase::new(&db_config, metrics.provider()).await?;
 
-        let storage_config = Arc::new(StorageConfig::test_config(StorageKind::Memory)?);
+        let storage_config = Arc::new(if let Some(storage_config) = storage_config {
+            storage_config
+        } else {
+            StorageConfig::test_config(StorageKind::Memory)?
+        });
+
         let test_storage =
             TestStorage::from_config(storage_config.clone(), metrics.provider()).await?;
 
         Ok(Self {
-            config: Arc::new(config),
+            config: web_config,
             context: Context::builder()
                 .await?
                 .pool(db_config.into(), db.pool().clone())
                 .storage(storage_config.clone(), test_storage.storage())
                 .with_build_queue()
                 .await?
-                .with_registry_api()
-                .await?
+                .registry_api(registry_api_config, registry_api.into())
                 .build()?
                 .into(),
             db,

@@ -362,7 +362,6 @@ pub(crate) async fn source_browser_handler(
 #[cfg(test)]
 mod tests {
     use crate::{
-        Config,
         cache::CachePolicy,
         testing::{AxumResponseTestExt, AxumRouterTestExt, TestEnvironment, async_wrapper},
     };
@@ -855,19 +854,16 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn large_file_test() -> Result<()> {
-        let env = TestEnvironment::with_config(
-            Config::builder()
-                .test_config()?
-                .storage(
-                    docs_rs_storage::Config::test_config(StorageKind::Memory)?.set(|mut cfg| {
-                        cfg.max_file_size = 1;
-                        cfg.max_file_size_html = 1;
-                        cfg
-                    }),
-                )
-                .build(),
-        )
-        .await?;
+        let env = TestEnvironment::builder()
+            .storage_config(
+                docs_rs_storage::Config::test_config(StorageKind::Memory)?.set(|mut cfg| {
+                    cfg.max_file_size = 1;
+                    cfg.max_file_size_html = 1;
+                    cfg
+                }),
+            )
+            .build()
+            .await?;
 
         env.fake_release()
             .await

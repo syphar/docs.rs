@@ -307,13 +307,15 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn build_trigger_rebuild_missing_config() -> Result<()> {
-        let env = TestEnvironment::with_config(
-            Config::builder()
-                .test_config()?
-                .maybe_cratesio_token(None)
-                .build(),
-        )
-        .await?;
+        let env = TestEnvironment::builder()
+            .web_config(
+                Config::builder()
+                    .test_config()?
+                    .maybe_cratesio_token(None)
+                    .build(),
+            )
+            .build()
+            .await?;
 
         env.fake_release()
             .await
@@ -355,13 +357,15 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn build_trigger_rebuild_with_config() -> Result<()> {
         let correct_token = "foo137";
-        let env = TestEnvironment::with_config(
-            Config::builder()
-                .test_config()?
-                .cratesio_token(correct_token.into())
-                .build(),
-        )
-        .await?;
+        let env = TestEnvironment::builder()
+            .web_config(
+                Config::builder()
+                    .test_config()?
+                    .cratesio_token(correct_token.into())
+                    .build(),
+            )
+            .build()
+            .await?;
 
         env.fake_release()
             .await
