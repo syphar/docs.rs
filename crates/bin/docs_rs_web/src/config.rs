@@ -2,19 +2,11 @@ use anyhow::Result;
 use docs_rs_env_vars::maybe_env;
 use std::time::Duration;
 
-macro_rules! load_env_into_builder {
-    ($self:expr, $( $env:expr => $method:ident ),* $(,)? ) => {
-        Ok($self
-            $( . $method ( maybe_env($env)? ) )*
-        )
-    };
-}
-
 #[derive(Debug, bon::Builder)]
-#[builder(on(_, overwritable,))]
+#[builder(on(_, overwritable))]
 pub struct Config {
-    // Access token for APIs for crates.io (careful: use
-    // constant_time_eq for comparisons!)
+    // Access token for APIs for crates.io
+    // (careful: use constant_time_eq for comparisons!)
     pub(crate) cratesio_token: Option<String>,
 
     // request timeout in seconds
@@ -24,6 +16,8 @@ pub struct Config {
     pub(crate) report_request_timeouts: bool,
 
     // The most memory that can be used to parse an HTML file
+    // LOL HTML only uses as much memory as the size of the start tag!
+    // https://github.com/rust-lang/docs.rs/pull/930#issuecomment-667729380
     #[builder(default = 5 * 1024 * 1024 as usize)]
     pub(crate) max_parse_memory: usize,
 
@@ -61,18 +55,20 @@ use config_builder::{IsComplete, State};
 
 impl<S: State> ConfigBuilder<S> {
     fn load_environment(self) -> Result<ConfigBuilder<impl IsComplete>> {
-        load_env_into_builder! {
-            self,
-            "DOCSRS_CRATESIO_TOKEN" => maybe_cratesio_token,
-            "DOCSRS_MAX_PARSE_MEMORY" => maybe_max_parse_memory,
-            "DOCSRS_RENDER_THREADS" => maybe_render_threads,
-            "DOCSRS_REQUEST_TIMEOUT" => maybe_request_timeout,
-            "DOCSRS_REPORT_REQUEST_TIMEOUTS" => maybe_report_request_timeouts,
-            "DOCSRS_RANDOM_CRATE_SEARCH_VIEW_SIZE" => maybe_random_crate_search_view_size,
-            "DOCSRS_CSP_REPORT_ONLY" => maybe_csp_report_only,
-            "CACHE_CONTROL_STALE_WHILE_REVALIDATE" => maybe_cache_control_stale_while_revalidate,
-            "DOCSRS_CACHE_INVALIDATEABLE_RESPONSES" => maybe_cache_invalidatable_responses,
-        }
+        Ok(self
+            .maybe_cratesio_token(maybe_env("DOCSRS_CRATESIO_TOKEN")?)
+            .maybe_max_parse_memory(maybe_env("DOCSRS_MAX_PARSE_MEMORY")?)
+            .maybe_render_threads(maybe_env("DOCSRS_RENDER_THREADS")?)
+            .maybe_request_timeout(maybe_env("DOCSRS_REQUEST_TIMEOUT")?)
+            .maybe_report_request_timeouts(maybe_env("DOCSRS_REPORT_REQUEST_TIMEOUTS")?)
+            .maybe_random_crate_search_view_size(maybe_env("DOCSRS_RANDOM_CRATE_SEARCH_VIEW_SIZE")?)
+            .maybe_csp_report_only(maybe_env("DOCSRS_CSP_REPORT_ONLY")?)
+            .maybe_cache_control_stale_while_revalidate(maybe_env(
+                "CACHE_CONTROL_STALE_WHILE_REVALIDATE",
+            )?)
+            .maybe_cache_invalidatable_responses(maybe_env(
+                "DOCSRS_CACHE_INVALIDATEABLE_RESPONSES",
+            )?))
     }
 
     #[cfg(test)]
@@ -91,20 +87,3 @@ impl Config {
         Ok(Self::builder().test_config()?.build())
     }
 }
-
-// Ok(self
-//     .maybe_cratesio_token(maybe_env("DOCSRS_CRATESIO_TOKEN")?)
-//     // LOL HTML only uses as much memory as the size of the start tag!
-//     // https://github.com/rust-lang/docs.rs/pull/930#issuecomment-667729380
-//     .maybe_max_parse_memory(maybe_env("DOCSRS_MAX_PARSE_MEMORY")?)
-//     .maybe_render_threads(maybe_env("DOCSRS_RENDER_THREADS")?)
-//     .maybe_request_timeout(maybe_env("DOCSRS_REQUEST_TIMEOUT")?)
-//     .maybe_report_request_timeouts(maybe_env("DOCSRS_REPORT_REQUEST_TIMEOUTS")?)
-//     .maybe_random_crate_search_view_size(maybe_env("DOCSRS_RANDOM_CRATE_SEARCH_VIEW_SIZE")?)
-//     .maybe_csp_report_only(maybe_env("DOCSRS_CSP_REPORT_ONLY")?)
-//     .maybe_cache_control_stale_while_revalidate(maybe_env(
-//         "CACHE_CONTROL_STALE_WHILE_REVALIDATE",
-//     )?)
-//     .maybe_cache_invalidatable_responses(maybe_env(
-//         "DOCSRS_CACHE_INVALIDATEABLE_RESPONSES",
-//     )?))
