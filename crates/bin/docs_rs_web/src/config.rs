@@ -1,5 +1,6 @@
-use docs_rs_env_vars::{env, maybe_env, require_env};
-use std::{path::PathBuf, time::Duration};
+use anyhow::Result;
+use docs_rs_env_vars::maybe_env;
+use std::time::Duration;
 
 #[derive(Debug, bon::Builder)]
 #[builder(on(_, overwritable))]
@@ -9,6 +10,7 @@ pub struct Config {
     pub(crate) cratesio_token: Option<String>,
 
     // request timeout in seconds
+    #[builder(with = |secs: u64| Duration::from_secs(secs))]
     pub(crate) request_timeout: Option<Duration>,
     #[builder(default)]
     pub(crate) report_request_timeouts: bool,
@@ -47,17 +49,17 @@ pub struct Config {
     pub(crate) cache_invalidatable_responses: bool,
 }
 
-impl Config {
-    pub fn from_environment() -> anyhow::Result<Self> {
-        Ok(Self::builder()
+use config_builder::{IsComplete, State};
+
+impl<S: State> ConfigBuilder<S> {
+    fn load_environment(self) -> Result<ConfigBuilder<impl IsComplete>> {
+        Ok(self
             .maybe_cratesio_token(maybe_env("DOCSRS_CRATESIO_TOKEN")?)
             // LOL HTML only uses as much memory as the size of the start tag!
             // https://github.com/rust-lang/docs.rs/pull/930#issuecomment-667729380
             .maybe_max_parse_memory(maybe_env("DOCSRS_MAX_PARSE_MEMORY")?)
             .maybe_render_threads(maybe_env("DOCSRS_RENDER_THREADS")?)
-            .maybe_request_timeout(
-                maybe_env::<u64>("DOCSRS_REQUEST_TIMEOUT")?.map(Duration::from_secs),
-            )
+            .maybe_request_timeout(maybe_env("DOCSRS_REQUEST_TIMEOUT")?)
             .maybe_report_request_timeouts(maybe_env("DOCSRS_REPORT_REQUEST_TIMEOUTS")?)
             .maybe_random_crate_search_view_size(maybe_env("DOCSRS_RANDOM_CRATE_SEARCH_VIEW_SIZE")?)
             .maybe_csp_report_only(maybe_env("DOCSRS_CSP_REPORT_ONLY")?)
@@ -66,12 +68,22 @@ impl Config {
             )?)
             .maybe_cache_invalidatable_responses(maybe_env(
                 "DOCSRS_CACHE_INVALIDATEABLE_RESPONSES",
-            )?)
-            .build())
+            )?))
     }
 
     #[cfg(test)]
-    pub fn test_config() -> anyhow::Result<Self> {
-        Self::from_environment()
+    fn test_config(self) -> Result<ConfigBuilder<impl IsComplete>> {
+        Ok(self.load_environment()?)
+    }
+}
+
+impl Config {
+    pub fn from_environment() -> Result<Self> {
+        Ok(Self::builder().load_environment()?.build())
+    }
+
+    #[cfg(test)]
+    pub fn test_config(self) -> Result<Self> {
+        Ok(Self::builder().test_config()?.build())
     }
 }
