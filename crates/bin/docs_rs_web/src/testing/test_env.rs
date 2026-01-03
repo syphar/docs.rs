@@ -45,6 +45,8 @@ impl TestEnvironment {
                 .storage(storage_config.clone(), test_storage.storage())
                 .with_build_queue()
                 .await?
+                .with_registry_api()
+                .await?
                 .build()?,
             db,
             storage: test_storage,

@@ -84,7 +84,10 @@ impl<S: State> ConfigBuilder<S> {
             .load_environment()?
             .storage(docs_rs_storage::Config::test_config(
                 docs_rs_storage::StorageKind::Memory,
-            )?))
+            )?)
+            // set stale content serving so Cache::ForeverInCdn and Cache::ForeverInCdnAndStaleInBrowser
+            // are actually different.
+            .cache_control_stale_while_revalidate(86400))
     }
 }
 
