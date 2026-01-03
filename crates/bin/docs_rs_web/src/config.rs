@@ -81,6 +81,7 @@ impl<S: State> ConfigBuilder<S> {
     }
 
     #[cfg(test)]
+    #[allow(clippy::type_complexity)]
     pub(crate) fn test_config(
         self,
     ) -> Result<ConfigBuilder<SetStorage<SetRegistryApi<SetStorage<SetBuildLimits<S>>>>>> {
