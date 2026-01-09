@@ -267,14 +267,14 @@ mod tests {
         updater::{RepositoryForge, repository_name},
     };
     use anyhow::Result;
-    use docs_rs_config::AppConfig as _;
 
     const TEST_TOKEN: &str = "qsjdnfqdq";
 
     fn github_config() -> anyhow::Result<Config> {
-        let mut cfg = Config::from_environment()?;
-        cfg.github_accesstoken = Some(TEST_TOKEN.to_owned());
-        Ok(cfg)
+        Ok(Config::builder()
+            .test_config()?
+            .github_accesstoken(TEST_TOKEN.into())
+            .build())
     }
 
     async fn mock_server_and_github(config: &Config) -> (mockito::ServerGuard, GitHub) {
