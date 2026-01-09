@@ -22,7 +22,12 @@ impl TestStorage {
     pub async fn from_kind(kind: StorageKind, meter_provider: &AnyMeterProvider) -> Result<Self> {
         docs_rs_logging::testing::init();
         Self::from_config(
-            Arc::new(Config::test_config_with_kind(kind)?),
+            Arc::new(
+                Config::builder()?
+                    .test_config()?
+                    .storage_backend(kind)
+                    .build(),
+            ),
             meter_provider,
         )
         .await

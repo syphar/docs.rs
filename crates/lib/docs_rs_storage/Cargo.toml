@@ -12,6 +12,7 @@ async-stream = { workspace = true }
 aws-config = { version = "1.0.0", default-features = false, features = ["rt-tokio", "default-https-client"] }
 aws-sdk-s3 = "1.3.0"
 aws-smithy-types-convert = { version = "0.60.0", features = ["convert-chrono"] }
+bon = { workspace = true }
 bzip2 = "0.6.0"
 chrono = { workspace = true }
 dashmap = "6.0.0"

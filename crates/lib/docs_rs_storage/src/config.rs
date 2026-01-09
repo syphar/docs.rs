@@ -1,4 +1,5 @@
 use crate::types::StorageKind;
+use anyhow::Result;
 use docs_rs_config::AppConfig;
 use docs_rs_env_vars::{env, maybe_env, require_env};
 use std::{
@@ -14,18 +15,30 @@ fn ensure_absolute_path(path: PathBuf) -> io::Result<PathBuf> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, bon::Builder)]
+#[builder(
+    start_fn(name = builder_internal, vis = ""),
+    on(_, overwritable)
+)]
 pub struct Config {
+    #[builder(start_fn)]
     pub temp_dir: PathBuf,
 
+    #[builder(start_fn)]
+    prefix: PathBuf,
+
     // Storage params
+    #[builder(default)]
     pub storage_backend: StorageKind,
 
     // AWS SDK configuration
+    #[builder(default = 6)]
     pub aws_sdk_max_retries: u32,
 
     // S3 params
+    #[builder(default = "rust-docs-rs".to_string())]
     pub s3_bucket: String,
+    #[builder(default = "us-west-1".to_string())]
     pub s3_region: String,
     pub s3_endpoint: Option<String>,
 
@@ -33,14 +46,20 @@ pub struct Config {
     // Accidentally turning this on outside of the test suite might cause data loss in the
     // production environment.
     #[cfg(any(test, feature = "testing"))]
+    #[builder(default = false)]
     pub s3_bucket_is_temporary: bool,
 
     // Max size of the files served by the docs.rs frontend
+    #[builder(default = 50 * 1024 * 1024)]
     pub max_file_size: usize,
+    #[builder(default = 50 * 1024 * 1024)]
     pub max_file_size_html: usize,
 
     // where do we want to store the locally cached index files
     // for the remote archives?
+    #[builder(with = |path: impl AsRef<Path>| -> io::Result<_> {
+        ensure_absolute_path(path.as_ref().into())
+    })]
     pub local_archive_cache_path: PathBuf,
 
     // expected number of entries in the local archive cache.
@@ -56,48 +75,16 @@ pub struct Config {
     // We're using a local DashMap to store some locks for these indexes,
     // and we already know in advance we need these 50k entries.
     // So we can preallocate the DashMap with this number to avoid resizes.
+    #[builder(default = 100_000)]
     pub local_archive_cache_expected_count: usize,
 }
 
-impl AppConfig for Config {
-    fn from_environment() -> anyhow::Result<Self> {
-        let prefix: PathBuf = require_env("DOCSRS_PREFIX")?;
-
-        Ok(Self {
-            temp_dir: prefix.join("tmp"),
-            storage_backend: env("DOCSRS_STORAGE_BACKEND", StorageKind::default())?,
-            aws_sdk_max_retries: env("DOCSRS_AWS_SDK_MAX_RETRIES", 6u32)?,
-            s3_bucket: env("DOCSRS_S3_BUCKET", "rust-docs-rs".to_string())?,
-            s3_region: env("S3_REGION", "us-west-1".to_string())?,
-            s3_endpoint: maybe_env("S3_ENDPOINT")?,
-            local_archive_cache_path: ensure_absolute_path(env(
-                "DOCSRS_ARCHIVE_INDEX_CACHE_PATH",
-                prefix.join("archive_cache"),
-            )?)?,
-            local_archive_cache_expected_count: env(
-                "DOCSRS_ARCHIVE_INDEX_EXPECTED_COUNT",
-                100_000usize,
-            )?,
-            max_file_size: env("DOCSRS_MAX_FILE_SIZE", 50 * 1024 * 1024)?,
-            max_file_size_html: env("DOCSRS_MAX_FILE_SIZE_HTML", 50 * 1024 * 1024)?,
-            #[cfg(any(test, feature = "testing"))]
-            s3_bucket_is_temporary: false,
-        })
-    }
-
-    #[cfg(any(feature = "testing", test))]
-    fn test_config() -> anyhow::Result<Self> {
-        Self::test_config_with_kind(StorageKind::Memory)
-    }
-}
+use config_builder::{SetLocalArchiveCachePath, State};
 
 impl Config {
-    #[cfg(any(feature = "testing", test))]
-    pub fn set<F>(self, f: F) -> Self
-    where
-        F: FnOnce(Self) -> Self,
-    {
-        f(self)
+    pub fn builder() -> Result<ConfigBuilder> {
+        let prefix: PathBuf = require_env("DOCSRS_PREFIX")?;
+        Ok(Config::builder_internal(prefix.join("tmp"), prefix))
     }
 
     pub fn max_file_size_for(&self, path: impl AsRef<Path>) -> usize {
@@ -111,19 +98,53 @@ impl Config {
             self.max_file_size
         }
     }
+}
 
-    #[cfg(any(feature = "testing", test))]
-    pub fn test_config_with_kind(kind: StorageKind) -> anyhow::Result<Self> {
-        let mut config = Self::from_environment()?;
-        config.storage_backend = kind;
+impl<S: State> ConfigBuilder<S> {
+    pub(crate) fn load_environment(self) -> Result<ConfigBuilder<SetLocalArchiveCachePath<S>>> {
+        let prefix = self.prefix.clone();
 
-        config.local_archive_cache_path =
-            std::env::temp_dir().join(format!("docsrs-test-index-{}", rand::random::<u64>()));
+        Ok(self
+            .maybe_storage_backend(maybe_env("DOCSRS_STORAGE_BACKEND")?)
+            .maybe_aws_sdk_max_retries(maybe_env("DOCSRS_AWS_SDK_MAX_RETRIES")?)
+            .maybe_s3_bucket(maybe_env("DOCSRS_S3_BUCKET")?)
+            .maybe_s3_region(maybe_env("S3_REGION")?)
+            .maybe_s3_endpoint(maybe_env("S3_ENDPOINT")?)
+            .local_archive_cache_path(env(
+                "DOCSRS_ARCHIVE_INDEX_CACHE_PATH",
+                prefix.join("archive_cache"),
+            )?)?
+            .maybe_local_archive_cache_expected_count(maybe_env(
+                "DOCSRS_ARCHIVE_INDEX_EXPECTED_COUNT",
+            )?)
+            .maybe_max_file_size(maybe_env("DOCSRS_MAX_FILE_SIZE")?)
+            .maybe_max_file_size_html(maybe_env("DOCSRS_MAX_FILE_SIZE_HTML")?))
+    }
 
-        // Use a temporary S3 bucket, only used when storage_kind is set to S3 in env or later.
-        config.s3_bucket = format!("docsrs-test-bucket-{}", rand::random::<u64>());
-        config.s3_bucket_is_temporary = true;
+    #[cfg(any(test, feature = "testing"))]
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn test_config(
+        self,
+    ) -> Result<ConfigBuilder<SetLocalArchiveCachePath<SetLocalArchiveCachePath<S>>>> {
+        Ok(self
+            .load_environment()?
+            .storage_backend(StorageKind::Memory)
+            .local_archive_cache_path(
+                std::env::temp_dir().join(format!("docsrs-test-index-{}", rand::random::<u64>())),
+            )?
+            // Use a temporary S3 bucket, only used when storage_kind is set to S3 in env or later.
+            .s3_bucket(format!("docsrs-test-bucket-{}", rand::random::<u64>()))
+            .s3_bucket_is_temporary(true))
+    }
+}
 
-        Ok(config)
+impl AppConfig for Config {
+    fn from_environment() -> Result<Self> {
+        Ok(Self::builder()?.load_environment()?.build())
+    }
+
+    #[cfg(test)]
+    fn test_config() -> Result<Self> {
+        Ok(Self::builder()?.test_config()?.build())
     }
 }
