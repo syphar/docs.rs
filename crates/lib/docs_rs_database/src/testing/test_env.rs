@@ -26,7 +26,7 @@ impl TestDatabase {
 
         let pool = Pool::new_with_schema(config, &schema, otel_meter_provider).await?;
 
-        let mut conn = sqlx::PgConnection::connect(&config.database_url).await?;
+        let mut conn = sqlx::PgConnection::connect(config.database_url.as_str()).await?;
         sqlx::query(&format!("CREATE SCHEMA {schema}"))
             .execute(&mut conn)
             .await

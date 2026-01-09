@@ -88,7 +88,7 @@ mod tests {
     async fn test_rebuild_when_old() -> Result<()> {
         let env = TestEnvironment::builder()
             .config(
-                Config::builder()
+                Config::builder()?
                     .test_config()?
                     .max_queued_rebuilds(100)
                     .build(),
@@ -125,7 +125,7 @@ mod tests {
     async fn test_still_rebuild_when_full_with_failed() -> Result<()> {
         let env = TestEnvironment::builder()
             .config(
-                Config::builder()
+                Config::builder()?
                     .test_config()?
                     .max_queued_rebuilds(1)
                     .build(),
@@ -169,7 +169,7 @@ mod tests {
     async fn test_dont_rebuild_when_full() -> Result<()> {
         let env = TestEnvironment::builder()
             .config(
-                Config::builder()
+                Config::builder()?
                     .test_config()?
                     .max_queued_rebuilds(1)
                     .build(),
