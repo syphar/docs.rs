@@ -43,7 +43,7 @@ pub async fn watch_registry(config: &Config, context: &Context) -> Result<()> {
                 }
             }
 
-            if last_gc.elapsed().as_secs() >= config.registry_gc_interval {
+            if last_gc.elapsed() >= config.registry_gc_interval {
                 index.run_git_gc().await;
                 last_gc = Instant::now();
             }

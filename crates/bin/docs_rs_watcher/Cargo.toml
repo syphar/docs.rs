@@ -8,6 +8,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = { workspace = true }
+bon = { workspace = true }
 clap = { workspace = true }
 crates-index = { version = "3.0.0", default-features = false, features = ["git", "git-https", "git-performance", "parallel"] }
 crates-index-diff = { version = "29.0.0", features = [ "max-performance" ]}

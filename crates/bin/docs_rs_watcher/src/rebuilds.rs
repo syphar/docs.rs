@@ -80,16 +80,21 @@ pub async fn queue_rebuilds(
 mod tests {
     use super::*;
     use crate::testing::TestEnvironment;
-    use docs_rs_config::AppConfig as _;
     use docs_rs_test_fakes::FakeBuild;
     use docs_rs_types::testing::{BAR, BAZ, FOO, V1};
     use pretty_assertions::assert_eq;
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_rebuild_when_old() -> Result<()> {
-        let mut config = Config::test_config()?;
-        config.max_queued_rebuilds = Some(100);
-        let env = TestEnvironment::builder().config(config).build().await?;
+        let env = TestEnvironment::builder()
+            .config(
+                Config::builder()
+                    .test_config()?
+                    .max_queued_rebuilds(100)
+                    .build(),
+            )
+            .build()
+            .await?;
 
         env.fake_release()
             .await
@@ -118,9 +123,15 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_still_rebuild_when_full_with_failed() -> Result<()> {
-        let mut config = Config::test_config()?;
-        config.max_queued_rebuilds = Some(1);
-        let env = TestEnvironment::builder().config(config).build().await?;
+        let env = TestEnvironment::builder()
+            .config(
+                Config::builder()
+                    .test_config()?
+                    .max_queued_rebuilds(1)
+                    .build(),
+            )
+            .build()
+            .await?;
 
         let build_queue = env.build_queue()?;
         build_queue
@@ -156,9 +167,15 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_dont_rebuild_when_full() -> Result<()> {
-        let mut config = Config::test_config()?;
-        config.max_queued_rebuilds = Some(1);
-        let env = TestEnvironment::builder().config(config).build().await?;
+        let env = TestEnvironment::builder()
+            .config(
+                Config::builder()
+                    .test_config()?
+                    .max_queued_rebuilds(1)
+                    .build(),
+            )
+            .build()
+            .await?;
 
         let build_queue = env.build_queue()?;
         build_queue
