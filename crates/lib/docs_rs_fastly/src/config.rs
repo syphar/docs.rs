@@ -1,6 +1,6 @@
 use anyhow::Result;
 use docs_rs_config::AppConfig;
-use docs_rs_env_vars::{env, maybe_env};
+use docs_rs_env_vars::maybe_env;
 use url::Url;
 
 #[derive(Debug, bon::Builder)]
