@@ -22,10 +22,12 @@ fn ensure_absolute_path(path: PathBuf) -> io::Result<PathBuf> {
 )]
 pub struct Config {
     #[builder(start_fn)]
-    pub temp_dir: PathBuf,
-
-    #[builder(start_fn)]
     prefix: PathBuf,
+
+    #[builder(
+        default = prefix.join("tmp")
+    )]
+    pub temp_dir: PathBuf,
 
     // Storage params
     #[builder(default)]
@@ -57,9 +59,12 @@ pub struct Config {
 
     // where do we want to store the locally cached index files
     // for the remote archives?
-    #[builder(with = |path: impl AsRef<Path>| -> io::Result<_> {
-        ensure_absolute_path(path.as_ref().into())
-    })]
+    #[builder(
+        with = |path: impl AsRef<Path>| -> io::Result<_> {
+            ensure_absolute_path(path.as_ref().into())
+        },
+        default = prefix.join("tmp")
+    )]
     pub local_archive_cache_path: PathBuf,
 
     // expected number of entries in the local archive cache.
@@ -79,12 +84,12 @@ pub struct Config {
     pub local_archive_cache_expected_count: usize,
 }
 
-use config_builder::{SetLocalArchiveCachePath, State};
+use config_builder::State;
 
 impl Config {
     pub fn builder() -> Result<ConfigBuilder> {
         let prefix: PathBuf = require_env("DOCSRS_PREFIX")?;
-        Ok(Config::builder_internal(prefix.join("tmp"), prefix))
+        Ok(Config::builder_internal(prefix))
     }
 
     pub fn max_file_size_for(&self, path: impl AsRef<Path>) -> usize {
@@ -101,7 +106,7 @@ impl Config {
 }
 
 impl<S: State> ConfigBuilder<S> {
-    pub(crate) fn load_environment(self) -> Result<ConfigBuilder<SetLocalArchiveCachePath<S>>> {
+    pub(crate) fn load_environment(self) -> Result<ConfigBuilder<S>> {
         let prefix = self.prefix.clone();
 
         Ok(self
@@ -123,9 +128,7 @@ impl<S: State> ConfigBuilder<S> {
 
     #[cfg(any(test, feature = "testing"))]
     #[allow(clippy::type_complexity)]
-    pub(crate) fn test_config(
-        self,
-    ) -> Result<ConfigBuilder<SetLocalArchiveCachePath<SetLocalArchiveCachePath<S>>>> {
+    pub(crate) fn test_config(self) -> Result<ConfigBuilder<S>> {
         Ok(self
             .load_environment()?
             .storage_backend(StorageKind::Memory)
