@@ -1,7 +1,7 @@
 use crate::types::StorageKind;
 use anyhow::Result;
 use docs_rs_config::AppConfig;
-use docs_rs_env_vars::{env, maybe_env, require_env};
+use docs_rs_env_vars::{maybe_env, require_env};
 use std::{
     io,
     path::{self, Path, PathBuf},
@@ -22,7 +22,7 @@ fn ensure_absolute_path(path: PathBuf) -> io::Result<PathBuf> {
 )]
 pub struct Config {
     #[builder(start_fn)]
-    prefix: PathBuf,
+    pub prefix: PathBuf,
 
     #[builder(
         default = prefix.join("tmp")
@@ -60,8 +60,8 @@ pub struct Config {
     // where do we want to store the locally cached index files
     // for the remote archives?
     #[builder(
-        with = |path: impl AsRef<Path>| -> io::Result<_> {
-            ensure_absolute_path(path.as_ref().into())
+        with = |path: PathBuf| -> io::Result<_> {
+            ensure_absolute_path(path)
         },
         default = prefix.join("tmp")
     )]
@@ -107,18 +107,13 @@ impl Config {
 
 impl<S: State> ConfigBuilder<S> {
     pub(crate) fn load_environment(self) -> Result<ConfigBuilder<S>> {
-        let prefix = self.prefix.clone();
-
         Ok(self
             .maybe_storage_backend(maybe_env("DOCSRS_STORAGE_BACKEND")?)
             .maybe_aws_sdk_max_retries(maybe_env("DOCSRS_AWS_SDK_MAX_RETRIES")?)
             .maybe_s3_bucket(maybe_env("DOCSRS_S3_BUCKET")?)
             .maybe_s3_region(maybe_env("S3_REGION")?)
             .maybe_s3_endpoint(maybe_env("S3_ENDPOINT")?)
-            .local_archive_cache_path(env(
-                "DOCSRS_ARCHIVE_INDEX_CACHE_PATH",
-                prefix.join("archive_cache"),
-            )?)?
+            .maybe_local_archive_cache_path(maybe_env("DOCSRS_ARCHIVE_INDEX_CACHE_PATH")?)?
             .maybe_local_archive_cache_expected_count(maybe_env(
                 "DOCSRS_ARCHIVE_INDEX_EXPECTED_COUNT",
             )?)
@@ -127,7 +122,6 @@ impl<S: State> ConfigBuilder<S> {
     }
 
     #[cfg(any(test, feature = "testing"))]
-    #[allow(clippy::type_complexity)]
     pub(crate) fn test_config(self) -> Result<ConfigBuilder<S>> {
         Ok(self
             .load_environment()?
