@@ -859,13 +859,12 @@ mod tests {
     async fn large_file_test() -> Result<()> {
         let env = TestEnvironment::builder()
             .storage_config(
-                docs_rs_storage::Config::test_config_with_kind(StorageKind::Memory)?.set(
-                    |mut cfg| {
-                        cfg.max_file_size = 1;
-                        cfg.max_file_size_html = 1;
-                        cfg
-                    },
-                ),
+                docs_rs_storage::Config::builder()?
+                    .test_config()?
+                    .storage_backend(StorageKind::Memory)
+                    .max_file_size(1)
+                    .max_file_size_html(1)
+                    .build(),
             )
             .build()
             .await?;

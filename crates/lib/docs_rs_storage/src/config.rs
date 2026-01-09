@@ -106,7 +106,7 @@ impl Config {
 }
 
 impl<S: State> ConfigBuilder<S> {
-    pub(crate) fn load_environment(self) -> Result<ConfigBuilder<S>> {
+    pub fn load_environment(self) -> Result<ConfigBuilder<S>> {
         Ok(self
             .maybe_storage_backend(maybe_env("DOCSRS_STORAGE_BACKEND")?)
             .maybe_aws_sdk_max_retries(maybe_env("DOCSRS_AWS_SDK_MAX_RETRIES")?)
@@ -122,7 +122,7 @@ impl<S: State> ConfigBuilder<S> {
     }
 
     #[cfg(any(test, feature = "testing"))]
-    pub(crate) fn test_config(self) -> Result<ConfigBuilder<S>> {
+    pub fn test_config(self) -> Result<ConfigBuilder<S>> {
         Ok(self
             .load_environment()?
             .storage_backend(StorageKind::Memory)
