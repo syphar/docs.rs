@@ -3,33 +3,31 @@ use docs_rs_config::AppConfig;
 use docs_rs_env_vars::maybe_env;
 use std::time::Duration;
 
-#[derive(Debug)]
+#[derive(Debug, bon::Builder)]
+#[builder(on(_, overwritable))]
 pub struct Config {
+    #[builder(default = 5)]
     pub build_attempts: u16,
+
+    #[builder(
+        with = |secs: u64| Duration::from_secs(secs),
+        default = Duration::from_secs(60),
+    )]
     pub delay_between_build_attempts: Duration,
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            build_attempts: 5,
-            delay_between_build_attempts: Duration::from_secs(60),
-        }
+use config_builder::State;
+
+impl<S: State> ConfigBuilder<S> {
+    pub(crate) fn load_environment(self) -> Result<ConfigBuilder<S>> {
+        Ok(self
+            .maybe_build_attempts(maybe_env("DOCSRS_BUILD_ATTEMPTS")?)
+            .maybe_delay_between_build_attempts(maybe_env("DOCSRS_DELAY_BETWEEN_BUILD_ATTEMPTS")?))
     }
 }
 
 impl AppConfig for Config {
     fn from_environment() -> Result<Self> {
-        let mut config = Self::default();
-
-        if let Some(attempts) = maybe_env::<u16>("DOCSRS_BUILD_ATTEMPTS")? {
-            config.build_attempts = attempts;
-        }
-
-        if let Some(delay) = maybe_env::<u64>("DOCSRS_DELAY_BETWEEN_BUILD_ATTEMPTS")? {
-            config.delay_between_build_attempts = Duration::from_secs(delay);
-        }
-
-        Ok(config)
+        Ok(Self::builder().load_environment()?.build())
     }
 }

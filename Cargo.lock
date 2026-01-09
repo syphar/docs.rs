@@ -1943,6 +1943,7 @@ name = "docs_rs_build_queue"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bon",
  "chrono",
  "docs_rs_config",
  "docs_rs_database",
@@ -2044,6 +2045,7 @@ name = "docs_rs_database"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bon",
  "chrono",
  "docs_rs_cargo_metadata",
  "docs_rs_config",
@@ -2067,6 +2069,7 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tracing",
+ "url",
 ]
 
 [[package]]
@@ -2082,6 +2085,7 @@ name = "docs_rs_fastly"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bon",
  "chrono",
  "docs_rs_config",
  "docs_rs_env_vars",

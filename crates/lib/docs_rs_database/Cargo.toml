@@ -8,9 +8,10 @@ build = "build.rs"
 
 [dependencies]
 anyhow = { workspace = true }
+bon = { workspace = true }
 chrono = { workspace = true }
-docs_rs_config = { path = "../docs_rs_config" }
 docs_rs_cargo_metadata = { path = "../docs_rs_cargo_metadata" }
+docs_rs_config = { path = "../docs_rs_config" }
 docs_rs_env_vars = { path = "../docs_rs_env_vars" }
 docs_rs_opentelemetry = { path = "../docs_rs_opentelemetry" }
 docs_rs_registry_api= { path = "../docs_rs_registry_api" }
@@ -29,6 +30,7 @@ strum = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+url = { workspace = true }
 
 [dev-dependencies]
 docs_rs_config = { path = "../docs_rs_config", features = ["testing"] }
