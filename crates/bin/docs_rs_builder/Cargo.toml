@@ -8,6 +8,7 @@ edition = "2024"
 
 [dependencies]
 anyhow = { workspace = true }
+bon = { workspace = true }
 clap = { workspace = true }
 docs_rs_build_limits = { path = "../../lib/docs_rs_build_limits" }
 docs_rs_build_queue = { path = "../../lib/docs_rs_build_queue" }

@@ -1,60 +1,86 @@
 use anyhow::Result;
 use docs_rs_config::AppConfig;
-use docs_rs_env_vars::{env, maybe_env, require_env};
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use docs_rs_env_vars::{maybe_env, require_env};
+use std::{path::PathBuf, time::Duration};
 
-#[derive(Debug)]
+#[derive(Debug, bon::Builder)]
+#[builder(
+    start_fn(name = builder_internal, vis = ""),
+    on(_, overwritable)
+)]
 pub struct Config {
+    #[builder(start_fn)]
     pub prefix: PathBuf,
+
+    #[builder(
+        default = prefix.join("tmp")
+    )]
     pub temp_dir: PathBuf,
 
     // Where to collect metrics for the metrics initiative.
     // When empty, we won't collect metrics.
     pub compiler_metrics_collection_path: Option<PathBuf>,
 
+    #[builder(
+        with = |secs: u64| Duration::from_secs(secs),
+        default = Duration::from_secs(86400),
+    )]
     pub build_workspace_reinitialization_interval: Duration,
 
     // Build params
+    #[builder(
+        default = prefix.join(".workspace")
+    )]
     pub rustwide_workspace: PathBuf,
+    #[builder(default = false)]
     pub inside_docker: bool,
     pub docker_image: Option<String>,
     pub build_cpu_limit: Option<u32>,
+    #[builder(default = true)]
     pub include_default_targets: bool,
+    #[builder(default = false)]
     pub disable_memory_limit: bool,
+}
 
-    // other module configs
-    pub build_limits: Arc<docs_rs_build_limits::Config>,
+use config_builder::State;
+
+impl Config {
+    pub fn builder() -> Result<ConfigBuilder> {
+        let prefix: PathBuf = require_env("DOCSRS_PREFIX")?;
+        Ok(Config::builder_internal(prefix))
+    }
+}
+
+impl<S: State> ConfigBuilder<S> {
+    pub(crate) fn load_environment(self) -> Result<ConfigBuilder<S>> {
+        Ok(self
+            .maybe_rustwide_workspace(maybe_env("DOCSRS_RUSTWIDE_WORKSPACE")?)
+            .maybe_inside_docker(maybe_env("DOCSRS_DOCKER")?)
+            .maybe_docker_image(
+                maybe_env("DOCSRS_LOCAL_DOCKER_IMAGE")?.or(maybe_env("DOCSRS_DOCKER_IMAGE")?),
+            )
+            .maybe_build_cpu_limit(maybe_env("DOCSRS_BUILD_CPU_LIMIT")?)
+            .maybe_include_default_targets(maybe_env("DOCSRS_INCLUDE_DEFAULT_TARGETS")?)
+            .maybe_disable_memory_limit(maybe_env("DOCSRS_DISABLE_MEMORY_LIMIT")?)
+            .maybe_build_workspace_reinitialization_interval(maybe_env(
+                "DOCSRS_BUILD_WORKSPACE_REINITIALIZATION_INTERVAL",
+            )?)
+            .maybe_compiler_metrics_collection_path(maybe_env("DOCSRS_COMPILER_METRICS_PATH")?))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_config(self) -> Result<ConfigBuilder<S>> {
+        Ok(self.load_environment()?.include_default_targets(true))
+    }
 }
 
 impl AppConfig for Config {
     fn from_environment() -> Result<Self> {
-        let prefix: PathBuf = require_env("DOCSRS_PREFIX")?;
-        Ok(Self {
-            temp_dir: prefix.join("tmp"),
-            prefix,
-            rustwide_workspace: env("DOCSRS_RUSTWIDE_WORKSPACE", PathBuf::from(".workspace"))?,
-            inside_docker: env("DOCSRS_DOCKER", false)?,
-            docker_image: maybe_env("DOCSRS_LOCAL_DOCKER_IMAGE")?
-                .or(maybe_env("DOCSRS_DOCKER_IMAGE")?),
-
-            build_cpu_limit: maybe_env("DOCSRS_BUILD_CPU_LIMIT")?,
-            include_default_targets: env("DOCSRS_INCLUDE_DEFAULT_TARGETS", true)?,
-            disable_memory_limit: env("DOCSRS_DISABLE_MEMORY_LIMIT", false)?,
-            build_workspace_reinitialization_interval: Duration::from_secs(env(
-                "DOCSRS_BUILD_WORKSPACE_REINITIALIZATION_INTERVAL",
-                86400,
-            )?),
-            compiler_metrics_collection_path: maybe_env("DOCSRS_COMPILER_METRICS_PATH")?,
-            build_limits: Arc::new(docs_rs_build_limits::Config::from_environment()?),
-        })
+        Ok(Self::builder()?.load_environment()?.build())
     }
 
     #[cfg(test)]
     fn test_config() -> Result<Self> {
-        let mut config = Self::from_environment()?;
-
-        config.include_default_targets = true;
-
-        Ok(config)
+        Ok(Self::builder()?.test_config()?.build())
     }
 }

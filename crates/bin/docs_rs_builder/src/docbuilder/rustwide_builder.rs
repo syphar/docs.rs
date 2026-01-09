@@ -117,6 +117,7 @@ pub struct RustwideBuilder {
     toolchain: Toolchain,
     runtime: runtime::Handle,
     config: Arc<Config>,
+    build_limits_config: Arc<docs_rs_build_limits::Config>,
     db: Pool,
     blocking_storage: Arc<Storage>,
     storage: Arc<AsyncStorage>,
@@ -137,6 +138,7 @@ impl RustwideBuilder {
             workspace: build_workspace(&config)?,
             toolchain,
             config: config.clone(),
+            build_limits_config: context.config().build_limits()?.clone(),
             db: context.pool()?.clone(),
             runtime: context.runtime().clone(),
             blocking_storage: context.blocking_storage()?.clone(),
@@ -385,10 +387,9 @@ impl RustwideBuilder {
         let krate: KrateName = krate.parse()?;
         self.runtime.block_on({
             let db = self.db.clone();
-            let config = self.config.clone();
             async move {
                 let mut conn = db.get_async().await?;
-                Limits::for_crate(&config.build_limits, &mut conn, &krate).await
+                Limits::for_crate(&self.build_limits_config, &mut conn, &krate).await
             }
         })
     }
