@@ -3,7 +3,7 @@ use docs_rs_config::AppConfig;
 use docs_rs_env_vars::maybe_env;
 use std::time::Duration;
 
-#[derive(Debug, bon::Builder)]
+#[derive(Debug, bon::Builder, Default)]
 #[builder(on(_, overwritable))]
 pub struct Config {
     #[builder(default = 5)]

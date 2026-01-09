@@ -2338,7 +2338,6 @@ dependencies = [
  "docs_rs_fastly",
  "docs_rs_logging",
  "docs_rs_opentelemetry",
- "docs_rs_repository_stats",
  "docs_rs_rustdoc_json",
  "docs_rs_storage",
  "docs_rs_test_fakes",
