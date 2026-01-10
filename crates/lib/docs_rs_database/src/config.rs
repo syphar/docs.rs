@@ -31,7 +31,7 @@ impl<S: State> ConfigBuilder<S> {
             .load_environment()?
             // Use less connections for each test compared to production.
             .max_pool_size(8)
-            .min_pool_idle(8))
+            .min_pool_idle(2))
     }
 }
 
