@@ -74,6 +74,10 @@ impl<S: State> AppConfigBuilder for ConfigBuilder<S> {
     fn test_config(self) -> Result<Self::Loaded> {
         Ok(self.load_environment()?.include_default_targets(true))
     }
+
+    fn build(self) -> Self::Config {
+        self.build()
+    }
 }
 
 impl AppConfig for Config {

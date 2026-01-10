@@ -22,6 +22,8 @@ pub trait AppConfigBuilder: Sized {
     fn test_config(self) -> Result<Self::Loaded> {
         self.load_environment()
     }
+
+    fn build(self) -> Self::Config;
 }
 
 // #[macro_export]

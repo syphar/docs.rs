@@ -84,6 +84,10 @@ impl<S: State> AppConfigBuilder for ConfigBuilder<S> {
             // are actually different.
             .cache_control_stale_while_revalidate(86400))
     }
+
+    fn build(self) -> Self::Config {
+        self.build()
+    }
 }
 
 impl AppConfig for Config {

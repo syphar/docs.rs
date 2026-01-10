@@ -27,6 +27,10 @@ impl<S: State> AppConfigBuilder for ConfigBuilder<S> {
             .maybe_github_updater_min_rate_limit(maybe_env("DOCSRS_GITHUB_UPDATER_MIN_RATE_LIMIT")?)
             .maybe_gitlab_accesstoken(maybe_env("DOCSRS_GITLAB_ACCESSTOKEN")?))
     }
+
+    fn build(self) -> Self::Config {
+        self.build()
+    }
 }
 
 impl AppConfig for Config {

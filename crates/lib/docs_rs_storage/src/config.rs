@@ -135,6 +135,10 @@ impl<S: State> AppConfigBuilder for ConfigBuilder<S> {
             .s3_bucket(format!("docsrs-test-bucket-{}", rand::random::<u64>()))
             .s3_bucket_is_temporary(true))
     }
+
+    fn build(self) -> Self::Config {
+        self.build()
+    }
 }
 
 impl AppConfig for Config {
