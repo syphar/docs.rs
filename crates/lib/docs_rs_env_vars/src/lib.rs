@@ -1,6 +1,11 @@
 use anyhow::{Context as _, Result, anyhow};
-use std::{env::VarError, error::Error, str::FromStr};
+use std::{env::VarError, error::Error, path::PathBuf, str::FromStr};
 use tracing::trace;
+
+/// the prefix we use to store all our local temporary files
+pub fn prefix() -> Result<PathBuf> {
+    require_env("DOCSRS_PREFIX")
+}
 
 pub fn env<T>(var: &str, default: T) -> Result<T>
 where

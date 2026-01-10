@@ -1,7 +1,7 @@
 use crate::types::StorageKind;
 use anyhow::Result;
 use docs_rs_config::AppConfig;
-use docs_rs_env_vars::{maybe_env, require_env};
+use docs_rs_env_vars::{maybe_env, prefix};
 use std::{
     io,
     path::{self, Path, PathBuf},
@@ -88,8 +88,7 @@ use config_builder::State;
 
 impl Config {
     pub fn builder() -> Result<ConfigBuilder> {
-        let prefix: PathBuf = require_env("DOCSRS_PREFIX")?;
-        Ok(Config::builder_internal(prefix))
+        Ok(Config::builder_internal(prefix()?))
     }
 
     pub fn max_file_size_for(&self, path: impl AsRef<Path>) -> usize {
