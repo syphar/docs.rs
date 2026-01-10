@@ -1340,7 +1340,6 @@ pub(crate) struct BuildResult {
 mod tests {
     use super::*;
     use crate::testing::{TestEnvironment, TestEnvironmentExt as _};
-    use docs_rs_config::AppConfig as _;
     use docs_rs_utils::block_on_async_with_conn;
     // use crate::test::{AxumRouterTestExt, TestEnvironment};
     use docs_rs_registry_api::ReleaseData;
@@ -1591,10 +1590,15 @@ mod tests {
     #[ignore]
     fn test_collect_metrics() -> Result<()> {
         let metrics_dir = tempfile::tempdir().unwrap().keep();
-        let mut config = Config::test_config()?;
-        config.compiler_metrics_collection_path = Some(metrics_dir.clone());
-        config.include_default_targets = false;
-        let env = TestEnvironment::builder().config(config).build()?;
+        let env = TestEnvironment::builder()
+            .config(
+                Config::builder()?
+                    .test_config()?
+                    .compiler_metrics_collection_path(metrics_dir.clone())
+                    .include_default_targets(false)
+                    .build(),
+            )
+            .build()?;
 
         let crate_ = DUMMY_CRATE_NAME;
         let version = DUMMY_CRATE_VERSION;
@@ -1855,9 +1859,14 @@ mod tests {
     #[test]
     #[ignore]
     fn test_locked_fails_unlocked_needs_new_deps() -> Result<()> {
-        let mut config = Config::test_config()?;
-        config.include_default_targets = false;
-        let env = TestEnvironment::builder().config(config).build()?;
+        let env = TestEnvironment::builder()
+            .config(
+                Config::builder()?
+                    .test_config()?
+                    .include_default_targets(false)
+                    .build(),
+            )
+            .build()?;
 
         // if the corrected dependency of the crate was already downloaded we need to remove it
         remove_cache_files(&env, "rand_core", &Version::new(0, 5, 1))?;
@@ -1883,9 +1892,14 @@ mod tests {
     #[test]
     #[ignore]
     fn test_locked_fails_unlocked_needs_new_unknown_deps() -> Result<()> {
-        let mut config = Config::test_config()?;
-        config.include_default_targets = false;
-        let env = TestEnvironment::builder().config(config).build()?;
+        let env = TestEnvironment::builder()
+            .config(
+                Config::builder()?
+                    .test_config()?
+                    .include_default_targets(false)
+                    .build(),
+            )
+            .build()?;
 
         // if the corrected dependency of the crate was already downloaded we need to remove it
         remove_cache_files(&env, "value-bag-sval2", &Version::new(1, 4, 1))?;
@@ -2087,9 +2101,14 @@ mod tests {
     #[test]
     #[ignore]
     fn test_workspace_reinitialize_after_interval() -> Result<()> {
-        let mut config = Config::test_config()?;
-        config.build_workspace_reinitialization_interval = Duration::from_secs(1);
-        let env = TestEnvironment::builder().config(config).build()?;
+        let env = TestEnvironment::builder()
+            .config(
+                Config::builder()?
+                    .test_config()?
+                    .build_workspace_reinitialization_interval(1)
+                    .build(),
+            )
+            .build()?;
 
         use std::thread::sleep;
         use std::time::Duration;
