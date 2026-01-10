@@ -359,7 +359,7 @@ mod tests {
 
     #[test]
     fn test_pending_count() -> Result<()> {
-        let env = test_queue(Config::default())?;
+        let env = test_queue(Config::test_config()?)?;
         let queue = env.queue;
         assert_eq!(queue.pending_count()?, 0);
         queue.add_crate(&FOO, &V1, 0, None)?;
@@ -378,7 +378,7 @@ mod tests {
 
     #[test]
     fn test_prioritized_count() -> Result<()> {
-        let env = test_queue(Config::default())?;
+        let env = test_queue(Config::test_config()?)?;
         let queue = env.queue;
 
         assert_eq!(queue.prioritized_count()?, 0);
@@ -400,7 +400,7 @@ mod tests {
 
     #[test]
     fn test_count_by_priority() -> Result<()> {
-        let env = test_queue(Config::default())?;
+        let env = test_queue(Config::test_config()?)?;
         let queue = env.queue;
 
         assert!(queue.pending_count_by_priority()?.is_empty());
@@ -493,7 +493,7 @@ mod tests {
 
     #[test]
     fn test_queued_crates() -> Result<()> {
-        let env = test_queue(Config::default())?;
+        let env = test_queue(Config::test_config()?)?;
         let queue = env.queue;
 
         let test_crates = [(BAR, 0), (FOO, -10), (BAZ, 10)];
@@ -515,7 +515,7 @@ mod tests {
 
     #[test]
     fn test_queue_lock() -> Result<()> {
-        let env = test_queue(Config::default())?;
+        let env = test_queue(Config::test_config()?)?;
         let queue = env.queue;
 
         // unlocked without config
@@ -532,7 +532,7 @@ mod tests {
 
     #[test]
     fn test_add_long_name() -> Result<()> {
-        let env = test_queue(Config::default())?;
+        let env = test_queue(Config::test_config()?)?;
         let queue = env.queue;
 
         let name: KrateName = "krate".repeat(100)[..64].parse().unwrap();
@@ -549,7 +549,7 @@ mod tests {
 
     #[test]
     fn test_add_long_version() -> Result<()> {
-        let env = test_queue(Config::default())?;
+        let env = test_queue(Config::test_config()?)?;
         let queue = env.queue;
 
         let long_version = Version::parse(&format!(

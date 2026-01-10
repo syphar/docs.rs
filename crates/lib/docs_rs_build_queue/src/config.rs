@@ -3,7 +3,7 @@ use docs_rs_config::AppConfig;
 use docs_rs_env_vars::maybe_env;
 use std::time::Duration;
 
-#[derive(Debug, bon::Builder, Default)]
+#[derive(Debug, bon::Builder)]
 #[builder(on(_, overwritable))]
 pub struct Config {
     #[builder(default = 5)]
@@ -29,5 +29,10 @@ impl<S: State> ConfigBuilder<S> {
 impl AppConfig for Config {
     fn from_environment() -> Result<Self> {
         Ok(Self::builder().load_environment()?.build())
+    }
+
+    #[cfg(any(test, feature = "testing"))]
+    fn test_config() -> Result<Self> {
+        Ok(Self::builder().build())
     }
 }
