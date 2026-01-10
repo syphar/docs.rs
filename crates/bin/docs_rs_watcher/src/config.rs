@@ -55,11 +55,6 @@ impl<S: State> AppConfigBuilder for ConfigBuilder<S> {
             .maybe_registry_gc_interval(maybe_env("DOCSRS_REGISTRY_GC_INTERVAL")?)
             .maybe_max_queued_rebuilds(maybe_env("DOCSRS_MAX_QUEUED_REBUILDS")?))
     }
-
-    #[cfg(test)]
-    fn test_config(self) -> Result<Self::Loaded> {
-        self.load_environment()
-    }
 }
 
 impl AppConfig for Config {
