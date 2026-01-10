@@ -140,7 +140,7 @@ impl AppConfig for Config {
         Ok(Self::builder()?.load_environment()?.build())
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     fn test_config() -> Result<Self> {
         Ok(Self::builder()?.test_config()?.build())
     }

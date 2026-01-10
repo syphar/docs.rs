@@ -25,7 +25,7 @@ impl<S: State> ConfigBuilder<S> {
             .maybe_max_pool_size(maybe_env("DOCSRS_MAX_POOL_SIZE")?))
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) fn test_config(self) -> Result<ConfigBuilder<SetDatabaseUrl<S>>> {
         Ok(self
             .load_environment()?
@@ -40,7 +40,7 @@ impl AppConfig for Config {
         Ok(Self::builder().load_environment()?.build())
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     fn test_config() -> Result<Self> {
         Ok(Self::builder().test_config()?.build())
     }
