@@ -31,4 +31,7 @@ mockito = { workspace = true }
 tokio = { workspace = true }
 
 [features]
-testing = ["dep:tokio"]
+testing = [
+    "dep:tokio",
+    "docs_rs_config/testing",
+]

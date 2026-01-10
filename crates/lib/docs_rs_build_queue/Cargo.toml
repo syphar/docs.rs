@@ -21,6 +21,7 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+docs_rs_config = { path = "../docs_rs_config", features = ["testing"] }
 docs_rs_opentelemetry = { path = "../docs_rs_opentelemetry", features = ["testing"] }
 docs_rs_database = { path = "../docs_rs_database", features = ["testing"] }
 docs_rs_utils = { path = "../../lib/docs_rs_utils", features = ["testing"] }
