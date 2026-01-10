@@ -43,7 +43,8 @@ pub struct Config {
     // Cache-Control header, for versioned URLs.
     // If both are absent, don't generate the header. If only one is present,
     // generate just that directive. Values are in seconds.
-    pub(crate) cache_control_stale_while_revalidate: Option<u32>,
+    #[builder(with = |secs: u64| Duration::from_secs(secs))]
+    pub(crate) cache_control_stale_while_revalidate: Option<Duration>,
 
     // Activate full page caching.
     // When disabled, we still cache static assets.

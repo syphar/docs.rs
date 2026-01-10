@@ -178,8 +178,8 @@ impl CachePolicy {
 
                 if config.cache_invalidatable_responses
                     && let Some(cache_control) =
-                        config.cache_control_stale_while_revalidate.map(|seconds| {
-                            format!("stale-while-revalidate={seconds}")
+                        config.cache_control_stale_while_revalidate.map(|duration| {
+                            format!("stale-while-revalidate={}", duration.as_secs())
                                 .parse::<HeaderValue>()
                                 .unwrap()
                         })
@@ -292,7 +292,7 @@ mod tests {
     )]
     fn test_validate_header_syntax_for_all_possible_combinations(
         cache_invalidatable_responses: bool,
-        stale_while_revalidate: Option<u32>,
+        stale_while_revalidate: Option<u64>,
     ) -> Result<()> {
         let config = Config::builder()
             .test_config()?
