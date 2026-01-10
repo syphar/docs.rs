@@ -17,12 +17,6 @@ pub struct Config {
     pub service_sid: Option<String>,
 }
 
-impl Config {
-    pub fn is_valid(&self) -> bool {
-        self.api_token.is_some() && self.service_sid.is_some()
-    }
-}
-
 use config_builder::State;
 
 impl<S: State> ConfigBuilder<S> {
@@ -51,5 +45,11 @@ impl AppConfig for Config {
         debug_assert!(cfg.is_valid());
 
         Ok(cfg)
+    }
+}
+
+impl Config {
+    pub fn is_valid(&self) -> bool {
+        self.api_token.is_some() && self.service_sid.is_some()
     }
 }
