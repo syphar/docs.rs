@@ -80,6 +80,7 @@ pub async fn queue_rebuilds(
 mod tests {
     use super::*;
     use crate::testing::TestEnvironment;
+    use docs_rs_config::AppConfigBuilder as _;
     use docs_rs_test_fakes::FakeBuild;
     use docs_rs_types::testing::{BAR, BAZ, FOO, V1};
     use pretty_assertions::assert_eq;

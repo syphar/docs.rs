@@ -1340,6 +1340,7 @@ pub(crate) struct BuildResult {
 mod tests {
     use super::*;
     use crate::testing::{TestEnvironment, TestEnvironmentExt as _};
+    use docs_rs_config::AppConfigBuilder as _;
     use docs_rs_utils::block_on_async_with_conn;
     // use crate::test::{AxumRouterTestExt, TestEnvironment};
     use docs_rs_registry_api::ReleaseData;

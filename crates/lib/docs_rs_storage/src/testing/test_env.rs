@@ -1,5 +1,6 @@
 use crate::{AsyncStorage, Config, StorageKind};
 use anyhow::Result;
+use docs_rs_config::AppConfigBuilder as _;
 use docs_rs_opentelemetry::AnyMeterProvider;
 use std::{ops::Deref, sync::Arc};
 use tokio::{runtime, task::block_in_place};

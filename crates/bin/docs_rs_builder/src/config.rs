@@ -1,5 +1,5 @@
 use anyhow::Result;
-use docs_rs_config::AppConfig;
+use docs_rs_config::{AppConfig, AppConfigBuilder};
 use docs_rs_env_vars::{maybe_env, prefix};
 use std::{path::PathBuf, time::Duration};
 
@@ -50,8 +50,11 @@ impl Config {
     }
 }
 
-impl<S: State> ConfigBuilder<S> {
-    pub(crate) fn load_environment(self) -> Result<ConfigBuilder<S>> {
+impl<S: State> AppConfigBuilder for ConfigBuilder<S> {
+    type Config = Config;
+    type Loaded = ConfigBuilder<S>;
+
+    fn load_environment(self) -> Result<Self::Loaded> {
         Ok(self
             .maybe_rustwide_workspace(maybe_env("DOCSRS_RUSTWIDE_WORKSPACE")?)
             .maybe_inside_docker(maybe_env("DOCSRS_DOCKER")?)
@@ -68,7 +71,7 @@ impl<S: State> ConfigBuilder<S> {
     }
 
     #[cfg(test)]
-    pub(crate) fn test_config(self) -> Result<ConfigBuilder<S>> {
+    fn test_config(self) -> Result<Self::Loaded> {
         Ok(self.load_environment()?.include_default_targets(true))
     }
 }

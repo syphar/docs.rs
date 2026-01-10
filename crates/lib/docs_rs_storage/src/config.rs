@@ -1,6 +1,6 @@
 use crate::types::StorageKind;
 use anyhow::Result;
-use docs_rs_config::AppConfig;
+use docs_rs_config::{AppConfig, AppConfigBuilder};
 use docs_rs_env_vars::{maybe_env, prefix};
 use std::{
     io,
@@ -104,8 +104,11 @@ impl Config {
     }
 }
 
-impl<S: State> ConfigBuilder<S> {
-    pub fn load_environment(self) -> Result<ConfigBuilder<S>> {
+impl<S: State> AppConfigBuilder for ConfigBuilder<S> {
+    type Config = Config;
+    type Loaded = ConfigBuilder<S>;
+
+    fn load_environment(self) -> Result<Self::Loaded> {
         Ok(self
             .maybe_storage_backend(maybe_env("DOCSRS_STORAGE_BACKEND")?)
             .maybe_aws_sdk_max_retries(maybe_env("DOCSRS_AWS_SDK_MAX_RETRIES")?)
@@ -121,7 +124,7 @@ impl<S: State> ConfigBuilder<S> {
     }
 
     #[cfg(any(test, feature = "testing"))]
-    pub fn test_config(self) -> Result<ConfigBuilder<S>> {
+    fn test_config(self) -> Result<Self::Loaded> {
         Ok(self
             .load_environment()?
             .storage_backend(StorageKind::Memory)

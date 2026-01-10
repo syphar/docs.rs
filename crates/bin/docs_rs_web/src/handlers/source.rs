@@ -370,6 +370,7 @@ mod tests {
     };
     use anyhow::Result;
     use axum_extra::headers::{ContentType, ETag, HeaderMapExt as _};
+    use docs_rs_config::AppConfigBuilder as _;
     use docs_rs_headers::IfNoneMatch;
     use docs_rs_storage::StorageKind;
     use docs_rs_types::KrateName;

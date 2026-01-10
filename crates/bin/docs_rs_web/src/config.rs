@@ -1,5 +1,5 @@
 use anyhow::Result;
-use docs_rs_config::AppConfig;
+use docs_rs_config::{AppConfig, AppConfigBuilder};
 use docs_rs_env_vars::maybe_env;
 use std::time::Duration;
 
@@ -55,8 +55,11 @@ pub struct Config {
 
 use config_builder::State;
 
-impl<S: State> ConfigBuilder<S> {
-    pub(crate) fn load_environment(self) -> Result<ConfigBuilder<S>> {
+impl<S: State> AppConfigBuilder for ConfigBuilder<S> {
+    type Config = Config;
+    type Loaded = ConfigBuilder<S>;
+
+    fn load_environment(self) -> Result<Self::Loaded> {
         Ok(self
             .maybe_cratesio_token(maybe_env("DOCSRS_CRATESIO_TOKEN")?)
             .maybe_max_parse_memory(maybe_env("DOCSRS_MAX_PARSE_MEMORY")?)
@@ -74,7 +77,7 @@ impl<S: State> ConfigBuilder<S> {
     }
 
     #[cfg(test)]
-    pub(crate) fn test_config(self) -> Result<ConfigBuilder<S>> {
+    fn test_config(self) -> Result<Self::Loaded> {
         Ok(self
             .load_environment()?
             // set stale content serving so Cache::ForeverInCdn and Cache::ForeverInCdnAndStaleInBrowser

@@ -11,3 +11,31 @@ pub trait AppConfig: Sized {
         Self::from_environment()
     }
 }
+
+pub trait AppConfigBuilder: Sized {
+    type Config;
+    type Loaded;
+
+    fn load_environment(self) -> Result<Self::Loaded>;
+
+    #[cfg(feature = "testing")]
+    fn test_config(self) -> Result<Self::Loaded> {
+        self.load_environment()
+    }
+}
+
+// #[macro_export]
+// macro_rules! impl_app_config_for_builder {
+//     ($config:ty) => {
+//         impl AppConfig for Config {
+//             fn from_environment() -> Result<Self> {
+//                 Ok(Self::builder().load_environment()?.build())
+//             }
+
+//             #[cfg(test)]
+//             fn test_config() -> Result<Self> {
+//                 Ok(Self::builder().test_config()?.build())
+//             }
+//         }
+//     };
+// }

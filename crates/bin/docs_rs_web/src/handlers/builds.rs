@@ -223,6 +223,7 @@ mod tests {
     use anyhow::Result;
     use axum::{body::Body, http::Request};
     use docs_rs_build_limits::Overrides;
+    use docs_rs_config::AppConfigBuilder as _;
     use docs_rs_test_fakes::{FakeBuild, fake_release_that_failed_before_build};
     use docs_rs_types::{
         BuildStatus,

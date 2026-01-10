@@ -129,6 +129,7 @@ mod tests {
     use crate::{cache::STATIC_ASSET_CACHE_POLICY, testing::TestEnvironment};
     use axum_extra::headers::{ETag, HeaderMapExt as _};
     use chrono::Utc;
+    use docs_rs_config::AppConfigBuilder as _;
     use docs_rs_headers::compute_etag;
     use docs_rs_storage::StorageKind;
     use docs_rs_types::CompressionAlgorithm;

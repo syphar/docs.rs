@@ -1044,6 +1044,7 @@ mod test {
     use anyhow::{Context, Result};
     use chrono::{NaiveDate, Utc};
     use docs_rs_cargo_metadata::Dependency;
+    use docs_rs_config::AppConfigBuilder as _;
     use docs_rs_registry_api::{CrateOwner, OwnerKind};
     use docs_rs_rustdoc_json::{
         RUSTDOC_JSON_COMPRESSION_ALGORITHMS, read_format_version_from_rustdoc_json,
