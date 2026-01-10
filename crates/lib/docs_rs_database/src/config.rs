@@ -1,10 +1,11 @@
 use anyhow::Result;
 use docs_rs_config::AppConfig;
 use docs_rs_env_vars::{env, require_env};
+use url::Url;
 
 #[derive(Debug)]
 pub struct Config {
-    pub database_url: String,
+    pub database_url: Url,
     pub max_pool_size: u32,
     pub min_pool_idle: u32,
 }
