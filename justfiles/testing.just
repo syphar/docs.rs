@@ -97,7 +97,7 @@ lint: format lint-dependencies
 sort-cargo-toml *args:
   # for now manually, `cargo sort --workspace` is broken right now for docs.rs
   # https://github.com/DevinR528/cargo-sort/pull/121
-  cargo sort {{ args }} \
+  ~/src/cargo-sort/target/debug/cargo-sort \
     ./Cargo.toml \
     ./crates/bin/* \
     ./crates/lib/*
