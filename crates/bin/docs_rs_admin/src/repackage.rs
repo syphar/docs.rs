@@ -98,6 +98,7 @@ async fn repackage_path(
 mod tests {
     use super::*;
     use crate::testing::TestEnvironment;
+    use docs_rs_storage::{StorageKind, testing::TestStorage};
     use docs_rs_types::testing::{KRATE, V1};
 
     // TODO:
@@ -105,7 +106,12 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_repackage_normal() -> Result<()> {
-        let env = TestEnvironment::new().await?;
+        let env = TestEnvironment::builder()
+            .storage_config(docs_rs_storage::Config::test_config_with_kind(
+                StorageKind::S3,
+            )?)
+            .build()
+            .await?;
 
         const HTML_PATH: &str = "some/path.html";
         const HTML_CONTENT: &str = "<html>content</html>";
