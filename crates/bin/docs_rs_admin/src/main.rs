@@ -17,7 +17,11 @@ use docs_rs_database::{
 };
 use docs_rs_fastly::CdnBehaviour as _;
 use docs_rs_headers::SurrogateKey;
-use docs_rs_types::{CrateId, KrateName, Version};
+use docs_rs_test_fakes::FakeRelease;
+use docs_rs_types::{
+    CrateId, KrateName, Version,
+    testing::{KRATE, V1},
+};
 use futures_util::StreamExt;
 use rebuilds::queue_rebuilds_faulty_rustdoc;
 use std::iter;
@@ -72,6 +76,8 @@ impl CommandLine {
             .await?
             .with_meter_provider()?
             .with_pool()
+            .await?
+            .with_storage()
             .await?
             .with_build_queue()?
             .with_repository_stats()?
@@ -283,6 +289,16 @@ enum DatabaseSubcommand {
         version: Option<i64>,
     },
 
+    /// insert a fake release into the database for testing purposes
+    InsertFakeRelease {
+        /// Crate name
+        #[arg(name = "CRATE_NAME")]
+        crate_name: Option<KrateName>,
+        /// Version
+        #[arg(name = "CRATE_VERSION")]
+        crate_version: Option<Version>,
+    },
+
     /// temporary command to update the `crates.latest_version_id` field
     UpdateLatestVersionId,
 
@@ -319,6 +335,17 @@ impl DatabaseSubcommand {
                 docs_rs_database::migrate(&mut conn, version).await
             }
             .context("Failed to run database migrations")?,
+
+            Self::InsertFakeRelease {
+                crate_name,
+                crate_version,
+            } => {
+                FakeRelease::new(ctx.pool()?.clone(), ctx.storage()?.clone())
+                    .name(&crate_name.unwrap_or(KRATE))
+                    .version(crate_version.unwrap_or(V1))
+                    .create()
+                    .await?;
+            }
 
             Self::UpdateLatestVersionId => {
                 let pool = ctx.pool()?;
