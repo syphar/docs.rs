@@ -1,14 +1,12 @@
 use anyhow::{Result, anyhow};
-use docs_rs_storage::{
-    AsyncStorage, FileEntry, add_path_into_remote_archive, rustdoc_archive_path,
-    source_archive_path,
-};
+use docs_rs_storage::{AsyncStorage, FileEntry, rustdoc_archive_path, source_archive_path};
 use docs_rs_types::{CompressionAlgorithm, KrateName, ReleaseId, Version};
 use docs_rs_utils::spawn_blocking;
 use futures_util::StreamExt as _;
 use sqlx::Acquire as _;
 use std::collections::HashSet;
 use tokio::{fs, io};
+use tracing::{debug, info, warn};
 
 /// repackage old rustdoc / source content.
 ///
@@ -32,6 +30,7 @@ use tokio::{fs, io};
 async fn repackage(
     conn: &mut sqlx::PgConnection,
     storage: &AsyncStorage,
+    rid: ReleaseId,
     name: &KrateName,
     version: &Version,
 ) -> Result<()> {
@@ -141,6 +140,9 @@ async fn repackage(
     Ok(())
 }
 
+/// repackage contents of a S3 path prefix into a single archive file.
+///
+/// Not performance optimized, for now it just tries to be simple.
 async fn repackage_path(
     storage: &AsyncStorage,
     prefix: &str,
@@ -148,9 +150,7 @@ async fn repackage_path(
 ) -> Result<(Vec<FileEntry>, CompressionAlgorithm)> {
     let tempdir = spawn_blocking(|| tempfile::tempdir().map_err(Into::into)).await?;
 
-    // TODO: optimize: directly pack into zip , don't store locally first.
-
-    let mut files: u64 = 0;
+    let mut files = 0;
     let mut list = storage.list_prefix(&prefix).await;
     while let Some(entry) = list.next().await {
         let entry = entry?;

@@ -18,7 +18,7 @@ use docs_rs_database::{
 };
 use docs_rs_fastly::CdnBehaviour as _;
 use docs_rs_headers::SurrogateKey;
-use docs_rs_types::{CrateId, KrateName, Version};
+use docs_rs_types::{CrateId, KrateName, ReleaseId, Version};
 use futures_util::StreamExt;
 use rebuilds::queue_rebuilds_faulty_rustdoc;
 use std::iter;
@@ -284,6 +284,9 @@ enum DatabaseSubcommand {
         version: Option<i64>,
     },
 
+    /// temporary command to repackage missing crates into archive storage.
+    Repackage,
+
     /// temporary command to update the `crates.latest_version_id` field
     UpdateLatestVersionId,
 
@@ -320,6 +323,35 @@ impl DatabaseSubcommand {
                 docs_rs_database::migrate(&mut conn, version).await
             }
             .context("Failed to run database migrations")?,
+
+            Self::Repackage => {
+                let pool = ctx.pool()?;
+                let mut conn = pool.get_async().await?;
+
+                let mut stream = sqlx::query!(
+                    r#"SELECT
+                           r.id as "id: ReleaseId",
+                           c.name as "name: KrateName",
+                           r.version as "version: Version"
+                       FROM
+                            crates as c
+                            INNER JOIN releases as r ON c.id = r.crate_id
+                       ORDER BY r.id
+                    "#
+                )
+                .fetch(&mut *conn);
+
+                while let Some(row) = stream.next().await {
+                    let row = row?;
+
+                    println!("handling crate {}", row.name);
+
+                    // crate_details::update_latest_version_id(&mut update_conn, row.id).await?;
+                }
+
+                Ok::<(), anyhow::Error>(())
+            }
+            .context("Failed to repackage storage")?,
 
             Self::UpdateLatestVersionId => {
                 let pool = ctx.pool()?;
