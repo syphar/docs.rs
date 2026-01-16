@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use anyhow::{Context as _, Result};
 use docs_rs_storage::{
     AsyncStorage, FileEntry, add_path_into_remote_archive, rustdoc_archive_path,
@@ -9,22 +11,36 @@ use futures_util::StreamExt as _;
 use tokio::{fs, io};
 
 async fn repackage(storage: &AsyncStorage, name: &KrateName, version: &Version) -> Result<()> {
-    let rustdoc_prefix = format!("rustdoc/{name}/{version}");
-    let sources_prefix = format!("sources/{name}/{version}");
+    let rustdoc_prefix = format!("rustdoc/{name}/{version}/");
+    let sources_prefix = format!("sources/{name}/{version}/");
 
-    repackage_path(
-        storage,
-        &rustdoc_prefix,
-        &rustdoc_archive_path(&name, version),
-    )
-    .await?;
+    let mut algs: HashSet<CompressionAlgorithm> = HashSet::new();
 
-    repackage_path(
-        storage,
-        &sources_prefix,
-        &source_archive_path(&name, version),
-    )
-    .await?;
+    let mut source_size: Option<u64> = None;
+    let mut documentation_size: Option<u64> = None;
+
+    {
+        let (rustdoc_file_list, alg) = repackage_path(
+            storage,
+            &rustdoc_prefix,
+            &rustdoc_archive_path(&name, version),
+        )
+        .await?;
+
+        documentation_size = Some(rustdoc_file_list.iter().map(|info| info.size).sum::<u64>());
+        algs.insert(alg);
+    }
+
+    {
+        let (source_file_list, alg) = repackage_path(
+            storage,
+            &sources_prefix,
+            &source_archive_path(&name, version),
+        )
+        .await?;
+        source_size = Some(source_file_list.iter().map(|info| info.size).sum());
+        algs.insert(alg);
+    }
 
     // TODO:
     // * fill in `source_size` in release? ( new metric, not in old builds )
@@ -43,56 +59,45 @@ async fn repackage_path(
     prefix: &str,
     target_archive: &str,
 ) -> Result<(Vec<FileEntry>, CompressionAlgorithm)> {
-    let prefix = format!("{}/", prefix.trim_end_matches('/'));
     let tempdir = spawn_blocking(|| tempfile::tempdir().map_err(Into::into)).await?;
 
     // TODO: optimize: directly pack into zip , don't store locally first.
 
+    let mut files: u64 = 0;
     let mut list = storage.list_prefix(&prefix).await;
     while let Some(entry) = list.next().await {
         let entry = entry?;
-        let mut stream = storage
-            .get_stream(&entry)
-            .await
-            .context("error getting stream")?;
+        let mut stream = storage.get_stream(&entry).await?;
 
-        let target_path = tempdir
-            .path()
-            .join(dbg!(stream.path.trim_start_matches(&prefix)));
+        let target_path = tempdir.path().join(stream.path.trim_start_matches(&prefix));
 
-        fs::create_dir_all(&target_path.parent().unwrap())
-            .await
-            .context("error creating parent directory")?;
+        fs::create_dir_all(&target_path.parent().unwrap()).await?;
         {
-            let mut output_file = fs::File::create(&target_path)
-                .await
-                .context("error creating file")?;
-            io::copy(&mut stream.content, &mut output_file)
-                .await
-                .context("error writing to file")?;
-            output_file
-                .sync_all()
-                .await
-                .context("error flushing file")?;
+            let mut output_file = fs::File::create(&target_path).await?;
+            io::copy(&mut stream.content, &mut output_file).await?;
+            output_file.sync_all().await?;
         }
+
+        files += 1;
     }
 
-    let (file_list, alg) = add_path_into_remote_archive(storage, target_archive, &tempdir.path())
-        .await
-        .context("error adding into remote archive")?;
+    if files > 0 {
+        let (file_list, alg) =
+            add_path_into_remote_archive(storage, target_archive, &tempdir.path()).await?;
 
-    fs::remove_dir_all(&tempdir)
-        .await
-        .context("error cleaning tempdir")?;
+        fs::remove_dir_all(&tempdir).await?;
 
-    Ok((file_list, alg))
+        Ok((file_list, alg))
+    } else {
+        Ok((Vec::new(), CompressionAlgorithm::Zstd))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::testing::TestEnvironment;
-    use docs_rs_storage::{StorageKind, source_archive_path, testing::TestStorage};
+    use docs_rs_storage::{StorageKind, source_archive_path};
     use docs_rs_types::testing::{KRATE, V1};
     use pretty_assertions::assert_eq;
 
@@ -147,17 +152,48 @@ mod tests {
             SOURCE_CONTENT.as_bytes()
         );
 
+        // let rustdoc_prefix = format!("rustdoc/{KRATE}/{V1}");
+        // let sources_prefix = format!("sources/{KRATE}/{V1}");
+
+        // assert!(
+        //     storage
+        //         .exists(&format!("{rustdoc_prefix}/{HTML_PATH}"))
+        //         .await?
+        // );
+        // assert!(
+        //     storage
+        //         .exists(&format!("{sources_prefix}/{SOURCE_PATH}"))
+        //         .await?
+        // );
+
+        assert_eq!(
+            storage
+                .list_prefix("")
+                .await
+                .filter_map(|s| async { s.ok().clone() })
+                .collect::<Vec<String>>()
+                .await,
+            vec![
+                "build-logs/10000/x86_64-unknown-linux-gnu.txt",
+                "rustdoc-json/krate/1.0.0/x86_64-unknown-linux-gnu/krate_1.0.0_x86_64-unknown-linux-gnu_42.json.gz",
+                "rustdoc-json/krate/1.0.0/x86_64-unknown-linux-gnu/krate_1.0.0_x86_64-unknown-linux-gnu_42.json.zst",
+                "rustdoc-json/krate/1.0.0/x86_64-unknown-linux-gnu/krate_1.0.0_x86_64-unknown-linux-gnu_latest.json.gz",
+                "rustdoc-json/krate/1.0.0/x86_64-unknown-linux-gnu/krate_1.0.0_x86_64-unknown-linux-gnu_latest.json.zst",
+                "rustdoc/krate/1.0.0/krate/index.html",
+                "rustdoc/krate/1.0.0/some/path.html",
+                "sources/krate/1.0.0/Cargo.toml",
+                "sources/krate/1.0.0/another/source.rs",
+            ]
+        );
+
         // confirm the target archives really don't exist
         let rustdoc_archive = rustdoc_archive_path(&KRATE, &V1);
         let source_archive = source_archive_path(&KRATE, &V1);
         for path in &[&rustdoc_archive, &source_archive] {
             assert!(!storage.exists(path).await?);
         }
-        dbg!(storage.list_prefix("").await.collect::<Vec<_>>().await);
 
         repackage(&storage, &KRATE, &V1).await?;
-
-        dbg!(storage.list_prefix("").await.collect::<Vec<_>>().await);
 
         // afterwards it work with rustdoc archives.
         assert_eq!(
@@ -171,39 +207,40 @@ mod tests {
             ),
             HTML_CONTENT
         );
-        dbg!(storage.list_prefix("").await.collect::<Vec<_>>().await);
 
-        // afterwards it work with source archives.
+        // also with source archives.
         assert_eq!(
             String::from_utf8_lossy(
                 &storage
-                    .stream_rustdoc_file(&KRATE, &V1, None, HTML_PATH, true)
+                    .stream_source_file(&KRATE, &V1, None, SOURCE_PATH, true)
                     .await?
                     .materialize(usize::MAX)
                     .await?
                     .content
             ),
-            HTML_CONTENT
+            SOURCE_CONTENT,
         );
-        dbg!(storage.list_prefix("").await.collect::<Vec<_>>().await);
 
-        let list = storage.list_prefix("").await.collect::<Vec<_>>().await;
-        dbg!(list);
-        dbg!(storage.list_prefix("").await.collect::<Vec<_>>().await);
-
+        // all new files are these (`.zip`, `.zip.index`), old files are gone.
         assert_eq!(
             storage
                 .list_prefix("")
                 .await
-                .map(|s| i.clone().collect::<Vec<_>>()).await),
-            vec!["".into()],
+                .filter_map(|s| async { s.ok().clone() })
+                .collect::<Vec<String>>()
+                .await,
+            vec![
+                "build-logs/10000/x86_64-unknown-linux-gnu.txt",
+                "rustdoc-json/krate/1.0.0/x86_64-unknown-linux-gnu/krate_1.0.0_x86_64-unknown-linux-gnu_42.json.gz",
+                "rustdoc-json/krate/1.0.0/x86_64-unknown-linux-gnu/krate_1.0.0_x86_64-unknown-linux-gnu_42.json.zst",
+                "rustdoc-json/krate/1.0.0/x86_64-unknown-linux-gnu/krate_1.0.0_x86_64-unknown-linux-gnu_latest.json.gz",
+                "rustdoc-json/krate/1.0.0/x86_64-unknown-linux-gnu/krate_1.0.0_x86_64-unknown-linux-gnu_latest.json.zst",
+                "rustdoc/krate/1.0.0.zip",
+                "rustdoc/krate/1.0.0.zip.index",
+                "sources/krate/1.0.0.zip",
+                "sources/krate/1.0.0.zip.index",
+            ]
         );
-        assert_eq!(
-            storage.list_prefix("").await.collect::<Vec<_>>().await,
-            "some/path.html",
-        );
-
-        panic!("test");
 
         Ok(())
     }
