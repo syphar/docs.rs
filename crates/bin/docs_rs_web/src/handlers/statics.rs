@@ -181,7 +181,7 @@ pub(crate) fn build_static_router(root: impl AsRef<Path>) -> AxumRouter {
         )
         .layer(middleware::from_fn(conditional_get))
 }
-.
+
 #[cfg(test)]
 mod tests {
     use super::*;

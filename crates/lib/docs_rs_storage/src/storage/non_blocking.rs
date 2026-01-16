@@ -1375,7 +1375,6 @@ mod backend_tests {
             test_delete_prefix_without_matches,
             test_delete_percent,
             test_exists_without_remote_archive,
-
         }
 
         tests_with_metrics {

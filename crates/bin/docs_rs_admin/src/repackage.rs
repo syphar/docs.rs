@@ -171,8 +171,12 @@ async fn repackage_path(
     }
 
     if files > 0 {
-        let (file_list, alg) =
-            add_path_into_remote_archive(storage, target_archive, &tempdir.path()).await?;
+        let (file_list, alg) = storage
+            .store_all_in_archive(target_archive, &tempdir.path())
+            .await?;
+
+        // let (file_list, alg) =
+        //     add_path_into_remote_archive(storage, target_archive, &tempdir.path()).await?;
 
         fs::remove_dir_all(&tempdir).await?;
 
