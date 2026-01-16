@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 use docs_rs_storage::{AsyncStorage, FileEntry, rustdoc_archive_path, source_archive_path};
 use docs_rs_types::{CompressionAlgorithm, KrateName, ReleaseId, Version};
 use docs_rs_utils::spawn_blocking;
@@ -44,7 +44,7 @@ pub async fn repackage(
 
     let mut algs: HashSet<CompressionAlgorithm> = HashSet::new();
 
-    let documentation_size = {
+    let had_rustdoc_files = {
         let (rustdoc_file_list, alg) = repackage_path(
             storage,
             &rustdoc_prefix,
@@ -53,10 +53,10 @@ pub async fn repackage(
         .await?;
 
         algs.insert(alg);
-        rustdoc_file_list.iter().map(|info| info.size).sum::<u64>()
+        !rustdoc_file_list.is_empty()
     };
 
-    let source_size = {
+    let had_source_files = {
         let (source_file_list, alg) = repackage_path(
             storage,
             &sources_prefix,
@@ -64,62 +64,26 @@ pub async fn repackage(
         )
         .await?;
         algs.insert(alg);
-        source_file_list.iter().map(|info| info.size).sum::<u64>()
+        !source_file_list.is_empty()
     };
 
-    let rid = sqlx::query_scalar!(
-        r#"
-         SELECT r.id as "release_id: ReleaseId"
-         FROM
-             crates AS c
-             INNER JOIN releases AS r on c.id = r.crate_id
-         WHERE
-             c.name = $1 AND
-             r.version = $2;
-         "#,
-        name as _,
-        version as _,
-    )
-    .fetch_optional(&mut *transaction)
-    .await?
-    .ok_or_else(|| anyhow!("Could not find release for {name} {version}"))?;
-
-    sqlx::query!(
-        r#"
-        UPDATE builds AS b
-            SET documentation_size = $1
-        FROM (
-            SELECT id
-            FROM builds
-            WHERE
-                rid = $2 AND
-                build_status = 'success'
-            ORDER BY build_finished DESC
-            LIMIT 1
-        ) latest
-        WHERE b.id = latest.id;
-        "#,
-        documentation_size as i64,
-        rid as _,
-    )
-    .execute(&mut *transaction)
-    .await?;
+    // FIXME: what to do when either source or rustdoc was empty?
+    // can we still convert? perhaps with an empty archive?
 
     let affected = sqlx::query!(
         r#"
         UPDATE releases
-        SET
-            source_size = $2,
-            archive_storage = TRUE
+        SET archive_storage = TRUE
         WHERE id = $1;
         "#,
         rid as _,
-        source_size as i64,
     )
     .execute(&mut *transaction)
     .await?
     .rows_affected();
-    debug_assert_eq!(affected, 1);
+    if affected == 0 {
+        bail!("release not found in database. Can't update archive_storage");
+    }
 
     sqlx::query!("DELETE FROM compression_rels WHERE release = $1;", rid as _,)
         .execute(&mut *transaction)
@@ -139,6 +103,8 @@ pub async fn repackage(
 
     transaction.commit().await?;
 
+    // only delete the old files when we were able to update database with `archive_storage=true`,
+    // and were able to validate the zip file.
     storage.delete_prefix(&rustdoc_prefix).await?;
     storage.delete_prefix(&sources_prefix).await?;
 
