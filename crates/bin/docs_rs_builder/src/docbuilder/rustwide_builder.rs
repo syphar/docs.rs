@@ -621,23 +621,32 @@ impl RustwideBuilder {
         fs::create_dir_all(&self.config.temp_dir)?;
         let local_storage = tempfile::tempdir_in(&self.config.temp_dir)?;
 
+        let mut algs = HashSet::new();
+        let (files_list, source_size) = {
+            debug!("adding sources into database");
+            let temp_dir = tempfile::tempdir_in(&self.config.temp_dir)?;
+
+            krate.copy_source_to(&self.workspace, temp_dir.path())?;
+
+            let (files_list, new_alg) = self.runtime.block_on(add_path_into_remote_archive(
+                &self.storage,
+                &source_archive_path(name, version),
+                &temp_dir,
+            ))?;
+
+            fs::remove_dir_all(temp_dir.path())?;
+
+            algs.insert(new_alg);
+            let source_size: u64 = files_list.iter().map(|info| info.size).sum();
+            (files_list, source_size)
+        };
+
         let successful = build_dir
             .build(&self.toolchain, &krate, self.prepare_sandbox(&limits))
             .run(|build| {
-                let mut algs = HashSet::new();
-
-                debug!("adding sources into database");
-                let files_list = {
-                    let (files_list, new_alg) =
-                        self.runtime.block_on(add_path_into_remote_archive(
-                            &self.storage,
-                            &source_archive_path(name, version),
-                            build.host_source_dir(),
-                        ))?;
-                    algs.insert(new_alg);
-                    files_list
-                };
-                let source_size: u64 = files_list.iter().map(|info| info.size).sum();
+                // NOTE: rustwide will run `copy_source_to` again when preparing the call to this
+                // closure.
+                // This could be optimized, but only with more rustwide changes.
                 let metadata = Metadata::from_crate_root(build.host_source_dir())?;
                 let BuildTargets {
                     default_target,
