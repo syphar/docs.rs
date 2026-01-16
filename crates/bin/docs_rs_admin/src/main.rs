@@ -347,6 +347,8 @@ impl DatabaseSubcommand {
                        FROM
                             crates as c
                             INNER JOIN releases as r ON c.id = r.crate_id
+                       WHERE
+                            r.archive_storage = FALSE
                        ORDER BY r.id
                        LIMIT $1
                     "#,
