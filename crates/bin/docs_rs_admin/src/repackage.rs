@@ -10,7 +10,7 @@ use tokio::{fs, io};
 
 async fn repackage(storage: &AsyncStorage, name: &KrateName, version: &Version) -> Result<()> {
     let rustdoc_prefix = format!("rustdoc/{name}/{version}");
-    // let sources_prefix = format!("sources/{name}/{version}");
+    let sources_prefix = format!("sources/{name}/{version}");
 
     repackage_path(
         storage,
@@ -19,12 +19,12 @@ async fn repackage(storage: &AsyncStorage, name: &KrateName, version: &Version) 
     )
     .await?;
 
-    // repackage_path(
-    //     storage,
-    //     &sources_prefix,
-    //     &source_archive_path(&name, version),
-    // )
-    // .await?;
+    repackage_path(
+        storage,
+        &sources_prefix,
+        &source_archive_path(&name, version),
+    )
+    .await?;
 
     // TODO:
     // * fill in `source_size` in release? ( new metric, not in old builds )
@@ -33,7 +33,7 @@ async fn repackage(storage: &AsyncStorage, name: &KrateName, version: &Version) 
     // * releases gets algs from (source, doc)
 
     storage.delete_prefix(&rustdoc_prefix).await?;
-    // storage.delete_prefix(&sources_prefix).await?;
+    storage.delete_prefix(&sources_prefix).await?;
 
     Ok(())
 }
@@ -50,19 +50,21 @@ async fn repackage_path(
 
     let mut list = storage.list_prefix(&prefix).await;
     while let Some(entry) = list.next().await {
-        let entry = dbg!(entry?);
+        let entry = entry?;
         let mut stream = storage
             .get_stream(&entry)
             .await
             .context("error getting stream")?;
 
-        let target_path = dbg!(tempdir.path().join(stream.path.trim_start_matches(&prefix)));
+        let target_path = tempdir
+            .path()
+            .join(dbg!(stream.path.trim_start_matches(&prefix)));
 
         fs::create_dir_all(&target_path.parent().unwrap())
             .await
             .context("error creating parent directory")?;
         {
-            let mut output_file = fs::File::create(dbg!(&target_path))
+            let mut output_file = fs::File::create(&target_path)
                 .await
                 .context("error creating file")?;
             io::copy(&mut stream.content, &mut output_file)
@@ -74,14 +76,6 @@ async fn repackage_path(
                 .context("error flushing file")?;
         }
     }
-
-    {
-        let mut dir = fs::read_dir(&tempdir.path()).await?;
-
-        while let Some(entry) = dir.next_entry().await? {
-            dbg!(&entry.path());
-        }
-    };
 
     let (file_list, alg) = add_path_into_remote_archive(storage, target_archive, &tempdir.path())
         .await
@@ -98,8 +92,9 @@ async fn repackage_path(
 mod tests {
     use super::*;
     use crate::testing::TestEnvironment;
-    use docs_rs_storage::{StorageKind, testing::TestStorage};
+    use docs_rs_storage::{StorageKind, source_archive_path, testing::TestStorage};
     use docs_rs_types::testing::{KRATE, V1};
+    use pretty_assertions::assert_eq;
 
     // TODO:
     // * test with real S3 too so prefixes are handled properly
@@ -164,8 +159,8 @@ mod tests {
 
         dbg!(storage.list_prefix("").await.collect::<Vec<_>>().await);
 
-        // afterwards it work with archives.
-        assert!(
+        // afterwards it work with rustdoc archives.
+        assert_eq!(
             String::from_utf8_lossy(
                 &storage
                     .stream_rustdoc_file(&KRATE, &V1, None, HTML_PATH, true)
@@ -173,21 +168,42 @@ mod tests {
                     .materialize(usize::MAX)
                     .await?
                     .content
-            )
-            .contains(HTML_CONTENT)
+            ),
+            HTML_CONTENT
+        );
+        dbg!(storage.list_prefix("").await.collect::<Vec<_>>().await);
+
+        // afterwards it work with source archives.
+        assert_eq!(
+            String::from_utf8_lossy(
+                &storage
+                    .stream_rustdoc_file(&KRATE, &V1, None, HTML_PATH, true)
+                    .await?
+                    .materialize(usize::MAX)
+                    .await?
+                    .content
+            ),
+            HTML_CONTENT
+        );
+        dbg!(storage.list_prefix("").await.collect::<Vec<_>>().await);
+
+        let list = storage.list_prefix("").await.collect::<Vec<_>>().await;
+        dbg!(list);
+        dbg!(storage.list_prefix("").await.collect::<Vec<_>>().await);
+
+        assert_eq!(
+            storage
+                .list_prefix("")
+                .await
+                .map(|s| i.clone().collect::<Vec<_>>()).await),
+            vec!["".into()],
+        );
+        assert_eq!(
+            storage.list_prefix("").await.collect::<Vec<_>>().await,
+            "some/path.html",
         );
 
-        // assert_eq!(
-        //     &storage
-        //         .stream_source_file(&KRATE, &V1, None, SOURCE_PATH, true)
-        //         .await?
-        //         .materialize(usize::MAX)
-        //         .await?
-        //         .content,
-        //     SOURCE_CONTENT.as_bytes()
-        // );
-
-        // TODO: check if the release & build records were updated.
+        panic!("test");
 
         Ok(())
     }
