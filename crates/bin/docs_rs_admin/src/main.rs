@@ -1,4 +1,5 @@
 mod rebuilds;
+mod repackage;
 #[cfg(test)]
 pub(crate) mod testing;
 
