@@ -1,16 +1,21 @@
 use std::collections::HashSet;
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use docs_rs_storage::{
     AsyncStorage, FileEntry, add_path_into_remote_archive, rustdoc_archive_path,
     source_archive_path,
 };
-use docs_rs_types::{CompressionAlgorithm, KrateName, Version};
+use docs_rs_types::{CompressionAlgorithm, KrateName, ReleaseId, Version};
 use docs_rs_utils::spawn_blocking;
 use futures_util::StreamExt as _;
 use tokio::{fs, io};
 
-async fn repackage(storage: &AsyncStorage, name: &KrateName, version: &Version) -> Result<()> {
+async fn repackage(
+    conn: &mut sqlx::PgConnection,
+    storage: &AsyncStorage,
+    name: &KrateName,
+    version: &Version,
+) -> Result<()> {
     let rustdoc_prefix = format!("rustdoc/{name}/{version}/");
     let sources_prefix = format!("sources/{name}/{version}/");
 
@@ -42,11 +47,63 @@ async fn repackage(storage: &AsyncStorage, name: &KrateName, version: &Version) 
         algs.insert(alg);
     }
 
-    // TODO:
-    // * fill in `source_size` in release? ( new metric, not in old builds )
-    // * fill in documentation_size in release / build ( new metric, not in old builds)
-    // * release gets file_list from sources.
-    // * releases gets algs from (source, doc)
+    let rid = sqlx::query!(
+        r#"SELECT id as "release_id: ReleaseId"
+         FROM releases
+         WHERE crate_name = $1 AND version = $2;"#,
+        name as _,
+        version as _,
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+
+    sqlx::query!(
+        r#"UPDATE builds AS b
+           SET documentation_size = $1
+           FROM (
+               SELECT id
+               FROM builds
+               WHERE
+                    rid = $2 AND
+                    build_status = 'success'
+               ORDER BY build_finished DESC
+               LIMIT 1
+         ) latest
+         WHERE b.id = latest.id;
+        "#,
+        documentation_size.map(|s| s as i64),
+        rid as _,
+    )
+    .execute(&mut *conn)
+    .await?;
+
+    sqlx::query!(
+        r#"
+        UPDATE releases
+        SET source_size = $2
+        WHERE id = $1;
+    "#,
+        rid as _,
+        source_size.map(|s| s as i64),
+    )
+    .execute(conn)
+    .await?;
+
+    sqlx::query!("DELETE FROM compression_rels WHERE release = $1;", rid as _,)
+        .execute(&mut *conn)
+        .await?;
+
+    for alg in algs {
+        sqlx::query!(
+            "INSERT INTO compression_rels (release, algorithm)
+             VALUES ($1, $2)
+             ON CONFLICT DO NOTHING;",
+            rid as _,
+            &(alg as i32)
+        )
+        .execute(&mut *conn)
+        .await?;
+    }
 
     storage.delete_prefix(&rustdoc_prefix).await?;
     storage.delete_prefix(&sources_prefix).await?;
