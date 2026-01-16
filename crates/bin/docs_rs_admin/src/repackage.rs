@@ -42,10 +42,7 @@ async fn repackage(
 
     let mut algs: HashSet<CompressionAlgorithm> = HashSet::new();
 
-    let mut source_size: Option<u64> = None;
-    let mut documentation_size: Option<u64> = None;
-
-    {
+    let documentation_size = {
         let (rustdoc_file_list, alg) = repackage_path(
             storage,
             &rustdoc_prefix,
@@ -53,30 +50,30 @@ async fn repackage(
         )
         .await?;
 
-        documentation_size = Some(rustdoc_file_list.iter().map(|info| info.size).sum::<u64>());
         algs.insert(alg);
-    }
+        rustdoc_file_list.iter().map(|info| info.size).sum::<u64>()
+    };
 
-    {
+    let source_size = {
         let (source_file_list, alg) = repackage_path(
             storage,
             &sources_prefix,
             &source_archive_path(&name, version),
         )
         .await?;
-        source_size = Some(source_file_list.iter().map(|info| info.size).sum());
         algs.insert(alg);
-    }
+        source_file_list.iter().map(|info| info.size).sum::<u64>()
+    };
 
     let rid = sqlx::query_scalar!(
         r#"
          SELECT r.id as "release_id: ReleaseId"
          FROM
-         crates AS c
-         INNER JOIN releases AS r on c.id = r.crate_id
+             crates AS c
+             INNER JOIN releases AS r on c.id = r.crate_id
          WHERE
-            c.name = $1 AND
-            r.version = $2;
+             c.name = $1 AND
+             r.version = $2;
          "#,
         name as _,
         version as _,
@@ -86,20 +83,21 @@ async fn repackage(
     .ok_or_else(|| anyhow!("Could not find release for {name} {version}"))?;
 
     sqlx::query!(
-        r#"UPDATE builds AS b
-           SET documentation_size = $1
-           FROM (
-               SELECT id
-               FROM builds
-               WHERE
-                    rid = $2 AND
-                    build_status = 'success'
-               ORDER BY build_finished DESC
-               LIMIT 1
-         ) latest
-         WHERE b.id = latest.id;
+        r#"
+        UPDATE builds AS b
+            SET documentation_size = $1
+        FROM (
+            SELECT id
+            FROM builds
+            WHERE
+                rid = $2 AND
+                build_status = 'success'
+            ORDER BY build_finished DESC
+            LIMIT 1
+        ) latest
+        WHERE b.id = latest.id;
         "#,
-        documentation_size.map(|s| s as i64),
+        documentation_size as i64,
         rid as _,
     )
     .execute(&mut *transaction)
@@ -112,7 +110,7 @@ async fn repackage(
         WHERE id = $1;
         "#,
         rid as _,
-        source_size.map(|s| s as i64),
+        source_size as i64,
     )
     .execute(&mut *transaction)
     .await?
@@ -174,9 +172,6 @@ async fn repackage_path(
         let (file_list, alg) = storage
             .store_all_in_archive(target_archive, &tempdir.path())
             .await?;
-
-        // let (file_list, alg) =
-        //     add_path_into_remote_archive(storage, target_archive, &tempdir.path()).await?;
 
         fs::remove_dir_all(&tempdir).await?;
 
