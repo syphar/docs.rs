@@ -1,6 +1,4 @@
-use std::collections::HashSet;
-
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use docs_rs_storage::{
     AsyncStorage, FileEntry, add_path_into_remote_archive, rustdoc_archive_path,
     source_archive_path,
@@ -8,14 +6,37 @@ use docs_rs_storage::{
 use docs_rs_types::{CompressionAlgorithm, KrateName, ReleaseId, Version};
 use docs_rs_utils::spawn_blocking;
 use futures_util::StreamExt as _;
+use sqlx::Acquire as _;
+use std::collections::HashSet;
 use tokio::{fs, io};
 
+/// repackage old rustdoc / source content.
+///
+/// New releases are storaged as ZIP files for quite some time already,
+/// from the current 1.9 million releases, only 363k are old non-archive
+/// releases, where we store all the single files on the storage.
+///
+/// Since I don't want to rebuild all of these,
+/// and I don't even know if stuff that old can be rebuilt with current toolchains,
+/// I'll just repackage the old file.
+///
+/// So
+/// 1. download all files for rustdoc / source from storage
+/// 2. create a ZIP archive containing all these files
+/// 3. upload the zip
+/// 4. update database entries accordingly
+/// 5. delete old files
+///
+/// When that's done, I can remove all the logic in the codebase related to
+/// non-archive storage.
 async fn repackage(
     conn: &mut sqlx::PgConnection,
     storage: &AsyncStorage,
     name: &KrateName,
     version: &Version,
 ) -> Result<()> {
+    let mut transaction = conn.begin().await?;
+
     let rustdoc_prefix = format!("rustdoc/{name}/{version}/");
     let sources_prefix = format!("sources/{name}/{version}/");
 
@@ -47,15 +68,22 @@ async fn repackage(
         algs.insert(alg);
     }
 
-    let rid = sqlx::query!(
-        r#"SELECT id as "release_id: ReleaseId"
-         FROM releases
-         WHERE crate_name = $1 AND version = $2;"#,
+    let rid = sqlx::query_scalar!(
+        r#"
+         SELECT r.id as "release_id: ReleaseId"
+         FROM
+         crates AS c
+         INNER JOIN releases AS r on c.id = r.crate_id
+         WHERE
+            c.name = $1 AND
+            r.version = $2;
+         "#,
         name as _,
         version as _,
     )
-    .fetch_one(&mut *conn)
-    .await?;
+    .fetch_optional(&mut *transaction)
+    .await?
+    .ok_or_else(|| anyhow!("Could not find release for {name} {version}"))?;
 
     sqlx::query!(
         r#"UPDATE builds AS b
@@ -74,23 +102,25 @@ async fn repackage(
         documentation_size.map(|s| s as i64),
         rid as _,
     )
-    .execute(&mut *conn)
+    .execute(&mut *transaction)
     .await?;
 
-    sqlx::query!(
+    let affected = sqlx::query!(
         r#"
         UPDATE releases
         SET source_size = $2
         WHERE id = $1;
-    "#,
+        "#,
         rid as _,
         source_size.map(|s| s as i64),
     )
-    .execute(conn)
-    .await?;
+    .execute(&mut *transaction)
+    .await?
+    .rows_affected();
+    debug_assert_eq!(affected, 1);
 
     sqlx::query!("DELETE FROM compression_rels WHERE release = $1;", rid as _,)
-        .execute(&mut *conn)
+        .execute(&mut *transaction)
         .await?;
 
     for alg in algs {
@@ -101,9 +131,11 @@ async fn repackage(
             rid as _,
             &(alg as i32)
         )
-        .execute(&mut *conn)
+        .execute(&mut *transaction)
         .await?;
     }
+
+    transaction.commit().await?;
 
     storage.delete_prefix(&rustdoc_prefix).await?;
     storage.delete_prefix(&sources_prefix).await?;
@@ -158,9 +190,6 @@ mod tests {
     use docs_rs_types::testing::{KRATE, V1};
     use pretty_assertions::assert_eq;
 
-    // TODO:
-    // * test with real S3 too so prefixes are handled properly
-
     #[tokio::test(flavor = "multi_thread")]
     async fn test_repackage_normal() -> Result<()> {
         let env = TestEnvironment::builder()
@@ -209,20 +238,6 @@ mod tests {
             SOURCE_CONTENT.as_bytes()
         );
 
-        // let rustdoc_prefix = format!("rustdoc/{KRATE}/{V1}");
-        // let sources_prefix = format!("sources/{KRATE}/{V1}");
-
-        // assert!(
-        //     storage
-        //         .exists(&format!("{rustdoc_prefix}/{HTML_PATH}"))
-        //         .await?
-        // );
-        // assert!(
-        //     storage
-        //         .exists(&format!("{sources_prefix}/{SOURCE_PATH}"))
-        //         .await?
-        // );
-
         assert_eq!(
             storage
                 .list_prefix("")
@@ -250,32 +265,29 @@ mod tests {
             assert!(!storage.exists(path).await?);
         }
 
-        repackage(&storage, &KRATE, &V1).await?;
+        let mut conn = env.async_conn().await?;
+        repackage(&mut conn, &storage, &KRATE, &V1).await?;
 
-        // afterwards it work with rustdoc archives.
+        // afterwards it works with rustdoc archives.
         assert_eq!(
-            String::from_utf8_lossy(
-                &storage
-                    .stream_rustdoc_file(&KRATE, &V1, None, HTML_PATH, true)
-                    .await?
-                    .materialize(usize::MAX)
-                    .await?
-                    .content
-            ),
-            HTML_CONTENT
+            &storage
+                .stream_rustdoc_file(&KRATE, &V1, None, HTML_PATH, true)
+                .await?
+                .materialize(usize::MAX)
+                .await?
+                .content,
+            HTML_CONTENT.as_bytes(),
         );
 
         // also with source archives.
         assert_eq!(
-            String::from_utf8_lossy(
-                &storage
-                    .stream_source_file(&KRATE, &V1, None, SOURCE_PATH, true)
-                    .await?
-                    .materialize(usize::MAX)
-                    .await?
-                    .content
-            ),
-            SOURCE_CONTENT,
+            &storage
+                .stream_source_file(&KRATE, &V1, None, SOURCE_PATH, true)
+                .await?
+                .materialize(usize::MAX)
+                .await?
+                .content,
+            SOURCE_CONTENT.as_bytes(),
         );
 
         // all new files are these (`.zip`, `.zip.index`), old files are gone.
