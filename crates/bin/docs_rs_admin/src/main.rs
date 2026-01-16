@@ -74,6 +74,8 @@ impl CommandLine {
             .with_meter_provider()?
             .with_pool()
             .await?
+            .with_storage()
+            .await?
             .with_build_queue()?
             .with_repository_stats()?
             .with_registry_api()?
@@ -285,7 +287,12 @@ enum DatabaseSubcommand {
     },
 
     /// temporary command to repackage missing crates into archive storage.
-    Repackage,
+    /// starts at the earliest release and works forwards.
+    Repackage {
+        /// process at most this amount of releases
+        #[arg(long)]
+        limit: Option<usize>,
+    },
 
     /// temporary command to update the `crates.latest_version_id` field
     UpdateLatestVersionId,
@@ -324,13 +331,15 @@ impl DatabaseSubcommand {
             }
             .context("Failed to run database migrations")?,
 
-            Self::Repackage => {
+            Self::Repackage { limit } => {
                 let pool = ctx.pool()?;
-                let mut conn = pool.get_async().await?;
+                let storage = ctx.storage()?;
+                let mut list_conn = pool.get_async().await?;
+                let mut update_conn = pool.get_async().await?;
 
                 let mut stream = sqlx::query!(
                     r#"SELECT
-                           r.id as "id: ReleaseId",
+                           r.id as "rid: ReleaseId",
                            c.name as "name: KrateName",
                            r.version as "version: Version"
                        FROM
@@ -339,14 +348,19 @@ impl DatabaseSubcommand {
                        ORDER BY r.id
                     "#
                 )
-                .fetch(&mut *conn);
+                .fetch(&mut *list_conn);
 
                 while let Some(row) = stream.next().await {
                     let row = row?;
 
-                    println!("handling crate {}", row.name);
-
-                    // crate_details::update_latest_version_id(&mut update_conn, row.id).await?;
+                    crate::repackage::repackage(
+                        &mut *update_conn,
+                        &storage,
+                        row.rid,
+                        &row.name,
+                        &row.version,
+                    )
+                    .await?;
                 }
 
                 Ok::<(), anyhow::Error>(())

@@ -6,7 +6,7 @@ use futures_util::StreamExt as _;
 use sqlx::Acquire as _;
 use std::collections::HashSet;
 use tokio::{fs, io};
-use tracing::{debug, info, warn};
+use tracing::{debug, info, instrument, warn};
 
 /// repackage old rustdoc / source content.
 ///
@@ -27,13 +27,16 @@ use tracing::{debug, info, warn};
 ///
 /// When that's done, I can remove all the logic in the codebase related to
 /// non-archive storage.
-async fn repackage(
+#[instrument(skip_all, fields(rid=%rid, name=%name, version=%version))]
+pub async fn repackage(
     conn: &mut sqlx::PgConnection,
     storage: &AsyncStorage,
     rid: ReleaseId,
     name: &KrateName,
     version: &Version,
 ) -> Result<()> {
+    info!("repackaging");
+
     let mut transaction = conn.begin().await?;
 
     let rustdoc_prefix = format!("rustdoc/{name}/{version}/");
@@ -143,6 +146,7 @@ async fn repackage(
 /// repackage contents of a S3 path prefix into a single archive file.
 ///
 /// Not performance optimized, for now it just tries to be simple.
+#[instrument(skip(storage))]
 async fn repackage_path(
     storage: &AsyncStorage,
     prefix: &str,
