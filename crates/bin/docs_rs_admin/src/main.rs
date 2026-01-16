@@ -291,7 +291,7 @@ enum DatabaseSubcommand {
     Repackage {
         /// process at most this amount of releases
         #[arg(long)]
-        limit: Option<usize>,
+        limit: Option<u32>,
     },
 
     /// temporary command to update the `crates.latest_version_id` field
@@ -337,6 +337,8 @@ impl DatabaseSubcommand {
                 let mut list_conn = pool.get_async().await?;
                 let mut update_conn = pool.get_async().await?;
 
+                let limit = limit.unwrap_or(2_000_000u32);
+
                 let mut stream = sqlx::query!(
                     r#"SELECT
                            r.id as "rid: ReleaseId",
@@ -346,7 +348,9 @@ impl DatabaseSubcommand {
                             crates as c
                             INNER JOIN releases as r ON c.id = r.crate_id
                        ORDER BY r.id
-                    "#
+                       LIMIT $1
+                    "#,
+                    limit as i64,
                 )
                 .fetch(&mut *list_conn);
 

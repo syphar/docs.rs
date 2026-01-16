@@ -108,7 +108,9 @@ pub async fn repackage(
     let affected = sqlx::query!(
         r#"
         UPDATE releases
-        SET source_size = $2
+        SET
+            source_size = $2,
+            archive_storage = TRUE
         WHERE id = $1;
         "#,
         rid as _,
@@ -193,6 +195,23 @@ mod tests {
     use docs_rs_types::testing::{KRATE, V1};
     use pretty_assertions::assert_eq;
 
+    async fn ls(storage: &AsyncStorage) -> Vec<String> {
+        storage
+            .list_prefix("")
+            .await
+            .filter_map(|path| async {
+                let Ok(path) = path else { return None };
+
+                if path.starts_with("rustdoc-json/") || path.starts_with("build-logs/") {
+                    return None;
+                }
+
+                Some(path.clone())
+            })
+            .collect::<Vec<String>>()
+            .await
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn test_repackage_normal() -> Result<()> {
         let env = TestEnvironment::builder()
@@ -242,18 +261,8 @@ mod tests {
         );
 
         assert_eq!(
-            storage
-                .list_prefix("")
-                .await
-                .filter_map(|s| async { s.ok().clone() })
-                .collect::<Vec<String>>()
-                .await,
+            ls(&storage).await,
             vec![
-                "build-logs/10000/x86_64-unknown-linux-gnu.txt",
-                "rustdoc-json/krate/1.0.0/x86_64-unknown-linux-gnu/krate_1.0.0_x86_64-unknown-linux-gnu_42.json.gz",
-                "rustdoc-json/krate/1.0.0/x86_64-unknown-linux-gnu/krate_1.0.0_x86_64-unknown-linux-gnu_42.json.zst",
-                "rustdoc-json/krate/1.0.0/x86_64-unknown-linux-gnu/krate_1.0.0_x86_64-unknown-linux-gnu_latest.json.gz",
-                "rustdoc-json/krate/1.0.0/x86_64-unknown-linux-gnu/krate_1.0.0_x86_64-unknown-linux-gnu_latest.json.zst",
                 "rustdoc/krate/1.0.0/krate/index.html",
                 "rustdoc/krate/1.0.0/some/path.html",
                 "sources/krate/1.0.0/Cargo.toml",
@@ -262,14 +271,15 @@ mod tests {
         );
 
         // confirm the target archives really don't exist
-        let rustdoc_archive = rustdoc_archive_path(&KRATE, &V1);
-        let source_archive = source_archive_path(&KRATE, &V1);
-        for path in &[&rustdoc_archive, &source_archive] {
+        for path in &[
+            &rustdoc_archive_path(&KRATE, &V1),
+            &source_archive_path(&KRATE, &V1),
+        ] {
             assert!(!storage.exists(path).await?);
         }
 
         let mut conn = env.async_conn().await?;
-        repackage(&mut conn, &storage, &KRATE, &V1).await?;
+        repackage(&mut conn, &storage, rid, &KRATE, &V1).await?;
 
         // afterwards it works with rustdoc archives.
         assert_eq!(
@@ -295,18 +305,8 @@ mod tests {
 
         // all new files are these (`.zip`, `.zip.index`), old files are gone.
         assert_eq!(
-            storage
-                .list_prefix("")
-                .await
-                .filter_map(|s| async { s.ok().clone() })
-                .collect::<Vec<String>>()
-                .await,
+            ls(&storage).await,
             vec![
-                "build-logs/10000/x86_64-unknown-linux-gnu.txt",
-                "rustdoc-json/krate/1.0.0/x86_64-unknown-linux-gnu/krate_1.0.0_x86_64-unknown-linux-gnu_42.json.gz",
-                "rustdoc-json/krate/1.0.0/x86_64-unknown-linux-gnu/krate_1.0.0_x86_64-unknown-linux-gnu_42.json.zst",
-                "rustdoc-json/krate/1.0.0/x86_64-unknown-linux-gnu/krate_1.0.0_x86_64-unknown-linux-gnu_latest.json.gz",
-                "rustdoc-json/krate/1.0.0/x86_64-unknown-linux-gnu/krate_1.0.0_x86_64-unknown-linux-gnu_latest.json.zst",
                 "rustdoc/krate/1.0.0.zip",
                 "rustdoc/krate/1.0.0.zip.index",
                 "sources/krate/1.0.0.zip",
