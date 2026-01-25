@@ -28,5 +28,6 @@ docs_rs_opentelemetry = { path = "../docs_rs_opentelemetry" }
 docs_rs_registry_api = { path = "../docs_rs_registry_api" }
 docs_rs_repository_stats = { path = "../docs_rs_repository_stats" }
 docs_rs_storage = { path = "../docs_rs_storage" }
+docs_rs_utils = { path = "../docs_rs_utils" }
 docs_rs_test_fakes = { path = "../docs_rs_test_fakes", optional = true }
 tokio = { workspace = true }

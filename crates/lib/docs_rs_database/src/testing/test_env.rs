@@ -1,16 +1,17 @@
 use crate::{AsyncPoolClient, Config, Pool, migrations};
 use anyhow::{Context as _, Result};
 use docs_rs_opentelemetry::AnyMeterProvider;
+use docs_rs_utils::Handle;
 use futures_util::TryStreamExt as _;
 use sqlx::Connection as _;
-use tokio::{runtime, task::block_in_place};
+use tokio::task::block_in_place;
 use tracing::error;
 
 #[derive(Debug)]
 pub struct TestDatabase {
     pool: Pool,
     schema: String,
-    runtime: runtime::Handle,
+    runtime: Handle,
 }
 
 impl TestDatabase {
@@ -67,7 +68,7 @@ impl TestDatabase {
         Ok(TestDatabase {
             pool,
             schema,
-            runtime: runtime::Handle::current(),
+            runtime: Handle::current(),
         })
     }
 

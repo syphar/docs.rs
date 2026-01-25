@@ -1,5 +1,6 @@
 use crate::{Config, errors::PoolError, metrics::PoolMetrics};
 use docs_rs_opentelemetry::AnyMeterProvider;
+use docs_rs_utils::Handle;
 use futures_util::{future::BoxFuture, stream::BoxStream};
 use sqlx::{Executor, postgres::PgPoolOptions};
 use std::{
@@ -7,7 +8,6 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tokio::runtime;
 use tracing::debug;
 
 const DEFAULT_SCHEMA: &str = "public";
@@ -15,7 +15,7 @@ const DEFAULT_SCHEMA: &str = "public";
 #[derive(Debug, Clone)]
 pub struct Pool {
     async_pool: sqlx::PgPool,
-    runtime: runtime::Handle,
+    runtime: Handle,
     otel_metrics: Arc<PoolMetrics>,
 }
 
@@ -79,7 +79,7 @@ impl Pool {
 
         Ok(Pool {
             async_pool: async_pool.clone(),
-            runtime: runtime::Handle::current(),
+            runtime: Handle::current(),
             otel_metrics: Arc::new(PoolMetrics::new(async_pool, otel_meter_provider)),
         })
     }
@@ -157,7 +157,7 @@ where
 #[derive(Debug)]
 pub struct AsyncPoolClient {
     inner: Option<sqlx::pool::PoolConnection<sqlx::postgres::Postgres>>,
-    runtime: runtime::Handle,
+    runtime: Handle,
 }
 
 impl Deref for AsyncPoolClient {
@@ -176,7 +176,7 @@ impl DerefMut for AsyncPoolClient {
 
 impl Drop for AsyncPoolClient {
     fn drop(&mut self) {
-        let _guard = self.runtime.enter();
+        let _guard = self.runtime.as_handle().enter();
         drop(self.inner.take())
     }
 }

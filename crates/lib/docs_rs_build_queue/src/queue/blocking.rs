@@ -6,7 +6,6 @@ use sqlx::Connection as _;
 #[cfg(test)]
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::runtime;
 use tracing::error;
 
 #[derive(Debug)]
@@ -62,11 +61,8 @@ impl BuildQueue {
 }
 
 impl BuildQueue {
-    pub fn new(runtime: runtime::Handle, inner: Arc<AsyncBuildQueue>) -> Self {
-        Self {
-            runtime: runtime.into(),
-            inner,
-        }
+    pub fn new(runtime: Handle, inner: Arc<AsyncBuildQueue>) -> Self {
+        Self { runtime, inner }
     }
 
     pub fn process_next_crate(

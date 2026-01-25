@@ -1,18 +1,18 @@
 use crate::{blob::Blob, file::FileEntry, storage::non_blocking::AsyncStorage, types::FileRange};
 use anyhow::Result;
 use docs_rs_types::{BuildId, CompressionAlgorithm, Version};
+use docs_rs_utils::Handle;
 use std::{fmt, path::Path, sync::Arc};
-use tokio::runtime;
 
 /// Sync wrapper around `AsyncStorage` for parts of the codebase that are not async.
 pub struct Storage {
     inner: Arc<AsyncStorage>,
-    runtime: runtime::Handle,
+    runtime: Handle,
 }
 
 #[allow(dead_code)]
 impl Storage {
-    pub fn new(inner: Arc<AsyncStorage>, runtime: runtime::Handle) -> Self {
+    pub fn new(inner: Arc<AsyncStorage>, runtime: Handle) -> Self {
         Self { inner, runtime }
     }
 

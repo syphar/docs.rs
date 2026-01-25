@@ -1,11 +1,12 @@
 use crate::{AsyncStorage, Config, StorageKind};
 use anyhow::Result;
 use docs_rs_opentelemetry::AnyMeterProvider;
+use docs_rs_utils::Handle;
 use std::{ops::Deref, sync::Arc};
-use tokio::{runtime, task::block_in_place};
+use tokio::task::block_in_place;
 
 pub struct TestStorage {
-    runtime: runtime::Handle,
+    runtime: Handle,
     config: Arc<Config>,
     storage: Arc<AsyncStorage>,
 }
@@ -33,7 +34,7 @@ impl TestStorage {
         meter_provider: &AnyMeterProvider,
     ) -> Result<Self> {
         let storage = Arc::new(AsyncStorage::new(config.clone(), meter_provider).await?);
-        let runtime = runtime::Handle::current();
+        let runtime = Handle::current();
 
         Ok(Self {
             config,

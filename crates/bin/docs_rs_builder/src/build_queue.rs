@@ -17,7 +17,7 @@ fn process_next_crate(
 ) -> Result<()> {
     let queue = context.blocking_build_queue()?.clone();
     let cdn = context.cdn();
-    let runtime: Handle = context.runtime().clone().into();
+    let runtime: Handle = context.runtime().clone();
     let queue_config = context.config().build_queue()?;
 
     let next_attempt = queue.process_next_crate(|to_process| {

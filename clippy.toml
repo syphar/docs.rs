@@ -20,3 +20,6 @@ reason = "use our own custom docs_rs_types::Version so you can use it with sqlx"
 path = "axum_extra::headers::IfNoneMatch"
 reason = "use our own custom docs_rs_headers::IfNoneMatch for sane behaviour with missing headers"
 
+[[disallowed-types]]
+path = "tokio::runtime::Handle"
+reason = "use our own custom docs_rs_utils::Handle for tracing span integration"

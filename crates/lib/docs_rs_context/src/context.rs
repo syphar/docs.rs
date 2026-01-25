@@ -8,8 +8,8 @@ use docs_rs_opentelemetry::{AnyMeterProvider, get_meter_provider};
 use docs_rs_registry_api::RegistryApi;
 use docs_rs_repository_stats::RepositoryStatsUpdater;
 use docs_rs_storage::{AsyncStorage, Storage};
+use docs_rs_utils::Handle;
 use std::sync::Arc;
-use tokio::runtime;
 
 #[derive(bon::Builder)]
 #[builder(
@@ -21,7 +21,7 @@ pub struct Context {
     pub config: Config,
 
     #[builder(getter)]
-    pub runtime: runtime::Handle,
+    pub runtime: Handle,
 
     #[builder(getter)]
     pub meter_provider: AnyMeterProvider,
@@ -99,7 +99,7 @@ impl<S: State> ContextBuilder<S> {
     where
         S::Runtime: IsUnset,
     {
-        Ok(self.runtime(runtime::Handle::try_current()?))
+        Ok(self.runtime(Handle::try_current()?))
     }
 
     pub fn with_meter_provider(self) -> Result<ContextBuilder<SetMeterProvider<S>>>
@@ -292,7 +292,7 @@ impl Context {
         &self.meter_provider
     }
 
-    pub fn runtime(&self) -> &runtime::Handle {
+    pub fn runtime(&self) -> &Handle {
         &self.runtime
     }
 

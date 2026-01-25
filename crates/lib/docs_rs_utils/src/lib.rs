@@ -8,7 +8,6 @@ pub use runtime_ext::Handle;
 use anyhow::{Context as _, Result};
 use std::fmt;
 use std::{panic, thread, time::Duration};
-use tokio::runtime;
 use tracing::{Span, error, warn};
 
 /// Version string generated at build time contains last git
@@ -133,11 +132,11 @@ where
     Fut: Future<Output = Result<()>> + Send,
     F: Fn() -> Fut + Send + 'static,
 {
-    start_async_cron_in_runtime(&runtime::Handle::current(), name, interval, exec)
+    start_async_cron_in_runtime(&Handle::current(), name, interval, exec)
 }
 
 pub fn start_async_cron_in_runtime<F, Fut>(
-    runtime: &runtime::Handle,
+    runtime: &Handle,
     name: &'static str,
     interval: Duration,
     exec: F,
