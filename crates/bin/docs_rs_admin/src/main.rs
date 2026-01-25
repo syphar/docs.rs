@@ -1,3 +1,4 @@
+mod import;
 mod rebuilds;
 mod repackage;
 #[cfg(test)]
@@ -302,6 +303,17 @@ enum DatabaseSubcommand {
 
     /// Backfill GitHub/GitLab stats for crates.
     BackfillRepositoryStats,
+
+    /// Import a successfully built release from the main docs.rs deployment.
+    ///
+    /// Only for testing.
+    ImportRelease {
+        #[arg(name = "CRATE")]
+        name: KrateName,
+
+        #[arg(name = "CRATE_VERSION")]
+        version: Version,
+    },
 
     /// Updates info for a crate from the registry's API
     UpdateCrateRegistryFields {
