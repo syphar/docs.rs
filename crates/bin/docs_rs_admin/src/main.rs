@@ -19,7 +19,7 @@ use docs_rs_database::{
 };
 use docs_rs_fastly::CdnBehaviour as _;
 use docs_rs_headers::SurrogateKey;
-use docs_rs_types::{CrateId, KrateName, ReleaseId, Version};
+use docs_rs_types::{CrateId, KrateName, ReleaseId, ReqVersion, Version};
 use futures_util::StreamExt;
 use rebuilds::queue_rebuilds_faulty_rustdoc;
 use std::iter;
@@ -311,8 +311,8 @@ enum DatabaseSubcommand {
         #[arg(name = "CRATE")]
         name: KrateName,
 
-        #[arg(name = "CRATE_VERSION")]
-        version: Version,
+        #[arg(name = "CRATE_VERSION", default_value_t)]
+        version: ReqVersion,
     },
 
     /// Updates info for a crate from the registry's API
@@ -431,7 +431,8 @@ impl DatabaseSubcommand {
 
             Self::ImportRelease { name, version } => {
                 let mut conn = ctx.pool()?.get_async().await?;
-                crate::import::import_test_release(&mut conn, &name, &version).await?;
+                crate::import::import_test_release(&mut conn, ctx.storage()?, &name, &version)
+                    .await?;
             }
         }
         Ok(())
