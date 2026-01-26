@@ -1894,6 +1894,7 @@ dependencies = [
  "docs_rs_utils",
  "futures-util",
  "pretty_assertions",
+ "reqwest 0.13.1",
  "sqlx",
  "tempfile",
  "test-case",

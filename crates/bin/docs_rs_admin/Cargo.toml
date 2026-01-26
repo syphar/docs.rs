@@ -21,6 +21,7 @@ docs_rs_storage = { path = "../../lib/docs_rs_storage" }
 docs_rs_types = { path = "../../lib/docs_rs_types" }
 docs_rs_utils = { path = "../../lib/docs_rs_utils" }
 futures-util = { workspace = true }
+reqwest = { workspace = true }
 sqlx = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }

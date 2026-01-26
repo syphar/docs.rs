@@ -1,4 +1,4 @@
-mod import;
+pub(crate) mod import;
 mod rebuilds;
 mod repackage;
 #[cfg(test)]
@@ -428,6 +428,11 @@ impl DatabaseSubcommand {
             Self::Blacklist { command } => command.handle_args(ctx).await?,
 
             Self::Limits { command } => command.handle_args(ctx).await?,
+
+            Self::ImportRelease { name, version } => {
+                let mut conn = ctx.pool()?.get_async().await?;
+                crate::import::import_test_release(&mut conn, &name, &version).await?;
+            }
         }
         Ok(())
     }
