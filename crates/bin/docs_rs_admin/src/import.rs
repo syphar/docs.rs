@@ -91,57 +91,29 @@ pub(crate) async fn import_test_release(
 
     let registry_data = registry_api.get_release_data(name, &version).await?;
 
-    {
-        let mut zip_content = {
-            let mut rustdoc_archive =
-                download_file(format!("https://docs.rs/crate/{name}/{version}/download")).await?;
+    let rustdoc_dir = {
+        let rustdoc_archive =
+            download_file(format!("https://docs.rs/crate/{name}/{version}/download"))
+                .await?
+                .into_std()
+                .await;
 
-            let mut buf = Vec::new();
-            rustdoc_archive.read_to_end(&mut buf).await?;
-            buf
-        };
+        spawn_blocking(|| {
+            let mut zip = zip::ZipArchive::new(rustdoc_archive)?;
 
-        let archive_path = rustdoc_archive_path(name, &version);
+            let temp_dir = tempfile::tempdir_in("/Users/syphar/tmp/")?;
+            zip.extract(&temp_dir)?;
+            Ok(temp_dir)
+        })
+        .await?
+    };
 
-        let remote_index_path = format!("{}.{ARCHIVE_INDEX_FILE_EXTENSION}", &archive_path);
-        let index_compression = CompressionAlgorithm::default();
-        let compressed_index_content = {
-            let local_index_path =
-                spawn_blocking(|| Ok(tempfile::NamedTempFile::new()?.into_temp_path())).await?;
+    // TODO: download needed rustdoc.static?
 
-            archive_index::create(
-                &mut std::io::Cursor::new(&mut zip_content),
-                &local_index_path,
-            )
-            .await?;
-
-            let mut buf: Vec<u8> = Vec::new();
-            compress_async(
-                &mut io::BufReader::new(fs::File::open(&local_index_path).await?),
-                &mut buf,
-                index_compression,
-            )
-            .await?;
-            buf
-        };
-
-        storage
-            .store_blobs(vec![
-                BlobUpload {
-                    path: archive_path.to_string(),
-                    mime: mimes::APPLICATION_ZIP.clone(),
-                    content: zip_content,
-                    compression: None,
-                },
-                BlobUpload {
-                    path: remote_index_path,
-                    mime: mime::APPLICATION_OCTET_STREAM,
-                    content: compressed_index_content,
-                    compression: Some(index_compression),
-                },
-            ])
-            .await?;
-    }
+    let (_rustdoc_files_list, new_alg) = storage
+        .store_all_in_archive(&rustdoc_archive_path(name, &version), &rustdoc_dir)
+        .await?;
+    algs.insert(new_alg);
 
     finish_release(
         &mut *conn,

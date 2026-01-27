@@ -17,6 +17,7 @@ docs_rs_cargo_metadata = { path = "../../lib/docs_rs_cargo_metadata" }
 docsrs-metadata = { path = "../../lib/metadata" }
 docs_rs_registry_api = { path = "../../lib/docs_rs_registry_api" }
 docs_rs_mimes = { path = "../../lib/docs_rs_mimes" }
+zip = { workspace = true }
 docs_rs_database = { path = "../../lib/docs_rs_database" }
 mime = { workspace = true }
 docs_rs_fastly = { path = "../../lib/docs_rs_fastly" }

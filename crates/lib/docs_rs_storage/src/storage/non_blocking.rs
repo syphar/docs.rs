@@ -575,6 +575,7 @@ impl AsyncStorage {
         Ok((file_paths_and_mimes, alg))
     }
 
+    #[cfg(test)]
     pub async fn store_blobs(&self, blobs: Vec<BlobUpload>) -> Result<()> {
         self.backend.store_batch(blobs).await
     }

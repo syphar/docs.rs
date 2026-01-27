@@ -1,4 +1,4 @@
-pub mod archive_index;
+mod archive_index;
 mod backends;
 mod blob;
 pub mod compression;
