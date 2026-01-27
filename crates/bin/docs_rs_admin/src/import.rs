@@ -113,14 +113,12 @@ pub(crate) async fn import_test_release(
         spawn_blocking(|| {
             let mut zip = zip::ZipArchive::new(rustdoc_archive)?;
 
-            let temp_dir = tempfile::tempdir_in("/Users/syphar/tmp/")?;
+            let temp_dir = tempfile::tempdir()?;
             zip.extract(&temp_dir)?;
             Ok(temp_dir)
         })
         .await?
     };
-
-    let rustdoc_dir = rustdoc_dir.keep();
 
     let mut static_files = find_rustdoc_static_urls(&rustdoc_dir).await?;
     static_files.remove("/-/rustdoc.static/${f}");
