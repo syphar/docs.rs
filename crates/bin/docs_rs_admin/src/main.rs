@@ -435,6 +435,7 @@ impl DatabaseSubcommand {
                     &mut conn,
                     ctx.storage()?,
                     ctx.registry_api()?,
+                    ctx.repository_stats()?,
                     &name,
                     &version,
                 )

@@ -1,19 +1,18 @@
 use anyhow::{Context as _, Result, bail};
 use async_tar::Archive;
-use docs_rs_cargo_metadata::{CargoMetadata, MetadataPackage};
+use docs_rs_cargo_metadata::CargoMetadata;
 use docs_rs_database::releases::{
     finish_build, finish_release, initialize_build, initialize_crate, initialize_release,
 };
-use docs_rs_mimes as mimes;
 use docs_rs_registry_api::RegistryApi;
 use docs_rs_repository_stats::RepositoryStatsUpdater;
 use docs_rs_storage::{
-    AsyncStorage, BlobUpload, compress_async, compression::wrap_reader_for_decompression,
-    file_list_to_json, rustdoc_archive_path, source_archive_path,
+    AsyncStorage, compression::wrap_reader_for_decompression, file_list_to_json,
+    rustdoc_archive_path, source_archive_path,
 };
-use docs_rs_types::{BuildStatus, CompressionAlgorithm, KrateName, ReqVersion, Version};
+use docs_rs_types::{BuildStatus, KrateName, ReqVersion, Version};
 use docs_rs_utils::{BUILD_VERSION, spawn_blocking};
-use docsrs_metadata::{BuildTargets, DEFAULT_TARGETS, HOST_TARGET, Metadata};
+use docsrs_metadata::{BuildTargets, Metadata};
 use futures_util::StreamExt as _;
 use regex::Regex;
 use serde::Deserialize;
@@ -56,7 +55,7 @@ pub(crate) async fn import_test_release(
     // * download JSON builds from docs.rs (which?)
     // * find used rustc version somehow?
 
-    let status = fetch_rustdoc_status(&name, version).await?;
+    let status = fetch_rustdoc_status(name, version).await?;
     if !status.doc_status {
         bail!("No rustdoc available for {name} {version}");
     }
