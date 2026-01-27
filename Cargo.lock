@@ -406,6 +406,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-tar"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3e9933aa2da420042c67e2ea83eec765919347d9742592744dc97cc42ef20c5d"
+dependencies = [
+ "filetime",
+ "futures-core",
+ "libc",
+ "redox_syscall 0.7.0",
+ "tokio",
+ "tokio-stream",
+ "xattr",
+]
+
+[[package]]
 name = "async-trait"
 version = "0.1.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1876,30 +1891,34 @@ name = "docs_rs_admin"
 version = "0.6.0"
 dependencies = [
  "anyhow",
+ "async-tar",
  "bon",
  "chrono",
  "clap",
  "docs_rs_build_limits",
  "docs_rs_build_queue",
+ "docs_rs_cargo_metadata",
  "docs_rs_config",
  "docs_rs_context",
  "docs_rs_database",
  "docs_rs_fastly",
  "docs_rs_headers",
  "docs_rs_logging",
+ "docs_rs_mimes",
  "docs_rs_opentelemetry",
+ "docs_rs_registry_api",
  "docs_rs_storage",
  "docs_rs_test_fakes",
  "docs_rs_types",
  "docs_rs_utils",
- "flate2",
+ "docsrs-metadata",
  "futures-util",
+ "mime",
  "pretty_assertions",
  "reqwest 0.13.1",
  "serde",
  "serde_json",
  "sqlx",
- "tar",
  "tempfile",
  "test-case",
  "tokio",

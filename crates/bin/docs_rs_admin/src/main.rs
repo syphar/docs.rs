@@ -431,8 +431,14 @@ impl DatabaseSubcommand {
 
             Self::ImportRelease { name, version } => {
                 let mut conn = ctx.pool()?.get_async().await?;
-                crate::import::import_test_release(&mut conn, ctx.storage()?, &name, &version)
-                    .await?;
+                crate::import::import_test_release(
+                    &mut conn,
+                    ctx.storage()?,
+                    ctx.registry_api()?,
+                    &name,
+                    &version,
+                )
+                .await?;
             }
         }
         Ok(())

@@ -6,7 +6,7 @@ use sqlx::{Acquire as _, QueryBuilder, Row as _, Sqlite};
 use std::{fs, io, path::Path};
 use tracing::instrument;
 
-pub(crate) const ARCHIVE_INDEX_FILE_EXTENSION: &str = "index";
+pub const ARCHIVE_INDEX_FILE_EXTENSION: &str = "index";
 
 #[derive(PartialEq, Eq, Debug)]
 pub(crate) struct FileInfo {
@@ -63,7 +63,7 @@ async fn sqlite_open<P: AsRef<Path>>(path: P) -> Result<sqlx::SqlitePool> {
 ///
 /// Will delete the destination file if it already exists.
 #[instrument(skip(zipfile))]
-pub(crate) async fn create<R: io::Read + io::Seek, P: AsRef<Path> + std::fmt::Debug>(
+pub async fn create<R: io::Read + io::Seek, P: AsRef<Path> + std::fmt::Debug>(
     zipfile: &mut R,
     destination: P,
 ) -> Result<()> {
