@@ -114,12 +114,8 @@ pub(crate) async fn import_test_release(
     }
     .keep();
 
-    // FIXME: target list is broken (default /other)
-    // * default target is from metadata, but can't default to HOST_TARGET.
-    //   Fallback should be "x86_64-unknown-linux-gnu", which is HOST_TARGET on the servers
-    // * Other targets can be taken from the metadata & DEFAULT_TARGEST as normally,
-    // * still checked with subfolders
-
+    // NOTE: the "successful" target list is wrong, if the "old" list of default targets was
+    // used.
     let BuildTargets {
         default_target,
         other_targets,
