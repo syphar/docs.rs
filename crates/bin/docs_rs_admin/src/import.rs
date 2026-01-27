@@ -6,6 +6,7 @@ use docs_rs_database::releases::{
 };
 use docs_rs_mimes as mimes;
 use docs_rs_registry_api::RegistryApi;
+use docs_rs_repository_stats::RepositoryStatsUpdater;
 use docs_rs_storage::{
     AsyncStorage, BlobUpload, compress_async, compression::wrap_reader_for_decompression,
     file_list_to_json, rustdoc_archive_path, source_archive_path,
@@ -36,6 +37,8 @@ const DOCS_RS: &str = "https://docs.rs";
 ///
 /// CAVEATS:
 /// * is currently only tested for newer releases, since there are some hacks in place.
+/// * to find the needed rustdoc-static files, we have to scan all the HTML files for certain paths.
+///   For bigger releases this might take some time.
 ///
 /// SECURITY:
 /// we execute `cargo metadata` on the downloaded source code, so
@@ -45,6 +48,7 @@ pub(crate) async fn import_test_release(
     conn: &mut sqlx::PgConnection,
     storage: &AsyncStorage,
     registry_api: &RegistryApi,
+    repository_stats: &RepositoryStatsUpdater,
     name: &KrateName,
     version: &ReqVersion,
 ) -> Result<()> {
@@ -67,9 +71,17 @@ pub(crate) async fn import_test_release(
 
     let source_dir = download_and_extract_source(name, &version).await?;
 
-    // FIXME: spawn_blocking for sync stuff?
-    let cargo_metadata = CargoMetadata::load_from_host_path(&source_dir)?;
-    let docsrs_metadata = Metadata::from_crate_root(&source_dir)?;
+    let cargo_metadata = spawn_blocking({
+        let source_dir = source_dir.source_path.clone();
+        move || CargoMetadata::load_from_host_path(&source_dir)
+    })
+    .await?;
+    let docsrs_metadata = spawn_blocking({
+        let source_dir = source_dir.source_path.clone();
+        move || Ok(Metadata::from_crate_root(&source_dir)?)
+    })
+    .await?;
+
     let BuildTargets {
         default_target,
         other_targets,
@@ -111,6 +123,7 @@ pub(crate) async fn import_test_release(
     let rustdoc_dir = rustdoc_dir.keep();
 
     let mut static_files = find_rustdoc_static_urls(&rustdoc_dir).await?;
+    static_files.remove("/-/rustdoc.static/${f}");
     static_files.extend(
         [
             "/-/rustdoc.static/SourceSerif4-Regular-6b053e98.ttf.woff2",
@@ -126,10 +139,6 @@ pub(crate) async fn import_test_release(
     );
 
     for path in &static_files {
-        if path.contains("${") {
-            continue;
-        }
-
         let key = format!(
             "{}{}",
             docs_rs_utils::RUSTDOC_STATIC_STORAGE_PREFIX,
@@ -154,6 +163,11 @@ pub(crate) async fn import_test_release(
         .await?;
     algs.insert(new_alg);
 
+    let repository_id = repository_stats
+        .load_repository(cargo_metadata.root())
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("failed to find repository for crate {name}",))?;
+
     finish_release(
         &mut *conn,
         crate_id,
@@ -167,7 +181,7 @@ pub(crate) async fn import_test_release(
         true,
         false, // FIXME: real has_examples?
         algs,
-        None, // FIXMED: repository_id: Option<i32>,
+        Some(repository_id),
         true,
         source_size,
     )
