@@ -7,18 +7,17 @@ use docs_rs_database::releases::{
 use docs_rs_mimes as mimes;
 use docs_rs_registry_api::RegistryApi;
 use docs_rs_storage::{
-    AsyncStorage, BlobUpload,
-    archive_index::{self, ARCHIVE_INDEX_FILE_EXTENSION},
-    compress_async,
-    compression::wrap_reader_for_decompression,
+    AsyncStorage, BlobUpload, compress_async, compression::wrap_reader_for_decompression,
     file_list_to_json, rustdoc_archive_path, source_archive_path,
 };
 use docs_rs_types::{BuildStatus, CompressionAlgorithm, KrateName, ReqVersion, Version};
 use docs_rs_utils::{BUILD_VERSION, spawn_blocking};
 use docsrs_metadata::{BuildTargets, DEFAULT_TARGETS, HOST_TARGET, Metadata};
 use futures_util::StreamExt as _;
+use regex::Regex;
 use serde::Deserialize;
 use std::fmt;
+use std::sync::LazyLock;
 use std::{
     collections::HashSet,
     path::{Path, PathBuf},
@@ -35,6 +34,9 @@ const DOCS_RS: &str = "https://docs.rs";
 /// import an existing crate release build from docs.rs into the
 /// local database & storage.
 ///
+/// CAVEATS:
+/// * is currently only tested for newer releases, since there are some hacks in place.
+///
 /// SECURITY:
 /// we execute `cargo metadata` on the downloaded source code, so
 /// this function MUST NOT be used with untrusted crate names/versions.
@@ -49,7 +51,6 @@ pub(crate) async fn import_test_release(
     // TODO:
     // * download JSON builds from docs.rs (which?)
     // * find used rustc version somehow?
-    // * add_essential_files for the needed nightly version?
 
     let status = fetch_rustdoc_status(&name, version).await?;
     if !status.doc_status {
@@ -65,7 +66,6 @@ pub(crate) async fn import_test_release(
     let build_id = initialize_build(&mut *conn, release_id).await?;
 
     let source_dir = download_and_extract_source(name, &version).await?;
-    dbg!(&source_dir);
 
     // FIXME: spawn_blocking for sync stuff?
     let cargo_metadata = CargoMetadata::load_from_host_path(&source_dir)?;
@@ -108,7 +108,46 @@ pub(crate) async fn import_test_release(
         .await?
     };
 
-    // TODO: download needed rustdoc.static?
+    let rustdoc_dir = rustdoc_dir.keep();
+
+    let mut static_files = find_rustdoc_static_urls(&rustdoc_dir).await?;
+    static_files.extend(
+        [
+            "/-/rustdoc.static/SourceSerif4-Regular-6b053e98.ttf.woff2",
+            "/-/rustdoc.static/FiraSans-Italic-81dc35de.woff2",
+            "/-/rustdoc.static/FiraSans-Regular-0fe48ade.woff2",
+            "/-/rustdoc.static/FiraSans-MediumItalic-ccf7e434.woff2",
+            "/-/rustdoc.static/FiraSans-Medium-e1aa3f0a.woff2",
+            "/-/rustdoc.static/SourceCodePro-Regular-8badfe75.ttf.woff2",
+            "/-/rustdoc.static/SourceCodePro-Semibold-aa29a496.ttf.woff2",
+        ]
+        .iter()
+        .map(|s| s.to_string()),
+    );
+
+    for path in &static_files {
+        if path.contains("${") {
+            continue;
+        }
+
+        let key = format!(
+            "{}{}",
+            docs_rs_utils::RUSTDOC_STATIC_STORAGE_PREFIX,
+            path.trim_start_matches("/-/rustdoc.static/")
+        );
+
+        if storage.exists(&key).await? {
+            info!("static file already exists in storage: {}", &key);
+            continue;
+        }
+
+        let mut static_file = download_file(format!("https://docs.rs{path}")).await?;
+
+        let mut content = Vec::new();
+        static_file.read_to_end(&mut content).await?;
+
+        storage.store_one(key, content).await?;
+    }
 
     let (_rustdoc_files_list, new_alg) = storage
         .store_all_in_archive(&rustdoc_archive_path(name, &version), &rustdoc_dir)
@@ -228,4 +267,65 @@ async fn download_and_extract_source(name: &KrateName, version: &Version) -> Res
         source_path,
         _temp_dir: temp_dir,
     })
+}
+
+#[instrument]
+async fn find_rustdoc_static_urls(
+    root_dir: impl AsRef<Path> + fmt::Debug,
+) -> Result<HashSet<String>> {
+    static RE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r#"(/-/rustdoc\.static/[^"]+)"#).unwrap());
+
+    let root_dir = root_dir.as_ref();
+    let mut dirs = vec![root_dir.to_path_buf()];
+    let mut html_files = Vec::new();
+
+    while let Some(dir) = dirs.pop() {
+        let mut entries = fs::read_dir(&dir)
+            .await
+            .with_context(|| format!("reading directory {dir:?}"))?;
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            let file_type = entry.file_type().await?;
+            if file_type.is_dir() {
+                dirs.push(path);
+                continue;
+            }
+
+            if file_type.is_file()
+                && path
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("html"))
+            {
+                html_files.push(path);
+            }
+        }
+    }
+
+    let mut urls = HashSet::new();
+
+    let mut file_stream =
+        futures_util::stream::iter(html_files.into_iter().map(|path| async move {
+            let mut file = fs::File::open(&path)
+                .await
+                .with_context(|| format!("opening file {path:?}"))?;
+            let mut contents = String::new();
+            file.read_to_string(&mut contents)
+                .await
+                .with_context(|| format!("reading file {path:?}"))?;
+
+            let matches = RE
+                .captures_iter(&contents)
+                .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string()))
+                .collect::<Vec<_>>();
+            Ok::<_, anyhow::Error>(matches)
+        }))
+        .buffer_unordered(16);
+
+    while let Some(matches) = file_stream.next().await {
+        urls.extend(matches?);
+    }
+
+    Ok(urls)
 }
