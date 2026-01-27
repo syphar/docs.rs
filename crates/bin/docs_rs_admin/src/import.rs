@@ -30,6 +30,7 @@ use tokio::{
 use tracing::{info, instrument};
 
 const DOCS_RS: &str = "https://docs.rs";
+const DEFAULT_TARGET: &str = "x86_64-unknown-linux-gnu";
 
 /// import an existing crate release build from docs.rs into the
 /// local database & storage.
@@ -81,13 +82,6 @@ pub(crate) async fn import_test_release(
     })
     .await?;
 
-    let BuildTargets {
-        default_target,
-        other_targets,
-    } = docsrs_metadata.targets(true);
-    let mut targets = vec![default_target];
-    targets.extend(&other_targets);
-
     let mut algs = HashSet::new();
     let (source_files_list, source_size) = {
         info!("adding sources into database");
@@ -112,12 +106,35 @@ pub(crate) async fn import_test_release(
         spawn_blocking(|| {
             let mut zip = zip::ZipArchive::new(rustdoc_archive)?;
 
-            let temp_dir = tempfile::tempdir()?;
+            let temp_dir = tempfile::tempdir_in("/Users/syphar/tmp/")?;
             zip.extract(&temp_dir)?;
             Ok(temp_dir)
         })
         .await?
-    };
+    }
+    .keep();
+
+    // FIXME: target list is broken (default /other)
+    // * default target is from metadata, but can't default to HOST_TARGET.
+    //   Fallback should be "x86_64-unknown-linux-gnu", which is HOST_TARGET on the servers
+    // * Other targets can be taken from the metadata & DEFAULT_TARGEST as normally,
+    // * still checked with subfolders
+
+    let BuildTargets {
+        default_target,
+        other_targets,
+    } = docsrs_metadata.targets_for_host(true, DEFAULT_TARGET);
+    dbg!(&default_target, &other_targets);
+    let mut targets = vec![default_target];
+
+    for t in &other_targets {
+        if rustdoc_dir.join(t).is_dir() {
+            // non-default targets lead to a subdirectory in rustdoc
+            targets.push(t);
+        }
+    }
+
+    dbg!(&targets);
 
     let mut static_files = find_rustdoc_static_urls(&rustdoc_dir).await?;
     static_files.remove("/-/rustdoc.static/${f}");
@@ -160,8 +177,7 @@ pub(crate) async fn import_test_release(
 
     let repository_id = repository_stats
         .load_repository(cargo_metadata.root())
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("failed to find repository for crate {name}",))?;
+        .await?;
 
     finish_release(
         &mut *conn,
@@ -176,7 +192,7 @@ pub(crate) async fn import_test_release(
         true,
         false, // FIXME: real has_examples?
         algs,
-        Some(repository_id),
+        repository_id,
         true,
         source_size,
     )
