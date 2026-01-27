@@ -26,6 +26,7 @@ use tokio::io::AsyncReadExt as _;
 use tokio::{
     fs,
     io::{self, AsyncSeekExt, AsyncWriteExt},
+    process::Command,
 };
 use tracing::{info, instrument};
 
@@ -123,7 +124,12 @@ pub(crate) async fn import_test_release(
     dbg!(&default_target, &other_targets);
     let mut targets = vec![default_target];
 
-    for t in &other_targets {
+    let mut potential_other_targets: HashSet<String> =
+        other_targets.iter().map(|t| t.to_string()).collect();
+    potential_other_targets.extend(fetch_target_list().await?.into_iter());
+    potential_other_targets.remove(default_target);
+
+    for t in &potential_other_targets {
         if rustdoc_dir.join(t).is_dir() {
             // non-default targets lead to a subdirectory in rustdoc
             targets.push(t);
@@ -271,6 +277,30 @@ async fn download_to_temp_file(url: impl reqwest::IntoUrl + fmt::Debug) -> Resul
     Ok(file)
 }
 
+async fn fetch_target_list() -> Result<HashSet<String>> {
+    let output = Command::new("rustc")
+        .arg("--print")
+        .arg("target-list")
+        .output()
+        .await?;
+
+    if !output.status.success() {
+        bail!(
+            "`rustc --print target-list` failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let stdout = String::from_utf8(output.stdout)?;
+
+    Ok(stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect())
+}
+
 #[instrument]
 async fn download_and_extract_source(name: &KrateName, version: &Version) -> Result<SourceDir> {
     info!("downloading source");
@@ -308,6 +338,7 @@ async fn find_rustdoc_static_urls(
 ) -> Result<HashSet<String>> {
     static RE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r#"(/-/rustdoc\.static/[^"]+)"#).unwrap());
+    // FIXME: migrate to walkdir
 
     let root_dir = root_dir.as_ref();
     let mut dirs = vec![root_dir.to_path_buf()];
