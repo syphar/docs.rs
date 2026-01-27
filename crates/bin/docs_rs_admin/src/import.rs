@@ -123,13 +123,13 @@ pub(crate) async fn import_test_release(
     static_files.remove("/-/rustdoc.static/${f}");
     static_files.extend(
         [
-            "/-/rustdoc.static/SourceSerif4-Regular-6b053e98.ttf.woff2",
             "/-/rustdoc.static/FiraSans-Italic-81dc35de.woff2",
-            "/-/rustdoc.static/FiraSans-Regular-0fe48ade.woff2",
-            "/-/rustdoc.static/FiraSans-MediumItalic-ccf7e434.woff2",
             "/-/rustdoc.static/FiraSans-Medium-e1aa3f0a.woff2",
+            "/-/rustdoc.static/FiraSans-MediumItalic-ccf7e434.woff2",
+            "/-/rustdoc.static/FiraSans-Regular-0fe48ade.woff2",
             "/-/rustdoc.static/SourceCodePro-Regular-8badfe75.ttf.woff2",
             "/-/rustdoc.static/SourceCodePro-Semibold-aa29a496.ttf.woff2",
+            "/-/rustdoc.static/SourceSerif4-Regular-6b053e98.ttf.woff2",
         ]
         .iter()
         .map(|s| s.to_string()),
