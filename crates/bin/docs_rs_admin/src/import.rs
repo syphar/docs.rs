@@ -112,8 +112,7 @@ pub(crate) async fn import_test_release(
             Ok(temp_dir)
         })
         .await?
-    }
-    .keep();
+    };
 
     // NOTE: the "successful" target list is wrong, if the "old" list of default targets was
     // used.
@@ -121,7 +120,6 @@ pub(crate) async fn import_test_release(
         default_target,
         other_targets,
     } = docsrs_metadata.targets_for_host(true, DEFAULT_TARGET);
-    dbg!(&default_target, &other_targets);
     let mut targets = vec![default_target];
 
     let mut potential_other_targets: HashSet<String> =
@@ -130,13 +128,11 @@ pub(crate) async fn import_test_release(
     potential_other_targets.remove(default_target);
 
     for t in &potential_other_targets {
-        if rustdoc_dir.join(t).is_dir() {
+        if rustdoc_dir.path().join(t).is_dir() {
             // non-default targets lead to a subdirectory in rustdoc
             targets.push(t);
         }
     }
-
-    dbg!(&targets);
 
     let mut static_files = find_rustdoc_static_urls(&rustdoc_dir).await?;
     static_files.remove("/-/rustdoc.static/${f}");
