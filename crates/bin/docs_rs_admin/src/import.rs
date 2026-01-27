@@ -104,7 +104,7 @@ pub(crate) async fn import_test_release(
 
     let rustdoc_dir = {
         let rustdoc_archive =
-            download_file(format!("https://docs.rs/crate/{name}/{version}/download"))
+            download_to_temp_file(format!("https://docs.rs/crate/{name}/{version}/download"))
                 .await?
                 .into_std()
                 .await;
@@ -147,17 +147,15 @@ pub(crate) async fn import_test_release(
             continue;
         }
 
-        let mut static_file = download_file(format!("https://docs.rs{path}")).await?;
-
-        let mut content = Vec::new();
-        static_file.read_to_end(&mut content).await?;
-
-        storage.store_one(key, content).await?;
+        storage
+            .store_one(key, download(format!("https://docs.rs{path}")).await?)
+            .await?;
     }
 
-    let (_rustdoc_files_list, new_alg) = storage
+    let (rustdoc_files_list, new_alg) = storage
         .store_all_in_archive(&rustdoc_archive_path(name, &version), &rustdoc_dir)
         .await?;
+    let documentation_size: u64 = rustdoc_files_list.iter().map(|info| info.size).sum();
     algs.insert(new_alg);
 
     let repository_id = repository_stats
@@ -190,7 +188,7 @@ pub(crate) async fn import_test_release(
         "rustc 1.95.0-nightly (873d4682c 2026-01-25)",
         BUILD_VERSION,
         BuildStatus::Success,
-        None, // FIXME: documentation size
+        Some(documentation_size),
         None,
     )
     .await?;
@@ -228,8 +226,20 @@ async fn fetch_rustdoc_status(name: &KrateName, version: &ReqVersion) -> Result<
 }
 
 #[instrument]
-async fn download_file(url: impl reqwest::IntoUrl + fmt::Debug) -> Result<fs::File> {
-    info!("downloading file");
+async fn download(url: impl reqwest::IntoUrl + fmt::Debug) -> Result<Vec<u8>> {
+    info!("downloading...");
+
+    Ok(reqwest::get(url)
+        .await?
+        .error_for_status()?
+        .bytes()
+        .await?
+        .to_vec())
+}
+
+#[instrument]
+async fn download_to_temp_file(url: impl reqwest::IntoUrl + fmt::Debug) -> Result<fs::File> {
+    info!("downloading to temp file..");
 
     // NOTE: even after being convert to a `tokio::fs::File`, this kind of temporary file
     // will be cleaned up by the us, when the last handle is closed.
@@ -252,7 +262,7 @@ async fn download_file(url: impl reqwest::IntoUrl + fmt::Debug) -> Result<fs::Fi
 #[instrument]
 async fn download_and_extract_source(name: &KrateName, version: &Version) -> Result<SourceDir> {
     info!("downloading source");
-    let crate_archive = download_file(format!(
+    let crate_archive = download_to_temp_file(format!(
         "https://static.crates.io/crates/{name}/{name}-{version}.crate"
     ))
     .await?;
