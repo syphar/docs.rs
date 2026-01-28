@@ -22,6 +22,20 @@ impl BuildTarget {
     pub fn list() -> impl Iterator<Item = BuildTarget> {
         STATIC_TARGET_LIST.iter().map(|&s| BuildTarget(s))
     }
+
+    pub const fn from_static(s: &'static str) -> Self {
+        // TODO: check that the target is valid.
+        // let mut i = 0;
+        // while i < STATIC_TARGET_LIST.len() {
+        //     if STATIC_TARGET_LIST[i].as_bytes() == s.as_bytes() {
+        //         return BuildTarget(s);
+        //     }
+        //     i += 1;
+        // }
+
+        // panic!("unknown build target");
+        BuildTarget(s)
+    }
 }
 
 impl AsRef<str> for BuildTarget {
@@ -41,8 +55,8 @@ impl FromStr for BuildTarget {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let normalized = s.trim().to_lowercase();
-        if let Some(build_target) = STATIC_TARGET_LIST.get_key(&normalized) {
-            Ok(Self(build_target))
+        if let Ok(idx) = STATIC_TARGET_LIST.binary_search(&normalized.as_str()) {
+            Ok(Self(STATIC_TARGET_LIST[idx]))
         } else {
             Err(UnknownBuildTarget(s.to_string()))
         }

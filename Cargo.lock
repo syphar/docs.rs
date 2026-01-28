@@ -2291,8 +2291,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "crates_io_validation",
- "phf 0.13.1",
- "phf_codegen 0.13.1",
  "pretty_assertions",
  "semver",
  "serde",
