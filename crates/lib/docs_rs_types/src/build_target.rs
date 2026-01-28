@@ -26,7 +26,7 @@ impl BuildTarget {
 
 impl AsRef<str> for BuildTarget {
     fn as_ref(&self) -> &str {
-        &self.0
+        self.0
     }
 }
 

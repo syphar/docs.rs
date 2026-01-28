@@ -31,7 +31,7 @@ use tokio::{
 use tracing::{info, instrument};
 
 const DOCS_RS: &str = "https://docs.rs";
-const DEFAULT_TARGET: &str = "x86_64-unknown-linux-gnu";
+const DEFAULT_TARGET: BuildTarget = "x86_64-unknown-linux-gnu";
 
 /// import an existing crate release build from docs.rs into the
 /// local database & storage.
@@ -271,30 +271,6 @@ async fn download_to_temp_file(url: impl reqwest::IntoUrl + fmt::Debug) -> Resul
     file.sync_all().await.context("error on fsync")?;
     file.seek(std::io::SeekFrom::Start(0)).await?;
     Ok(file)
-}
-
-async fn fetch_target_list() -> Result<HashSet<String>> {
-    let output = Command::new("rustc")
-        .arg("--print")
-        .arg("target-list")
-        .output()
-        .await?;
-
-    if !output.status.success() {
-        bail!(
-            "`rustc --print target-list` failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-
-    let stdout = String::from_utf8(output.stdout)?;
-
-    Ok(stdout
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .map(str::to_owned)
-        .collect())
 }
 
 #[instrument]

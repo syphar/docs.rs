@@ -1,16 +1,17 @@
 mod build_status;
+mod build_target;
 mod compression_algorithm;
 pub mod doc_coverage;
 mod feature;
 mod ids;
 mod krate_name;
 mod req_version;
-mod targets;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 mod version;
 
 pub use build_status::BuildStatus;
+pub use build_target::{BuildTarget, UnknownBuildTarget};
 pub use compression_algorithm::{CompressionAlgorithm, compression_from_file_extension};
 pub use doc_coverage::{DocCoverage, RawFileCoverage};
 pub use feature::Feature;

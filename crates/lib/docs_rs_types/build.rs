@@ -35,7 +35,7 @@ fn main() -> Result<()> {
     let mut target_list_file = File::create(out_dir.join("static_target_list.rs"))?;
     writeln!(
         &mut target_list_file,
-        "pub static STATIC_TARGET_LIST: ::phf::OrderedSet<&'static str> = {};",
+        "static STATIC_TARGET_LIST: ::phf::OrderedSet<&'static str> = {};",
         target_list.build()
     )?;
     target_list_file.sync_all()?;
