@@ -14,12 +14,26 @@ impl fmt::Display for UnknownBuildTarget {
 }
 
 /// validated build target
+///
+/// Target list is based on the output of `rustc --print target-list` at
+/// compile time, so only contains the currently supported targets.
+///
+/// Missing might be legacy targets, or custom json-file targets.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, DeserializeFromStr, SerializeDisplay)]
 pub struct BuildTarget(&'static str);
 
 impl BuildTarget {
     pub fn list() -> impl Iterator<Item = BuildTarget> {
         STATIC_TARGET_LIST.iter().map(|&s| BuildTarget(s))
+    }
+
+    fn find(s: &str) -> Option<usize> {
+        let normalized = s.trim().to_lowercase();
+        STATIC_TARGET_LIST.binary_search(&normalized.as_str()).ok()
+    }
+
+    pub fn exists(s: &str) -> bool {
+        Self::find(s).is_some()
     }
 
     pub const fn from_static(s: &'static str) -> Self {
@@ -67,8 +81,7 @@ impl FromStr for BuildTarget {
     type Err = UnknownBuildTarget;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let normalized = s.trim().to_lowercase();
-        if let Ok(idx) = STATIC_TARGET_LIST.binary_search(&normalized.as_str()) {
+        if let Some(idx) = Self::find(s) {
             Ok(Self(STATIC_TARGET_LIST[idx]))
         } else {
             Err(UnknownBuildTarget(s.to_string()))

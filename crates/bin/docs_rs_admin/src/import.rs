@@ -10,7 +10,7 @@ use docs_rs_storage::{
     AsyncStorage, compression::wrap_reader_for_decompression, file_list_to_json,
     rustdoc_archive_path, source_archive_path,
 };
-use docs_rs_types::{BuildStatus, KrateName, ReqVersion, Version};
+use docs_rs_types::{BuildStatus, BuildTarget, KrateName, ReqVersion, Version};
 use docs_rs_utils::{BUILD_VERSION, spawn_blocking};
 use docsrs_metadata::{BuildTargets, Metadata};
 use futures_util::StreamExt as _;
@@ -26,12 +26,11 @@ use tokio::io::AsyncReadExt as _;
 use tokio::{
     fs,
     io::{self, AsyncSeekExt, AsyncWriteExt},
-    process::Command,
 };
 use tracing::{info, instrument};
 
 const DOCS_RS: &str = "https://docs.rs";
-const DEFAULT_TARGET: BuildTarget = "x86_64-unknown-linux-gnu";
+const DEFAULT_TARGET: BuildTarget = BuildTarget::from_static("x86_64-unknown-linux-gnu");
 
 /// import an existing crate release build from docs.rs into the
 /// local database & storage.
@@ -119,7 +118,7 @@ pub(crate) async fn import_test_release(
     let BuildTargets {
         default_target,
         other_targets,
-    } = docsrs_metadata.targets_for_host(true, DEFAULT_TARGET);
+    } = docsrs_metadata.targets_for_host(true, &DEFAULT_TARGET);
     let mut targets = vec![default_target];
 
     let mut potential_other_targets: HashSet<String> =
