@@ -5,6 +5,7 @@ mod feature;
 mod ids;
 mod krate_name;
 mod req_version;
+mod targets;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 mod version;

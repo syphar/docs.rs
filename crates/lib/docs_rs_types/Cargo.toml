@@ -4,6 +4,12 @@ version = "0.1.0"
 license = "MIT"
 repository = "https://github.com/rust-lang/docs.rs"
 edition = "2024"
+build = "build.rs"
+
+[package.metadata.cargo-machete]
+ignored = [
+    "phf", # used in build script output
+]
 
 [features]
 # NOTE: we could make serde & sqlx optional features, some 
@@ -19,6 +25,11 @@ serde_json = { workspace = true }
 serde_with = { workspace = true }
 sqlx = { workspace = true }
 strum = { workspace = true }
+phf = { workspace = true }
+
+[build-dependencies]
+anyhow = { workspace = true }
+phf_codegen = { workspace = true }
 
 [dev-dependencies]
 pretty_assertions = { workspace = true }
