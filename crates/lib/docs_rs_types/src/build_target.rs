@@ -14,7 +14,6 @@ impl fmt::Display for UnknownBuildTarget {
 }
 
 /// validated build target
-// #[derive(Debug, Clone, PartialEq, Eq, Hash, DeserializeFromStr, SerializeDisplay)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash, DeserializeFromStr, SerializeDisplay)]
 pub struct BuildTarget(&'static str);
 
@@ -24,18 +23,32 @@ impl BuildTarget {
     }
 
     pub const fn from_static(s: &'static str) -> Self {
-        // TODO: check that the target is valid.
-        // let mut i = 0;
-        // while i < STATIC_TARGET_LIST.len() {
-        //     if STATIC_TARGET_LIST[i].as_bytes() == s.as_bytes() {
-        //         return BuildTarget(s);
-        //     }
-        //     i += 1;
-        // }
+        let mut i = 0;
+        while i < STATIC_TARGET_LIST.len() {
+            if str_eq(STATIC_TARGET_LIST[i], s) {
+                return BuildTarget(s);
+            }
+            i += 1;
+        }
 
-        // panic!("unknown build target");
-        BuildTarget(s)
+        panic!("unknown build target");
     }
+}
+
+const fn str_eq(a: &str, b: &str) -> bool {
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+    if a_bytes.len() != b_bytes.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a_bytes.len() {
+        if a_bytes[i] != b_bytes[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
 }
 
 impl AsRef<str> for BuildTarget {
