@@ -79,6 +79,12 @@ impl FromStr for BuildTarget {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::Result;
+    use std::{
+        collections::HashSet,
+        fs,
+        io::{self, BufRead as _},
+    };
     use test_case::test_case;
 
     #[test]
@@ -103,5 +109,43 @@ mod tests {
             input.parse::<BuildTarget>().unwrap_err(),
             UnknownBuildTarget(failed_name) if failed_name == input
         ));
+    }
+
+    #[test]
+    fn test_validate() -> Result<()> {
+        let mut invalid_targets: HashSet<String> = HashSet::new();
+        for line in io::BufReader::new(fs::File::open(
+            "/Users/syphar/Dropbox/rust-lang/docs-rs/targets.csv",
+        )?)
+        .lines()
+        .skip(1)
+        {
+            let line = line?;
+
+            let (default, rest) = line.split_once(',').unwrap();
+            let default = default.replace("\"", "");
+
+            if default.parse::<BuildTarget>().is_err() {
+                invalid_targets.insert(default);
+            }
+
+            let mut rest = rest.to_string();
+            for ch in &['\"', '[', ']'] {
+                rest = rest.replace(*ch, "");
+            }
+            for t in rest.split(',') {
+                let t = t.trim();
+                if t.is_empty() {
+                    continue;
+                }
+                if t.parse::<BuildTarget>().is_err() {
+                    invalid_targets.insert(t.to_string());
+                }
+            }
+        }
+        if !invalid_targets.is_empty() {
+            panic!("some targets are invalid: {:?}", invalid_targets);
+        }
+        Ok(())
     }
 }
