@@ -23,9 +23,7 @@ use docs_rs_types::{BuildId, CompressionAlgorithm, Version};
 use docs_rs_utils::spawn_blocking;
 use futures_util::stream::BoxStream;
 use std::{
-    fmt,
-    fs::{self, File},
-    io::{self, BufReader},
+    fmt, fs, io,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -79,8 +77,7 @@ impl AsyncStorage {
         path: &str,
     ) -> Result<StreamingBlob> {
         trace!("fetch rustdoc file");
-        self
-            .stream_from_archive(&rustdoc_archive_path(name, version), latest_build_id, path)
+        self.stream_from_archive(&rustdoc_archive_path(name, version), latest_build_id, path)
             .await
     }
 
@@ -106,8 +103,7 @@ impl AsyncStorage {
         path: &str,
     ) -> Result<StreamingBlob> {
         trace!("fetch source file");
-        self
-            .stream_from_archive(&source_archive_path(name, version), latest_build_id, path)
+        self.stream_from_archive(&source_archive_path(name, version), latest_build_id, path)
             .await
     }
 
@@ -119,8 +115,7 @@ impl AsyncStorage {
         latest_build_id: Option<BuildId>,
         path: &str,
     ) -> Result<bool> {
-        self
-            .exists_in_archive(&rustdoc_archive_path(name, version), latest_build_id, path)
+        self.exists_in_archive(&rustdoc_archive_path(name, version), latest_build_id, path)
             .await
     }
 
@@ -175,21 +170,6 @@ impl AsyncStorage {
     #[instrument]
     pub async fn get_stream(&self, path: &str) -> Result<StreamingBlob> {
         Ok(self.get_raw_stream(path).await?.decompress().await?)
-    }
-
-    /// get, decompress and materialize part of an object from store
-    #[instrument]
-    pub(crate) async fn get_range(
-        &self,
-        path: &str,
-        max_size: usize,
-        range: FileRange,
-        compression: Option<CompressionAlgorithm>,
-    ) -> Result<Blob> {
-        self.get_range_stream(path, range, compression)
-            .await?
-            .materialize(max_size)
-            .await
     }
 
     /// get a decompressing stream to a range inside an object in storage
@@ -329,17 +309,16 @@ impl AsyncStorage {
         archive_index::find_in_file(local_index_path, path_in_archive).await
     }
 
-    #[instrument]
-    pub async fn get_from_archive(
+    #[cfg(test)]
+    async fn get_from_archive(
         &self,
         archive_path: &str,
         latest_build_id: Option<BuildId>,
         path: &str,
-        max_size: usize,
     ) -> Result<Blob> {
         self.stream_from_archive(archive_path, latest_build_id, path)
             .await?
-            .materialize(max_size)
+            .materialize(self.config.max_file_size_for(path))
             .await
     }
 
@@ -610,32 +589,6 @@ impl AsyncStorage {
         Ok(alg)
     }
 
-    #[instrument(skip(self))]
-    pub async fn store_path(
-        &self,
-        target_path: impl Into<String> + std::fmt::Debug,
-        source_path: impl AsRef<Path> + std::fmt::Debug,
-    ) -> Result<CompressionAlgorithm> {
-        let target_path = target_path.into();
-        let source_path = source_path.as_ref();
-
-        let alg = CompressionAlgorithm::default();
-        let content = compress(BufReader::new(File::open(source_path)?), alg)?;
-
-        let mime = detect_mime(&target_path).to_owned();
-
-        self.backend
-            .store_batch(vec![BlobUpload {
-                path: target_path,
-                mime,
-                content,
-                compression: Some(alg),
-            }])
-            .await?;
-
-        Ok(alg)
-    }
-
     pub async fn list_prefix<'a>(&'a self, prefix: &'a str) -> BoxStream<'a, Result<String>> {
         self.backend.list_prefix(prefix).await
     }
@@ -749,7 +702,7 @@ mod test {
             // fetching the content out of the archive also works
             assert_eq!(
                 storage
-                    .get_from_archive(archive_name, LATEST_BUILD_ID, "important.txt", usize::MAX)
+                    .get_from_archive(archive_name, LATEST_BUILD_ID, "important.txt")
                     .await?
                     .content,
                 b"important.txt"
@@ -789,7 +742,7 @@ mod test {
         for archive_name in &["test1.zip", "test2.zip"] {
             assert_eq!(
                 storage
-                    .get_from_archive(archive_name, LATEST_BUILD_ID, "important.txt", usize::MAX)
+                    .get_from_archive(archive_name, LATEST_BUILD_ID, "important.txt")
                     .await?
                     .content,
                 b"important.txt"
@@ -882,7 +835,9 @@ mod backend_tests {
 
         for range in [0..=4, 5..=12] {
             let partial_blob = storage
-                .get_range("foo/bar.txt", usize::MAX, range.clone(), None)
+                .get_range_stream("foo/bar.txt", range.clone(), None)
+                .await?
+                .materialize(usize::MAX)
                 .await?;
             let range = (*range.start() as usize)..=(*range.end() as usize);
             assert_eq!(blob.content[range], partial_blob.content);
@@ -900,7 +855,7 @@ mod backend_tests {
         for path in &["bar.txt", "baz.txt", "foo/baz.txt"] {
             assert!(
                 storage
-                    .get_range(path, usize::MAX, 0..=4, None)
+                    .get_range_stream(path, 0..=4, None)
                     .await
                     .unwrap_err()
                     .downcast_ref::<PathNotFoundError>()
@@ -1120,14 +1075,14 @@ mod backend_tests {
         );
 
         let file = storage
-            .get_from_archive("folder/test.zip", None, "Cargo.toml", usize::MAX)
+            .get_from_archive("folder/test.zip", None, "Cargo.toml")
             .await?;
         assert_eq!(file.content, b"data");
         assert_eq!(file.mime, "text/toml");
         assert_eq!(file.path, "folder/test.zip/Cargo.toml");
 
         let file = storage
-            .get_from_archive("folder/test.zip", None, "src/main.rs", usize::MAX)
+            .get_from_archive("folder/test.zip", None, "src/main.rs")
             .await?;
         assert_eq!(file.content, b"data");
         assert_eq!(file.mime, "text/rust");
