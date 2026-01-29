@@ -447,7 +447,10 @@ async fn find_rustdoc_static_urls(
     })
     .await?;
 
-    debug!("finding static URLs in HTML files...");
+    debug!(
+        count = html_files.len(),
+        "finding static URLs in HTML files..."
+    );
     const MAX_RUSTDOC_STATIC_FILE_COUNT: usize = 64;
     let urls = stream::iter(html_files)
         .map(|path| async move {
