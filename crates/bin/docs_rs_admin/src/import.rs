@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Result, bail};
 use async_tar::Archive;
 use docs_rs_cargo_metadata::CargoMetadata;
 use docs_rs_database::releases::{
@@ -21,15 +21,15 @@ use docsrs_metadata::{BuildTargets, Metadata};
 use futures_util::StreamExt as _;
 use regex::Regex;
 use serde::Deserialize;
-use std::fmt;
-use std::sync::LazyLock;
 use std::{
     collections::HashSet,
+    fmt,
     path::{Path, PathBuf},
+    sync::LazyLock,
 };
-use tokio::io::AsyncReadExt as _;
 use tokio::{
     fs,
+    io::AsyncReadExt as _,
     io::{self, AsyncSeekExt, AsyncWriteExt},
     process::Command,
 };
@@ -316,13 +316,11 @@ async fn download_to_temp_file(url: impl reqwest::IntoUrl + fmt::Debug) -> Resul
 
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.context("error reading from response stream")?;
-        file.write_all(&chunk)
-            .await
-            .context("error writing to temp file")?;
+        let chunk = chunk?;
+        file.write_all(&chunk).await?;
     }
 
-    file.sync_all().await.context("error on fsync")?;
+    file.sync_all().await?;
     file.seek(std::io::SeekFrom::Start(0)).await?;
     Ok(file)
 }
@@ -417,13 +415,9 @@ async fn find_rustdoc_static_urls(
 
     let mut file_stream =
         futures_util::stream::iter(html_files.into_iter().map(|path| async move {
-            let mut file = fs::File::open(&path)
-                .await
-                .with_context(|| format!("opening file {path:?}"))?;
+            let mut file = fs::File::open(&path).await?;
             let mut contents = String::new();
-            file.read_to_string(&mut contents)
-                .await
-                .with_context(|| format!("reading file {path:?}"))?;
+            file.read_to_string(&mut contents).await?;
 
             let matches = RE
                 .captures_iter(&contents)
