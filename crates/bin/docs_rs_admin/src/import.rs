@@ -16,7 +16,7 @@ use docs_rs_storage::{
     rustdoc_archive_path, source_archive_path,
 };
 use docs_rs_storage::{compress, decompress, rustdoc_json_path};
-use docs_rs_types::{BuildStatus, KrateName, ReqVersion, Version};
+use docs_rs_types::{BuildId, BuildStatus, CrateId, KrateName, ReleaseId, ReqVersion, Version};
 use docs_rs_utils::{BUILD_VERSION, spawn_blocking};
 use docsrs_metadata::{BuildTargets, Metadata};
 use futures_util::StreamExt as _;
@@ -79,6 +79,9 @@ pub(crate) async fn import_test_release(
         repository_stats,
         name,
         &version,
+        crate_id,
+        release_id,
+        build_id,
     )
     .await;
 
@@ -89,6 +92,7 @@ pub(crate) async fn import_test_release(
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 #[instrument(skip_all, fields(name=%name, version=%version))]
 async fn import_test_release_inner(
     conn: &mut sqlx::PgConnection,
@@ -97,9 +101,12 @@ async fn import_test_release_inner(
     repository_stats: &RepositoryStatsUpdater,
     name: &KrateName,
     version: &Version,
+    crate_id: CrateId,
+    release_id: ReleaseId,
+    build_id: BuildId,
 ) -> Result<()> {
     info!("download & inspect source from crates.io...");
-    let source_dir = download_and_extract_source(name, &version).await?;
+    let source_dir = download_and_extract_source(name, version).await?;
 
     let cargo_metadata = spawn_blocking({
         let source_dir = source_dir.source_path.clone();
@@ -116,7 +123,7 @@ async fn import_test_release_inner(
     let (source_files_list, source_size) = {
         info!("writing source files to storage...");
         let (files_list, new_alg) = storage
-            .store_all_in_archive(&source_archive_path(name, &version), &source_dir)
+            .store_all_in_archive(&source_archive_path(name, version), &source_dir)
             .await?;
 
         algs.insert(new_alg);
@@ -124,7 +131,7 @@ async fn import_test_release_inner(
         (files_list, source_size)
     };
 
-    let registry_data = registry_api.get_release_data(name, &version).await?;
+    let registry_data = registry_api.get_release_data(name, version).await?;
 
     let rustdoc_dir = {
         info!("download & extract rustdoc archive...");
@@ -205,7 +212,7 @@ async fn import_test_release_inner(
 
     info!("writing rustdoc files to storage...");
     let (rustdoc_file_list, new_alg) = storage
-        .store_all_in_archive(&rustdoc_archive_path(name, &version), &rustdoc_dir)
+        .store_all_in_archive(&rustdoc_archive_path(name, version), &rustdoc_dir)
         .await?;
     let documentation_size: u64 = rustdoc_file_list.iter().map(|info| info.size).sum();
     algs.insert(new_alg);
@@ -245,7 +252,7 @@ async fn import_test_release_inner(
             let compressed_json = compress(&*rustdoc_json, *alg)?;
 
             for format_version in [format_version, RustdocJsonFormatVersion::Latest] {
-                let path = rustdoc_json_path(name, &version, target, format_version, Some(*alg));
+                let path = rustdoc_json_path(name, version, target, format_version, Some(*alg));
                 storage
                     .store_one_uncompressed(&path, compressed_json.clone())
                     .await?;
