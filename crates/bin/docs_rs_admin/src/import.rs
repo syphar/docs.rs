@@ -21,8 +21,8 @@ use docs_rs_types::{
 };
 use docs_rs_utils::{APP_USER_AGENT, BUILD_VERSION, spawn_blocking};
 use docsrs_metadata::{BuildTargets, Metadata};
-use futures_util::StreamExt as _;
 use futures_util::stream;
+use futures_util::{StreamExt as _, TryStreamExt as _};
 use regex::Regex;
 use serde::Deserialize;
 use std::{
@@ -450,27 +450,33 @@ async fn find_rustdoc_static_urls(
 
     debug!("finding static URLs in HTML files...");
     const MAX_RUSTDOC_STATIC_FILE_COUNT: usize = 64;
-    let mut urls = HashSet::with_capacity(MAX_RUSTDOC_STATIC_FILE_COUNT);
-    let mut file_stream = stream::iter(html_files.into_iter().map(|path| async move {
-        let reader = io::BufReader::new(fs::File::open(&path).await?);
-        // we assume rustdoc HTML doesn't break the href paths into multiple lines.
-        let mut lines = reader.lines();
+    let file_stream = stream::iter(html_files.into_iter().map(|path| {
+        Ok(async move {
+            let reader = io::BufReader::new(fs::File::open(&path).await?);
+            let mut lines = reader.lines();
 
-        let mut matches = HashSet::with_capacity(MAX_RUSTDOC_STATIC_FILE_COUNT);
-        while let Some(line) = lines.next_line().await? {
-            matches.extend(
-                RE.captures_iter(&line)
-                    .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string())),
-            );
-        }
+            let mut matches = HashSet::with_capacity(MAX_RUSTDOC_STATIC_FILE_COUNT);
+            while let Some(line) = lines.next_line().await? {
+                matches.extend(
+                    RE.captures_iter(&line)
+                        .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_string())),
+                );
+            }
 
-        Ok::<_, anyhow::Error>(matches)
+            Ok::<_, anyhow::Error>(matches)
+        })
     }))
-    .buffer_unordered(16);
+    .try_buffer_unordered(16);
 
-    while let Some(matches) = file_stream.next().await {
-        urls.extend(matches?);
-    }
+    let urls = file_stream
+        .try_fold(
+            HashSet::with_capacity(MAX_RUSTDOC_STATIC_FILE_COUNT),
+            |mut urls, matches| async move {
+                urls.extend(matches);
+                Ok(urls)
+            },
+        )
+        .await?;
 
     Ok(urls)
 }
