@@ -34,7 +34,6 @@ use std::{
 use tokio::io::AsyncBufReadExt as _;
 use tokio::{
     fs,
-    io::AsyncReadExt as _,
     io::{self, AsyncSeekExt, AsyncWriteExt},
     process::Command,
 };
@@ -450,8 +449,8 @@ async fn find_rustdoc_static_urls(
 
     debug!("finding static URLs in HTML files...");
     const MAX_RUSTDOC_STATIC_FILE_COUNT: usize = 64;
-    let file_stream = stream::iter(html_files.into_iter().map(|path| {
-        Ok(async move {
+    let file_stream = stream::iter(html_files)
+        .map(|path| async move {
             let reader = io::BufReader::new(fs::File::open(&path).await?);
             let mut lines = reader.lines();
 
@@ -465,8 +464,7 @@ async fn find_rustdoc_static_urls(
 
             Ok::<_, anyhow::Error>(matches)
         })
-    }))
-    .try_buffer_unordered(16);
+        .buffer_unordered(16);
 
     let urls = file_stream
         .try_fold(
