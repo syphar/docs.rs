@@ -16,7 +16,9 @@ use docs_rs_storage::{
     rustdoc_archive_path, source_archive_path,
 };
 use docs_rs_storage::{compress, decompress, rustdoc_json_path};
-use docs_rs_types::{BuildId, BuildStatus, CrateId, KrateName, ReleaseId, ReqVersion, Version};
+use docs_rs_types::{
+    BuildId, BuildStatus, CompressionAlgorithm, CrateId, KrateName, ReleaseId, ReqVersion, Version,
+};
 use docs_rs_utils::{APP_USER_AGENT, BUILD_VERSION, spawn_blocking};
 use docsrs_metadata::{BuildTargets, Metadata};
 use futures_util::StreamExt as _;
@@ -396,8 +398,7 @@ async fn download_and_extract_source(name: &KrateName, version: &Version) -> Res
     debug!("unpacking source archive");
     {
         let mut file = io::BufReader::new(crate_archive);
-        let mut decompressed =
-            wrap_reader_for_decompression(&mut file, docs_rs_types::CompressionAlgorithm::Gzip);
+        let mut decompressed = wrap_reader_for_decompression(&mut file, CompressionAlgorithm::Gzip);
         let archive = Archive::new(&mut decompressed);
         archive.unpack(&temp_dir).await?;
     }
@@ -422,6 +423,7 @@ async fn find_rustdoc_static_urls(
     static RE: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r#""(/-/rustdoc\.static/[^"]+)""#).unwrap());
 
+    debug!("finding HTML files...");
     let root_dir = root_dir.as_ref();
     let html_files = spawn_blocking({
         let root_dir = root_dir.to_path_buf();
@@ -444,8 +446,8 @@ async fn find_rustdoc_static_urls(
     })
     .await?;
 
+    debug!("finding static URLs in HTML files...");
     let mut urls = HashSet::new();
-
     let mut file_stream =
         futures_util::stream::iter(html_files.into_iter().map(|path| async move {
             let mut file = fs::File::open(&path).await?;
