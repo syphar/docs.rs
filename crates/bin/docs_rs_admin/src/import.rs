@@ -3,6 +3,7 @@ use async_tar::Archive;
 use docs_rs_cargo_metadata::CargoMetadata;
 use docs_rs_database::releases::{
     finish_build, finish_release, initialize_build, initialize_crate, initialize_release,
+    update_build_with_error,
 };
 use docs_rs_registry_api::RegistryApi;
 use docs_rs_repository_stats::RepositoryStatsUpdater;
@@ -53,7 +54,6 @@ const DEFAULT_TARGET: &str = "x86_64-unknown-linux-gnu";
 /// SECURITY:
 /// we execute `cargo metadata` on the downloaded source code, so
 /// this function MUST NOT be used with untrusted crate names/versions.
-#[instrument(skip_all, fields(name=%name, version=%version))]
 pub(crate) async fn import_test_release(
     conn: &mut sqlx::PgConnection,
     storage: &AsyncStorage,
@@ -72,8 +72,32 @@ pub(crate) async fn import_test_release(
     let release_id = initialize_release(&mut *conn, crate_id, &version).await?;
     let build_id = initialize_build(&mut *conn, release_id).await?;
 
-    // FIXME: if any errors happen here, use update_build_with_error, don't `finish_release`
+    let result = import_test_release_inner(
+        &mut *conn,
+        storage,
+        registry_api,
+        repository_stats,
+        name,
+        &version,
+    )
+    .await;
 
+    if let Err(err) = &result {
+        update_build_with_error(&mut *conn, build_id, Some(&format!("{err:?}"))).await?;
+    }
+
+    result
+}
+
+#[instrument(skip_all, fields(name=%name, version=%version))]
+async fn import_test_release_inner(
+    conn: &mut sqlx::PgConnection,
+    storage: &AsyncStorage,
+    registry_api: &RegistryApi,
+    repository_stats: &RepositoryStatsUpdater,
+    name: &KrateName,
+    version: &Version,
+) -> Result<()> {
     info!("download & inspect source from crates.io...");
     let source_dir = download_and_extract_source(name, &version).await?;
 
@@ -105,7 +129,7 @@ pub(crate) async fn import_test_release(
     let rustdoc_dir = {
         info!("download & extract rustdoc archive...");
         let rustdoc_archive =
-            download_to_temp_file(format!("https://docs.rs/crate/{name}/{version}/download"))
+            download_to_temp_file(format!("{DOCS_RS}/crate/{name}/{version}/download"))
                 .await?
                 .into_std()
                 .await;
@@ -175,7 +199,7 @@ pub(crate) async fn import_test_release(
         }
 
         storage
-            .store_one(key, download(format!("https://docs.rs{path}")).await?)
+            .store_one(key, download(format!("{DOCS_RS}{path}")).await?)
             .await?;
     }
 
@@ -198,7 +222,7 @@ pub(crate) async fn import_test_release(
         let rustdoc_json = decompress(
             // FIXME: worth using async decompress here?
             &*download(format!(
-                "https://docs.rs/crate/{name}/{version}/{target}/json.{}",
+                "{DOCS_RS}/crate/{name}/{version}/{target}/json.{}",
                 json_compression.file_extension()
             ))
             .await?,
@@ -280,7 +304,6 @@ impl AsRef<Path> for SourceDir {
     }
 }
 
-#[instrument]
 async fn fetch_rustdoc_status(name: &KrateName, version: &ReqVersion) -> Result<RustdocStatus> {
     debug!("fetching rustdoc status...");
     Ok(
@@ -292,7 +315,6 @@ async fn fetch_rustdoc_status(name: &KrateName, version: &ReqVersion) -> Result<
     )
 }
 
-#[instrument]
 async fn download(url: impl reqwest::IntoUrl + fmt::Debug) -> Result<Vec<u8>> {
     debug!("downloading...");
 
@@ -304,8 +326,7 @@ async fn download(url: impl reqwest::IntoUrl + fmt::Debug) -> Result<Vec<u8>> {
         .to_vec())
 }
 
-#[instrument]
-async fn download_to_temp_file(url: impl reqwest::IntoUrl + fmt::Debug) -> Result<fs::File> {
+async fn download_to_temp_file(url: impl reqwest::IntoUrl) -> Result<fs::File> {
     debug!("downloading to temp file..");
 
     let response = reqwest::get(url).await?.error_for_status()?;
@@ -349,7 +370,6 @@ async fn fetch_target_list() -> Result<HashSet<String>> {
         .collect())
 }
 
-#[instrument]
 async fn download_and_extract_source(name: &KrateName, version: &Version) -> Result<SourceDir> {
     debug!("downloading source");
     let crate_archive = download_to_temp_file(format!(
@@ -382,7 +402,6 @@ async fn download_and_extract_source(name: &KrateName, version: &Version) -> Res
     })
 }
 
-#[instrument]
 async fn find_rustdoc_static_urls(
     root_dir: impl AsRef<Path> + fmt::Debug,
 ) -> Result<HashSet<String>> {
