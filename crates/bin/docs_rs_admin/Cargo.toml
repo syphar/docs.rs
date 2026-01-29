@@ -28,6 +28,7 @@ docs_rs_utils = { path = "../../lib/docs_rs_utils" }
 docsrs-metadata = { path = "../../lib/metadata" }
 futures-util = { workspace = true }
 regex = { workspace = true }
+walkdir = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 sqlx = { workspace = true }

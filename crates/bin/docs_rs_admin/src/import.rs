@@ -34,6 +34,7 @@ use tokio::{
     process::Command,
 };
 use tracing::{debug, info, instrument};
+use walkdir::WalkDir;
 
 const DOCS_RS: &str = "https://docs.rs";
 const DEFAULT_TARGET: &str = "x86_64-unknown-linux-gnu";
@@ -388,35 +389,29 @@ async fn find_rustdoc_static_urls(
     root_dir: impl AsRef<Path> + fmt::Debug,
 ) -> Result<HashSet<String>> {
     static RE: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r#"(/-/rustdoc\.static/[^"]+)"#).unwrap());
-    // FIXME: migrate to walkdir
+        LazyLock::new(|| Regex::new(r#""(/-/rustdoc\.static/[^"]+)""#).unwrap());
 
     let root_dir = root_dir.as_ref();
-    let mut dirs = vec![root_dir.to_path_buf()];
-    let mut html_files = Vec::new();
-
-    while let Some(dir) = dirs.pop() {
-        let mut entries = fs::read_dir(&dir)
-            .await
-            .with_context(|| format!("reading directory {dir:?}"))?;
-        while let Some(entry) = entries.next_entry().await? {
-            let path = entry.path();
-            let file_type = entry.file_type().await?;
-            if file_type.is_dir() {
-                dirs.push(path);
-                continue;
+    let html_files = spawn_blocking({
+        let root_dir = root_dir.to_path_buf();
+        move || {
+            let mut files = Vec::new();
+            for entry in WalkDir::new(&root_dir).follow_links(false).into_iter() {
+                let entry = entry?;
+                let path = entry.path();
+                if entry.file_type().is_file()
+                    && path
+                        .extension()
+                        .and_then(|ext| ext.to_str())
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("html"))
+                {
+                    files.push(path.to_path_buf());
+                }
             }
-
-            if file_type.is_file()
-                && path
-                    .extension()
-                    .and_then(|ext| ext.to_str())
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("html"))
-            {
-                html_files.push(path);
-            }
+            Ok(files)
         }
-    }
+    })
+    .await?;
 
     let mut urls = HashSet::new();
 
