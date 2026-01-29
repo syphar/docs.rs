@@ -166,7 +166,7 @@ async fn import_test_release_inner(
 
     // FIXME: add fake build logs for JSON & normal for all targets in the metadata.
 
-    info!("finding used rustdoc static files in HTML files...");
+    info!("finding used rustdoc static files in HTML...");
     let mut static_files = find_rustdoc_static_urls(&rustdoc_dir).await?;
     // these files aren't referenced directly in the HTML code, but their imports
     // are generated through JS.
@@ -234,6 +234,7 @@ async fn import_test_release_inner(
         }
 
         let format_version = spawn_blocking({
+            // FIXME: having this in a local file would save us the potentially big clone.
             let rustdoc_json = rustdoc_json.clone();
             move || read_format_version_from_rustdoc_json(&*rustdoc_json)
         })
