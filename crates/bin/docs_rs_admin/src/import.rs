@@ -17,7 +17,7 @@ use docs_rs_storage::{
 };
 use docs_rs_storage::{compress, decompress, rustdoc_json_path};
 use docs_rs_types::{BuildId, BuildStatus, CrateId, KrateName, ReleaseId, ReqVersion, Version};
-use docs_rs_utils::{BUILD_VERSION, spawn_blocking};
+use docs_rs_utils::{APP_USER_AGENT, BUILD_VERSION, spawn_blocking};
 use docsrs_metadata::{BuildTargets, Metadata};
 use futures_util::StreamExt as _;
 use regex::Regex;
@@ -39,6 +39,13 @@ use walkdir::WalkDir;
 
 const DOCS_RS: &str = "https://docs.rs";
 const DEFAULT_TARGET: &str = "x86_64-unknown-linux-gnu";
+
+static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
+    reqwest::Client::builder()
+        .user_agent(APP_USER_AGENT)
+        .build()
+        .expect("can't create request client & connection pool")
+});
 
 /// import an existing crate release build from docs.rs into the
 /// local database & storage.
@@ -227,7 +234,6 @@ async fn import_test_release_inner(
 
         let json_compression = RUSTDOC_JSON_COMPRESSION_ALGORITHMS[0];
         let rustdoc_json = decompress(
-            // FIXME: worth using async decompress here?
             &*download(format!(
                 "{DOCS_RS}/crate/{name}/{version}/{target}/json.{}",
                 json_compression.file_extension()
@@ -241,14 +247,12 @@ async fn import_test_release_inner(
         }
 
         let format_version = spawn_blocking({
-            // FIXME: having this in a local file would save us the potentially big clone.
             let rustdoc_json = rustdoc_json.clone();
             move || read_format_version_from_rustdoc_json(&*rustdoc_json)
         })
         .await?;
 
         for alg in RUSTDOC_JSON_COMPRESSION_ALGORITHMS {
-            // FIXME: worth using async compress here?
             let compressed_json = compress(&*rustdoc_json, *alg)?;
 
             for format_version in [format_version, RustdocJsonFormatVersion::Latest] {
@@ -314,19 +318,21 @@ impl AsRef<Path> for SourceDir {
 
 async fn fetch_rustdoc_status(name: &KrateName, version: &ReqVersion) -> Result<RustdocStatus> {
     debug!("fetching rustdoc status...");
-    Ok(
-        reqwest::get(&format!("{DOCS_RS}/crate/{name}/{version}/status.json"))
-            .await?
-            .error_for_status()?
-            .json()
-            .await?,
-    )
+    Ok(CLIENT
+        .get(format!("{DOCS_RS}/crate/{name}/{version}/status.json"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?)
 }
 
 async fn download(url: impl reqwest::IntoUrl + fmt::Debug) -> Result<Vec<u8>> {
     debug!("downloading...");
 
-    Ok(reqwest::get(url)
+    Ok(CLIENT
+        .get(url)
+        .send()
         .await?
         .error_for_status()?
         .bytes()
@@ -337,7 +343,7 @@ async fn download(url: impl reqwest::IntoUrl + fmt::Debug) -> Result<Vec<u8>> {
 async fn download_to_temp_file(url: impl reqwest::IntoUrl) -> Result<fs::File> {
     debug!("downloading to temp file..");
 
-    let response = reqwest::get(url).await?.error_for_status()?;
+    let response = CLIENT.get(url).send().await?.error_for_status()?;
 
     // NOTE: even after being convert to a `tokio::fs::File`, this kind of temporary file
     // will be cleaned up by the OS, when the last handle is closed.
