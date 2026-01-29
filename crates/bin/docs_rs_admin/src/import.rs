@@ -449,7 +449,7 @@ async fn find_rustdoc_static_urls(
 
     debug!("finding static URLs in HTML files...");
     const MAX_RUSTDOC_STATIC_FILE_COUNT: usize = 64;
-    let file_stream = stream::iter(html_files)
+    let urls = stream::iter(html_files)
         .map(|path| async move {
             let reader = io::BufReader::new(fs::File::open(&path).await?);
             let mut lines = reader.lines();
@@ -464,9 +464,7 @@ async fn find_rustdoc_static_urls(
 
             Ok::<_, anyhow::Error>(matches)
         })
-        .buffer_unordered(16);
-
-    let urls = file_stream
+        .buffer_unordered(16)
         .try_fold(
             HashSet::with_capacity(MAX_RUSTDOC_STATIC_FILE_COUNT),
             |mut urls, matches| async move {
