@@ -118,12 +118,12 @@ pub(crate) async fn import_test_release(
     let BuildTargets {
         default_target,
         other_targets,
-    } = docsrs_metadata.targets_for_host(true, &DEFAULT_TARGET);
+    } = docsrs_metadata.targets_for_host(true, DEFAULT_TARGET);
     let mut targets = vec![default_target];
 
     let mut potential_other_targets: HashSet<String> =
         other_targets.iter().map(|t| t.to_string()).collect();
-    potential_other_targets.extend(fetch_target_list().await?.into_iter());
+    potential_other_targets.extend(BuildTarget::list());
     potential_other_targets.remove(default_target);
 
     for t in &potential_other_targets {
