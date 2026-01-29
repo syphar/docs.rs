@@ -6,10 +6,15 @@ use docs_rs_database::releases::{
 };
 use docs_rs_registry_api::RegistryApi;
 use docs_rs_repository_stats::RepositoryStatsUpdater;
+use docs_rs_rustdoc_json::{
+    RUSTDOC_JSON_COMPRESSION_ALGORITHMS, RustdocJsonFormatVersion,
+    read_format_version_from_rustdoc_json,
+};
 use docs_rs_storage::{
     AsyncStorage, compression::wrap_reader_for_decompression, file_list_to_json,
     rustdoc_archive_path, source_archive_path,
 };
+use docs_rs_storage::{compress, decompress, rustdoc_json_path};
 use docs_rs_types::{BuildStatus, KrateName, ReqVersion, Version};
 use docs_rs_utils::{BUILD_VERSION, spawn_blocking};
 use docsrs_metadata::{BuildTargets, Metadata};
@@ -28,7 +33,7 @@ use tokio::{
     io::{self, AsyncSeekExt, AsyncWriteExt},
     process::Command,
 };
-use tracing::{info, instrument};
+use tracing::{debug, info, instrument};
 
 const DOCS_RS: &str = "https://docs.rs";
 const DEFAULT_TARGET: &str = "x86_64-unknown-linux-gnu";
@@ -40,11 +45,14 @@ const DEFAULT_TARGET: &str = "x86_64-unknown-linux-gnu";
 /// * is currently only tested for newer releases, since there are some hacks in place.
 /// * to find the needed rustdoc-static files, we have to scan all the HTML files for certain paths.
 ///   For bigger releases this might take some time.
+/// * we assume when the normal target build is successfull, we also have a valid rustdoc json file,
+///   and we'll ignore any rustdoc JSON files related to failed targets.
+/// * build logs are fake, but are created.
 ///
 /// SECURITY:
 /// we execute `cargo metadata` on the downloaded source code, so
 /// this function MUST NOT be used with untrusted crate names/versions.
-#[instrument(skip(conn, storage, registry_api))]
+#[instrument(skip_all, fields(name=%name, version=%version))]
 pub(crate) async fn import_test_release(
     conn: &mut sqlx::PgConnection,
     storage: &AsyncStorage,
@@ -53,23 +61,19 @@ pub(crate) async fn import_test_release(
     name: &KrateName,
     version: &ReqVersion,
 ) -> Result<()> {
-    // TODO:
-    // * download JSON builds from docs.rs (which?)
-    // * find used rustc version somehow?
-
     let status = fetch_rustdoc_status(name, version).await?;
     if !status.doc_status {
         bail!("No rustdoc available for {name} {version}");
     }
-
     let version = status.version;
-
-    // potential improvement: full delete of the release before import.
 
     let crate_id = initialize_crate(&mut *conn, name).await?;
     let release_id = initialize_release(&mut *conn, crate_id, &version).await?;
     let build_id = initialize_build(&mut *conn, release_id).await?;
 
+    // FIXME: if any errors happen here, use update_build_with_error, don't `finish_release`
+
+    info!("download & inspect source from crates.io...");
     let source_dir = download_and_extract_source(name, &version).await?;
 
     let cargo_metadata = spawn_blocking({
@@ -85,7 +89,7 @@ pub(crate) async fn import_test_release(
 
     let mut algs = HashSet::new();
     let (source_files_list, source_size) = {
-        info!("adding sources into database");
+        info!("writing source files to storage...");
         let (files_list, new_alg) = storage
             .store_all_in_archive(&source_archive_path(name, &version), &source_dir)
             .await?;
@@ -98,6 +102,7 @@ pub(crate) async fn import_test_release(
     let registry_data = registry_api.get_release_data(name, &version).await?;
 
     let rustdoc_dir = {
+        info!("download & extract rustdoc archive...");
         let rustdoc_archive =
             download_to_temp_file(format!("https://docs.rs/crate/{name}/{version}/download"))
                 .await?
@@ -107,21 +112,21 @@ pub(crate) async fn import_test_release(
         spawn_blocking(|| {
             let mut zip = zip::ZipArchive::new(rustdoc_archive)?;
 
-            let temp_dir = tempfile::tempdir_in("/Users/syphar/tmp/")?;
+            let temp_dir = tempfile::tempdir()?;
             zip.extract(&temp_dir)?;
             Ok(temp_dir)
         })
         .await?
     };
 
-    // NOTE: the "successful" target list is wrong, if the "old" list of default targets was
-    // used.
+    info!("find successfull build targets...");
     let BuildTargets {
         default_target,
         other_targets,
     } = docsrs_metadata.targets_for_host(true, DEFAULT_TARGET);
     let mut targets = vec![default_target];
 
+    // from the "outside" we have no way to find the list of "successful targets".
     let mut potential_other_targets: HashSet<String> =
         other_targets.iter().map(|t| t.to_string()).collect();
     potential_other_targets.extend(fetch_target_list().await?.into_iter());
@@ -134,7 +139,13 @@ pub(crate) async fn import_test_release(
         }
     }
 
+    // FIXME: add fake build logs for JSON & normal for all targets in the metadata.
+
+    info!("finding used rustdoc static files in HTML files...");
     let mut static_files = find_rustdoc_static_urls(&rustdoc_dir).await?;
+    // these files aren't referenced directly in the HTML code, but their imports
+    // are generated through JS.
+    // Since these are statically known and barely change, I can just add them here.
     static_files.remove("/-/rustdoc.static/${f}");
     static_files.extend(
         [
@@ -158,7 +169,7 @@ pub(crate) async fn import_test_release(
         );
 
         if storage.exists(&key).await? {
-            info!("static file already exists in storage: {}", &key);
+            debug!("static file already exists in storage: {}", &key);
             continue;
         }
 
@@ -167,16 +178,56 @@ pub(crate) async fn import_test_release(
             .await?;
     }
 
-    let (rustdoc_files_list, new_alg) = storage
+    info!("writing rustdoc files to storage...");
+    let (rustdoc_file_list, new_alg) = storage
         .store_all_in_archive(&rustdoc_archive_path(name, &version), &rustdoc_dir)
         .await?;
-    let documentation_size: u64 = rustdoc_files_list.iter().map(|info| info.size).sum();
+    let documentation_size: u64 = rustdoc_file_list.iter().map(|info| info.size).sum();
     algs.insert(new_alg);
 
+    info!("loading repository stats...");
     let repository_id = repository_stats
         .load_repository(cargo_metadata.root())
         .await?;
 
+    for target in &targets {
+        info!("copying rustdoc json for target {target}...");
+
+        let json_compression = RUSTDOC_JSON_COMPRESSION_ALGORITHMS[0];
+        let rustdoc_json = decompress(
+            // FIXME: worth using async decompress here?
+            &*download(format!(
+                "https://docs.rs/crate/{name}/{version}/{target}/json.{}",
+                json_compression.file_extension()
+            ))
+            .await?,
+            json_compression,
+            usize::MAX,
+        )?;
+        if rustdoc_json.is_empty() || rustdoc_json[0] != b'{' {
+            bail!("invalid rustdoc json for {name} {version} {target}");
+        }
+
+        let format_version = spawn_blocking({
+            let rustdoc_json = rustdoc_json.clone();
+            move || read_format_version_from_rustdoc_json(&*rustdoc_json)
+        })
+        .await?;
+
+        for alg in RUSTDOC_JSON_COMPRESSION_ALGORITHMS {
+            // FIXME: worth using async compress here?
+            let compressed_json = compress(&*rustdoc_json, *alg)?;
+
+            for format_version in [format_version, RustdocJsonFormatVersion::Latest] {
+                let path = rustdoc_json_path(name, &version, target, format_version, Some(*alg));
+                storage
+                    .store_one_uncompressed(&path, compressed_json.clone())
+                    .await?;
+            }
+        }
+    }
+
+    info!("finish release & build");
     finish_release(
         &mut *conn,
         crate_id,
@@ -185,7 +236,7 @@ pub(crate) async fn import_test_release(
         &source_dir,
         default_target,
         file_list_to_json(source_files_list),
-        targets.into_iter().map(|t| t.to_string()).collect(), // FIXME: this should be only successful targets
+        targets.iter().map(|t| t.to_string()).collect(),
         &registry_data,
         true,
         false, // FIXME: real has_examples?
@@ -230,6 +281,7 @@ impl AsRef<Path> for SourceDir {
 
 #[instrument]
 async fn fetch_rustdoc_status(name: &KrateName, version: &ReqVersion) -> Result<RustdocStatus> {
+    debug!("fetching rustdoc status...");
     Ok(
         reqwest::get(&format!("{DOCS_RS}/crate/{name}/{version}/status.json"))
             .await?
@@ -241,7 +293,7 @@ async fn fetch_rustdoc_status(name: &KrateName, version: &ReqVersion) -> Result<
 
 #[instrument]
 async fn download(url: impl reqwest::IntoUrl + fmt::Debug) -> Result<Vec<u8>> {
-    info!("downloading...");
+    debug!("downloading...");
 
     Ok(reqwest::get(url)
         .await?
@@ -253,12 +305,13 @@ async fn download(url: impl reqwest::IntoUrl + fmt::Debug) -> Result<Vec<u8>> {
 
 #[instrument]
 async fn download_to_temp_file(url: impl reqwest::IntoUrl + fmt::Debug) -> Result<fs::File> {
-    info!("downloading to temp file..");
+    debug!("downloading to temp file..");
+
+    let response = reqwest::get(url).await?.error_for_status()?;
 
     // NOTE: even after being convert to a `tokio::fs::File`, this kind of temporary file
-    // will be cleaned up by the us, when the last handle is closed.
+    // will be cleaned up by the OS, when the last handle is closed.
     let mut file = fs::File::from_std(spawn_blocking(|| Ok(tempfile::tempfile()?)).await?);
-    let response = reqwest::get(url).await?.error_for_status()?;
 
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
@@ -299,7 +352,7 @@ async fn fetch_target_list() -> Result<HashSet<String>> {
 
 #[instrument]
 async fn download_and_extract_source(name: &KrateName, version: &Version) -> Result<SourceDir> {
-    info!("downloading source");
+    debug!("downloading source");
     let crate_archive = download_to_temp_file(format!(
         "https://static.crates.io/crates/{name}/{name}-{version}.crate"
     ))
@@ -307,7 +360,7 @@ async fn download_and_extract_source(name: &KrateName, version: &Version) -> Res
 
     let temp_dir = spawn_blocking(|| Ok(tempfile::tempdir()?)).await?;
 
-    info!("unpacking source archive");
+    debug!("unpacking source archive");
     {
         let mut file = io::BufReader::new(crate_archive);
         let mut decompressed =
@@ -317,10 +370,12 @@ async fn download_and_extract_source(name: &KrateName, version: &Version) -> Res
     }
 
     let source_path = temp_dir.path().join(format!("{name}-{version}"));
-    debug_assert!(
-        source_path.is_dir(),
-        "expected source path to be a directory"
-    );
+    if !source_path.is_dir() {
+        bail!(
+            "broken crate archive, missing source directory {:?}",
+            source_path
+        );
+    };
 
     Ok(SourceDir {
         source_path,
