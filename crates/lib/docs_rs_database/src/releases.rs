@@ -39,7 +39,6 @@ pub async fn finish_release(
     has_examples: bool,
     compression_algorithms: impl IntoIterator<Item = CompressionAlgorithm>,
     repository_id: Option<i32>,
-    archive_storage: bool,
     source_size: u64,
 ) -> Result<()> {
     debug!("updating release data");
@@ -78,8 +77,7 @@ pub async fn finish_release(
                default_target = $21,
                features = $22,
                repository_id = $23,
-               archive_storage = $24,
-               source_size = $25
+               source_size = $24
            WHERE id = $1"#,
         release_id.0,
         registry_data.release_time,
@@ -104,7 +102,6 @@ pub async fn finish_release(
         default_target,
         features as Vec<Feature>,
         repository_id,
-        archive_storage,
         source_size as i64,
     )
     .execute(&mut *conn)
@@ -324,8 +321,8 @@ pub async fn initialize_release(
     version: &Version,
 ) -> Result<ReleaseId> {
     let release_id = sqlx::query_scalar!(
-        r#"INSERT INTO releases (crate_id, version, archive_storage)
-         VALUES ($1, $2, TRUE)
+        r#"INSERT INTO releases (crate_id, version)
+         VALUES ($1, $2)
          ON CONFLICT (crate_id, version) DO UPDATE
          SET -- this `SET` is needed so the id is always returned.
             version = EXCLUDED.version
@@ -657,7 +654,6 @@ mod test {
             false,
             iter::empty(),
             None,
-            true,
             24,
         )
         .await?;

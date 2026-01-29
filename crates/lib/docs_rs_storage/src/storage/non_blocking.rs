@@ -67,11 +67,9 @@ impl AsyncStorage {
     /// * `name` - the crate name
     /// * `version` - the crate version
     /// * `latest_build_id` - the id of the most recent build. used purely to invalidate the local archive
-    ///   index cache, when `archive_storage` is `true.` Without it we wouldn't know that we have
+    ///   index cache. Without it we wouldn't know that we have
     ///   to invalidate the locally cached file after a rebuild.
     /// * `path` - the wanted path inside the documentation.
-    /// * `archive_storage` - if `true`, we will assume we have a remove ZIP archive and an index
-    ///    where we can fetch the requested path from inside the ZIP file.
     #[instrument]
     pub async fn stream_rustdoc_file(
         &self,
@@ -79,17 +77,11 @@ impl AsyncStorage {
         version: &Version,
         latest_build_id: Option<BuildId>,
         path: &str,
-        archive_storage: bool,
     ) -> Result<StreamingBlob> {
         trace!("fetch rustdoc file");
-        Ok(if archive_storage {
-            self.stream_from_archive(&rustdoc_archive_path(name, version), latest_build_id, path)
-                .await?
-        } else {
-            // Add rustdoc prefix, name and version to the path for accessing the file stored in the database
-            let remote_path = format!("rustdoc/{name}/{version}/{path}");
-            self.get_stream(&remote_path).await?
-        })
+        self
+            .stream_from_archive(&rustdoc_archive_path(name, version), latest_build_id, path)
+            .await
     }
 
     pub async fn fetch_source_file(
@@ -98,9 +90,8 @@ impl AsyncStorage {
         version: &Version,
         latest_build_id: Option<BuildId>,
         path: &str,
-        archive_storage: bool,
     ) -> Result<Blob> {
-        self.stream_source_file(name, version, latest_build_id, path, archive_storage)
+        self.stream_source_file(name, version, latest_build_id, path)
             .await?
             .materialize(self.config.max_file_size_for(path))
             .await
@@ -113,16 +104,11 @@ impl AsyncStorage {
         version: &Version,
         latest_build_id: Option<BuildId>,
         path: &str,
-        archive_storage: bool,
     ) -> Result<StreamingBlob> {
         trace!("fetch source file");
-        Ok(if archive_storage {
-            self.stream_from_archive(&source_archive_path(name, version), latest_build_id, path)
-                .await?
-        } else {
-            let remote_path = format!("sources/{name}/{version}/{path}");
-            self.get_stream(&remote_path).await?
-        })
+        self
+            .stream_from_archive(&source_archive_path(name, version), latest_build_id, path)
+            .await
     }
 
     #[instrument]
@@ -132,16 +118,10 @@ impl AsyncStorage {
         version: &Version,
         latest_build_id: Option<BuildId>,
         path: &str,
-        archive_storage: bool,
     ) -> Result<bool> {
-        Ok(if archive_storage {
-            self.exists_in_archive(&rustdoc_archive_path(name, version), latest_build_id, path)
-                .await?
-        } else {
-            // Add rustdoc prefix, name and version to the path for accessing the file stored in the database
-            let remote_path = format!("rustdoc/{name}/{version}/{path}");
-            self.exists(&remote_path).await?
-        })
+        self
+            .exists_in_archive(&rustdoc_archive_path(name, version), latest_build_id, path)
+            .await
     }
 
     #[instrument]

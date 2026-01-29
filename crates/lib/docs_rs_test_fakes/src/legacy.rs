@@ -73,7 +73,6 @@ pub struct FakeRelease<'a> {
     registry_release_data: ReleaseData,
     has_docs: bool,
     has_examples: bool,
-    archive_storage: bool,
     /// This stores the content, while `package.readme` stores the filename
     readme: Option<&'a str>,
     github_stats: Option<FakeGithubStats>,
@@ -143,7 +142,6 @@ impl<'a> FakeRelease<'a> {
             readme: None,
             github_stats: None,
             doc_coverage: None,
-            archive_storage: false,
             no_cargo_toml: false,
         }
     }
@@ -217,11 +215,6 @@ impl<'a> FakeRelease<'a> {
 
     pub fn yanked(mut self, new: bool) -> Self {
         self.registry_release_data.yanked = new;
-        self
-    }
-
-    pub fn archive_storage(mut self, new: bool) -> Self {
-        self.archive_storage = new;
         self
     }
 
@@ -343,7 +336,6 @@ impl<'a> FakeRelease<'a> {
         let pool = self.pool;
         let mut rustdoc_files = self.rustdoc_files;
         let storage = self.storage;
-        let archive_storage = self.archive_storage;
 
         // Upload all source files as rustdoc files
         // In real life, these would be highlighted HTML, but for testing we just use the files themselves.
@@ -396,7 +388,6 @@ impl<'a> FakeRelease<'a> {
         async fn upload_files(
             kind: FileKind,
             source_directory: &Path,
-            archive_storage: bool,
             package: &MetadataPackage,
             storage: &AsyncStorage,
         ) -> Result<(Vec<FileEntry>, CompressionAlgorithm)> {
@@ -405,27 +396,14 @@ impl<'a> FakeRelease<'a> {
                 kind,
                 source_directory.display()
             );
-            if archive_storage {
-                let archive = match kind {
-                    FileKind::Rustdoc => rustdoc_archive_path(&package.name, &package.version),
-                    FileKind::Sources => source_archive_path(&package.name, &package.version),
-                };
-                debug!("store in archive: {:?}", archive);
-                Ok(storage
-                    .store_all_in_archive(&archive, source_directory)
-                    .await?)
-            } else {
-                let prefix = match kind {
-                    FileKind::Rustdoc => "rustdoc",
-                    FileKind::Sources => "sources",
-                };
-                storage
-                    .store_all(
-                        format!("{}/{}/{}/", prefix, package.name, package.version),
-                        source_directory,
-                    )
-                    .await
-            }
+            let archive = match kind {
+                FileKind::Rustdoc => rustdoc_archive_path(&package.name, &package.version),
+                FileKind::Sources => source_archive_path(&package.name, &package.version),
+            };
+            debug!("store in archive: {:?}", archive);
+            storage
+                .store_all_in_archive(&archive, source_directory)
+                .await
         }
 
         debug!("before upload source");
@@ -449,14 +427,8 @@ impl<'a> FakeRelease<'a> {
             store_files_into(&[("Cargo.toml", content.as_bytes())], source_tmp.path())?;
         }
 
-        let (source_meta, algs) = upload_files(
-            FileKind::Sources,
-            source_tmp.path(),
-            archive_storage,
-            &package,
-            &storage,
-        )
-        .await?;
+        let (source_meta, algs) =
+            upload_files(FileKind::Sources, source_tmp.path(), &package, &storage).await?;
         debug!(?source_meta, "added source files");
 
         // If the test didn't add custom builds, inject a default one
@@ -484,14 +456,8 @@ impl<'a> FakeRelease<'a> {
                 debug!("added platform files for {}", platform);
             }
 
-            let (files, _) = upload_files(
-                FileKind::Rustdoc,
-                rustdoc_path,
-                archive_storage,
-                &package,
-                &storage,
-            )
-            .await?;
+            let (files, _) =
+                upload_files(FileKind::Rustdoc, rustdoc_path, &package, &storage).await?;
             debug!(?files, "uploaded rustdoc files");
         }
 
@@ -563,7 +529,6 @@ impl<'a> FakeRelease<'a> {
             self.has_examples,
             iter::once(algs),
             repository,
-            archive_storage,
             24,
         )
         .await?;

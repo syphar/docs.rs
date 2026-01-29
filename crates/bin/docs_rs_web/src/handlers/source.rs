@@ -223,7 +223,6 @@ pub(crate) async fn source_browser_handler(
 
     let row = sqlx::query!(
         r#"SELECT
-            releases.archive_storage,
             (
                 SELECT id
                 FROM builds
@@ -250,13 +249,7 @@ pub(crate) async fn source_browser_handler(
     // skip if request is a directory
     let stream = if !params.path_is_folder() {
         match storage
-            .stream_source_file(
-                params.name(),
-                version,
-                row.latest_build_id,
-                inner_path,
-                row.archive_storage,
-            )
+            .stream_source_file(params.name(), version, row.latest_build_id, inner_path)
             .await
             .context("error fetching source file")
         {
@@ -378,7 +371,6 @@ mod tests {
     use mime::APPLICATION_PDF;
     use reqwest::StatusCode;
     use std::str::FromStr as _;
-    use test_case::test_case;
 
     fn get_file_list_links(body: &str) -> Vec<String> {
         let dom = kuchikiki::parse_html().one(body);
@@ -392,15 +384,13 @@ mod tests {
             .collect()
     }
 
-    #[test_case(true)]
-    #[test_case(false)]
-    fn fetch_source_file_utf8_path(archive_storage: bool) {
+    #[test]
+    fn fetch_source_file_utf8_path() {
         async_wrapper(|env| async move {
             let filename = "序.pdf";
 
             env.fake_release()
                 .await
-                .archive_storage(archive_storage)
                 .name("fake")
                 .version("0.1.0")
                 .source_file(filename, b"some_random_content")
@@ -424,13 +414,11 @@ mod tests {
         });
     }
 
-    #[test_case(true)]
-    #[test_case(false)]
-    fn fetch_source_file_content(archive_storage: bool) {
+    #[test]
+    fn fetch_source_file_content() {
         async_wrapper(|env| async move {
             env.fake_release()
                 .await
-                .archive_storage(archive_storage)
                 .name("fake")
                 .version("0.1.0")
                 .source_file("some_filename.rs", b"some_random_content")
@@ -462,13 +450,11 @@ mod tests {
         });
     }
 
-    #[test_case(true)]
-    #[test_case(false)]
-    fn fetch_binary(archive_storage: bool) {
+    #[test]
+    fn fetch_binary() {
         async_wrapper(|env| async move {
             env.fake_release()
                 .await
-                .archive_storage(archive_storage)
                 .name("fake")
                 .version("0.1.0")
                 .source_file("some_file.pdf", b"some_random_content")
@@ -512,13 +498,11 @@ mod tests {
         });
     }
 
-    #[test_case(true)]
-    #[test_case(false)]
-    fn cargo_ok_not_skipped(archive_storage: bool) {
+    #[test]
+    fn cargo_ok_not_skipped() {
         async_wrapper(|env| async move {
             env.fake_release()
                 .await
-                .archive_storage(archive_storage)
                 .name("fake")
                 .version("0.1.0")
                 .source_file(".cargo-ok", b"ok")
@@ -531,14 +515,12 @@ mod tests {
         });
     }
 
-    #[test_case(true)]
-    #[test_case(false)]
-    fn empty_file_list_dont_break_the_view(archive_storage: bool) {
+    #[test]
+    fn empty_file_list_dont_break_the_view() {
         async_wrapper(|env| async move {
             let release_id = env
                 .fake_release()
                 .await
-                .archive_storage(archive_storage)
                 .name("fake")
                 .version("0.1.0")
                 .source_file("README.md", b"hello")
@@ -570,7 +552,6 @@ mod tests {
         async_wrapper(|env| async move {
             env.fake_release()
                 .await
-                .archive_storage(true)
                 .name("fake")
                 .version("0.1.0")
                 .source_file(".cargo-ok", b"ok")
@@ -596,13 +577,11 @@ mod tests {
         });
     }
 
-    #[test_case(true)]
-    #[test_case(false)]
-    fn directory_not_found(archive_storage: bool) {
+    #[test]
+    fn directory_not_found() {
         async_wrapper(|env| async move {
             env.fake_release()
                 .await
-                .archive_storage(archive_storage)
                 .name("mbedtls")
                 .version("0.2.0")
                 .create()
@@ -614,13 +593,11 @@ mod tests {
         })
     }
 
-    #[test_case(true)]
-    #[test_case(false)]
-    fn semver_handled_latest(archive_storage: bool) {
+    #[test]
+    fn semver_handled_latest() {
         async_wrapper(|env| async move {
             env.fake_release()
                 .await
-                .archive_storage(archive_storage)
                 .name("mbedtls")
                 .version("0.2.0")
                 .source_file("README.md", b"hello")
@@ -639,13 +616,11 @@ mod tests {
         })
     }
 
-    #[test_case(true)]
-    #[test_case(false)]
-    fn semver_handled(archive_storage: bool) {
+    #[test]
+    fn semver_handled() {
         async_wrapper(|env| async move {
             env.fake_release()
                 .await
-                .archive_storage(archive_storage)
                 .name("mbedtls")
                 .version("0.2.0")
                 .source_file("README.md", b"hello")
@@ -664,13 +639,11 @@ mod tests {
         })
     }
 
-    #[test_case(true)]
-    #[test_case(false)]
-    fn literal_krate_description(archive_storage: bool) {
+    #[test]
+    fn literal_krate_description() {
         async_wrapper(|env| async move {
             env.fake_release()
                 .await
-                .archive_storage(archive_storage)
                 .name("rustc-ap-syntax")
                 .version("178.0.0")
                 .description("some stuff with krate")

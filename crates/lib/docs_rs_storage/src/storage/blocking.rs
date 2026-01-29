@@ -26,15 +26,11 @@ impl Storage {
         version: &Version,
         latest_build_id: Option<BuildId>,
         path: &str,
-        archive_storage: bool,
     ) -> Result<Blob> {
-        self.runtime.block_on(self.inner.fetch_source_file(
-            name,
-            version,
-            latest_build_id,
-            path,
-            archive_storage,
-        ))
+        self.runtime.block_on(
+            self.inner
+                .fetch_source_file(name, version, latest_build_id, path),
+        )
     }
 
     pub fn rustdoc_file_exists(
@@ -43,15 +39,11 @@ impl Storage {
         version: &Version,
         latest_build_id: Option<BuildId>,
         path: &str,
-        archive_storage: bool,
     ) -> Result<bool> {
-        self.runtime.block_on(self.inner.rustdoc_file_exists(
-            name,
-            version,
-            latest_build_id,
-            path,
-            archive_storage,
-        ))
+        self.runtime.block_on(
+            self.inner
+                .rustdoc_file_exists(name, version, latest_build_id, path),
+        )
     }
 
     pub fn exists_in_archive(
