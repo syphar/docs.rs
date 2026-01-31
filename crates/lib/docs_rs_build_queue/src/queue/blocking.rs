@@ -52,10 +52,6 @@ impl BuildQueue {
             .block_on(self.inner.pending_count_by_priority())
     }
     #[cfg(test)]
-    pub(crate) fn failed_count(&self) -> Result<usize> {
-        self.runtime.block_on(self.inner.failed_count())
-    }
-    #[cfg(test)]
     pub(crate) fn queued_crates(&self) -> Result<Vec<QueuedCrate>> {
         self.runtime.block_on(self.inner.queued_crates())
     }
@@ -110,44 +106,54 @@ impl BuildQueue {
 
         let res = f(&to_process);
 
-        let mut increase_attempt_count = || -> Result<i32> {
-            let next_attempt: i32 = self.runtime.block_on(
+        let mut next_attempt = Some(
+            self.runtime.block_on(
                 sqlx::query_scalar!(
                     "UPDATE queue
-                         SET
-                            attempt = attempt + 1,
-                            last_attempt = NOW()
-                         WHERE id = $1
-                         RETURNING attempt;",
+                     SET
+                        attempt = attempt + 1,
+                        last_attempt = NOW()
+                     WHERE id = $1
+                     RETURNING attempt;",
                     to_process.id,
                 )
                 .fetch_one(&mut *transaction),
+            )?,
+        );
+
+        let mut delete_from_queue = || -> Result<()> {
+            self.runtime.block_on(
+                sqlx::query!("DELETE FROM queue WHERE id = $1;", to_process.id)
+                    .execute(&mut *transaction),
             )?;
-
-            Ok(next_attempt)
+            Ok(())
         };
-
-        let next_attempt: Option<i32>;
 
         match res {
             Ok(BuildPackageSummary {
                 should_reattempt: false,
                 successful: _,
             }) => {
-                self.runtime.block_on(
-                    sqlx::query!("DELETE FROM queue WHERE id = $1;", to_process.id)
-                        .execute(&mut *transaction),
-                )?;
+                delete_from_queue()?;
                 next_attempt = None;
             }
             Ok(BuildPackageSummary {
                 should_reattempt: true,
                 successful: _,
             }) => {
-                next_attempt = Some(increase_attempt_count()?);
+                if let Some(attempt) = next_attempt {
+                    if attempt >= self.inner.config.build_attempts.into() {
+                        // exceeded max attempts, remove from queue
+                        delete_from_queue()?;
+                        next_attempt = None;
+                    } else {
+                        // keep in queue for re-attempt
+                    }
+                } else {
+                    unreachable!()
+                }
             }
             Err(e) => {
-                next_attempt = Some(increase_attempt_count()?);
                 error!(
                     ?e,
                     name = %to_process.name,

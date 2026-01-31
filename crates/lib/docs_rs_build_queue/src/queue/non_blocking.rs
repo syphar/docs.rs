@@ -14,13 +14,11 @@ pub struct AsyncBuildQueue {
     pub(super) config: Arc<Config>,
     pub(super) db: Pool,
     queue_metrics: metrics::BuildQueueMetrics,
-    max_attempts: i32,
 }
 
 impl AsyncBuildQueue {
     pub fn new(db: Pool, config: Arc<Config>, otel_meter_provider: &AnyMeterProvider) -> Self {
         AsyncBuildQueue {
-            max_attempts: config.build_attempts.into(),
             config,
             db,
             queue_metrics: metrics::BuildQueueMetrics::new(otel_meter_provider),
@@ -81,29 +79,16 @@ impl AsyncBuildQueue {
 
         Ok(sqlx::query!(
             r#"
-                SELECT
-                    priority,
-                    COUNT(*) as "count!"
-                FROM queue
-                WHERE attempt < $1
-                GROUP BY priority"#,
-            self.max_attempts,
+            SELECT
+                priority,
+                COUNT(*) as "count!"
+            FROM queue
+            GROUP BY priority"#,
         )
         .fetch(&mut *conn)
         .map_ok(|row| (row.priority, row.count as usize))
         .try_collect()
         .await?)
-    }
-
-    pub async fn failed_count(&self) -> Result<usize> {
-        let mut conn = self.db.get_async().await?;
-
-        Ok(sqlx::query_scalar!(
-            r#"SELECT COUNT(*) as "count!" FROM queue WHERE attempt >= $1;"#,
-            self.max_attempts,
-        )
-        .fetch_one(&mut *conn)
-        .await? as usize)
     }
 
     pub async fn queued_crates(&self) -> Result<Vec<QueuedCrate>> {
@@ -119,9 +104,7 @@ impl AsyncBuildQueue {
                 registry,
                 attempt
              FROM queue
-             WHERE attempt < $1
              ORDER BY priority ASC, attempt ASC, id ASC"#,
-            self.max_attempts
         )
         .fetch_all(&mut *conn)
         .await?)
@@ -133,11 +116,9 @@ impl AsyncBuildQueue {
             "SELECT id
              FROM queue
              WHERE
-                attempt < $1 AND
-                name = $2 AND
-                version = $3
+                name = $1 AND
+                version = $2
              ",
-            self.max_attempts,
             name as _,
             version as _,
         )
@@ -197,12 +178,10 @@ impl AsyncBuildQueue {
              WHERE
                 name = $2
                 AND version != $3
-                AND attempt < $4
              ",
             new_priority,
             name as _,
             latest_version as _,
-            self.max_attempts,
         )
         .execute(&mut *conn)
         .await?;
