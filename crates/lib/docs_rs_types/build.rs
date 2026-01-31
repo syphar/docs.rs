@@ -5,6 +5,7 @@ fn main() -> Result<()> {
     let out_dir = env::var("OUT_DIR").context("missing OUT_DIR")?;
     let out_dir = Path::new(&out_dir);
 
+    // FIXME: +nightly?
     let output = Command::new("rustc")
         .arg("--print")
         .arg("target-list")
