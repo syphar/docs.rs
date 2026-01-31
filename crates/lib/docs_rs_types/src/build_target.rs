@@ -94,7 +94,7 @@ mod tests {
     use super::*;
     use anyhow::Result;
     use std::{
-        collections::HashSet,
+        collections::BTreeSet,
         fs,
         io::{self, BufRead as _},
     };
@@ -126,20 +126,25 @@ mod tests {
 
     #[test]
     fn test_validate() -> Result<()> {
-        let mut invalid_targets: HashSet<String> = HashSet::new();
+        let mut invalid_targets: BTreeSet<(String, String, String)> = BTreeSet::new();
         for line in io::BufReader::new(fs::File::open(
-            "/Users/syphar/Dropbox/rust-lang/docs-rs/targets.csv",
+            "/Users/syphar/Dropbox/rust-lang/docs-rs/build_targets/targets.csv",
         )?)
         .lines()
         .skip(1)
         {
             let line = line?;
+            let line: Vec<_> = line.split(',').collect();
+            // name,version,id,default_target,doc_targets
 
-            let (default, rest) = line.split_once(',').unwrap();
-            let default = default.replace("\"", "");
+            let name = line[0];
+            let version = line[1];
+            let _id = line[2];
+            let default = line[3].replace("\"", "");
+            let rest = line[4];
 
-            if default.parse::<BuildTarget>().is_err() {
-                invalid_targets.insert(default);
+            if !default.is_empty() && default.parse::<BuildTarget>().is_err() {
+                invalid_targets.insert((default, name.into(), version.into()));
             }
 
             let mut rest = rest.to_string();
@@ -152,7 +157,7 @@ mod tests {
                     continue;
                 }
                 if t.parse::<BuildTarget>().is_err() {
-                    invalid_targets.insert(t.to_string());
+                    invalid_targets.insert((t.to_string(), name.into(), version.into()));
                 }
             }
         }
