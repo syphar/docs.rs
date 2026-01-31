@@ -1,7 +1,9 @@
 mod build_status;
 mod build_target;
 mod compression_algorithm;
+pub(crate) mod convert;
 pub mod doc_coverage;
+mod duration;
 mod feature;
 mod ids;
 mod krate_name;
@@ -14,6 +16,7 @@ pub use build_status::BuildStatus;
 pub use build_target::{BuildTarget, UnknownBuildTarget};
 pub use compression_algorithm::{CompressionAlgorithm, compression_from_file_extension};
 pub use doc_coverage::{DocCoverage, RawFileCoverage};
+pub use duration::Duration;
 pub use feature::Feature;
 pub use ids::{BuildId, CrateId, ReleaseId};
 pub use krate_name::KrateName;
