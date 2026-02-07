@@ -77,12 +77,12 @@ impl RepositoryStatsUpdater {
         if let Ok(Some(updater)) = GitHub::new(config) {
             updaters.push(Box::new(updater));
         }
-        if let Ok(updater) = GitLab::new("gitlab.com", &config.gitlab_accesstoken) {
-            updaters.push(Box::new(updater));
-        }
-        if let Ok(updater) = GitLab::new("gitlab.freedesktop.org", &None) {
-            updaters.push(Box::new(updater));
-        }
+        // if let Ok(updater) = GitLab::new("gitlab.com", &config.gitlab_accesstoken) {
+        //     updaters.push(Box::new(updater));
+        // }
+        // if let Ok(updater) = GitLab::new("gitlab.freedesktop.org", &None) {
+        //     updaters.push(Box::new(updater));
+        // }
         Self { updaters, pool }
     }
 

@@ -43,6 +43,7 @@ const GRAPHQL_SINGLE: &str = "query($owner: String!, $repo: String!) {
     }
 }";
 
+#[derive(Debug)]
 pub struct GitHub {
     endpoint: String,
     client: HttpClient,

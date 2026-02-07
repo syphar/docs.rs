@@ -2201,6 +2201,7 @@ dependencies = [
  "docs_rs_config",
  "docs_rs_database",
  "docs_rs_env_vars",
+ "docs_rs_opentelemetry",
  "docs_rs_utils",
  "futures-util",
  "mockito",
