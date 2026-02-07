@@ -19,9 +19,16 @@ exclude = [
     "ignored",
 ]
 
+[workspace.package]
+version = "0.6.0"
+authors = ["Onur Aslan <onuraslan@gmail.com>", "The Rust Project Developers"]
+license = "MIT"
+repository = "https://github.com/rust-lang/docs.rs"
+edition = "2024"
+
 [workspace.dependencies]
 anyhow = { version = "1.0.42", features = ["backtrace"] }
-askama = "0.15.1"
+askama = "0.15.4"
 async-stream = "0.3.5"
 axum-extra = { version = "0.12.0", features = ["typed-header", "routing", "middleware"] }
 base64 = "0.22"
