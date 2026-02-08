@@ -11,12 +11,14 @@ mod version_impl {
         postgres::{PgArgumentBuffer, PgTypeInfo, PgValueRef},
         prelude::*,
     };
-    use std::{fmt, io::Write, ops::Deref, str::FromStr};
+    use std::{fmt, io::Write, str::FromStr};
 
     /// NewType around semver::Version to be able to use it with sqlx.
     ///
     /// Represented as string in the database.
-    #[derive(Clone, Debug, DeserializeFromStr, Eq, Hash, PartialEq, SerializeDisplay)]
+    #[derive(
+        Clone, Debug, DeserializeFromStr, Eq, PartialOrd, Ord, Hash, PartialEq, SerializeDisplay,
+    )]
     pub struct Version(pub semver::Version);
 
     impl Version {
@@ -27,12 +29,18 @@ mod version_impl {
         pub fn parse(text: &str) -> Result<Self, semver::Error> {
             Version::from_str(text)
         }
+
+        pub fn as_version(&self) -> &semver::Version {
+            &self.0
+        }
+
+        pub fn is_prerelease(&self) -> bool {
+            !self.0.pre.is_empty()
+        }
     }
 
-    impl Deref for Version {
-        type Target = semver::Version;
-
-        fn deref(&self) -> &Self::Target {
+    impl AsRef<semver::Version> for Version {
+        fn as_ref(&self) -> &semver::Version {
             &self.0
         }
     }

@@ -728,7 +728,7 @@ pub(crate) async fn rustdoc_html_server_handler(
     // Get the latest version of the crate
     let latest_version = latest_release.version.clone();
     let is_latest_version = latest_version == krate.version;
-    let is_prerelease = !(krate.version.pre.is_empty());
+    let is_prerelease = krate.version.is_prerelease();
 
     // Find the path of the latest version for the `Go to latest` and `Permalink` links
     let permalink_path = params

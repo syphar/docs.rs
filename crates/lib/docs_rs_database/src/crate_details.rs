@@ -84,7 +84,7 @@ pub async fn releases_for_crate(
 
 pub fn latest_release(releases: &[Release]) -> Option<&Release> {
     if let Some(release) = releases.iter().find(|release| {
-        release.version.pre.is_empty()
+        !release.version.is_prerelease()
             && release.yanked == Some(false)
             && release.build_status != BuildStatus::InProgress
     }) {

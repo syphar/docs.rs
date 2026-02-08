@@ -122,7 +122,7 @@ fn semver_match<'a, F: Fn(&Release) -> bool>(
     if let Some(release) = releases
         .iter()
         .filter(|release| filter(release))
-        .find(|release| req.matches(&release.version))
+        .find(|release| req.matches(release.version.as_version()))
     {
         Some(release)
     } else if req == &VersionReq::STAR {
