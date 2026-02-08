@@ -17,10 +17,8 @@ pub static SURROGATE_KEY: HeaderName = HeaderName::from_static("surrogate-key");
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SurrogateKey(HeaderValue);
 
-impl core::ops::Deref for SurrogateKey {
-    type Target = HeaderValue;
-
-    fn deref(&self) -> &Self::Target {
+impl AsRef<HeaderValue> for SurrogateKey {
+    fn as_ref(&self) -> &HeaderValue {
         &self.0
     }
 }
@@ -212,7 +210,7 @@ impl SurrogateKeys {
         let mut current_key_size: u64 = self.encoded_len();
 
         self.0.extend(iter.into_iter().take_while(|key| {
-            let key_size = key.len() as u64 + 1; // +1 for the space or terminator
+            let key_size = key.0.len() as u64 + 1; // +1 for the space or terminator
             if current_key_size + key_size > MAX_LEN {
                 false
             } else {
