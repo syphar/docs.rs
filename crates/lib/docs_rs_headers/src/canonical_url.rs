@@ -4,7 +4,7 @@ use docs_rs_uri::EscapedURI;
 use headers::{Header, HeaderName, HeaderValue};
 use http::uri::Uri;
 use serde::Serialize;
-use std::{fmt, ops::Deref};
+use std::fmt;
 
 /// simplified typed header for a `Link rel=canonical` header in the response.
 ///
@@ -75,10 +75,8 @@ impl From<EscapedURI> for CanonicalUrl {
     }
 }
 
-impl Deref for CanonicalUrl {
-    type Target = EscapedURI;
-
-    fn deref(&self) -> &Self::Target {
+impl AsRef<EscapedURI> for CanonicalUrl {
+    fn as_ref(&self) -> &EscapedURI {
         &self.0
     }
 }
