@@ -821,8 +821,9 @@ mod tests {
     use mockito::Matcher;
     use reqwest::StatusCode;
     use serde_json::json;
-    use std::collections::HashSet;
+    use std::{collections::HashSet, time::Instant};
     use test_case::test_case;
+    use tracing::{debug, info};
 
     #[test]
     fn test_release_list_with_incomplete_release_and_successful_build() {
@@ -1762,11 +1763,16 @@ mod tests {
             let web = env.web_app().await;
             web.assert_success("/releases/feed").await?;
 
+            let started_at = Instant::now();
             env.fake_release()
                 .await
                 .name("some_random_crate")
                 .create()
                 .await?;
+            info!(
+                elapsed_ms = started_at.elapsed().as_millis(),
+                "fake release"
+            );
             env.fake_release()
                 .await
                 .name("some_random_crate_that_failed")
