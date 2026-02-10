@@ -823,7 +823,7 @@ mod tests {
     use serde_json::json;
     use std::{collections::HashSet, time::Instant};
     use test_case::test_case;
-    use tracing::{debug, info};
+    use tracing::info;
 
     #[test]
     fn test_release_list_with_incomplete_release_and_successful_build() {

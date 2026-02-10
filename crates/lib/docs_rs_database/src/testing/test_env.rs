@@ -40,7 +40,7 @@ impl TestDatabase {
             .await?;
         }
 
-        let pool = Pool::new(&config, otel_meter_provider).await?;
+        let pool = Pool::new(config, otel_meter_provider).await?;
 
         info!(
             name,

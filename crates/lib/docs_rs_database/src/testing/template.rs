@@ -28,10 +28,7 @@ impl TemplateDatabase {
 
         let template_name = format!(
             "{}_template",
-            config
-                .original_db_name
-                .as_deref()
-                .unwrap_or_else(|| "docs_rs")
+            config.original_db_name.as_deref().unwrap_or("docs_rs")
         );
         let mut template_url = base_url.clone();
         template_url.set_path(&format!("/{template_name}"));
