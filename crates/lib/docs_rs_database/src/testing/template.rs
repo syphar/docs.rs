@@ -14,60 +14,54 @@ pub(super) struct TemplateDatabase {
 }
 
 impl TemplateDatabase {
-    #[instrument]
+    #[instrument(skip(config))]
     pub async fn instance(config: &Config) -> Result<&'static Self> {
         TEMPLATE.get_or_try_init(|| Self::new(config)).await
     }
 
-    #[instrument]
+    #[instrument(skip(config))]
     async fn new(config: &Config) -> Result<Self> {
-        let mut base_url: Url = config.database_url.parse()?;
-
-        let prefix = base_url.path().strip_prefix('/');
-        let prefix = prefix
-            .ok_or_else(|| anyhow!("failed to parse database name"))?
-            .to_string();
+        // generate a database url without a database name to connect to the server
+        // without connecting to a specific database.
+        let mut base_url: Url = config.database_url.clone();
         base_url.set_path("/");
 
-        let template_name = format!("{prefix}_template");
+        let template_name = format!(
+            "{}_template",
+            config
+                .original_db_name
+                .as_deref()
+                .unwrap_or_else(|| "docs_rs")
+        );
         let mut template_url = base_url.clone();
         template_url.set_path(&format!("/{template_name}"));
 
-        let mut conn = sqlx::PgConnection::connect(base_url.as_str()).await?;
+        let mut admin_conn = sqlx::PgConnection::connect(base_url.as_str()).await?;
         sqlx::query("SELECT pg_advisory_lock($1)")
             .bind(LOCK_KEY)
-            .execute(&mut conn)
+            .execute(&mut admin_conn)
             .await?;
 
         let exists: bool =
             sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)")
                 .bind(&template_name)
-                .fetch_one(&mut conn)
+                .fetch_one(&mut admin_conn)
                 .await?;
 
         if !exists {
             sqlx::query(&format!("CREATE DATABASE {template_name}"))
-                .execute(&mut conn)
+                .execute(&mut admin_conn)
                 .await?;
-
-            drop(conn);
-
-            let mut conn = sqlx::PgConnection::connect(template_url.as_str()).await?;
-            migrations::migrate(&mut conn, None)
-                .await
-                .context("error running migrations")?;
         }
+
+        let mut template_conn = sqlx::PgConnection::connect(template_url.as_str()).await?;
+        migrations::migrate(&mut template_conn, None)
+            .await
+            .context("error running migrations")?;
 
         Ok(TemplateDatabase {
             base_url,
-            // pool,
             template_name,
-            prefix,
         })
     }
-
-    // #[instrument(skip(self))]
-    // fn get_connection(&self) -> PooledConnection<ConnectionManager<PgConnection>> {
-    //     self.pool.get().expect("Failed to get database connection")
-    // }
 }

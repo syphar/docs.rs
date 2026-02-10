@@ -74,7 +74,7 @@ impl Pool {
                     })
                 }
             })
-            .connect_lazy(&config.database_url)
+            .connect_lazy(config.database_url.as_str())
             .map_err(PoolError::AsyncPoolCreationFailed)?;
 
         Ok(Pool {
