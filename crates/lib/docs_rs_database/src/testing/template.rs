@@ -1,5 +1,5 @@
 use crate::{Config, migrations};
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use sqlx::Connection as _;
 use tokio::sync::OnceCell;
 use tracing::instrument;
