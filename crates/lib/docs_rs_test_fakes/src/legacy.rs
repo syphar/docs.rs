@@ -20,6 +20,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     fmt, iter,
     sync::Arc,
+    time::Instant,
 };
 use tracing::debug;
 
@@ -346,6 +347,8 @@ impl<'a> FakeRelease<'a> {
 
     /// Returns the release_id
     pub async fn create(mut self) -> Result<ReleaseId> {
+        let start = Instant::now();
+
         use std::fs;
         use std::path::Path;
 
@@ -598,6 +601,7 @@ impl<'a> FakeRelease<'a> {
                 .await?;
         }
 
+        debug!(duration = ?start.elapsed(), "created fake release");
         Ok(release_id)
     }
 }
