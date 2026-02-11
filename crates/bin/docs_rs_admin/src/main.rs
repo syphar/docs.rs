@@ -19,7 +19,8 @@ use docs_rs_database::{
 };
 use docs_rs_fastly::CdnBehaviour as _;
 use docs_rs_headers::SurrogateKey;
-use docs_rs_types::{CrateId, KrateName, ReleaseId, ReqVersion, Version};
+use docs_rs_repository_stats::workspaces;
+use docs_rs_types::{CrateId, KrateName, ReleaseId, Version, ReqVersion};
 use futures_util::StreamExt;
 use rebuilds::queue_rebuilds_faulty_rustdoc;
 use std::iter;
@@ -318,7 +319,7 @@ enum DatabaseSubcommand {
     /// Updates info for a crate from the registry's API
     UpdateCrateRegistryFields {
         #[arg(name = "CRATE")]
-        name: String,
+        name: KrateName,
     },
 
     /// Blacklist operations
@@ -407,11 +408,21 @@ impl DatabaseSubcommand {
             .context("Failed to update latest version id")?,
 
             Self::UpdateRepositoryFields => {
+                println!("rewrite crate count per repository...");
+                let mut conn = ctx.pool()?.get_async().await?;
+                workspaces::rewrite_repository_stats(&mut conn).await?;
+
+                println!("update repository stats where outdated...");
                 ctx.repository_stats()?.update_all_crates().await?;
             }
 
             Self::BackfillRepositoryStats => {
+                println!("backfill repositories...");
                 ctx.repository_stats()?.backfill_repositories().await?;
+
+                println!("rewrite crate count per repository...");
+                let mut conn = ctx.pool()?.get_async().await?;
+                workspaces::rewrite_repository_stats(&mut conn).await?;
             }
 
             Self::UpdateCrateRegistryFields { name } => {

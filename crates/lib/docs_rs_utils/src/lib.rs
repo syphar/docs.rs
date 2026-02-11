@@ -39,6 +39,9 @@ pub const APP_USER_AGENT: &str = concat!(
 /// `s3://rust-docs-rs//rustdoc-static/something.css`
 pub const RUSTDOC_STATIC_STORAGE_PREFIX: &str = "/rustdoc-static/";
 
+/// Where we want to serve the rustdoc static files stored in the storage prefix above
+pub const RUSTDOC_STATIC_PATH: &str = "/-/rustdoc.static/";
+
 /// a wrapper around tokio's `spawn_blocking` that
 /// enables us to write nicer code when the closure
 /// returns an `anyhow::Result`.
@@ -104,9 +107,10 @@ pub fn retry<T>(mut f: impl FnMut() -> Result<T>, max_attempts: u32) -> Result<T
     unreachable!()
 }
 
-pub async fn retry_async<T, Fut, F: FnMut() -> Fut>(mut f: F, max_attempts: u32) -> Result<T>
+pub async fn retry_async<T, E, Fut, F: FnMut() -> Fut>(mut f: F, max_attempts: u32) -> Result<T, E>
 where
-    Fut: Future<Output = Result<T>>,
+    Fut: Future<Output = Result<T, E>>,
+    E: fmt::Debug,
 {
     for attempt in 1.. {
         match f().await {
