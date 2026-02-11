@@ -135,7 +135,7 @@ impl RustwideBuilder {
             get_configured_toolchain(&mut conn).await
         })?;
 
-        Ok(RustwideBuilder {
+        let builder = RustwideBuilder {
             workspace: build_workspace(&config)?,
             toolchain,
             config: config.clone(),
@@ -147,7 +147,24 @@ impl RustwideBuilder {
             repository_stats: context.repository_stats()?.clone(),
             workspace_initialize_time: Instant::now(),
             builder_metrics: BuilderMetrics::new(context.meter_provider()).into(),
-        })
+        };
+
+        builder
+            .runtime
+            .block_on(async { builder.update_cached_build_image().await })?;
+
+        Ok(builder)
+    }
+
+    pub async fn update_cached_build_image(&self) -> Result<()> {
+        let mut conn = self.db.get_async().await?;
+        set_config(
+            &mut conn,
+            ConfigName::BuildImage,
+            self.workspace.sandbox_image().get_name_with_hash(),
+        )
+        .await?;
+        Ok(())
     }
 
     #[instrument(skip(self))]
@@ -157,6 +174,8 @@ impl RustwideBuilder {
             info!("start reinitialize workspace again");
             self.workspace = build_workspace(&self.config)?;
             self.workspace_initialize_time = Instant::now();
+            self.runtime
+                .block_on(async { self.update_cached_build_image().await })?;
         }
 
         Ok(())

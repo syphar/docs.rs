@@ -8,6 +8,7 @@ pub enum ConfigName {
     LastSeenIndexReference,
     QueueLocked,
     Toolchain,
+    BuildImage,
 }
 
 pub async fn set_config(
