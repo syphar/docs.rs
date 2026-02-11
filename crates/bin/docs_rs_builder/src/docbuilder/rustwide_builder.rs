@@ -158,6 +158,10 @@ impl RustwideBuilder {
 
     pub async fn update_cached_build_image(&self) -> Result<()> {
         let mut conn = self.db.get_async().await?;
+        // FIXME: with multiple builders in the new architecture,
+        // each builder might have a different image version.
+        // Perhaps we need nice builder-names first, and then
+        // store the image version per builder, instead of globally.
         set_config(
             &mut conn,
             ConfigName::BuildImage,
