@@ -11,7 +11,7 @@ use crate::{
     metrics::WebMetrics,
     page::templates::{RenderBrands, RenderRegular, RenderSolid, filters},
 };
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, anyhow};
 use askama::Template;
 use axum::{
     extract::{Extension, Query},
@@ -24,6 +24,7 @@ use docs_rs_registry_api::{self as registry_api, RegistryApi};
 use docs_rs_types::{KrateName, ReqVersion, Version};
 use docs_rs_uri::encode_url_path;
 use futures_util::stream::TryStreamExt;
+use http::StatusCode;
 use serde::Deserialize;
 use sqlx::Row;
 use std::{
@@ -155,7 +156,7 @@ async fn get_search_results(
     registry: &RegistryApi,
     query_params: &str,
     query: &str,
-) -> Result<SearchResult, anyhow::Error> {
+) -> Result<SearchResult, registry_api::Error> {
     let registry_api::Search { crates, meta } = registry.search(query_params).await?;
 
     let names = Arc::new(
@@ -221,7 +222,8 @@ async fn get_search_results(
         )
     })
     .try_collect()
-    .await?;
+    .await
+    .map_err(|err| anyhow!(err))?;
 
     // start with the original names from crates.io to keep the original ranking,
     // extend with the release/build information from docs.rs
@@ -430,6 +432,7 @@ pub(crate) async fn owner_handler(Path(owner): Path<String>) -> AxumResult<impl 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Search {
     pub(crate) title: String,
+    pub(crate) message: Option<String>,
     pub(crate) releases: Vec<ReleaseStatus>,
     pub(crate) search_query: Option<String>,
     pub(crate) search_sort_by: Option<String>,
@@ -444,6 +447,7 @@ impl Default for Search {
     fn default() -> Self {
         Self {
             title: String::default(),
+            message: None,
             releases: Vec::default(),
             search_query: None,
             previous_page_link: None,
@@ -552,9 +556,10 @@ pub(crate) async fn search_handler(
         // since we never pass a version into `match_version` here, we'll never get
         // `MatchVersion::Exact`, so the distinction between `Exact` and `Semver` doesn't
         // matter
-        if let Ok(matchver) = match_version(&mut conn, krate, &ReqVersion::Latest)
-            .await
-            .map(|matched_release| matched_release.into_exactly_named())
+        if let Ok(krate) = krate.parse::<KrateName>()
+            && let Ok(matchver) = match_version(&mut conn, &krate, &ReqVersion::Latest)
+                .await
+                .map(|matched_release| matched_release.into_exactly_named())
         {
             query_params.remove("query");
             queries.extend(query_params);
@@ -563,7 +568,7 @@ pub(crate) async fn search_handler(
             let params = RustdocParams::from_matched_release(&matchver);
 
             trace!(
-                krate,
+                %krate,
                 ?params,
                 "redirecting I'm feeling lucky search to crate page"
             );
@@ -603,7 +608,7 @@ pub(crate) async fn search_handler(
             }
         }
 
-        get_search_results(&mut conn, &registry, query_params, "").await?
+        get_search_results(&mut conn, &registry, query_params, "").await
     } else if !query.is_empty() {
         let query_params: String = form_urlencoded::Serializer::new(String::new())
             .append_pair("q", &query)
@@ -611,31 +616,46 @@ pub(crate) async fn search_handler(
             .append_pair("per_page", &RELEASES_IN_RELEASES.to_string())
             .finish();
 
-        get_search_results(&mut conn, &registry, &query_params, &query).await?
+        get_search_results(&mut conn, &registry, &query_params, &query).await
     } else {
         return Err(AxumNope::NoResults);
     };
 
-    let title = if search_result.results.is_empty() {
-        format!("No results found for '{query}'")
-    } else {
-        format!("Search results for '{query}'")
-    };
+    match search_result {
+        Ok(search_result) => {
+            let title = if search_result.results.is_empty() {
+                format!("No results found for '{query}'")
+            } else {
+                format!("Search results for '{query}'")
+            };
 
-    Ok(Search {
-        title,
-        releases: search_result.results,
-        search_query: Some(query),
-        search_sort_by: Some(sort_by),
-        next_page_link: search_result
-            .next_page
-            .map(|params| format!("/releases/search?paginate={}", b64.encode(params))),
-        previous_page_link: search_result
-            .prev_page
-            .map(|params| format!("/releases/search?paginate={}", b64.encode(params))),
-        ..Default::default()
+            Ok(Search {
+                title,
+                releases: search_result.results,
+                search_query: Some(query),
+                search_sort_by: Some(sort_by),
+                next_page_link: search_result
+                    .next_page
+                    .map(|params| format!("/releases/search?paginate={}", b64.encode(params))),
+                previous_page_link: search_result
+                    .prev_page
+                    .map(|params| format!("/releases/search?paginate={}", b64.encode(params))),
+                ..Default::default()
+            }
+            .into_response())
+        }
+        Err(err) => {
+            warn!(%query, ?err, "error during crate search");
+
+            Ok(Search {
+                title: format!("Error searching for '{query}'"),
+                message: Some(err.to_string()),
+                status: err.status().unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                ..Default::default()
+            }
+            .into_response())
+        }
     }
-    .into_response())
 }
 
 #[derive(Template)]
@@ -809,7 +829,7 @@ mod tests {
         async_wrapper(|env| async move {
             let mut conn = env.async_conn().await?;
 
-            let crate_id = initialize_crate(&mut conn, "foo").await?;
+            let crate_id = initialize_crate(&mut conn, &FOO).await?;
             let release_id = initialize_release(&mut conn, crate_id, &V1).await?;
             let build_id = initialize_build(&mut conn, release_id).await?;
 
@@ -1198,55 +1218,6 @@ mod tests {
         })
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn crates_io_errors_as_status_code_200() -> Result<()> {
-        let mut crates_io = mockito::Server::new_async().await;
-
-        let env = TestEnvironment::builder()
-            .registry_api_config(
-                docs_rs_registry_api::Config::builder()
-                    .registry_api_host(crates_io.url().parse().unwrap())
-                    .build(),
-            )
-            .build()
-            .await?;
-
-        let _m = crates_io
-            .mock("GET", "/api/v1/crates")
-            .match_query(Matcher::AllOf(vec![
-                Matcher::UrlEncoded("q".into(), "doesnt_matter_here".into()),
-                Matcher::UrlEncoded("per_page".into(), "30".into()),
-            ]))
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(
-                json!({
-                    "errors": [
-                        { "detail": "error name 1" },
-                        { "detail": "error name 2" },
-                    ]
-                })
-                .to_string(),
-            )
-            .create_async()
-            .await;
-
-        let response = env
-            .web_app()
-            .await
-            .get("/releases/search?query=doesnt_matter_here")
-            .await?;
-        assert_eq!(response.status(), 500);
-
-        assert!(
-            response
-                .text()
-                .await?
-                .contains("error name 1\nerror name 2")
-        );
-        Ok(())
-    }
-
     #[test_case(StatusCode::NOT_FOUND)]
     #[test_case(StatusCode::INTERNAL_SERVER_ERROR)]
     #[test_case(StatusCode::BAD_GATEWAY)]
@@ -1281,7 +1252,7 @@ mod tests {
             .await
             .get("/releases/search?query=doesnt_matter_here")
             .await?;
-        assert_eq!(response.status(), 500);
+        assert_eq!(response.status(), status);
 
         assert!(response.text().await?.contains(&format!("{status}")));
         Ok(())

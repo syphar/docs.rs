@@ -112,6 +112,10 @@ pub(crate) async fn get_new_crates(context: &Context, index: &Index) -> Result<u
 
     let crates_added = process_changes(context, &changes, index.repository_url()).await;
 
+    if let Err(err) = context.build_queue()?.deprioritize_workspaces().await {
+        error!(?err, "error deprioritizing workspaces");
+    }
+
     // set the reference in the database
     // so this survives recreating the registry watcher
     // server.
@@ -260,8 +264,7 @@ async fn process_crate_deleted(context: &Context, krate: &KrateName) -> Result<(
     );
     queue_crate_invalidation(krate, context.cdn.as_deref()).await;
 
-    let name: KrateName = krate.parse()?;
-    context.build_queue()?.remove_crate_from_queue(&name).await
+    context.build_queue()?.remove_crate_from_queue(krate).await
 }
 
 pub(crate) async fn set_yanked(
@@ -283,7 +286,7 @@ pub(crate) async fn set_yanked(
              AND version = $2
         RETURNING crates.id as "id: CrateId"
         "#,
-        name,
+        name as _,
         version as _,
         yanked,
     )
@@ -298,12 +301,7 @@ pub(crate) async fn set_yanked(
         );
         update_latest_version_id(&mut conn, crate_id).await?;
     } else {
-        let name: KrateName = name.parse()?;
-        match context
-            .build_queue()?
-            .has_build_queued(&name, version)
-            .await
-        {
+        match context.build_queue()?.has_build_queued(name, version).await {
             Ok(false) => {
                 error!(
                     %name,
