@@ -1949,13 +1949,11 @@ name = "docs_rs_admin"
 version = "0.6.0"
 dependencies = [
  "anyhow",
- "async-tar",
  "bon",
  "chrono",
  "clap",
  "docs_rs_build_limits",
  "docs_rs_build_queue",
- "docs_rs_cargo_metadata",
  "docs_rs_config",
  "docs_rs_context",
  "docs_rs_database",
@@ -1963,24 +1961,18 @@ dependencies = [
  "docs_rs_headers",
  "docs_rs_logging",
  "docs_rs_opentelemetry",
- "docs_rs_registry_api",
  "docs_rs_repository_stats",
  "docs_rs_storage",
  "docs_rs_test_fakes",
  "docs_rs_types",
  "docs_rs_utils",
- "docsrs-metadata",
  "futures-util",
  "pretty_assertions",
- "regex",
- "reqwest 0.13.2",
- "serde",
  "sqlx",
  "tempfile",
  "test-case",
  "tokio",
  "tracing",
- "zip",
 ]
 
 [[package]]
