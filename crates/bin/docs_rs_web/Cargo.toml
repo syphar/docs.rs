@@ -74,10 +74,6 @@ url = { workspace = true }
 anyhow = { version = "1.0.42", features = ["backtrace"] }
 grass = { version = "0.13.1", default-features = false }
 md5 = "0.8.0"
-<<<<<<< HEAD
-phf_codegen = { workspace = true }
-=======
->>>>>>> main
 syntect = { version = "5.0.0", default-features = false, features = ["parsing", "dump-create", "yaml-load", "regex-onig"] }
 walkdir = { workspace = true }
 

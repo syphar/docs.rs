@@ -1963,10 +1963,7 @@ dependencies = [
  "docs_rs_headers",
  "docs_rs_logging",
  "docs_rs_opentelemetry",
-<<<<<<< HEAD
  "docs_rs_registry_api",
-=======
->>>>>>> main
  "docs_rs_repository_stats",
  "docs_rs_storage",
  "docs_rs_test_fakes",
@@ -1976,7 +1973,7 @@ dependencies = [
  "futures-util",
  "pretty_assertions",
  "regex",
- "reqwest 0.13.1",
+ "reqwest 0.13.2",
  "serde",
  "sqlx",
  "tempfile",
@@ -8339,12 +8336,6 @@ dependencies = [
 ]
 
 [[package]]
-<<<<<<< HEAD
-name = "wasm-streams"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15053d8d85c7eccdbefef60f06769760a563c7f0a9d6902a13d35c7800b0ad65"
-=======
 name = "wasm-encoder"
 version = "0.244.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8371,7 +8362,6 @@ name = "wasm-streams"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9d1ec4f6517c9e11ae630e200b2b65d193279042e28edd4a2cda233e46670bbb"
->>>>>>> main
 dependencies = [
  "futures-util",
  "js-sys",
@@ -8381,8 +8371,6 @@ dependencies = [
 ]
 
 [[package]]
-<<<<<<< HEAD
-=======
 name = "wasmparser"
 version = "0.244.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8395,7 +8383,6 @@ dependencies = [
 ]
 
 [[package]]
->>>>>>> main
 name = "web-sys"
 version = "0.3.85"
 source = "registry+https://github.com/rust-lang/crates.io-index"
