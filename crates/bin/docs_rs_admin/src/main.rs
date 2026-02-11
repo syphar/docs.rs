@@ -1,4 +1,3 @@
-pub(crate) mod import;
 mod rebuilds;
 mod repackage;
 #[cfg(test)]
@@ -20,7 +19,7 @@ use docs_rs_database::{
 use docs_rs_fastly::CdnBehaviour as _;
 use docs_rs_headers::SurrogateKey;
 use docs_rs_repository_stats::workspaces;
-use docs_rs_types::{CrateId, KrateName, ReleaseId, Version, ReqVersion};
+use docs_rs_types::{CrateId, KrateName, ReleaseId, Version};
 use futures_util::StreamExt;
 use rebuilds::queue_rebuilds_faulty_rustdoc;
 use std::iter;
@@ -305,17 +304,6 @@ enum DatabaseSubcommand {
     /// Backfill GitHub/GitLab stats for crates.
     BackfillRepositoryStats,
 
-    /// Import a successfully built release from the main docs.rs deployment.
-    ///
-    /// Only for testing.
-    ImportRelease {
-        #[arg(name = "CRATE")]
-        name: KrateName,
-
-        #[arg(name = "CRATE_VERSION", default_value_t)]
-        version: ReqVersion,
-    },
-
     /// Updates info for a crate from the registry's API
     UpdateCrateRegistryFields {
         #[arg(name = "CRATE")]
@@ -439,19 +427,6 @@ impl DatabaseSubcommand {
             Self::Blacklist { command } => command.handle_args(ctx).await?,
 
             Self::Limits { command } => command.handle_args(ctx).await?,
-
-            Self::ImportRelease { name, version } => {
-                let mut conn = ctx.pool()?.get_async().await?;
-                crate::import::import_test_release(
-                    &mut conn,
-                    ctx.storage()?,
-                    ctx.registry_api()?,
-                    ctx.repository_stats()?,
-                    &name,
-                    &version,
-                )
-                .await?;
-            }
         }
         Ok(())
     }
