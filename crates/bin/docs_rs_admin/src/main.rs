@@ -17,12 +17,8 @@ use docs_rs_database::{
 };
 use docs_rs_fastly::CdnBehaviour as _;
 use docs_rs_headers::SurrogateKey;
-<<<<<<< HEAD
-use docs_rs_types::{CrateId, KrateName, Version};
-=======
 use docs_rs_repository_stats::workspaces;
-use docs_rs_types::{CrateId, KrateName, ReleaseId, Version};
->>>>>>> main
+use docs_rs_types::{CrateId, KrateName, Version};
 use futures_util::StreamExt;
 use rebuilds::queue_rebuilds_faulty_rustdoc;
 use std::iter;

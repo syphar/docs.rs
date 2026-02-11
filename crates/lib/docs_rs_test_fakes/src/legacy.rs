@@ -408,8 +408,8 @@ impl<'a> FakeRelease<'a> {
             );
             let krate_name: KrateName = package.name.parse()?;
             let archive = match kind {
-                FileKind::Rustdoc => rustdoc_archive_path(&package.name, &package.version),
-                FileKind::Sources => source_archive_path(&package.name, &package.version),
+                FileKind::Rustdoc => rustdoc_archive_path(&krate_name, &package.version),
+                FileKind::Sources => source_archive_path(&krate_name, &package.version),
             };
             debug!("store in archive: {:?}", archive);
             storage
