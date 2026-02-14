@@ -158,7 +158,7 @@ _build-test-binaries:
   set -euo pipefail
 
   export SQLX_OFFLINE=1
-  cargo test --no-run --workspace --locked
+  cargo nextest run --no-run --workspace --locked
 
 [group('testing')]
 run-tests: _ensure_db_and_s3_are_running _build-test-binaries
@@ -174,7 +174,7 @@ run-tests: _ensure_db_and_s3_are_running _build-test-binaries
   export AWS_SECRET_ACCESS_KEY=secret_key
   export S3_ENDPOINT=http://localhost:9000
 
-  cargo test --workspace --locked --no-fail-fast
+  cargo nextest run --workspace --locked --no-fail-fast
 
 [group('testing')]
 [group('builder')]
@@ -188,4 +188,4 @@ run-builder-tests: _ensure_db_and_s3_are_running
   export RUST_BACKTRACE=1
   export DOCSRS_PREFIX=ignored/cratesfyi-prefix
 
-  cargo test --locked -- --ignored --test-threads=1
+  cargo nextest run --locked --run-ignored ignored --test-threads=1
