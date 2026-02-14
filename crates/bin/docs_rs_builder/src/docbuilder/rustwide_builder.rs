@@ -33,6 +33,7 @@ use docs_rs_utils::{
     Handle, RUSTDOC_STATIC_STORAGE_PREFIX, retry, rustc_version::parse_rustc_version,
 };
 use docsrs_metadata::{BuildTargets, DEFAULT_TARGETS, HOST_TARGET, Metadata};
+use rayon::prelude::*;
 use regex::Regex;
 use rustwide::{
     AlternativeRegistry, Build, Crate, Toolchain, Workspace, WorkspaceBuilder,
@@ -1023,25 +1024,44 @@ impl RustwideBuilder {
                 .context("couldn't parse rustdoc json to find format version")?
         };
 
-        for alg in RUSTDOC_JSON_COMPRESSION_ALGORITHMS {
-            let compressed_json: Vec<u8> = {
-                let _span =
-                    info_span!("compress_json", file_size = json_filename.metadata()?.len(), algorithm=%alg)
+        let json_file_size = json_filename.metadata()?.len();
+        let parent_span = tracing::Span::current();
+
+        RUSTDOC_JSON_COMPRESSION_ALGORITHMS
+            .par_iter()
+            .try_for_each(|alg| -> Result<()> {
+                let compressed_json = {
+                    let compress_span = info_span!(
+                        parent: &parent_span,
+                        "compress_json",
+                        file_size = json_file_size,
+                        algorithm = %alg
+                    );
+                    let _span = compress_span.enter();
+
+                    compress(BufReader::new(File::open(&json_filename)?), *alg)?
+                };
+
+                [format_version, RustdocJsonFormatVersion::Latest]
+                    .into_par_iter()
+                    .try_for_each(|format_version| -> Result<()> {
+                        let path =
+                            rustdoc_json_path(name, version, target, format_version, Some(*alg));
+                        let _span = info_span!(
+                            parent: &parent_span,
+                            "store_json",
+                            %format_version,
+                            algorithm = %alg,
+                            target_path = %path
+                        )
                         .entered();
 
-                compress(BufReader::new(File::open(&json_filename)?), *alg)?
-            };
+                        self.blocking_storage
+                            .store_one_uncompressed(&path, compressed_json.clone())?;
 
-            for format_version in [format_version, RustdocJsonFormatVersion::Latest] {
-                let path = rustdoc_json_path(name, version, target, format_version, Some(*alg));
-                let _span =
-                    info_span!("store_json", %format_version, algorithm=%alg, target_path=%path)
-                        .entered();
-
-                self.blocking_storage
-                    .store_one_uncompressed(&path, compressed_json.clone())?;
-            }
-        }
+                        Ok(())
+                    })
+            })?;
 
         Ok(())
     }

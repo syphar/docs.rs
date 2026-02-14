@@ -2045,6 +2045,7 @@ dependencies = [
  "log",
  "opentelemetry",
  "pretty_assertions",
+ "rayon",
  "regex",
  "rustwide",
  "serde_json",
