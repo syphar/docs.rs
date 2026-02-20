@@ -1,5 +1,6 @@
 use crate::{Config, docbuilder::build_error::RustwideBuildError, utils::copy::copy_dir_all};
 use anyhow::{Context as _, Error, Result, anyhow};
+use docs_rs_build_limits::Limits;
 use docs_rs_cargo_metadata::CargoMetadata;
 use docs_rs_rustdoc_json::{
     RUSTDOC_JSON_COMPRESSION_ALGORITHMS, RustdocJsonFormatVersion,
@@ -10,8 +11,8 @@ use docs_rs_types::{BuildId, KrateName, Version, doc_coverage::DocCoverage};
 use docs_rs_utils::rustc_version::parse_rustc_version;
 use docsrs_metadata::{HOST_TARGET, Metadata};
 use rustwide::{
-    Build, Toolchain, Workspace,
-    cmd::Command,
+    Build, Crate, Toolchain, Workspace, WorkspaceBuilder,
+    cmd::{Command, CommandError, SandboxBuilder, SandboxImage},
     logging::{self, LogStorage},
 };
 use std::{
@@ -21,6 +22,78 @@ use std::{
     sync::Arc,
 };
 use tracing::{debug, error, info, info_span, instrument, log, warn};
+
+const USER_AGENT: &str = "docs.rs builder (https://github.com/rust-lang/docs.rs)";
+
+pub(crate) struct RustwideWorkspaceManager {
+    workspace: Workspace,
+    config: Arc<Config>,
+}
+
+impl RustwideWorkspaceManager {
+    pub(crate) fn new(config: Arc<Config>) -> Result<Self> {
+        let mut builder = WorkspaceBuilder::new(&config.rustwide_workspace, USER_AGENT)
+            .running_inside_docker(config.inside_docker);
+        if let Some(custom_image) = &config.docker_image {
+            let image = match SandboxImage::local(custom_image) {
+                Ok(i) => i,
+                Err(CommandError::SandboxImageMissing(_)) => SandboxImage::remote(custom_image)?,
+                Err(err) => return Err(err.into()),
+            };
+            builder = builder.sandbox_image(image);
+        }
+        if cfg!(test) {
+            builder = builder.fast_init(true);
+        }
+
+        let workspace = builder.init()?;
+        workspace.purge_all_build_dirs()?;
+        Ok(Self { workspace, config })
+    }
+
+    pub(crate) fn workspace(&self) -> &Workspace {
+        &self.workspace
+    }
+
+    pub(crate) fn reinitialize(&mut self) -> Result<()> {
+        *self = Self::new(self.config.clone())?;
+        Ok(())
+    }
+
+    pub(crate) fn purge_all_caches(&self) -> Result<()> {
+        self.workspace.purge_all_caches()?;
+        Ok(())
+    }
+
+    pub(crate) fn purge_all_build_dirs(&self) -> Result<()> {
+        self.workspace.purge_all_build_dirs()?;
+        Ok(())
+    }
+
+    pub(crate) fn prepare_sandbox(&self, limits: &Limits) -> SandboxBuilder {
+        SandboxBuilder::new()
+            .cpu_limit(self.config.build_cpu_limit.map(|limit| limit as f32))
+            .memory_limit(Some(limits.memory()))
+            .enable_networking(limits.networking())
+    }
+
+    pub(crate) fn build_crate<T, F>(
+        &self,
+        toolchain: &Toolchain,
+        krate: &Crate,
+        limits: &Limits,
+        build_dir_name: &str,
+        build_fn: F,
+    ) -> Result<T>
+    where
+        F: FnOnce(&Build) -> Result<T>,
+    {
+        let mut build_dir = self.workspace.build_dir(build_dir_name);
+        build_dir
+            .build(toolchain, krate, self.prepare_sandbox(limits))
+            .run(build_fn)
+    }
+}
 
 pub(crate) fn load_metadata_from_rustwide(
     workspace: &Workspace,

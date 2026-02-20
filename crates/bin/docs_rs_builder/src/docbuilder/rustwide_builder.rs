@@ -2,7 +2,8 @@ use crate::{
     Config,
     docbuilder::build_error::RustwideBuildError,
     docbuilder::rustwide_executor::{
-        BuildArtifactSink, RustwideBuildExecutor, load_metadata_from_rustwide,
+        BuildArtifactSink, RustwideBuildExecutor, RustwideWorkspaceManager,
+        load_metadata_from_rustwide,
     },
     metrics::BuilderMetrics,
     utils::copy::copy_dir_all,
@@ -31,11 +32,7 @@ use docs_rs_utils::{
 };
 use docsrs_metadata::{BuildTargets, DEFAULT_TARGETS, HOST_TARGET, Metadata};
 use regex::Regex;
-use rustwide::{
-    AlternativeRegistry, Crate, Toolchain, Workspace, WorkspaceBuilder,
-    cmd::{Command, CommandError, SandboxBuilder, SandboxImage},
-    toolchain::ToolchainError,
-};
+use rustwide::{AlternativeRegistry, Crate, Toolchain, cmd::Command, toolchain::ToolchainError};
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -45,7 +42,6 @@ use std::{
 };
 use tracing::{debug, error, info, info_span, instrument, warn};
 
-const USER_AGENT: &str = "docs.rs builder (https://github.com/rust-lang/docs.rs)";
 const COMPONENTS: &[&str] = &["llvm-tools-preview", "rustc-dev", "rustfmt"];
 static DUMMY_CRATE_NAME: LazyLock<KrateName> = LazyLock::new(|| "empty-library".parse().unwrap());
 const DUMMY_CRATE_VERSION: Version = Version::new(1, 0, 0);
@@ -67,27 +63,6 @@ async fn get_configured_toolchain(conn: &mut sqlx::PgConnection) -> Result<Toolc
     }
 }
 
-#[instrument(skip(config))]
-fn build_workspace(config: &Config) -> Result<Workspace> {
-    let mut builder = WorkspaceBuilder::new(&config.rustwide_workspace, USER_AGENT)
-        .running_inside_docker(config.inside_docker);
-    if let Some(custom_image) = &config.docker_image {
-        let image = match SandboxImage::local(custom_image) {
-            Ok(i) => i,
-            Err(CommandError::SandboxImageMissing(_)) => SandboxImage::remote(custom_image)?,
-            Err(err) => return Err(err.into()),
-        };
-        builder = builder.sandbox_image(image);
-    }
-    if cfg!(test) {
-        builder = builder.fast_init(true);
-    }
-
-    let workspace = builder.init()?;
-    workspace.purge_all_build_dirs()?;
-    Ok(workspace)
-}
-
 #[derive(Debug)]
 pub enum PackageKind<'a> {
     Local(&'a Path),
@@ -96,7 +71,7 @@ pub enum PackageKind<'a> {
 }
 
 pub struct RustwideBuilder {
-    workspace: Workspace,
+    workspace: RustwideWorkspaceManager,
     toolchain: Toolchain,
     runtime: Handle,
     config: Arc<Config>,
@@ -134,7 +109,7 @@ impl RustwideBuilder {
         })?;
 
         Ok(RustwideBuilder {
-            workspace: build_workspace(&config)?,
+            workspace: RustwideWorkspaceManager::new(config.clone())?,
             toolchain,
             config: config.clone(),
             db: context.pool()?.clone(),
@@ -153,19 +128,11 @@ impl RustwideBuilder {
         let interval = self.config.build_workspace_reinitialization_interval;
         if self.workspace_initialize_time.elapsed() >= interval {
             info!("start reinitialize workspace again");
-            self.workspace = build_workspace(&self.config)?;
+            self.workspace.reinitialize()?;
             self.workspace_initialize_time = Instant::now();
         }
 
         Ok(())
-    }
-
-    #[instrument(skip(self))]
-    fn prepare_sandbox(&self, limits: &Limits) -> SandboxBuilder {
-        SandboxBuilder::new()
-            .cpu_limit(self.config.build_cpu_limit.map(|limit| limit as f32))
-            .memory_limit(Some(limits.memory()))
-            .enable_networking(limits.networking())
     }
 
     pub fn purge_caches(&self) -> Result<()> {
@@ -223,7 +190,7 @@ impl RustwideBuilder {
         // we fake the rustc version and install from scratch every time since we can't detect
         // the already-installed rustc version.
         if self.toolchain.as_ci().is_some() {
-            self.toolchain.install(&self.workspace)?;
+            self.toolchain.install(self.workspace.workspace())?;
             self.add_essential_files()?;
             return Ok(true);
         }
@@ -236,7 +203,7 @@ impl RustwideBuilder {
             .map(|&t| t.to_string()) // &str has a specialized ToString impl, while &&str goes through Display
             .collect::<HashSet<_>>();
 
-        let installed_targets = match self.toolchain.installed_targets(&self.workspace) {
+        let installed_targets = match self.toolchain.installed_targets(self.workspace.workspace()) {
             Ok(targets) => targets,
             Err(err) => {
                 if let Some(&ToolchainError::NotInstalled) = err.downcast_ref::<ToolchainError>() {
@@ -261,21 +228,26 @@ impl RustwideBuilder {
         // and will not be reinstalled until explicitly requested by a crate.
         for target in installed_targets {
             if !targets_to_install.remove(&target) {
-                self.toolchain.remove_target(&self.workspace, &target)?;
+                self.toolchain
+                    .remove_target(self.workspace.workspace(), &target)?;
             }
         }
 
-        self.toolchain.install(&self.workspace)?;
+        self.toolchain.install(self.workspace.workspace())?;
 
         for target in &targets_to_install {
-            self.toolchain.add_target(&self.workspace, target)?;
+            self.toolchain
+                .add_target(self.workspace.workspace(), target)?;
         }
         // NOTE: rustup will automatically refuse to update the toolchain
         // if `rustfmt` is not available in the newer version
         // NOTE: this ignores the error so that you can still run a build without rustfmt.
         // This should only happen if you run a build for the first time when rustfmt isn't available.
         for component in COMPONENTS {
-            if let Err(err) = self.toolchain.add_component(&self.workspace, component) {
+            if let Err(err) = self
+                .toolchain
+                .add_component(self.workspace.workspace(), component)
+            {
                 warn!("failed to install {component}: {err}");
                 info!("continuing anyway, since this must be the first build");
             }
@@ -368,7 +340,7 @@ impl RustwideBuilder {
     /// for dist toolchains. Will error if run with a CI toolchain.
     fn detect_rustc_version(&self) -> Result<String> {
         info!("detecting rustc's version...");
-        let res = Command::new(&self.workspace, self.toolchain.rustc())
+        let res = Command::new(self.workspace.workspace(), self.toolchain.rustc())
             .args(&["--version"])
             .log_output(false)
             .run_capture()?;
@@ -412,15 +384,11 @@ impl RustwideBuilder {
         // which we don't do. Currently our separate builders use a separate rustwide workspace.
         self.workspace.purge_all_build_dirs()?;
 
-        let mut build_dir = self
-            .workspace
-            .build_dir(&format!("essential-files-{parsed_rustc_version}"));
-
         // This is an empty library crate that is supposed to always build.
         let krate = Crate::crates_io(DUMMY_CRATE_NAME.as_str(), &DUMMY_CRATE_VERSION.to_string());
-        krate.fetch(&self.workspace)?;
+        krate.fetch(self.workspace.workspace())?;
         let executor = RustwideBuildExecutor::new(
-            &self.workspace,
+            self.workspace.workspace(),
             &self.toolchain,
             &self.config,
             Arc::new(StorageArtifactSink {
@@ -429,9 +397,12 @@ impl RustwideBuilder {
             &rustc_version,
         );
 
-        build_dir
-            .build(&self.toolchain, &krate, self.prepare_sandbox(&limits))
-            .run(|build| {
+        self.workspace.build_crate(
+            &self.toolchain,
+            &krate,
+            &limits,
+            &format!("essential-files-{parsed_rustc_version}"),
+            |build| {
                 let metadata = Metadata::from_crate_root(build.host_source_dir())?;
 
                 let res = executor.execute_build(
@@ -477,17 +448,19 @@ impl RustwideBuilder {
                     set_config(&mut conn, ConfigName::RustcVersion, rustc_version.clone()).await
                 })?;
                 Ok(())
-            })?;
+            },
+        )?;
 
-        krate.purge_from_cache(&self.workspace)?;
+        krate.purge_from_cache(self.workspace.workspace())?;
         Ok(())
     }
 
     pub fn build_local_package(&mut self, path: &Path) -> Result<BuildPackageSummary> {
-        let metadata = load_metadata_from_rustwide(&self.workspace, &self.toolchain, path)
-            .map_err(|err| {
-                err.context(format!("failed to load local package {}", path.display()))
-            })?;
+        let metadata =
+            load_metadata_from_rustwide(self.workspace.workspace(), &self.toolchain, path)
+                .map_err(|err| {
+                    err.context(format!("failed to load local package {}", path.display()))
+                })?;
         let package = metadata.root();
         self.build_package(
             &package
@@ -609,8 +582,6 @@ impl RustwideBuilder {
         // which we don't do. Currently our separate builders use a separate rustwide workspace.
         info_span!("purge_all_build_dirs").in_scope(|| self.workspace.purge_all_build_dirs())?;
 
-        let mut build_dir = self.workspace.build_dir(&format!("{name}-{version}"));
-
         let is_local = matches!(kind, PackageKind::Local(_));
         let krate = {
             let _span = info_span!("krate.fetch").entered();
@@ -623,7 +594,7 @@ impl RustwideBuilder {
                     Crate::registry(AlternativeRegistry::new(registry), name.as_str(), &version)
                 }
             };
-            krate.fetch(&self.workspace)?;
+            krate.fetch(self.workspace.workspace())?;
             krate
         };
 
@@ -636,7 +607,7 @@ impl RustwideBuilder {
             debug!("adding sources into database");
             let temp_dir = tempfile::tempdir_in(&self.config.temp_dir)?;
 
-            krate.copy_source_to(&self.workspace, temp_dir.path())?;
+            krate.copy_source_to(self.workspace.workspace(), temp_dir.path())?;
 
             let (files_list, new_alg) = self.runtime.block_on(
                 self.storage
@@ -651,7 +622,7 @@ impl RustwideBuilder {
         };
         let rustc_version = self.rustc_version()?;
         let executor = RustwideBuildExecutor::new(
-            &self.workspace,
+            self.workspace.workspace(),
             &self.toolchain,
             &self.config,
             Arc::new(StorageArtifactSink {
@@ -660,9 +631,12 @@ impl RustwideBuilder {
             &rustc_version,
         );
 
-        let successful = build_dir
-            .build(&self.toolchain, &krate, self.prepare_sandbox(&limits))
-            .run(|build| {
+        let successful = self.workspace.build_crate(
+            &self.toolchain,
+            &krate,
+            &limits,
+            &format!("{name}-{version}"),
+            |build| {
                 // NOTE: rustwide will run `copy_source_to` again when preparing the call to this
                 // closure.
                 // This could be optimized, but only with more rustwide changes.
@@ -705,14 +679,14 @@ impl RustwideBuilder {
                     std::fs::remove_file(cargo_lock)?;
                     {
                         let _span = info_span!("cargo_generate_lockfile").entered();
-                        Command::new(&self.workspace, self.toolchain.cargo())
+                        Command::new(self.workspace.workspace(), self.toolchain.cargo())
                             .cd(build.host_source_dir())
                             .args(&["generate-lockfile"])
                             .run_capture()?;
                     }
                     {
                         let _span = info_span!("cargo fetch --locked").entered();
-                        Command::new(&self.workspace, self.toolchain.cargo())
+                        Command::new(self.workspace.workspace(), self.toolchain.cargo())
                             .cd(build.host_source_dir())
                             .args(&["fetch", "--locked"])
                             .run_capture()?;
@@ -924,11 +898,12 @@ impl RustwideBuilder {
                 });
 
                 Ok(successful)
-            })?;
+            },
+        )?;
 
         {
             let _span = info_span!("purge_from_cache").entered();
-            krate.purge_from_cache(&self.workspace)?;
+            krate.purge_from_cache(self.workspace.workspace())?;
             local_storage.close()?;
         }
         Ok(successful)
