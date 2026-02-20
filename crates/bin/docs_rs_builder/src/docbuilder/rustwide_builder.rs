@@ -744,7 +744,7 @@ impl RustwideBuilder {
                 let mut target_build_logs = HashMap::new();
                 let documentation_size = if has_docs {
                     debug!("adding documentation for the default target to the database");
-                    executor.copy_docs(
+                    self.copy_docs(
                         &build.host_target_dir(),
                         local_storage.path(),
                         default_target,
@@ -757,7 +757,8 @@ impl RustwideBuilder {
                     // Limit the number of targets so that no one can try to build all 200000 possible targets
                     for target in other_targets.into_iter().take(limits.targets()) {
                         debug!("building package {} {} for {}", name, version, target);
-                        let target_res = executor.build_target(
+                        let target_res = self.build_target(
+                            &executor,
                             build_id,
                             name,
                             version,
@@ -931,6 +932,71 @@ impl RustwideBuilder {
             local_storage.close()?;
         }
         Ok(successful)
+    }
+
+    #[instrument(skip(self, executor, build))]
+    #[allow(clippy::too_many_arguments)]
+    fn build_target(
+        &self,
+        executor: &RustwideBuildExecutor<'_>,
+        build_id: BuildId,
+        name: &KrateName,
+        version: &Version,
+        target: &str,
+        build: &rustwide::Build,
+        limits: &Limits,
+        local_storage: &Path,
+        successful_targets: &mut Vec<String>,
+        metadata: &Metadata,
+        collect_metrics: bool,
+    ) -> Result<crate::docbuilder::rustwide_executor::FullBuildResult> {
+        let target_res = executor.execute_build(
+            build_id,
+            name,
+            version,
+            target,
+            false,
+            build,
+            limits,
+            metadata,
+            false,
+            collect_metrics,
+        )?;
+        if target_res.successful() {
+            // Cargo is not giving any error and not generating documentation of some crates
+            // when we use target compile options. Check documentation exists before
+            // adding target to successfully_targets.
+            if build.host_target_dir().join(target).join("doc").is_dir() {
+                debug!("adding documentation for target {} to the database", target);
+                self.copy_docs(&build.host_target_dir(), local_storage, target, false)?;
+                successful_targets.push(target.to_string());
+            }
+        }
+        Ok(target_res)
+    }
+
+    #[instrument(skip(self))]
+    fn copy_docs(
+        &self,
+        target_dir: &Path,
+        local_storage: &Path,
+        target: &str,
+        is_default_target: bool,
+    ) -> Result<()> {
+        let source = target_dir.join(target).join("doc");
+
+        let mut dest = local_storage.to_path_buf();
+        // only add target name to destination directory when we are copying a non-default target.
+        // this is allowing us to host documents in the root of the crate documentation directory.
+        // for example winapi will be available in docs.rs/winapi/$version/winapi/ for its
+        // default target: x86_64-pc-windows-msvc. But since it will be built under
+        // target/x86_64-pc-windows-msvc we still need target in this function.
+        if !is_default_target {
+            dest = dest.join(target);
+        }
+
+        info!("copy {} to {}", source.display(), dest.display());
+        copy_dir_all(source, dest).map_err(Into::into)
     }
 
     fn get_repo(&self, metadata: &MetadataPackage) -> Result<Option<i32>> {
