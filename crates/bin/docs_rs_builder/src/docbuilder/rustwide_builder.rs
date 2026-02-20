@@ -1,7 +1,9 @@
 use crate::{
     Config,
     docbuilder::build_error::RustwideBuildError,
-    docbuilder::rustwide_executor::{RustwideBuildExecutor, load_metadata_from_rustwide},
+    docbuilder::rustwide_executor::{
+        BuildArtifactSink, RustwideBuildExecutor, load_metadata_from_rustwide,
+    },
     metrics::BuilderMetrics,
     utils::copy::copy_dir_all,
 };
@@ -105,6 +107,22 @@ pub struct RustwideBuilder {
     repository_stats: Arc<RepositoryStatsUpdater>,
     workspace_initialize_time: Instant,
     pub(crate) builder_metrics: Arc<BuilderMetrics>,
+}
+
+struct StorageArtifactSink {
+    storage: Arc<Storage>,
+}
+
+impl BuildArtifactSink for StorageArtifactSink {
+    fn store_text(&self, path: &str, content: String) -> Result<()> {
+        self.storage.store_one(path, content)?;
+        Ok(())
+    }
+
+    fn store_bytes(&self, path: &str, content: Vec<u8>) -> Result<()> {
+        self.storage.store_one_uncompressed(path, content)?;
+        Ok(())
+    }
 }
 
 impl RustwideBuilder {
@@ -405,7 +423,9 @@ impl RustwideBuilder {
             &self.workspace,
             &self.toolchain,
             &self.config,
-            self.blocking_storage.clone(),
+            Arc::new(StorageArtifactSink {
+                storage: self.blocking_storage.clone(),
+            }),
             &rustc_version,
         );
 
@@ -634,7 +654,9 @@ impl RustwideBuilder {
             &self.workspace,
             &self.toolchain,
             &self.config,
-            self.blocking_storage.clone(),
+            Arc::new(StorageArtifactSink {
+                storage: self.blocking_storage.clone(),
+            }),
             &rustc_version,
         );
 

@@ -5,7 +5,7 @@ use docs_rs_rustdoc_json::{
     RUSTDOC_JSON_COMPRESSION_ALGORITHMS, RustdocJsonFormatVersion,
     read_format_version_from_rustdoc_json,
 };
-use docs_rs_storage::{Storage, compress, get_file_list, rustdoc_json_path};
+use docs_rs_storage::{compress, get_file_list, rustdoc_json_path};
 use docs_rs_types::{BuildId, KrateName, Version, doc_coverage::DocCoverage};
 use docs_rs_utils::rustc_version::parse_rustc_version;
 use docsrs_metadata::{HOST_TARGET, Metadata};
@@ -38,11 +38,23 @@ pub(crate) fn load_metadata_from_rustwide(
     CargoMetadata::load_from_metadata(metadata)
 }
 
+pub(crate) trait BuildArtifactSink: Send + Sync {
+    fn store_text(&self, _path: &str, _content: String) -> Result<()> {
+        Ok(())
+    }
+
+    fn store_bytes(&self, _path: &str, _content: Vec<u8>) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl BuildArtifactSink for () {}
+
 pub(crate) struct RustwideBuildExecutor<'a> {
     workspace: &'a Workspace,
     toolchain: &'a Toolchain,
     config: &'a Config,
-    blocking_storage: Arc<Storage>,
+    artifact_sink: Arc<dyn BuildArtifactSink>,
     rustc_version: &'a str,
 }
 
@@ -51,14 +63,14 @@ impl<'a> RustwideBuildExecutor<'a> {
         workspace: &'a Workspace,
         toolchain: &'a Toolchain,
         config: &'a Config,
-        blocking_storage: Arc<Storage>,
+        artifact_sink: Arc<dyn BuildArtifactSink>,
         rustc_version: &'a str,
     ) -> Self {
         Self {
             workspace,
             toolchain,
             config,
-            blocking_storage,
+            artifact_sink,
             rustc_version,
         }
     }
@@ -136,9 +148,9 @@ impl<'a> RustwideBuildExecutor<'a> {
         {
             let _span = info_span!("store_json_build_logs").entered();
             let build_log_path = format!("build-logs/{build_id}/{target}_json.txt");
-            self.blocking_storage
-                .store_one(build_log_path, storage.to_string())
-                .context("storing build log on S3")?;
+            self.artifact_sink
+                .store_text(&build_log_path, storage.to_string())
+                .context("storing build log in artifact sink")?;
         }
 
         if !successful {
@@ -202,8 +214,8 @@ impl<'a> RustwideBuildExecutor<'a> {
                     info_span!("store_json", %format_version, algorithm=%alg, target_path=%path)
                         .entered();
 
-                self.blocking_storage
-                    .store_one_uncompressed(&path, compressed_json.clone())?;
+                self.artifact_sink
+                    .store_bytes(&path, compressed_json.clone())?;
             }
         }
 
