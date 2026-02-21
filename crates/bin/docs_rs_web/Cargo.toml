@@ -59,7 +59,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 slug = { workspace = true }
 sqlx = { workspace = true }
-syntect = { version = "5.0.0", default-features = false, features = ["parsing", "html", "dump-load", "regex-onig"] }
+syntect = { version = "5.0.0", default-features = false, features = ["parsing", "html", "dump-load", "regex-onig", "metadata", "default-syntaxes"] }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { version = "0.7.15", default-features = false, features = ["io"] }

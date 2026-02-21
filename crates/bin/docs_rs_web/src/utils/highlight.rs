@@ -17,7 +17,8 @@ pub struct LimitsExceeded;
 static SYNTAXES: LazyLock<SyntaxSet> = LazyLock::new(|| {
     static SYNTAX_DATA: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/syntect.packdump"));
 
-    let syntaxes: SyntaxSet = syntect::dumps::from_uncompressed_data(SYNTAX_DATA).unwrap();
+    // let syntaxes: SyntaxSet = syntect::dumps::from_uncompressed_data(SYNTAX_DATA).unwrap();
+    let syntaxes = SyntaxSet::load_defaults_nonewlines();
 
     let names = syntaxes
         .syntaxes()
@@ -92,6 +93,9 @@ pub fn with_lang(lang: Option<&str>, code: &str, default: Option<&str>) -> Strin
 
 #[cfg(test)]
 mod tests {
+    use crate::utils::highlight::SYNTAXES;
+    use pretty_assertions::assert_eq;
+
     use super::{
         LimitsExceeded, PER_LINE_BYTE_LENGTH_LIMIT, TOTAL_CODE_BYTE_LENGTH_LIMIT, select_syntax,
         try_with_lang, with_lang,
@@ -134,5 +138,109 @@ mod tests {
         let text = "<p>\n".to_string() + "aa".repeat(PER_LINE_BYTE_LENGTH_LIMIT).as_str();
         let highlighted = with_lang(Some("toml"), &text, None);
         assert!(highlighted.starts_with("&lt;p&gt;\n"));
+    }
+
+    #[test]
+    fn all_discovered_syntaxes() {
+        let mut names = SYNTAXES
+            .syntaxes()
+            .iter()
+            .map(|s| &s.name)
+            .collect::<Vec<_>>();
+        names.sort();
+
+        assert_eq!(
+            vec![
+                "ASP",
+                "ActionScript",
+                "AppleScript",
+                "Batch File",
+                "BibTeX",
+                "Bourne Again Shell (bash)",
+                "C",
+                "C#",
+                "C++",
+                "CSS",
+                "Cargo Build Results",
+                "Clojure",
+                "D",
+                "DMD Output",
+                "Diff",
+                "Erlang",
+                "Git Attributes",
+                "Git Commit",
+                "Git Common",
+                "Git Config",
+                "Git Ignore",
+                "Git Link",
+                "Git Log",
+                "Git Mailmap",
+                "Git Rebase Todo",
+                "Go",
+                "Graphviz (DOT)",
+                "Groovy",
+                "HTML",
+                "HTML (ASP)",
+                "HTML (Erlang)",
+                "HTML (Rails)",
+                "HTML (Tcl)",
+                "Haskell",
+                "JSON",
+                "Java",
+                "Java Properties",
+                "Java Server Page (JSP)",
+                "Javadoc",
+                "JavaScript",
+                "JavaScript (Babel)",
+                "JavaScript (Rails)",
+                "LaTeX",
+                "LaTeX Log",
+                "Lisp",
+                "Literate Haskell",
+                "Lua",
+                "MATLAB",
+                "Make Output",
+                "Makefile",
+                "Markdown",
+                "MultiMarkdown",
+                "NAnt Build File",
+                "OCaml",
+                "OCamllex",
+                "OCamlyacc",
+                "Objective-C",
+                "Objective-C++",
+                "PHP",
+                "PHP Source",
+                "Pascal",
+                "Perl",
+                "Plain Text",
+                "Python",
+                "R",
+                "R Console",
+                "Rd (R Documentation)",
+                "Regular Expression",
+                "Regular Expressions (Javascript)",
+                "Regular Expressions (PHP)",
+                "Regular Expressions (Python)",
+                "Ruby",
+                "Ruby Haml",
+                "Ruby on Rails",
+                "Rust",
+                "SQL",
+                "SQL (Rails)",
+                "Scala",
+                "Shell-Unix-Generic",
+                "TOML",
+                "Tcl",
+                "TeX",
+                "Textile",
+                "XML",
+                "YAML",
+                "camlp4",
+                "commands-builtin-shell-bash",
+                "reStructuredText",
+            ],
+            names,
+        );
     }
 }
