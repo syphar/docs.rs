@@ -17,6 +17,10 @@ pub struct LimitsExceeded;
 static SYNTAXES: LazyLock<SyntaxSet> = LazyLock::new(|| {
     let mut builder = SyntaxSetBuilder::new();
 
+    for syntax in two_face::syntax::extra_newlines().into_builder().syntaxes() {
+        builder.add(syntax.clone());
+    }
+
     // static SYNTAX_DATA: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/syntect.packdump"));
 
     // for syntax in syntect::dumps::from_uncompressed_data::<SyntaxSet>(SYNTAX_DATA)
@@ -27,19 +31,12 @@ static SYNTAXES: LazyLock<SyntaxSet> = LazyLock::new(|| {
     //     builder.add(syntax.clone());
     // }
 
-    for syntax in SyntaxSet::load_defaults_nonewlines()
+    for syntax in SyntaxSet::load_defaults_newlines()
         .into_builder()
         .syntaxes()
     {
         builder.add(syntax.clone());
     }
-
-    // for syntax in two_face::syntax::extra_no_newlines()
-    //     .into_builder()
-    //     .syntaxes()
-    // {
-    //     builder.add(syntax.clone());
-    // }
 
     let syntaxes = builder.build();
 
