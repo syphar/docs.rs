@@ -15,10 +15,16 @@ const PER_LINE_BYTE_LENGTH_LIMIT: usize = 512;
 pub struct LimitsExceeded;
 
 static SYNTAXES: LazyLock<SyntaxSet> = LazyLock::new(|| {
-    static SYNTAX_DATA: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/syntect.packdump"));
+    let mut builder = SyntaxSet::load_defaults_nonewlines().into_builder();
 
-    // let syntaxes: SyntaxSet = syntect::dumps::from_uncompressed_data(SYNTAX_DATA).unwrap();
-    let syntaxes = SyntaxSet::load_defaults_nonewlines();
+    for syntax in two_face::syntax::extra_no_newlines()
+        .into_builder()
+        .syntaxes()
+    {
+        builder.add(syntax.clone());
+    }
+
+    let syntaxes = builder.build();
 
     let names = syntaxes
         .syntaxes()
