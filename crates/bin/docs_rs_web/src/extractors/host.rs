@@ -15,15 +15,11 @@ const X_FORWARDED_HOST: HeaderName = HeaderName::from_static("x-forwarded-host")
 /// Use `Option<RequestedHost>` when the header is optional.
 /// Use `RequestedHost` when the header is required.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RequestedHost(String);
+pub(crate) struct RequestedHost(Authority);
 
 impl RequestedHost {
-    pub(crate) fn as_str(&self) -> &str {
-        &self.0
-    }
-
     pub(crate) fn uses_subdomain(&self) -> bool {
-        host_uses_subdomain(self.as_str())
+        host_uses_subdomain(self.0.host())
     }
 
     pub(crate) fn from_header_value(header: &HeaderValue) -> Option<Self> {
@@ -32,7 +28,8 @@ impl RequestedHost {
             .ok()
             .map(str::trim)
             .filter(|host| !host.is_empty())
-            .map(|host| Self(host.to_string()))
+            .and_then(parse_authority)
+            .map(Self)
     }
 
     fn from_headers(headers: &HeaderMap) -> Option<Self> {
@@ -49,7 +46,8 @@ impl RequestedHost {
             .and_then(|value| value.split(',').next())
             .map(str::trim)
             .filter(|host| !host.is_empty())
-            .map(|host| Self(host.to_string()))
+            .and_then(parse_authority)
+            .map(Self)
     }
 }
 
@@ -83,13 +81,6 @@ where
 }
 
 fn host_uses_subdomain(host: &str) -> bool {
-    let host = host.trim().trim_end_matches('.');
-    let authority = match host.parse::<Authority>() {
-        Ok(authority) => authority,
-        Err(_) => return false,
-    };
-    let host = authority.host();
-
     if host.eq_ignore_ascii_case("localhost") || host_as_ip_addr(host).is_some() {
         return false;
     }
@@ -102,6 +93,10 @@ fn host_uses_subdomain(host: &str) -> bool {
 
 fn host_as_ip_addr(host: &str) -> Option<IpAddr> {
     host.trim_matches(['[', ']']).parse::<IpAddr>().ok()
+}
+
+fn parse_authority(host: &str) -> Option<Authority> {
+    host.trim_end_matches('.').parse::<Authority>().ok()
 }
 
 #[cfg(test)]
@@ -127,7 +122,7 @@ mod tests {
         headers.insert(HOST, HeaderValue::from_static("docs.rs"));
 
         let extracted = RequestedHost::from_headers(&headers).unwrap();
-        assert_eq!(extracted.as_str(), "docs.rs");
+        assert_eq!(extracted.0.as_str(), "docs.rs");
     }
 
     #[test]
@@ -140,6 +135,6 @@ mod tests {
         );
 
         let extracted = RequestedHost::from_headers(&headers).unwrap();
-        assert_eq!(extracted.as_str(), "crate.docs.rs");
+        assert_eq!(extracted.0.as_str(), "crate.docs.rs");
     }
 }
