@@ -19,7 +19,10 @@ use axum::{
     routing::{MethodRouter, get, post},
 };
 use axum_extra::routing::RouterExt;
+use http::header::HOST;
 use std::convert::Infallible;
+use std::net::IpAddr;
+use tower::ServiceExt as _;
 use tracing::{debug, instrument};
 
 const INTERNAL_PREFIXES: &[&str] = &["-", "about", "crate", "releases", "sitemap.xml"];
@@ -101,6 +104,25 @@ fn cached_permanent_redirect(uri: &str) -> impl IntoResponse {
 }
 
 pub(crate) fn build_axum_routes() -> Result<AxumRouter> {
+    let main_router = build_main_axum_routes()?;
+    let subdomain_router = build_subdomain_axum_routes()?;
+
+    Ok(AxumRouter::new().fallback({
+        move |request| {
+            let main_router = main_router.clone();
+            let subdomain_router = subdomain_router.clone();
+            async move { dispatch_router(request, main_router, subdomain_router).await }
+        }
+    }))
+}
+
+fn build_subdomain_axum_routes() -> Result<AxumRouter> {
+    // Keep this separate from the main router so we can evolve subdomain-only behavior
+    // without changing the non-subdomain route tree.
+    build_main_axum_routes()
+}
+
+fn build_main_axum_routes() -> Result<AxumRouter> {
     // hint for naming axum routes:
     // when routes overlap, the route parameters at the same position
     // have to use the same name:
@@ -350,6 +372,53 @@ pub(crate) fn build_axum_routes() -> Result<AxumRouter> {
         .fallback(fallback))
 }
 
+async fn dispatch_router(
+    request: AxumHttpRequest,
+    main_router: AxumRouter,
+    subdomain_router: AxumRouter,
+) -> axum::response::Response {
+    if request_uses_subdomain(&request) {
+        subdomain_router
+            .oneshot(request)
+            .await
+            .expect("axum router service is infallible")
+    } else {
+        main_router
+            .oneshot(request)
+            .await
+            .expect("axum router service is infallible")
+    }
+}
+
+fn request_uses_subdomain(request: &AxumHttpRequest) -> bool {
+    request
+        .headers()
+        .get(HOST)
+        .and_then(|value| value.to_str().ok())
+        .map(host_uses_subdomain)
+        .unwrap_or(false)
+}
+
+fn host_uses_subdomain(host: &str) -> bool {
+    let host = host_without_port(host.trim()).trim_end_matches('.');
+    if host.eq_ignore_ascii_case("localhost") || host.parse::<IpAddr>().is_ok() {
+        return false;
+    }
+
+    host.split('.')
+        .filter(|segment| !segment.is_empty())
+        .count()
+        >= 3
+}
+
+fn host_without_port(host: &str) -> &str {
+    if let Some(rest) = host.strip_prefix('[') {
+        return rest.split_once(']').map(|(ip, _)| ip).unwrap_or(host);
+    }
+
+    host.split_once(':').map(|(name, _)| name).unwrap_or(host)
+}
+
 async fn fallback() -> impl IntoResponse {
     AxumNope::ResourceNotFound
 }
@@ -362,6 +431,8 @@ mod tests {
         async_wrapper,
     };
     use anyhow::Result;
+    use axum::{Router as AxumRouter, body::Body, routing::get};
+    use http::{Request, header::HOST};
     use reqwest::StatusCode;
     use test_case::test_case;
 
@@ -424,5 +495,44 @@ mod tests {
             );
             Ok(())
         })
+    }
+
+    #[test_case("docs.rs", false)]
+    #[test_case("foo.docs.rs", true)]
+    #[test_case("foo.docs.rs:443", true)]
+    #[test_case("localhost", false)]
+    #[test_case("127.0.0.1:3000", false)]
+    fn test_host_uses_subdomain(host: &str, expected: bool) {
+        assert_eq!(super::host_uses_subdomain(host), expected);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn subdomain_requests_use_subdomain_router() {
+        let main_router = AxumRouter::new().route("/", get(|| async { "main" }));
+        let subdomain_router = AxumRouter::new().route("/", get(|| async { "subdomain" }));
+        let request = Request::builder()
+            .uri("/")
+            .header(HOST, "crate.docs.rs")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = super::dispatch_router(request, main_router, subdomain_router).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.text().await.unwrap(), "subdomain");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn root_domain_requests_use_main_router() {
+        let main_router = AxumRouter::new().route("/", get(|| async { "main" }));
+        let subdomain_router = AxumRouter::new().route("/", get(|| async { "subdomain" }));
+        let request = Request::builder()
+            .uri("/")
+            .header(HOST, "docs.rs")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = super::dispatch_router(request, main_router, subdomain_router).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.text().await.unwrap(), "main");
     }
 }
