@@ -1,6 +1,7 @@
 use crate::{
     cache::CachePolicy,
     error::AxumNope,
+    extractors::RequestedHost,
     handlers::{
         about, build_details, builds, crate_details, features, releases, rustdoc, sitemap, source,
         statics::{build_static_router, static_root_dir},
@@ -11,7 +12,7 @@ use crate::{
 use anyhow::Result;
 use askama::Template;
 use axum::{
-    Extension, Router as AxumRouter,
+    Extension, RequestPartsExt as _, Router as AxumRouter,
     extract::Request as AxumHttpRequest,
     handler::Handler as AxumHandler,
     middleware::{self, Next},
@@ -19,9 +20,7 @@ use axum::{
     routing::{MethodRouter, get, post},
 };
 use axum_extra::routing::RouterExt;
-use http::header::HOST;
 use std::convert::Infallible;
-use std::net::IpAddr;
 use tower::ServiceExt as _;
 use tracing::{debug, instrument};
 
@@ -377,7 +376,15 @@ async fn dispatch_router(
     main_router: AxumRouter,
     subdomain_router: AxumRouter,
 ) -> axum::response::Response {
-    if request_uses_subdomain(&request) {
+    let (mut parts, body) = request.into_parts();
+    let uses_subdomain = parts
+        .extract::<Option<RequestedHost>>()
+        .await
+        .expect("infallible extractor")
+        .is_some_and(|host| host.uses_subdomain());
+    let request = AxumHttpRequest::from_parts(parts, body);
+
+    if uses_subdomain {
         subdomain_router
             .oneshot(request)
             .await
@@ -388,35 +395,6 @@ async fn dispatch_router(
             .await
             .expect("axum router service is infallible")
     }
-}
-
-fn request_uses_subdomain(request: &AxumHttpRequest) -> bool {
-    request
-        .headers()
-        .get(HOST)
-        .and_then(|value| value.to_str().ok())
-        .map(host_uses_subdomain)
-        .unwrap_or(false)
-}
-
-fn host_uses_subdomain(host: &str) -> bool {
-    let host = host_without_port(host.trim()).trim_end_matches('.');
-    if host.eq_ignore_ascii_case("localhost") || host.parse::<IpAddr>().is_ok() {
-        return false;
-    }
-
-    host.split('.')
-        .filter(|segment| !segment.is_empty())
-        .count()
-        >= 3
-}
-
-fn host_without_port(host: &str) -> &str {
-    if let Some(rest) = host.strip_prefix('[') {
-        return rest.split_once(']').map(|(ip, _)| ip).unwrap_or(host);
-    }
-
-    host.split_once(':').map(|(name, _)| name).unwrap_or(host)
 }
 
 async fn fallback() -> impl IntoResponse {
@@ -495,15 +473,6 @@ mod tests {
             );
             Ok(())
         })
-    }
-
-    #[test_case("docs.rs", false)]
-    #[test_case("foo.docs.rs", true)]
-    #[test_case("foo.docs.rs:443", true)]
-    #[test_case("localhost", false)]
-    #[test_case("127.0.0.1:3000", false)]
-    fn test_host_uses_subdomain(host: &str, expected: bool) {
-        assert_eq!(super::host_uses_subdomain(host), expected);
     }
 
     #[tokio::test(flavor = "multi_thread")]
