@@ -3,9 +3,11 @@ use anyhow::anyhow;
 use axum::{
     RequestPartsExt,
     extract::{FromRequestParts, OptionalFromRequestParts},
-    http::{HeaderValue, header::HOST, request::Parts},
+    http::{HeaderMap, HeaderName, HeaderValue, header::HOST, request::Parts},
 };
 use std::{convert::Infallible, net::IpAddr};
+
+const X_FORWARDED_HOST: HeaderName = HeaderName::from_static("x-forwarded-host");
 
 /// Extractor for the HTTP Host header.
 ///
@@ -27,6 +29,23 @@ impl RequestedHost {
         header
             .to_str()
             .ok()
+            .map(str::trim)
+            .filter(|host| !host.is_empty())
+            .map(|host| Self(host.to_string()))
+    }
+
+    fn from_headers(headers: &HeaderMap) -> Option<Self> {
+        headers
+            .get(&X_FORWARDED_HOST)
+            .and_then(Self::from_forwarded_header_value)
+            .or_else(|| headers.get(HOST).and_then(Self::from_header_value))
+    }
+
+    fn from_forwarded_header_value(header: &HeaderValue) -> Option<Self> {
+        header
+            .to_str()
+            .ok()
+            .and_then(|value| value.split(',').next())
             .map(str::trim)
             .filter(|host| !host.is_empty())
             .map(|host| Self(host.to_string()))
@@ -58,7 +77,7 @@ where
         parts: &mut Parts,
         _state: &S,
     ) -> Result<Option<Self>, Self::Rejection> {
-        Ok(parts.headers.get(HOST).and_then(Self::from_header_value))
+        Ok(Self::from_headers(&parts.headers))
     }
 }
 
@@ -85,6 +104,7 @@ fn host_without_port(host: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use http::HeaderMap;
     use test_case::test_case;
 
     #[test_case("docs.rs", false)]
@@ -96,5 +116,27 @@ mod tests {
         let header = HeaderValue::from_str(host).unwrap();
         let host = RequestedHost::from_header_value(&header).unwrap();
         assert_eq!(host.uses_subdomain(), expected);
+    }
+
+    #[test]
+    fn takes_host_header_when_forwarded_host_missing() {
+        let mut headers = HeaderMap::new();
+        headers.insert(HOST, HeaderValue::from_static("docs.rs"));
+
+        let extracted = RequestedHost::from_headers(&headers).unwrap();
+        assert_eq!(extracted.as_str(), "docs.rs");
+    }
+
+    #[test]
+    fn prefers_x_forwarded_host_over_host() {
+        let mut headers = HeaderMap::new();
+        headers.insert(HOST, HeaderValue::from_static("docs.rs"));
+        headers.insert(
+            &X_FORWARDED_HOST,
+            HeaderValue::from_static("crate.docs.rs, docs.rs"),
+        );
+
+        let extracted = RequestedHost::from_headers(&headers).unwrap();
+        assert_eq!(extracted.as_str(), "crate.docs.rs");
     }
 }
