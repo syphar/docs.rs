@@ -377,11 +377,10 @@ async fn dispatch_router(
     subdomain_router: AxumRouter,
 ) -> axum::response::Response {
     let (mut parts, body) = request.into_parts();
-    let uses_subdomain = parts
-        .extract::<Option<RequestedHost>>()
-        .await
-        .expect("infallible extractor")
-        .is_some_and(|host| host.uses_subdomain());
+    let uses_subdomain = match parts.extract::<Option<RequestedHost>>().await {
+        Ok(host) => host.is_some_and(|host| host.uses_subdomain()),
+        Err(err) => return err.into_response(),
+    };
     let request = AxumHttpRequest::from_parts(parts, body);
 
     if uses_subdomain {
@@ -503,5 +502,19 @@ mod tests {
         let response = super::dispatch_router(request, main_router, subdomain_router).await;
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.text().await.unwrap(), "main");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn invalid_host_is_bad_request() {
+        let main_router = AxumRouter::new().route("/", get(|| async { "main" }));
+        let subdomain_router = AxumRouter::new().route("/", get(|| async { "subdomain" }));
+        let request = Request::builder()
+            .uri("/")
+            .header(HOST, "bad/host")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = super::dispatch_router(request, main_router, subdomain_router).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }
