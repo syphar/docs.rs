@@ -43,12 +43,14 @@ impl RequestedHost {
             .to_str()
             .context("invalid x-forwarded-host header")
             .map_err(AxumNope::BadRequest)?;
-        let host = value
+        let Some(host) = value
             .split(',')
             .next()
             .map(str::trim)
             .filter(|host| !host.is_empty())
-            .ok_or_else(|| AxumNope::BadRequest(anyhow!("invalid x-forwarded-host header")))?;
+        else {
+            return Ok(None);
+        };
 
         parse_authority(host)
             .context("invalid x-forwarded-host header")
@@ -115,9 +117,7 @@ fn parse_host_header_value(
         .map_err(AxumNope::BadRequest)?
         .trim();
     if host.is_empty() {
-        return Err(AxumNope::BadRequest(anyhow!(
-            "invalid {header_name} header"
-        )));
+        return Ok(None);
     }
 
     parse_authority(host)
@@ -175,11 +175,28 @@ mod tests {
     }
 
     #[test]
+    fn empty_host_header_is_none() {
+        let mut headers = HeaderMap::new();
+        headers.insert(HOST, HeaderValue::from_static(""));
+
+        assert!(RequestedHost::from_headers(&headers).unwrap().is_none());
+    }
+
+    #[test]
     fn invalid_forwarded_host_header_is_rejected() {
         let mut headers = HeaderMap::new();
         headers.insert(HOST, HeaderValue::from_static("docs.rs"));
         headers.insert(&X_FORWARDED_HOST, HeaderValue::from_static("bad/host"));
 
         assert!(RequestedHost::from_headers(&headers).is_err());
+    }
+
+    #[test]
+    fn empty_forwarded_host_header_is_none() {
+        let mut headers = HeaderMap::new();
+        headers.insert(HOST, HeaderValue::from_static("docs.rs"));
+        headers.insert(&X_FORWARDED_HOST, HeaderValue::from_static(""));
+
+        assert!(RequestedHost::from_headers(&headers).unwrap().is_none());
     }
 }
