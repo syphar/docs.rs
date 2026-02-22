@@ -5,6 +5,7 @@ use axum::{
     extract::{FromRequestParts, OptionalFromRequestParts},
     http::{HeaderMap, HeaderName, HeaderValue, header::HOST, request::Parts},
 };
+use http::uri::Authority;
 use std::{convert::Infallible, net::IpAddr};
 
 const X_FORWARDED_HOST: HeaderName = HeaderName::from_static("x-forwarded-host");
@@ -82,8 +83,14 @@ where
 }
 
 fn host_uses_subdomain(host: &str) -> bool {
-    let host = host_without_port(host.trim()).trim_end_matches('.');
-    if host.eq_ignore_ascii_case("localhost") || host.parse::<IpAddr>().is_ok() {
+    let host = host.trim().trim_end_matches('.');
+    let authority = match host.parse::<Authority>() {
+        Ok(authority) => authority,
+        Err(_) => return false,
+    };
+    let host = authority.host();
+
+    if host.eq_ignore_ascii_case("localhost") || host_as_ip_addr(host).is_some() {
         return false;
     }
 
@@ -93,12 +100,8 @@ fn host_uses_subdomain(host: &str) -> bool {
         >= 3
 }
 
-fn host_without_port(host: &str) -> &str {
-    if let Some(rest) = host.strip_prefix('[') {
-        return rest.split_once(']').map(|(ip, _)| ip).unwrap_or(host);
-    }
-
-    host.split_once(':').map(|(name, _)| name).unwrap_or(host)
+fn host_as_ip_addr(host: &str) -> Option<IpAddr> {
+    host.trim_matches(['[', ']']).parse::<IpAddr>().ok()
 }
 
 #[cfg(test)]
