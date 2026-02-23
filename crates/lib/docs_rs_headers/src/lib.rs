@@ -8,6 +8,7 @@ mod testing;
 
 pub use canonical_url::CanonicalUrl;
 pub use etag::{ETagComputer, compute_etag};
+pub use forwarded_host::{X_FORWARDED_HOST, XForwardedHost};
 pub use headers::{ETag, Host};
 pub use if_none_match::IfNoneMatch;
 pub use surrogate_key::{SURROGATE_KEY, SurrogateKey, SurrogateKeys};
