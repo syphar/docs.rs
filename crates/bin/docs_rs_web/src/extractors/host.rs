@@ -3,60 +3,59 @@ use anyhow::{Context as _, anyhow};
 use axum::{
     RequestPartsExt,
     extract::{FromRequestParts, OptionalFromRequestParts},
-    http::{HeaderMap, HeaderName, HeaderValue, header::HOST, request::Parts},
+    http::{HeaderMap, request::Parts},
 };
-use http::uri::{Authority, InvalidUri};
+use axum_extra::headers::HeaderMapExt;
+use docs_rs_headers::{Host, X_FORWARDED_HOST, XForwardedHost};
+use http::header::HOST;
 use std::net::IpAddr;
-
-const X_FORWARDED_HOST: HeaderName = HeaderName::from_static("x-forwarded-host");
-
-// FIXME: use typed `headers::Host`, write our own `headers::XForwardedHost`
 
 /// Extractor for the HTTP Host header.
 ///
 /// Use `Option<RequestedHost>` when the header is optional.
 /// Use `RequestedHost` when the header is required.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RequestedHost(Authority);
+pub(crate) struct RequestedHost(String);
 
 impl RequestedHost {
-    pub(crate) fn uses_subdomain(&self) -> bool {
-        host_uses_subdomain(self.0.host())
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 
-    fn parse_authority(header: &[u8]) -> Result<Option<Self>, InvalidUri> {
-        if header.is_empty() || header.iter().all(|b| b.is_ascii_whitespace()) {
-            return Ok(None);
+    pub fn subdomain(&self) -> Option<&str> {
+        if self.is_ip_address() || self.0.eq_ignore_ascii_case("localhost") {
+            return None;
         }
 
-        let auth: Authority = header.try_into()?;
-        Ok(Some(Self(auth)))
+        let parts = self
+            .0
+            .split('.')
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>();
+
+        (parts.len() == 3).then(|| parts[0])
     }
 
-    fn from_host_header_value(header: &HeaderValue) -> Result<Option<Self>, InvalidUri> {
-        Self::parse_authority(header.as_bytes())
-    }
-
-    fn from_forwarded_header_value(header: &HeaderValue) -> Result<Option<Self>, InvalidUri> {
-        let header = header.as_bytes();
-
-        let slice = match header.iter().position(|&b| b == b',') {
-            Some(pos) => &header[..pos],
-            None => &header[..],
-        };
-
-        Self::parse_authority(slice)
+    pub fn is_ip_address(&self) -> bool {
+        self.0.trim_matches(['[', ']']).parse::<IpAddr>().is_ok()
     }
 
     fn from_headers(headers: &HeaderMap) -> Result<Option<Self>, AxumNope> {
-        if let Some(header) = headers.get(&X_FORWARDED_HOST) {
-            Self::from_forwarded_header_value(header)
-                .with_context(|| format!("invalid {} header", X_FORWARDED_HOST))
-                .map_err(AxumNope::BadRequest)
-        } else if let Some(header) = headers.get(HOST) {
-            Self::from_host_header_value(header)
-                .with_context(|| format!("invalid {} header", X_FORWARDED_HOST))
-                .map_err(AxumNope::BadRequest)
+        if let Some(header) = headers
+            .typed_try_get::<XForwardedHost>()
+            .with_context(|| format!("invalid {} header", X_FORWARDED_HOST))
+            .map_err(AxumNope::BadRequest)?
+        {
+            Ok(header
+                .iter()
+                .next()
+                .map(|authority| Self(authority.host().to_string())))
+        } else if let Some(header) = headers
+            .typed_try_get::<Host>()
+            .with_context(|| format!("invalid {} header", HOST))
+            .map_err(AxumNope::BadRequest)?
+        {
+            Ok(Some(Self(header.hostname().to_string())))
         } else {
             Ok(None)
         }
@@ -73,7 +72,7 @@ where
         parts
             .extract::<Option<Self>>()
             .await?
-            .ok_or_else(|| AxumNope::BadRequest(anyhow!("host header not found")))
+            .ok_or_else(|| AxumNope::BadRequest(anyhow!("no X-ForwardedFor or Host header found")))
     }
 }
 
@@ -91,54 +90,32 @@ where
     }
 }
 
-fn host_uses_subdomain(host: &str) -> bool {
-    if host.eq_ignore_ascii_case("localhost") || host_as_ip_addr(host).is_some() {
-        return false;
-    }
-
-    host.split('.')
-        .filter(|segment| !segment.is_empty())
-        .count()
-        >= 3
-}
-
-fn host_as_ip_addr(host: &str) -> Option<IpAddr> {
-    host.trim_matches(['[', ']']).parse::<IpAddr>().ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anyhow::Result;
-    use http::HeaderMap;
+    use http::header::HOST;
+    use http::{HeaderMap, HeaderValue};
     use test_case::test_case;
 
-    #[test_case(""; "empty")]
-    #[test_case("  "; "whitespace only")]
-    fn test_parse_authority_empty(host: &'static str) -> Result<()> {
-        assert!(RequestedHost::parse_authority(host.as_bytes())?.is_none());
-        Ok(())
+    #[test_case("foo.docs.rs", "foo")]
+    #[test_case("foo.docs.rs:443", "foo")]
+    fn detects_has_subdomain(host: &'static str, expected: &str) {
+        let mut headers = HeaderMap::new();
+        headers.insert(HOST, HeaderValue::from_static(host));
+
+        let host = RequestedHost::from_headers(&headers).unwrap().unwrap();
+        assert_eq!(host.subdomain().unwrap(), expected);
     }
 
-    #[test_case("docs.rs", "docs.rs")]
-    #[test_case("docs.rs:443", "docs.rs")]
-    fn test_parse_authority(host: &'static str, expected: &str) -> Result<()> {
-        let auth = RequestedHost::parse_authority(host.as_bytes())?.unwrap();
-        assert_eq!(auth.0.host(), expected);
-        Ok(())
-    }
+    #[test_case("docs.rs")]
+    #[test_case("localhost")]
+    #[test_case("127.0.0.1:3000")]
+    fn detects_no_subdomain(host: &'static str) {
+        let mut headers = HeaderMap::new();
+        headers.insert(HOST, HeaderValue::from_static(host));
 
-    #[test_case("docs.rs", false)]
-    #[test_case("foo.docs.rs", true)]
-    #[test_case("foo.docs.rs:443", true)]
-    #[test_case("localhost", false)]
-    #[test_case("127.0.0.1:3000", false)]
-    fn detects_subdomain(host: &str, expected: bool) {
-        let header = HeaderValue::from_str(host).unwrap();
-        let host = RequestedHost::from_host_header_value(&header)
-            .unwrap()
-            .unwrap();
-        assert_eq!(host.uses_subdomain(), expected);
+        let host = RequestedHost::from_headers(&headers).unwrap().unwrap();
+        assert!(host.subdomain().is_none());
     }
 
     #[test]
@@ -147,7 +124,7 @@ mod tests {
         headers.insert(HOST, HeaderValue::from_static("docs.rs"));
 
         let extracted = RequestedHost::from_headers(&headers).unwrap().unwrap();
-        assert_eq!(extracted.0.as_str(), "docs.rs");
+        assert_eq!(extracted.0, "docs.rs");
     }
 
     #[test]
@@ -160,7 +137,7 @@ mod tests {
         );
 
         let extracted = RequestedHost::from_headers(&headers).unwrap().unwrap();
-        assert_eq!(extracted.0.as_str(), "crate.docs.rs");
+        assert_eq!(extracted.0, "crate.docs.rs");
     }
 
     #[test]
@@ -189,11 +166,17 @@ mod tests {
     }
 
     #[test]
-    fn empty_forwarded_host_header_is_none() {
+    fn empty_forwarded_host_header_is_ignored() {
         let mut headers = HeaderMap::new();
         headers.insert(HOST, HeaderValue::from_static("docs.rs"));
         headers.insert(&X_FORWARDED_HOST, HeaderValue::from_static(""));
 
-        assert!(RequestedHost::from_headers(&headers).unwrap().is_none());
+        assert_eq!(
+            RequestedHost::from_headers(&headers)
+                .unwrap()
+                .unwrap()
+                .as_str(),
+            "docs.rs"
+        );
     }
 }

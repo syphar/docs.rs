@@ -21,10 +21,6 @@ impl XForwardedHost {
     pub fn iter(&self) -> impl Iterator<Item = &Authority> {
         self.0.iter()
     }
-
-    pub fn first(&self) -> Option<&Authority> {
-        self.0.first()
-    }
 }
 
 impl Header for XForwardedHost {
