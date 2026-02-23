@@ -10,7 +10,9 @@ use docs_rs_headers::{Host, X_FORWARDED_HOST, XForwardedHost};
 use http::header::HOST;
 use std::net::IpAddr;
 
-/// Extractor for the HTTP Host header.
+/// Extractor for the requested hostname.
+///
+/// First tries `X-Forwarded-Host`, then `Host`. If neither header is present, returns `None`.
 ///
 /// Use `Option<RequestedHost>` when the header is optional.
 /// Use `RequestedHost` when the header is required.
@@ -169,10 +171,7 @@ mod tests {
         headers.insert(&X_FORWARDED_HOST, HeaderValue::from_static(""));
 
         assert_eq!(
-            RequestedHost::from_headers(&headers)
-                .unwrap()
-                .unwrap()
-                .as_str(),
+            RequestedHost::from_headers(&headers).unwrap().unwrap().0,
             "docs.rs"
         );
     }
