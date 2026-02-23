@@ -5,6 +5,11 @@ pub static X_FORWARDED_HOST: HeaderName = HeaderName::from_static("x-forwarded-h
 
 const SEP: u8 = b',';
 
+/// Typed X-Forwarded-Host header.
+///
+/// Parsing:
+/// Will skip over empty entries, but will fail completely when any
+/// single entry is invalid.
 #[derive(Clone, Debug)]
 pub struct XForwardedHost(Vec<Authority>);
 
@@ -32,7 +37,6 @@ impl Header for XForwardedHost {
             return Err(Error::invalid());
         };
 
-        // FIXME: unclear: when one host is invalid, should we skip it or fully error out?
         let hosts = value
             .as_bytes()
             .split(|ch| *ch == SEP)
