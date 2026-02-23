@@ -22,7 +22,7 @@ impl Header for XForwardedHost {
         let hosts: Vec<Authority> = value
             .as_bytes()
             .split(|ch| *ch == SEP)
-            .map(|hv| -> Result<Authority, _> { hv.try_into() })
+            .map(|hv| -> Result<Authority, _> { hv.trim_ascii().try_into() })
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_| Error::invalid())?;
 
@@ -48,7 +48,6 @@ impl Header for XForwardedHost {
 mod tests {
     use super::*;
     use crate::testing::{test_typed_decode, test_typed_encode};
-    use std::ops::RangeInclusive;
     use test_case::test_case;
 
     #[test]
@@ -63,16 +62,58 @@ mod tests {
         Ok(())
     }
 
-    // #[test]
-    // fn test_decode() -> anyhow::Result<()> {
-    //     assert_eq!(
-    //         test_typed_decode::<SurrogateKeys, _>("key-1 key-2 key-2")?.unwrap(),
-    //         SurrogateKeys::from_iter_until_full([
-    //             SurrogateKey::from_str("key-2").unwrap(),
-    //             SurrogateKey::from_str("key-1").unwrap(),
-    //         ]),
-    //     );
+    #[test_case(vec!["docs.rs"], "docs.rs"; "single host")]
+    #[test_case(vec!["crate.docs.rs", "docs.rs"], "crate.docs.rs,docs.rs"; "multiple hosts")]
+    #[test_case(vec!["docs.rs:443", "docs.rs:80"], "docs.rs:443,docs.rs:80"; "hosts with ports")]
+    fn test_encode_variations(hosts: Vec<&'static str>, expected: &str) -> anyhow::Result<()> {
+        let header = XForwardedHost(
+            hosts
+                .into_iter()
+                .map(Authority::from_static)
+                .collect::<Vec<_>>(),
+        );
 
-    //     Ok(())
-    // }
+        assert_eq!(test_typed_encode(header), expected);
+
+        Ok(())
+    }
+
+    #[test_case("docs.rs", &["docs.rs"]; "single host")]
+    #[test_case(
+        "crate.docs.rs,docs.rs",
+        &["crate.docs.rs", "docs.rs"];
+        "multiple hosts no spaces"
+    )]
+    #[test_case(
+        "crate.docs.rs, docs.rs",
+        &["crate.docs.rs", "docs.rs"];
+        "multiple hosts with spaces"
+    )]
+    #[test_case(
+        "crate.docs.rs:443,docs.rs:80",
+        &["crate.docs.rs:443", "docs.rs:80"];
+        "multiple hosts with ports"
+    )]
+    fn test_decode(header: &str, expected: &[&str]) -> anyhow::Result<()> {
+        let decoded = test_typed_decode::<XForwardedHost, _>(header)?.unwrap();
+
+        let decoded = decoded
+            .0
+            .iter()
+            .map(|host| host.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(decoded, expected);
+
+        Ok(())
+    }
+
+    #[test_case("" ; "empty")]
+    #[test_case(" " ; "single space")]
+    #[test_case("   \t  " ; "whitespace only")]
+    #[test_case(", " ; "empty first host")]
+    #[test_case("docs.rs, " ; "empty second host")]
+    fn test_decode_rejects_empty_or_whitespace_values(header: &str) {
+        assert!(test_typed_decode::<XForwardedHost, _>(header).is_err());
+    }
 }
