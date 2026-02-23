@@ -19,12 +19,18 @@ impl Header for XForwardedHost {
         };
 
         // FIXME: unclear: when one host is invalid, should we skip it or fully error out?
-        let hosts: Vec<Authority> = value
+        let hosts = value
             .as_bytes()
             .split(|ch| *ch == SEP)
-            .map(|hv| -> Result<Authority, _> { hv.trim_ascii().try_into() })
+            .map(|hv| hv.trim_ascii())
+            .filter(|hv| !hv.is_empty())
+            .map(|hv| -> Result<Authority, _> { hv.try_into() })
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_| Error::invalid())?;
+
+        if hosts.is_empty() {
+            return Err(Error::invalid());
+        }
 
         Ok(Self(hosts))
     }
@@ -111,9 +117,24 @@ mod tests {
     #[test_case("" ; "empty")]
     #[test_case(" " ; "single space")]
     #[test_case("   \t  " ; "whitespace only")]
-    #[test_case(", " ; "empty first host")]
-    #[test_case("docs.rs, " ; "empty second host")]
+    #[test_case(" , " ; "only empty hosts")]
     fn test_decode_rejects_empty_or_whitespace_values(header: &str) {
         assert!(test_typed_decode::<XForwardedHost, _>(header).is_err());
+    }
+
+    #[test_case(",docs.rs", &["docs.rs"]; "ignore empty first host")]
+    #[test_case("docs.rs, ", &["docs.rs"]; "ignore empty second host")]
+    #[test_case("docs.rs,,crate.docs.rs", &["docs.rs", "crate.docs.rs"]; "ignore empty middle host")]
+    fn test_decode_ignores_empty_hosts(header: &str, expected: &[&str]) -> anyhow::Result<()> {
+        let decoded = test_typed_decode::<XForwardedHost, _>(header)?.unwrap();
+        let decoded = decoded
+            .0
+            .into_iter()
+            .map(|host| host.to_string())
+            .collect::<Vec<_>>();
+        let expected = expected.iter().map(ToString::to_string).collect::<Vec<_>>();
+        assert_eq!(decoded, expected);
+
+        Ok(())
     }
 }
