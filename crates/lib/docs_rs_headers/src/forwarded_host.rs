@@ -67,14 +67,14 @@ mod tests {
         Ok(())
     }
 
-    #[test_case(vec!["docs.rs"], "docs.rs"; "single host")]
-    #[test_case(vec!["crate.docs.rs", "docs.rs"], "crate.docs.rs,docs.rs"; "multiple hosts")]
-    #[test_case(vec!["docs.rs:443", "docs.rs:80"], "docs.rs:443,docs.rs:80"; "hosts with ports")]
-    fn test_encode_variations(hosts: Vec<&'static str>, expected: &str) -> anyhow::Result<()> {
+    #[test_case(&["docs.rs"], "docs.rs"; "single host")]
+    #[test_case(&["crate.docs.rs", "docs.rs"], "crate.docs.rs,docs.rs"; "multiple hosts")]
+    #[test_case(&["docs.rs:443", "docs.rs:80"], "docs.rs:443,docs.rs:80"; "hosts with ports")]
+    fn test_encode_variations(hosts: &[&'static str], expected: &str) -> anyhow::Result<()> {
         let header = XForwardedHost(
             hosts
                 .into_iter()
-                .map(Authority::from_static)
+                .map(|s| Authority::from_static(*s))
                 .collect::<Vec<_>>(),
         );
 
