@@ -8,6 +8,20 @@ const SEP: u8 = b',';
 #[derive(Clone, Debug)]
 pub struct XForwardedHost(Vec<Authority>);
 
+impl XForwardedHost {
+    pub fn hosts(&self) -> &[Authority] {
+        &self.0
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Authority> {
+        self.0.iter()
+    }
+
+    pub fn first(&self) -> Option<&Authority> {
+        self.0.first()
+    }
+}
+
 impl Header for XForwardedHost {
     fn name() -> &'static HeaderName {
         &X_FORWARDED_HOST
