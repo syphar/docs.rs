@@ -18,10 +18,6 @@ use std::net::IpAddr;
 pub(crate) struct RequestedHost(String);
 
 impl RequestedHost {
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
     pub fn subdomain(&self) -> Option<&str> {
         if self.is_ip_address() || self.0.eq_ignore_ascii_case("localhost") {
             return None;
@@ -45,6 +41,7 @@ impl RequestedHost {
             .typed_try_get::<XForwardedHost>()
             .with_context(|| format!("invalid {} header", X_FORWARDED_HOST))
             .map_err(AxumNope::BadRequest)?
+            .filter(|h| !h.is_empty())
         {
             Ok(header
                 .iter()
@@ -149,11 +146,11 @@ mod tests {
     }
 
     #[test]
-    fn empty_host_header_is_none() {
+    fn empty_host_header_is_err() {
         let mut headers = HeaderMap::new();
         headers.insert(HOST, HeaderValue::from_static(""));
 
-        assert!(RequestedHost::from_headers(&headers).unwrap().is_none());
+        assert!(RequestedHost::from_headers(&headers).is_err());
     }
 
     #[test]

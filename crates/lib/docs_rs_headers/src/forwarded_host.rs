@@ -21,6 +21,10 @@ impl XForwardedHost {
     pub fn iter(&self) -> impl Iterator<Item = &Authority> {
         self.0.iter()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
 }
 
 impl Header for XForwardedHost {
