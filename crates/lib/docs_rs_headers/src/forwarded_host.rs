@@ -3,6 +3,8 @@ use http::{HeaderName, HeaderValue, uri::Authority};
 
 pub static X_FORWARDED_HOST: HeaderName = HeaderName::from_static("x-forwarded-host");
 
+const SEP: u8 = b',';
+
 #[derive(Clone, Debug)]
 pub struct XForwardedHost(Vec<Authority>);
 
@@ -19,7 +21,7 @@ impl Header for XForwardedHost {
         // FIXME: unclear: when one host is invalid, should we skip it or fully error out?
         let hosts: Vec<Authority> = value
             .as_bytes()
-            .split(|ch| *ch == b',')
+            .split(|ch| *ch == SEP)
             .map(|hv| -> Result<Authority, _> { hv.try_into() })
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_| Error::invalid())?;
@@ -32,7 +34,7 @@ impl Header for XForwardedHost {
 
         for host in &self.0 {
             if !buf.is_empty() {
-                buf.push(b',');
+                buf.push(SEP);
             }
 
             buf.extend_from_slice(host.as_str().as_bytes());
