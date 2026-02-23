@@ -55,22 +55,10 @@ mod tests {
     use crate::testing::{test_typed_decode, test_typed_encode};
     use test_case::test_case;
 
-    #[test]
-    fn test_encode() -> anyhow::Result<()> {
-        let header = XForwardedHost(vec![
-            Authority::from_static("example.com"),
-            Authority::from_static("example.org"),
-        ]);
-
-        assert_eq!(test_typed_encode(header), "example.com,example.org");
-
-        Ok(())
-    }
-
     #[test_case(&["docs.rs"], "docs.rs"; "single host")]
     #[test_case(&["crate.docs.rs", "docs.rs"], "crate.docs.rs,docs.rs"; "multiple hosts")]
     #[test_case(&["docs.rs:443", "docs.rs:80"], "docs.rs:443,docs.rs:80"; "hosts with ports")]
-    fn test_encode_variations(hosts: &[&'static str], expected: &str) -> anyhow::Result<()> {
+    fn test_encode(hosts: &[&'static str], expected: &str) -> anyhow::Result<()> {
         let header = XForwardedHost(
             hosts
                 .into_iter()
@@ -131,10 +119,9 @@ mod tests {
         let decoded = test_typed_decode::<XForwardedHost, _>(header)?.unwrap();
         let decoded = decoded
             .0
-            .into_iter()
-            .map(|host| host.to_string())
+            .iter()
+            .map(|host| host.as_str())
             .collect::<Vec<_>>();
-        let expected = expected.iter().map(ToString::to_string).collect::<Vec<_>>();
         assert_eq!(decoded, expected);
 
         Ok(())
