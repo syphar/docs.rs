@@ -43,3 +43,36 @@ impl Header for XForwardedHost {
         values.extend(HeaderValue::from_maybe_shared(buf));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::{test_typed_decode, test_typed_encode};
+    use std::ops::RangeInclusive;
+    use test_case::test_case;
+
+    #[test]
+    fn test_encode() -> anyhow::Result<()> {
+        let header = XForwardedHost(vec![
+            Authority::from_static("example.com"),
+            Authority::from_static("example.org"),
+        ]);
+
+        assert_eq!(test_typed_encode(header), "example.com,example.org");
+
+        Ok(())
+    }
+
+    // #[test]
+    // fn test_decode() -> anyhow::Result<()> {
+    //     assert_eq!(
+    //         test_typed_decode::<SurrogateKeys, _>("key-1 key-2 key-2")?.unwrap(),
+    //         SurrogateKeys::from_iter_until_full([
+    //             SurrogateKey::from_str("key-2").unwrap(),
+    //             SurrogateKey::from_str("key-1").unwrap(),
+    //         ]),
+    //     );
+
+    //     Ok(())
+    // }
+}
