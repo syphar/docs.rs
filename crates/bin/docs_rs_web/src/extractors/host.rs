@@ -83,9 +83,9 @@ impl FromStr for RequestedHost {
         // or handle localhost better?
         if host == "localhost" {
             return Ok(Self::ApexDomain(host.to_string()));
-        } else if host.ends_with(".localhost") {
+        } else if let Some(subdomain) = host.strip_suffix(".localhost") {
             return Ok(Self::SubDomain(
-                host[..host.len() - ".localhost".len()].to_string(),
+                subdomain.to_string(),
                 "localhost".to_string(),
             ));
         }
