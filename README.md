@@ -244,7 +244,7 @@ See `cargo run -- --help` for a full list of commands.
 #### Starting the web server
 
 ```sh
-# This command will start web interface of docs.rs on http://localhost:3000
+# This command will start web interface of docs.rs on http://localhost:3000 or http://lvh.me:3000/
 cargo run --bin docs_rs_webserver start-web-server
 ```
 
