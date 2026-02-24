@@ -79,6 +79,17 @@ impl FromStr for RequestedHost {
             return Err(anyhow!("host is empty"));
         }
 
+        // FIXME: perhaps to_ascii_lowercase?
+        // or handle localhost better?
+        if host == "localhost" {
+            return Ok(Self::ApexDomain(host.to_string()));
+        } else if host.ends_with(".localhost") {
+            return Ok(Self::SubDomain(
+                host[..host.len() - ".localhost".len()].to_string(),
+                "localhost".to_string(),
+            ));
+        }
+
         let mut dots = host.rmatch_indices('.').map(|(i, _)| i);
 
         if let Some(sep) = dots.nth(1) {

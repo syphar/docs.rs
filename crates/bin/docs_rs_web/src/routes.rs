@@ -118,7 +118,9 @@ pub(crate) fn build_axum_routes() -> Result<AxumRouter> {
 fn build_subdomain_axum_routes() -> Result<AxumRouter> {
     // Keep this separate from the main router so we can evolve subdomain-only behavior
     // without changing the non-subdomain route tree.
-    build_main_axum_routes()
+    Ok(AxumRouter::new()
+        .route("/", get(|| async { "subdomain" }))
+        .route("/{*path}", get(|| async { "subdomain" })))
 }
 
 fn build_main_axum_routes() -> Result<AxumRouter> {
@@ -377,7 +379,7 @@ async fn dispatch_router(
     subdomain_router: AxumRouter,
 ) -> axum::response::Response {
     let (mut parts, body) = request.into_parts();
-    let has_subdomain = match parts.extract::<Option<RequestedHost>>().await {
+    let has_subdomain = match dbg!(parts.extract::<Option<RequestedHost>>().await) {
         Ok(host) => host.is_some_and(|host| host.subdomain().is_some()),
         Err(err) => return err.into_response(),
     };
