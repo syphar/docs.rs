@@ -63,7 +63,7 @@ impl FromStr for RequestedHost {
     type Err = anyhow::Error;
 
     fn from_str(host: &str) -> Result<Self, Self::Err> {
-        let host = host.trim();
+        let host = host.trim().trim_matches('.');
 
         if host.is_empty() {
             return Err(anyhow!("host is empty"));
@@ -71,12 +71,6 @@ impl FromStr for RequestedHost {
 
         if let Ok(ip_addr) = host.trim_matches(['[', ']']).parse::<IpAddr>() {
             return Ok(Self::IPAddr(ip_addr));
-        }
-
-        let host = host.trim_matches('.');
-
-        if host.is_empty() {
-            return Err(anyhow!("host is empty"));
         }
 
         if host.eq_ignore_ascii_case("localhost") {
@@ -89,14 +83,11 @@ impl FromStr for RequestedHost {
 
         let mut dots = host.rmatch_indices('.').map(|(i, _)| i);
 
-        if let Some(sep) = dots.nth(1) {
-            Ok(Self::SubDomain(
-                host[0..sep].to_string(),
-                host[sep + 1..].to_string(),
-            ))
+        Ok(if let Some(sep) = dots.nth(1) {
+            Self::SubDomain(host[0..sep].to_string(), host[sep + 1..].to_string())
         } else {
-            Ok(Self::ApexDomain(host.to_string()))
-        }
+            Self::ApexDomain(host.to_string())
+        })
     }
 }
 
