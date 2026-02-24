@@ -63,6 +63,8 @@ pub(crate) async fn sitemap_handler(
         return Err(AxumNope::ResourceNotFound);
     }
 
+    // FIXME: subdomain or apex domain for sitemaps
+
     let stream_span = Span::current();
 
     let stream = stream!({

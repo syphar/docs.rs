@@ -3,8 +3,10 @@ use axum::{
     Extension, extract::Request as AxumHttpRequest, middleware::Next,
     response::Response as AxumResponse,
 };
-use axum_extra::headers::HeaderMapExt as _;
-use docs_rs_headers::{SURROGATE_CONTROL, SURROGATE_KEY, SurrogateKey, SurrogateKeys};
+use axum_extra::headers::{HeaderMapExt as _, Vary};
+use docs_rs_headers::{
+    SURROGATE_CONTROL, SURROGATE_KEY, SurrogateKey, SurrogateKeys, X_FORWARDED_HOST,
+};
 use http::{
     HeaderMap, HeaderValue, StatusCode,
     header::{CACHE_CONTROL, ETAG},
@@ -46,6 +48,12 @@ impl ResponseCacheHeaders {
         if let Some(surrogate_keys) = self.surrogate_keys {
             headers.typed_insert(surrogate_keys);
         }
+
+        // FIXME: do we need to add HOST here? Or is it ok to rely on the CDN to always
+        // set X-Forwarded-Host?
+        // See also https://github.com/hyperium/headers/pull/223 ,
+        // or change to setting the non-typed header
+        headers.typed_insert(Vary::from(X_FORWARDED_HOST.clone()));
     }
 }
 

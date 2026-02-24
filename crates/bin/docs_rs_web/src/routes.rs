@@ -131,12 +131,12 @@ async fn subdomain_response_headers_middleware(
 ) -> impl IntoResponse {
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
-    headers.insert(VARY, HeaderValue::from_static("Host"));
+    // FIXME: add config var, "subdomain mode" vs "apex domain mode",
+    // update robots.txt, sitemap, noindex headers accordingly.
     headers.insert(
         "x-robots-tag",
         HeaderValue::from_static("noindex, nofollow, noarchive"),
     );
-    headers.insert("x-docsrs-subdomain-router", HeaderValue::from_static("1"));
     response
 }
 
