@@ -9,6 +9,7 @@ use axum_extra::headers::HeaderMapExt;
 use docs_rs_headers::{Host, X_FORWARDED_HOST, XForwardedHost};
 use http::header::HOST;
 use std::net::IpAddr;
+use std::str::FromStr;
 
 /// Extractor for the requested hostname.
 ///
@@ -31,24 +32,6 @@ impl RequestedHost {
         }
     }
 
-    fn parse_host(host: &str) -> Self {
-        let host = host.trim();
-
-        if let Ok(ip_addr) = host.trim_matches(['[', ']']).parse::<IpAddr>() {
-            return Self::IPAddr(ip_addr);
-        }
-
-        let host = host.trim_matches('.');
-
-        let mut dots = host.rmatch_indices('.').map(|(i, _)| i);
-
-        if let Some(sep) = dots.nth(1) {
-            Self::SubDomain(host[0..sep].to_string(), host[sep + 1..].to_string())
-        } else {
-            Self::ApexDomain(host.to_string())
-        }
-    }
-
     fn from_headers(headers: &HeaderMap) -> Result<Option<Self>, AxumNope> {
         if let Some(header) = headers
             .typed_try_get::<XForwardedHost>()
@@ -59,15 +42,52 @@ impl RequestedHost {
             Ok(header
                 .iter()
                 .next()
-                .map(|authority| Self::parse_host(authority.host())))
+                .map(|authority| authority.host().parse())
+                .transpose()
+                .map_err(AxumNope::BadRequest)?)
         } else if let Some(header) = headers
             .typed_try_get::<Host>()
             .with_context(|| format!("invalid {} header", HOST))
             .map_err(AxumNope::BadRequest)?
         {
-            Ok(Some(Self::parse_host(header.hostname())))
+            Ok(Some(
+                header.hostname().parse().map_err(AxumNope::BadRequest)?,
+            ))
         } else {
             Ok(None)
+        }
+    }
+}
+
+impl FromStr for RequestedHost {
+    type Err = anyhow::Error;
+
+    fn from_str(host: &str) -> Result<Self, Self::Err> {
+        let host = host.trim();
+
+        if host.is_empty() {
+            return Err(anyhow!("host is empty"));
+        }
+
+        if let Ok(ip_addr) = host.trim_matches(['[', ']']).parse::<IpAddr>() {
+            return Ok(Self::IPAddr(ip_addr));
+        }
+
+        let host = host.trim_matches('.');
+
+        if host.is_empty() {
+            return Err(anyhow!("host is empty"));
+        }
+
+        let mut dots = host.rmatch_indices('.').map(|(i, _)| i);
+
+        if let Some(sep) = dots.nth(1) {
+            Ok(Self::SubDomain(
+                host[0..sep].to_string(),
+                host[sep + 1..].to_string(),
+            ))
+        } else {
+            Ok(Self::ApexDomain(host.to_string()))
         }
     }
 }
