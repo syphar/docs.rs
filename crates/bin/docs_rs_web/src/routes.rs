@@ -405,6 +405,7 @@ async fn fallback() -> impl IntoResponse {
 #[cfg(test)]
 mod tests {
     use crate::cache::CachePolicy;
+    use crate::extractors::RequestedHost;
     use crate::testing::{
         AxumResponseTestExt, AxumRouterTestExt, TestEnvironment, TestEnvironmentExt as _,
         async_wrapper,
@@ -476,13 +477,20 @@ mod tests {
         })
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn subdomain_requests_use_subdomain_router() {
+    #[test_case("crate.docs.rs")]
+    #[test_case("crate.localhost")]
+    #[tokio::test]
+    async fn subdomain_requests_use_subdomain_router(host: &str) {
         let main_router = AxumRouter::new().route("/", get(|| async { "main" }));
-        let subdomain_router = AxumRouter::new().route("/", get(|| async { "subdomain" }));
+        let subdomain_router = AxumRouter::new().route(
+            "/",
+            get(|host: RequestedHost| async move {
+                format!("subdomain: {}", host.subdomain().unwrap())
+            }),
+        );
         let request = Request::builder()
             .uri("/")
-            .header(HOST, "crate.docs.rs")
+            .header(HOST, host)
             .body(Body::empty())
             .unwrap();
 
@@ -491,13 +499,15 @@ mod tests {
         assert_eq!(response.text().await.unwrap(), "subdomain");
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn root_domain_requests_use_main_router() {
+    #[test_case("docs.rs")]
+    #[test_case("localhost")]
+    #[tokio::test]
+    async fn root_domain_requests_use_main_router(host: &str) {
         let main_router = AxumRouter::new().route("/", get(|| async { "main" }));
         let subdomain_router = AxumRouter::new().route("/", get(|| async { "subdomain" }));
         let request = Request::builder()
             .uri("/")
-            .header(HOST, "docs.rs")
+            .header(HOST, host)
             .body(Body::empty())
             .unwrap();
 
@@ -506,7 +516,7 @@ mod tests {
         assert_eq!(response.text().await.unwrap(), "main");
     }
 
-    #[tokio::test(flavor = "multi_thread")]
+    #[tokio::test]
     async fn invalid_host_is_bad_request() {
         let main_router = AxumRouter::new().route("/", get(|| async { "main" }));
         let subdomain_router = AxumRouter::new().route("/", get(|| async { "subdomain" }));
