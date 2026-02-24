@@ -1,7 +1,12 @@
 //! special rustdoc extractors
 
-use crate::{error::AxumNope, extractors::Path, match_release::MatchedRelease, metadata::MetaData};
-use anyhow::Result;
+use crate::{
+    error::AxumNope,
+    extractors::{Path, RequestedHost},
+    match_release::MatchedRelease,
+    metadata::MetaData,
+};
+use anyhow::{Result, anyhow};
 use axum::{
     RequestPartsExt,
     extract::{FromRequestParts, MatchedPath},
@@ -109,6 +114,17 @@ pub(crate) struct UrlParams {
     pub path: Option<String>,
 }
 
+/// Same as UrlParams, but without the crate-name.
+///
+/// For when pages are accessed via subdomain
+#[derive(Debug, Deserialize)]
+pub(crate) struct SubdomainUrlParams {
+    #[serde(default)]
+    pub version: ReqVersion,
+    pub target: Option<String>,
+    pub path: Option<String>,
+}
+
 impl<S> FromRequestParts<S> for RustdocParams
 where
     S: Send + Sync,
@@ -126,10 +142,35 @@ where
     /// We also extract & store the original URI, and also use it to find a potential static
     /// route stuffix (e.g. the `/settings.html` in the `/{krate}/{version}/settings.html` route).
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let Path(params) = parts
-            .extract::<Path<UrlParams>>()
-            .await
-            .map_err(|err| AxumNope::BadRequest(err.into()))?;
+        let params = if let Some(requested_host) = parts.extract::<Option<RequestedHost>>().await?
+            && let RequestedHost::SubDomain(subdomain, _parent) = requested_host
+        {
+            // TODO: should we validate the parent? so it's something like `docs.rs`?
+            // The hostname do privately access the server might also have a subdomain.
+            let name: KrateName = subdomain.parse().map_err(|err| {
+                AxumNope::BadRequest(anyhow!(
+                    "invalid crate name in subdomain: {subdomain}: {err}"
+                ))
+            })?;
+
+            let Path(params) = parts
+                .extract::<Path<SubdomainUrlParams>>()
+                .await
+                .map_err(|err| AxumNope::BadRequest(err.into()))?;
+
+            UrlParams {
+                name,
+                version: params.version,
+                target: params.target,
+                path: params.path,
+            }
+        } else {
+            parts
+                .extract::<Path<UrlParams>>()
+                .await
+                .map_err(|err| AxumNope::BadRequest(err.into()))?
+                .0
+        };
 
         let original_uri = parts.extract::<Uri>().await.expect("infallible extractor");
 
