@@ -379,7 +379,7 @@ async fn dispatch_router(
     subdomain_router: AxumRouter,
 ) -> axum::response::Response {
     let (mut parts, body) = request.into_parts();
-    let has_subdomain = match dbg!(parts.extract::<Option<RequestedHost>>().await) {
+    let has_subdomain = match parts.extract::<Option<RequestedHost>>().await {
         Ok(host) => host.is_some_and(|host| host.subdomain().is_some()),
         Err(err) => return err.into_response(),
     };
