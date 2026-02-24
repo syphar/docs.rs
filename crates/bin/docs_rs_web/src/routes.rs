@@ -20,6 +20,7 @@ use axum::{
     routing::{MethodRouter, get, post},
 };
 use axum_extra::routing::RouterExt;
+use http::{HeaderValue, header::VARY};
 use std::convert::Infallible;
 use tower::ServiceExt as _;
 use tracing::{debug, instrument};
@@ -120,7 +121,23 @@ fn build_subdomain_axum_routes() -> Result<AxumRouter> {
     // without changing the non-subdomain route tree.
     Ok(AxumRouter::new()
         .route("/", get(|| async { "subdomain" }))
-        .route("/{*path}", get(|| async { "subdomain" })))
+        .route("/{*path}", get(|| async { "subdomain" }))
+        .layer(middleware::from_fn(subdomain_response_headers_middleware)))
+}
+
+async fn subdomain_response_headers_middleware(
+    request: AxumHttpRequest,
+    next: Next,
+) -> impl IntoResponse {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert(VARY, HeaderValue::from_static("Host"));
+    headers.insert(
+        "x-robots-tag",
+        HeaderValue::from_static("noindex, nofollow, noarchive"),
+    );
+    headers.insert("x-docsrs-subdomain-router", HeaderValue::from_static("1"));
+    response
 }
 
 fn build_main_axum_routes() -> Result<AxumRouter> {
@@ -497,6 +514,29 @@ mod tests {
         let response = super::dispatch_router(request, main_router, subdomain_router).await;
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.text().await.unwrap(), "subdomain: crate");
+    }
+
+    #[tokio::test]
+    async fn built_subdomain_router_adds_response_headers() {
+        let main_router = AxumRouter::new().route("/", get(|| async { "main" }));
+        let subdomain_router = super::build_subdomain_axum_routes().unwrap();
+        let request = Request::builder()
+            .uri("/")
+            .header(HOST, "crate.docs.rs")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = super::dispatch_router(request, main_router, subdomain_router).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers().get(http::header::VARY).unwrap(), "Host");
+        assert_eq!(
+            response.headers().get("x-robots-tag").unwrap(),
+            "noindex, nofollow, noarchive"
+        );
+        assert_eq!(
+            response.headers().get("x-docsrs-subdomain-router").unwrap(),
+            "1"
+        );
     }
 
     #[test_case("docs.rs")]

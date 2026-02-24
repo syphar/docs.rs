@@ -6,7 +6,7 @@ use crate::{
     match_release::MatchedRelease,
     metadata::MetaData,
 };
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Result, anyhow};
 use axum::{
     RequestPartsExt,
     extract::{FromRequestParts, MatchedPath},
