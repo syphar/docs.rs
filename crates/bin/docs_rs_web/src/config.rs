@@ -1,7 +1,29 @@
-use anyhow::Result;
+use anyhow::{Result, bail};
 use docs_rs_config::AppConfig;
 use docs_rs_env_vars::maybe_env;
-use std::time::Duration;
+use std::{str::FromStr, time::Duration};
+
+/// main serving mode for crate docs.
+#[derive(Debug, Copy, Clone, Default)]
+pub enum Mode {
+    /// Serve crate docs under a subdomain (`https://regex.docs.rs/`)
+    Subdomain,
+    /// Serve crate docs the apex domain (`https://docs.rs/regex/`)
+    #[default]
+    ApexDomain,
+}
+
+impl FromStr for Mode {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "subdomain" => Ok(Self::Subdomain),
+            "apex_domain" => Ok(Self::ApexDomain),
+            _ => bail!("invalid mode: {s}"),
+        }
+    }
+}
 
 #[derive(Debug, bon::Builder)]
 #[builder(on(_, overwritable))]
@@ -50,6 +72,18 @@ pub struct Config {
     // This only affects pages that depend on invalidations to work.
     #[builder(default = true)]
     pub(crate) cache_invalidatable_responses: bool,
+
+    /// primary doc-serving mode.
+    /// By default we will serve docs both ways (subdomain or apex domain).
+    ///
+    /// Depending on `enforce_mode`, we'll either
+    /// * just block search engines on the non-default mode
+    /// * redirect to the default mode for non-default requests.
+    #[builder(default)]
+    pub(crate) mode: Mode,
+
+    #[builder(default)]
+    pub(crate) enforce_mode: bool,
 }
 
 use config_builder::State;
