@@ -949,6 +949,7 @@ mod tests {
     use crate::testing::{AxumResponseTestExt, AxumRouterTestExt};
     use axum::{Router, routing::get};
     use docs_rs_types::{Version, testing::V1};
+    use http::header::HOST;
     use test_case::test_case;
 
     const KRATE: KrateName = KrateName::from_static("krate");
@@ -1094,6 +1095,61 @@ mod tests {
         let res = app.get(&path).await?;
         assert!(res.status().is_success());
         assert_eq!(res.text().await?, format!("{:?}", expected));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_extract_rustdoc_params_from_request_uses_subdomain_name() -> anyhow::Result<()> {
+        let expected = RustdocParams::new(KRATE)
+            .try_with_req_version("1.2.3")?
+            .try_with_original_uri(format!("/1.2.3/{OTHER_TARGET}/some/path/to/a/file.html"))?
+            .with_doc_target(OTHER_TARGET)
+            .with_inner_path("some/path/to/a/file.html")
+            .with_page_kind(PageKind::Rustdoc);
+
+        let app = Router::new().route(
+            "/{version}/{target}/{*path}",
+            get(|params: RustdocParams| async move {
+                format!("{:?}", params.with_page_kind(PageKind::Rustdoc))
+            }),
+        );
+
+        let res = app
+            .get_with_headers(
+                "/1.2.3/x86_64-pc-windows-msvc/some/path/to/a/file.html",
+                |h| {
+                    h.insert(HOST, "krate.docs.rs".parse().unwrap());
+                },
+            )
+            .await?;
+
+        assert!(res.status().is_success());
+        assert_eq!(res.text().await?, format!("{:?}", expected));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_extract_rustdoc_params_from_request_rejects_invalid_subdomain_name()
+    -> anyhow::Result<()> {
+        let app = Router::new().route(
+            "/{version}/{target}/{*path}",
+            get(|params: RustdocParams| async move {
+                format!("{:?}", params.with_page_kind(PageKind::Rustdoc))
+            }),
+        );
+
+        let res = app
+            .get_with_headers(
+                "/1.2.3/x86_64-pc-windows-msvc/some/path/to/a/file.html",
+                |h| {
+                    h.insert(HOST, "foo.bar.docs.rs".parse().unwrap());
+                },
+            )
+            .await?;
+
+        assert_eq!(res.status(), http::StatusCode::BAD_REQUEST);
 
         Ok(())
     }
