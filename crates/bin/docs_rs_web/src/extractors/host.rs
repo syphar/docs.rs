@@ -17,31 +17,36 @@ use std::net::IpAddr;
 /// Use `Option<RequestedHost>` when the header is optional.
 /// Use `RequestedHost` when the header is required.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct RequestedHost(String);
+pub(crate) enum RequestedHost {
+    IPAddr(IpAddr),
+    ApexDomain(String),
+    SubDomain(String, String),
+}
 
 impl RequestedHost {
     pub fn subdomain(&self) -> Option<&str> {
-        if self.is_ip_address() || self.0.eq_ignore_ascii_case("localhost") {
-            return None;
+        match self {
+            Self::SubDomain(subdomain, _) => Some(subdomain),
+            _ => None,
+        }
+    }
+
+    fn parse_host(host: &str) -> Self {
+        let host = host.trim();
+
+        if let Ok(ip_addr) = host.trim_matches(['[', ']']).parse::<IpAddr>() {
+            return Self::IPAddr(ip_addr);
         }
 
-        let parts = self
-            .0
-            .split('.')
-            .filter(|part| !part.is_empty())
-            .collect::<Vec<_>>();
+        let host = host.trim_matches('.');
 
-        (parts.len() == 3).then(|| parts[0])
-    }
+        let mut dots = host.rmatch_indices('.').map(|(i, _)| i);
 
-    pub fn is_apex_domain(&self) -> bool {
-        !self.is_ip_address()
-            && !self.0.eq_ignore_ascii_case("localhost")
-            && self.0.split('.').filter(|part| !part.is_empty()).count() == 2
-    }
-
-    pub fn is_ip_address(&self) -> bool {
-        self.0.trim_matches(['[', ']']).parse::<IpAddr>().is_ok()
+        if let Some(sep) = dots.nth(1) {
+            Self::SubDomain(host[0..sep].to_string(), host[sep + 1..].to_string())
+        } else {
+            Self::ApexDomain(host.to_string())
+        }
     }
 
     fn from_headers(headers: &HeaderMap) -> Result<Option<Self>, AxumNope> {
@@ -54,13 +59,13 @@ impl RequestedHost {
             Ok(header
                 .iter()
                 .next()
-                .map(|authority| Self(authority.host().to_string())))
+                .map(|authority| Self::parse_host(authority.host())))
         } else if let Some(header) = headers
             .typed_try_get::<Host>()
             .with_context(|| format!("invalid {} header", HOST))
             .map_err(AxumNope::BadRequest)?
         {
-            Ok(Some(Self(header.hostname().to_string())))
+            Ok(Some(Self::parse_host(header.hostname())))
         } else {
             Ok(None)
         }
@@ -74,10 +79,9 @@ where
     type Rejection = AxumNope;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        parts
-            .extract::<Option<Self>>()
-            .await?
-            .ok_or_else(|| AxumNope::BadRequest(anyhow!("no X-ForwardedFor or Host header found")))
+        parts.extract::<Option<Self>>().await?.ok_or_else(|| {
+            AxumNope::BadRequest(anyhow!("no X-Forwarded-Host or Host header found"))
+        })
     }
 }
 
@@ -98,29 +102,21 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use http::header::HOST;
     use http::{HeaderMap, HeaderValue};
     use test_case::test_case;
 
-    #[test_case("foo.docs.rs", "foo")]
-    #[test_case("foo.docs.rs:443", "foo")]
-    fn detects_has_subdomain(host: &'static str, expected: &str) {
+    #[test_case("foo.docs.rs", RequestedHost::SubDomain("foo".to_string(), "docs.rs".to_string()))]
+    #[test_case("foo.docs.rs:443", RequestedHost::SubDomain("foo".to_string(), "docs.rs".to_string()))]
+    #[test_case("docs.rs", RequestedHost::ApexDomain("docs.rs".to_string()))]
+    #[test_case("localhost", RequestedHost::ApexDomain("localhost".to_string()))]
+    #[test_case("127.0.0.1:3000", RequestedHost::IPAddr("127.0.0.1".parse().unwrap()))]
+    #[test_case("[::1]:3000", RequestedHost::IPAddr("::1".parse().unwrap()))]
+    fn classifies_host(host: &'static str, expected: RequestedHost) {
         let mut headers = HeaderMap::new();
         headers.insert(HOST, HeaderValue::from_static(host));
 
         let host = RequestedHost::from_headers(&headers).unwrap().unwrap();
-        assert_eq!(host.subdomain().unwrap(), expected);
-    }
-
-    #[test_case("docs.rs")]
-    #[test_case("localhost")]
-    #[test_case("127.0.0.1:3000")]
-    fn detects_no_subdomain(host: &'static str) {
-        let mut headers = HeaderMap::new();
-        headers.insert(HOST, HeaderValue::from_static(host));
-
-        let host = RequestedHost::from_headers(&headers).unwrap().unwrap();
-        assert!(host.subdomain().is_none());
+        assert_eq!(host, expected);
     }
 
     #[test]
@@ -129,7 +125,7 @@ mod tests {
         headers.insert(HOST, HeaderValue::from_static("docs.rs"));
 
         let extracted = RequestedHost::from_headers(&headers).unwrap().unwrap();
-        assert_eq!(extracted.0, "docs.rs");
+        assert_eq!(extracted, RequestedHost::ApexDomain("docs.rs".to_string()));
     }
 
     #[test]
@@ -142,7 +138,10 @@ mod tests {
         );
 
         let extracted = RequestedHost::from_headers(&headers).unwrap().unwrap();
-        assert_eq!(extracted.0, "crate.docs.rs");
+        assert_eq!(
+            extracted,
+            RequestedHost::SubDomain("crate".to_string(), "docs.rs".to_string())
+        );
     }
 
     #[test]
@@ -177,8 +176,8 @@ mod tests {
         headers.insert(&X_FORWARDED_HOST, HeaderValue::from_static(""));
 
         assert_eq!(
-            RequestedHost::from_headers(&headers).unwrap().unwrap().0,
-            "docs.rs"
+            RequestedHost::from_headers(&headers).unwrap().unwrap(),
+            RequestedHost::ApexDomain("docs.rs".to_string())
         );
     }
 }
