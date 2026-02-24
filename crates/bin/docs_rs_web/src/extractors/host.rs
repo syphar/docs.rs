@@ -106,6 +106,7 @@ mod tests {
     use test_case::test_case;
 
     #[test_case("foo.docs.rs", RequestedHost::SubDomain("foo".to_string(), "docs.rs".to_string()))]
+    #[test_case("foo.bar.docs.rs", RequestedHost::SubDomain("foo.bar".to_string(), "docs.rs".to_string()))]
     #[test_case("foo.docs.rs:443", RequestedHost::SubDomain("foo".to_string(), "docs.rs".to_string()))]
     #[test_case("docs.rs", RequestedHost::ApexDomain("docs.rs".to_string()))]
     #[test_case("localhost", RequestedHost::ApexDomain("localhost".to_string()))]
