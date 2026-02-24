@@ -496,7 +496,7 @@ mod tests {
 
         let response = super::dispatch_router(request, main_router, subdomain_router).await;
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(response.text().await.unwrap(), "subdomain");
+        assert_eq!(response.text().await.unwrap(), "subdomain: crate");
     }
 
     #[test_case("docs.rs")]
