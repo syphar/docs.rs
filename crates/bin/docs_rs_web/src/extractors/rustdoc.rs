@@ -6,7 +6,7 @@ use crate::{
     match_release::MatchedRelease,
     metadata::MetaData,
 };
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use axum::{
     RequestPartsExt,
     extract::{FromRequestParts, MatchedPath},
@@ -133,7 +133,7 @@ where
 
     /// extract rustdoc parameters from request parts.
     ///
-    /// For now, we're using specificially named path parameters, most are optional:
+    /// For now, we're using specificially named path or subdomain parameters, most are optional:
     /// * `{name}` (mandatory) => crate name
     /// * `{version}` (optional) => request version
     /// * `{target}` (optional) => doc target
@@ -153,10 +153,15 @@ where
                 ))
             })?;
 
-            let Path(params) = parts
-                .extract::<Path<SubdomainUrlParams>>()
-                .await
-                .map_err(|err| AxumNope::BadRequest(err.into()))?;
+            let Path(params) =
+                parts
+                    .extract::<Path<SubdomainUrlParams>>()
+                    .await
+                    .map_err(|err| {
+                        AxumNope::BadRequest(
+                            anyhow!(err).context("error parsing subdomain url params"),
+                        )
+                    })?;
 
             UrlParams {
                 name,
@@ -168,16 +173,17 @@ where
             parts
                 .extract::<Path<UrlParams>>()
                 .await
-                .map_err(|err| AxumNope::BadRequest(err.into()))?
+                .map_err(|err| {
+                    AxumNope::BadRequest(anyhow!(err).context("error parsing full url params"))
+                })?
                 .0
         };
 
         let original_uri = parts.extract::<Uri>().await.expect("infallible extractor");
 
-        let matched_path = parts
-            .extract::<MatchedPath>()
-            .await
-            .map_err(|err| AxumNope::BadRequest(err.into()))?;
+        let matched_path = parts.extract::<MatchedPath>().await.map_err(|err| {
+            AxumNope::BadRequest(anyhow!(err).context("error extracting matched path"))
+        })?;
 
         Ok(Self::from_parts(params, original_uri, matched_path)?)
     }
