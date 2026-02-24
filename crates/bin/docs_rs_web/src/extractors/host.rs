@@ -34,6 +34,12 @@ impl RequestedHost {
         (parts.len() == 3).then(|| parts[0])
     }
 
+    pub fn is_apex_domain(&self) -> bool {
+        !self.is_ip_address()
+            && !self.0.eq_ignore_ascii_case("localhost")
+            && self.0.split('.').filter(|part| !part.is_empty()).count() == 2
+    }
+
     pub fn is_ip_address(&self) -> bool {
         self.0.trim_matches(['[', ']']).parse::<IpAddr>().is_ok()
     }
