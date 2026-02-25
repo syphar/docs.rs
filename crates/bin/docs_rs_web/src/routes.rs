@@ -16,7 +16,7 @@ use axum::{
     extract::Request as AxumHttpRequest,
     handler::Handler as AxumHandler,
     middleware::{self, Next},
-    response::{IntoResponse, Redirect},
+    response::{IntoResponse, Redirect, Response as AxumResponse},
     routing::{MethodRouter, get, post},
 };
 use axum_extra::routing::RouterExt;
@@ -110,6 +110,8 @@ fn cached_permanent_redirect(uri: &str) -> impl IntoResponse {
     )
 }
 
+/// small tower service that dispatches to two separate axum routers,
+/// depending on if we have a request with or without subdomain.
 #[derive(Clone)]
 pub(crate) struct HostDispatchService {
     main_router: AxumRouter,
@@ -123,35 +125,10 @@ impl HostDispatchService {
             subdomain_router,
         }
     }
-
-    async fn dispatch_router(
-        request: AxumHttpRequest,
-        main_router: AxumRouter,
-        subdomain_router: AxumRouter,
-    ) -> axum::response::Response {
-        let (mut parts, body) = request.into_parts();
-        let has_subdomain = match parts.extract::<Option<RequestedHost>>().await {
-            Ok(host) => host.is_some_and(|host| host.subdomain().is_some()),
-            Err(err) => return err.into_response(),
-        };
-        let request = AxumHttpRequest::from_parts(parts, body);
-
-        if has_subdomain {
-            subdomain_router
-                .oneshot(request)
-                .await
-                .expect("axum router service is infallible")
-        } else {
-            main_router
-                .oneshot(request)
-                .await
-                .expect("axum router service is infallible")
-        }
-    }
 }
 
 impl Service<AxumHttpRequest> for HostDispatchService {
-    type Response = axum::response::Response;
+    type Response = AxumResponse;
     type Error = Infallible;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
@@ -163,9 +140,26 @@ impl Service<AxumHttpRequest> for HostDispatchService {
         let main_router = self.main_router.clone();
         let subdomain_router = self.subdomain_router.clone();
 
-        Box::pin(
-            async move { Ok(Self::dispatch_router(request, main_router, subdomain_router).await) },
-        )
+        Box::pin(async move {
+            let (mut parts, body) = request.into_parts();
+            let has_subdomain = match parts.extract::<Option<RequestedHost>>().await {
+                Ok(host) => host.is_some_and(|host| host.subdomain().is_some()),
+                Err(err) => return Ok(err.into_response()),
+            };
+            let request = AxumHttpRequest::from_parts(parts, body);
+
+            Ok(if has_subdomain {
+                subdomain_router
+                    .oneshot(request)
+                    .await
+                    .expect("axum router service is infallible")
+            } else {
+                main_router
+                    .oneshot(request)
+                    .await
+                    .expect("axum router service is infallible")
+            })
+        })
     }
 }
 
@@ -460,6 +454,7 @@ mod tests {
     use http::{Request, header::HOST};
     use reqwest::StatusCode;
     use test_case::test_case;
+    use tower::Service as _;
 
     // These are "well-known" resources that will be requested from the root, but support
     // redirection
@@ -539,8 +534,10 @@ mod tests {
             .body(Body::empty())
             .unwrap();
 
-        let response =
-            HostDispatchService::dispatch_router(request, main_router, subdomain_router).await;
+        let response = HostDispatchService::new(main_router, subdomain_router)
+            .call(request)
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.text().await.unwrap(), "subdomain: crate");
     }
@@ -555,8 +552,10 @@ mod tests {
             .body(Body::empty())
             .unwrap();
 
-        let response =
-            HostDispatchService::dispatch_router(request, main_router, subdomain_router).await;
+        let response = HostDispatchService::new(main_router, subdomain_router)
+            .call(request)
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers().get(http::header::VARY).unwrap(), "Host");
         assert_eq!(
@@ -581,8 +580,10 @@ mod tests {
             .body(Body::empty())
             .unwrap();
 
-        let response =
-            HostDispatchService::dispatch_router(request, main_router, subdomain_router).await;
+        let response = HostDispatchService::new(main_router, subdomain_router)
+            .call(request)
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.text().await.unwrap(), "main");
     }
@@ -597,8 +598,10 @@ mod tests {
             .body(Body::empty())
             .unwrap();
 
-        let response =
-            HostDispatchService::dispatch_router(request, main_router, subdomain_router).await;
+        let response = HostDispatchService::new(main_router, subdomain_router)
+            .call(request)
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }
