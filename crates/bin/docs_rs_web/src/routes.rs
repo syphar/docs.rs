@@ -20,7 +20,8 @@ use axum::{
     routing::{MethodRouter, get, post},
 };
 use axum_extra::routing::RouterExt;
-use http::{HeaderValue, header::VARY};
+use docs_rs_headers::X_ROBOTS_TAG;
+use http::HeaderValue;
 use std::convert::Infallible;
 use tower::ServiceExt as _;
 use tracing::{debug, instrument};
@@ -105,7 +106,17 @@ fn cached_permanent_redirect(uri: &str) -> impl IntoResponse {
 
 pub(crate) fn build_axum_routes() -> Result<AxumRouter> {
     let main_router = build_main_axum_routes()?;
-    let subdomain_router = build_subdomain_axum_routes()?;
+    let subdomain_router =
+        build_subdomain_axum_routes()?.layer(middleware::from_fn(|request, next: Next| async {
+            // temporary forbid search engines on all subdomain routes.
+            let mut response = next.run(request).await;
+            let headers = response.headers_mut();
+            headers.insert(
+                &X_ROBOTS_TAG,
+                HeaderValue::from_static("noindex, nofollow, noarchive"),
+            );
+            response
+        }));
 
     Ok(AxumRouter::new().fallback({
         move |request| {
@@ -121,23 +132,7 @@ fn build_subdomain_axum_routes() -> Result<AxumRouter> {
     // without changing the non-subdomain route tree.
     Ok(AxumRouter::new()
         .route("/", get(|| async { "subdomain" }))
-        .route("/{*path}", get(|| async { "subdomain" }))
-        .layer(middleware::from_fn(subdomain_response_headers_middleware)))
-}
-
-async fn subdomain_response_headers_middleware(
-    request: AxumHttpRequest,
-    next: Next,
-) -> impl IntoResponse {
-    let mut response = next.run(request).await;
-    let headers = response.headers_mut();
-    // FIXME: add config var, "subdomain mode" vs "apex domain mode",
-    // update robots.txt, sitemap, noindex headers accordingly.
-    headers.insert(
-        "x-robots-tag",
-        HeaderValue::from_static("noindex, nofollow, noarchive"),
-    );
-    response
+        .route("/{*path}", get(|| async { "subdomain" })))
 }
 
 fn build_main_axum_routes() -> Result<AxumRouter> {
