@@ -166,6 +166,8 @@ impl Service<AxumHttpRequest> for HostDispatchService {
 pub(crate) fn build_subdomain_axum_routes() -> Result<AxumRouter> {
     // TODO:
     // * serve robots.txt, currently forbid, later for crate?
+    // * add sitemap just for the subdomain (?)
+    // * reference these sub-sitemaps in the main sitemap.
 
     // Keep this separate from the main router so we can evolve subdomain-only behavior
     // without changing the non-subdomain route tree.
