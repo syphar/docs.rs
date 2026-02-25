@@ -178,7 +178,6 @@ pub(crate) fn build_subdomain_axum_routes() -> Result<AxumRouter> {
             // temporary forbid search engines on all subdomain routes.
             let mut response = next.run(request).await;
             let headers = response.headers_mut();
-            headers.insert(http::header::VARY, HeaderValue::from_static("Host"));
             headers.insert(
                 &X_ROBOTS_TAG,
                 HeaderValue::from_static("noindex, nofollow, noarchive"),
@@ -453,6 +452,8 @@ mod tests {
     };
     use anyhow::Result;
     use axum::{Router as AxumRouter, body::Body, routing::get};
+    use docs_rs_headers::X_ROBOTS_TAG;
+    use http::header::VARY;
     use http::{Request, header::HOST};
     use reqwest::StatusCode;
     use test_case::test_case;
@@ -559,9 +560,9 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(response.headers().get(http::header::VARY).unwrap(), "Host");
+        assert_eq!(response.headers().get(VARY).unwrap(), "X-Forwarded-Host");
         assert_eq!(
-            response.headers().get("x-robots-tag").unwrap(),
+            response.headers().get(&X_ROBOTS_TAG).unwrap(),
             "noindex, nofollow, noarchive"
         );
         assert_eq!(
@@ -587,6 +588,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers().get(VARY).unwrap(), "X-Forwarded-Host");
+        assert!(response.headers().get(&X_ROBOTS_TAG).is_none());
         assert_eq!(response.text().await.unwrap(), "main");
     }
 
