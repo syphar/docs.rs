@@ -11,7 +11,7 @@ use http::{
 use http_body_util::BodyExt;
 use serde::de::DeserializeOwned;
 use std::{collections::HashMap, panic};
-use tower::ServiceExt;
+use tower::{Service, ServiceExt};
 
 pub(crate) fn assert_cache_headers_eq(
     response: &axum::response::Response,
@@ -128,7 +128,14 @@ pub(crate) trait AxumRouterTestExt {
     ) -> Result<AxumResponse>;
 }
 
-impl AxumRouterTestExt for axum::Router {
+impl<S> AxumRouterTestExt for S
+where
+    S: Service<Request<Body>, Response = AxumResponse, Error = std::convert::Infallible>
+        + Clone
+        + Send
+        + 'static,
+    S::Future: Send + 'static,
+{
     /// Make sure that a URL returns a status code between 200-299
     async fn assert_success(&self, path: &str) -> Result<AxumResponse> {
         let response = self.get(path).await?;
@@ -238,7 +245,8 @@ impl AxumRouterTestExt for axum::Router {
         Ok(self
             .clone()
             .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
-            .await?)
+            .await
+            .unwrap_or_else(|err| match err {}))
     }
 
     async fn get_with_headers<F>(&self, path: &str, f: F) -> Result<AxumResponse>
@@ -251,7 +259,8 @@ impl AxumRouterTestExt for axum::Router {
         Ok(self
             .clone()
             .oneshot(builder.body(Body::empty()).unwrap())
-            .await?)
+            .await
+            .unwrap_or_else(|err| match err {}))
     }
 
     async fn get_and_follow_redirects(&self, path: &str) -> Result<AxumResponse> {
@@ -279,7 +288,8 @@ impl AxumRouterTestExt for axum::Router {
                     .body(Body::empty())
                     .unwrap(),
             )
-            .await?)
+            .await
+            .unwrap_or_else(|err| match err {}))
     }
 
     async fn assert_redirect_common(

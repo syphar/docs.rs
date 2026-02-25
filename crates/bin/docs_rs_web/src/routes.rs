@@ -22,7 +22,13 @@ use axum::{
 use axum_extra::routing::RouterExt;
 use docs_rs_headers::X_ROBOTS_TAG;
 use http::HeaderValue;
-use std::convert::Infallible;
+use std::{
+    convert::Infallible,
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll},
+};
+use tower::Service;
 use tower::ServiceExt as _;
 use tracing::{debug, instrument};
 
@@ -104,38 +110,89 @@ fn cached_permanent_redirect(uri: &str) -> impl IntoResponse {
     )
 }
 
-pub(crate) fn build_axum_routes() -> Result<AxumRouter> {
-    let main_router = build_main_axum_routes()?;
-    let subdomain_router =
-        build_subdomain_axum_routes()?.layer(middleware::from_fn(|request, next: Next| async {
-            // temporary forbid search engines on all subdomain routes.
-            let mut response = next.run(request).await;
-            let headers = response.headers_mut();
-            headers.insert(
-                &X_ROBOTS_TAG,
-                HeaderValue::from_static("noindex, nofollow, noarchive"),
-            );
-            response
-        }));
-
-    Ok(AxumRouter::new().fallback({
-        move |request| {
-            let main_router = main_router.clone();
-            let subdomain_router = subdomain_router.clone();
-            async move { dispatch_router(request, main_router, subdomain_router).await }
-        }
-    }))
+#[derive(Clone)]
+pub(crate) struct HostDispatchService {
+    main_router: AxumRouter,
+    subdomain_router: AxumRouter,
 }
 
-fn build_subdomain_axum_routes() -> Result<AxumRouter> {
+impl HostDispatchService {
+    pub(crate) fn new(main_router: AxumRouter, subdomain_router: AxumRouter) -> Self {
+        Self {
+            main_router,
+            subdomain_router,
+        }
+    }
+
+    async fn dispatch_router(
+        request: AxumHttpRequest,
+        main_router: AxumRouter,
+        subdomain_router: AxumRouter,
+    ) -> axum::response::Response {
+        let (mut parts, body) = request.into_parts();
+        let has_subdomain = match parts.extract::<Option<RequestedHost>>().await {
+            Ok(host) => host.is_some_and(|host| host.subdomain().is_some()),
+            Err(err) => return err.into_response(),
+        };
+        let request = AxumHttpRequest::from_parts(parts, body);
+
+        if has_subdomain {
+            subdomain_router
+                .oneshot(request)
+                .await
+                .expect("axum router service is infallible")
+        } else {
+            main_router
+                .oneshot(request)
+                .await
+                .expect("axum router service is infallible")
+        }
+    }
+}
+
+impl Service<AxumHttpRequest> for HostDispatchService {
+    type Response = axum::response::Response;
+    type Error = Infallible;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, request: AxumHttpRequest) -> Self::Future {
+        let main_router = self.main_router.clone();
+        let subdomain_router = self.subdomain_router.clone();
+
+        Box::pin(
+            async move { Ok(Self::dispatch_router(request, main_router, subdomain_router).await) },
+        )
+    }
+}
+
+pub(crate) fn build_subdomain_axum_routes() -> Result<AxumRouter> {
+    // TODO:
+    // * serve robots.txt, currently forbid, later for crate?
+
     // Keep this separate from the main router so we can evolve subdomain-only behavior
     // without changing the non-subdomain route tree.
     Ok(AxumRouter::new()
         .route("/", get(|| async { "subdomain" }))
-        .route("/{*path}", get(|| async { "subdomain" })))
+        .route("/{*path}", get(|| async { "subdomain" }))
+        .layer(middleware::from_fn(|request, next: Next| async {
+            // temporary forbid search engines on all subdomain routes.
+            let mut response = next.run(request).await;
+            let headers = response.headers_mut();
+            headers.insert(http::header::VARY, HeaderValue::from_static("Host"));
+            headers.insert(
+                &X_ROBOTS_TAG,
+                HeaderValue::from_static("noindex, nofollow, noarchive"),
+            );
+            headers.insert("x-docsrs-subdomain-router", HeaderValue::from_static("1"));
+            response
+        })))
 }
 
-fn build_main_axum_routes() -> Result<AxumRouter> {
+pub(crate) fn build_main_axum_routes() -> Result<AxumRouter> {
     // hint for naming axum routes:
     // when routes overlap, the route parameters at the same position
     // have to use the same name:
@@ -385,31 +442,6 @@ fn build_main_axum_routes() -> Result<AxumRouter> {
         .fallback(fallback))
 }
 
-async fn dispatch_router(
-    request: AxumHttpRequest,
-    main_router: AxumRouter,
-    subdomain_router: AxumRouter,
-) -> axum::response::Response {
-    let (mut parts, body) = request.into_parts();
-    let has_subdomain = match parts.extract::<Option<RequestedHost>>().await {
-        Ok(host) => host.is_some_and(|host| host.subdomain().is_some()),
-        Err(err) => return err.into_response(),
-    };
-    let request = AxumHttpRequest::from_parts(parts, body);
-
-    if has_subdomain {
-        subdomain_router
-            .oneshot(request)
-            .await
-            .expect("axum router service is infallible")
-    } else {
-        main_router
-            .oneshot(request)
-            .await
-            .expect("axum router service is infallible")
-    }
-}
-
 async fn fallback() -> impl IntoResponse {
     AxumNope::ResourceNotFound
 }
@@ -418,6 +450,7 @@ async fn fallback() -> impl IntoResponse {
 mod tests {
     use crate::cache::CachePolicy;
     use crate::extractors::RequestedHost;
+    use crate::routes::HostDispatchService;
     use crate::testing::{
         AxumResponseTestExt, AxumRouterTestExt, TestEnvironment, TestEnvironmentExt as _,
         async_wrapper,
@@ -506,7 +539,8 @@ mod tests {
             .body(Body::empty())
             .unwrap();
 
-        let response = super::dispatch_router(request, main_router, subdomain_router).await;
+        let response =
+            HostDispatchService::dispatch_router(request, main_router, subdomain_router).await;
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.text().await.unwrap(), "subdomain: crate");
     }
@@ -521,7 +555,8 @@ mod tests {
             .body(Body::empty())
             .unwrap();
 
-        let response = super::dispatch_router(request, main_router, subdomain_router).await;
+        let response =
+            HostDispatchService::dispatch_router(request, main_router, subdomain_router).await;
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers().get(http::header::VARY).unwrap(), "Host");
         assert_eq!(
@@ -546,7 +581,8 @@ mod tests {
             .body(Body::empty())
             .unwrap();
 
-        let response = super::dispatch_router(request, main_router, subdomain_router).await;
+        let response =
+            HostDispatchService::dispatch_router(request, main_router, subdomain_router).await;
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.text().await.unwrap(), "main");
     }
@@ -561,7 +597,8 @@ mod tests {
             .body(Body::empty())
             .unwrap();
 
-        let response = super::dispatch_router(request, main_router, subdomain_router).await;
+        let response =
+            HostDispatchService::dispatch_router(request, main_router, subdomain_router).await;
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }

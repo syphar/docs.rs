@@ -11,8 +11,9 @@ pub(crate) trait TestEnvironmentExt {
 impl TestEnvironmentExt for TestEnvironment {
     async fn web_app(&self) -> Router {
         let template_data = Arc::new(TemplateData::new(1).unwrap());
-        build_axum_app(self.config().clone(), self.context().clone(), template_data)
+        let app = build_axum_app(self.config().clone(), self.context().clone(), template_data)
             .await
-            .expect("could not build axum app")
+            .expect("could not build axum app");
+        Router::new().fallback_service(app)
     }
 }

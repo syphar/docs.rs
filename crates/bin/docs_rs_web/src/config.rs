@@ -1,7 +1,7 @@
-use anyhow::{Result, bail};
+use anyhow::Result;
 use docs_rs_config::AppConfig;
 use docs_rs_env_vars::maybe_env;
-use std::{str::FromStr, time::Duration};
+use std::time::Duration;
 
 #[derive(Debug, bon::Builder)]
 #[builder(on(_, overwritable))]
