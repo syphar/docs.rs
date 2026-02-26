@@ -16,7 +16,7 @@ use crate::Config;
 use crate::metrics::WebMetrics;
 use crate::middleware::{csp, security};
 use crate::page::{self, TemplateData};
-use crate::{cache, routes, routes::HostDispatchService};
+use crate::{cache, routes, routes::host_dispatch::HostDispatchService};
 use anyhow::{Context as _, Error, Result, anyhow, bail};
 use axum::{
     Router as AxumRouter,
@@ -118,14 +118,14 @@ pub(crate) async fn build_axum_app(
     template_data: Arc<TemplateData>,
 ) -> Result<HostDispatchService, Error> {
     let main_router = apply_middleware(
-        routes::build_main_axum_routes()?,
+        routes::main::build_main_axum_routes()?,
         config.clone(),
         context.clone(),
         Some(template_data.clone()),
     )
     .await?;
     let subdomain_router = apply_middleware(
-        routes::build_subdomain_axum_routes()?,
+        routes::subdomain::build_subdomain_axum_routes()?,
         config,
         context,
         Some(template_data),

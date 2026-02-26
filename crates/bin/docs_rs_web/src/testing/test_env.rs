@@ -1,5 +1,6 @@
 use crate::{
-    Config as WebConfig, handlers::build_axum_app, page::TemplateData, routes::HostDispatchService,
+    Config as WebConfig, handlers::build_axum_app, page::TemplateData,
+    routes::host_dispatch::HostDispatchService,
 };
 use std::sync::Arc;
 

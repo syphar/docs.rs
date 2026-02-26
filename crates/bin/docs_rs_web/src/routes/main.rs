@@ -8,6 +8,7 @@ use crate::{
         status,
     },
     metrics::request_recorder,
+    routes::{cached_permanent_redirect, get_internal, get_rustdoc, get_static, post_internal},
 };
 use anyhow::Result;
 use askama::Template;
@@ -33,159 +34,6 @@ use tower::ServiceExt as _;
 use tracing::{debug, instrument};
 
 const INTERNAL_PREFIXES: &[&str] = &["-", "about", "crate", "releases", "sitemap.xml"];
-
-#[instrument(skip_all)]
-pub(crate) fn get_static<H, T, S>(handler: H) -> MethodRouter<S, Infallible>
-where
-    H: AxumHandler<T, S>,
-    T: 'static,
-    S: Clone + Send + Sync + 'static,
-{
-    get(handler).route_layer(middleware::from_fn(|request, next| async {
-        request_recorder(request, next, Some("static resource")).await
-    }))
-}
-
-#[instrument(skip_all)]
-fn get_internal<H, T, S>(handler: H) -> MethodRouter<S, Infallible>
-where
-    H: AxumHandler<T, S>,
-    T: 'static,
-    S: Clone + Send + Sync + 'static,
-{
-    get(handler).route_layer(middleware::from_fn(|request, next| async {
-        request_recorder(request, next, None).await
-    }))
-}
-
-#[instrument(skip_all)]
-fn post_internal<H, T, S>(handler: H) -> MethodRouter<S, Infallible>
-where
-    H: AxumHandler<T, S>,
-    T: 'static,
-    S: Clone + Send + Sync + 'static,
-{
-    post(handler).route_layer(middleware::from_fn(|request, next| async {
-        request_recorder(request, next, None).await
-    }))
-}
-
-#[instrument(skip_all)]
-fn get_rustdoc<H, T, S>(handler: H) -> MethodRouter<S, Infallible>
-where
-    H: AxumHandler<T, S>,
-    T: 'static,
-    S: Clone + Send + Sync + 'static,
-{
-    get(handler)
-        .route_layer(middleware::from_fn(|request, next| async {
-            request_recorder(request, next, Some("rustdoc page")).await
-        }))
-        .layer(middleware::from_fn(block_blacklisted_prefixes_middleware))
-}
-
-async fn block_blacklisted_prefixes_middleware(
-    request: AxumHttpRequest,
-    next: Next,
-) -> impl IntoResponse {
-    if let Some(first_component) = request.uri().path().trim_matches('/').split('/').next()
-        && !first_component.is_empty()
-        && (INTERNAL_PREFIXES.binary_search(&first_component).is_ok())
-    {
-        debug!(
-            first_component = first_component,
-            uri = ?request.uri(),
-            "blocking blacklisted prefix"
-        );
-        return AxumNope::CrateNotFound.into_response();
-    }
-
-    next.run(request).await
-}
-
-fn cached_permanent_redirect(uri: &str) -> impl IntoResponse {
-    (
-        Extension(CachePolicy::ForeverInCdnAndBrowser),
-        Redirect::permanent(uri),
-    )
-}
-
-/// small tower service that dispatches to two separate axum routers,
-/// depending on if we have a request with or without subdomain.
-#[derive(Clone)]
-pub(crate) struct HostDispatchService {
-    main_router: AxumRouter,
-    subdomain_router: AxumRouter,
-}
-
-impl HostDispatchService {
-    pub(crate) fn new(main_router: AxumRouter, subdomain_router: AxumRouter) -> Self {
-        Self {
-            main_router,
-            subdomain_router,
-        }
-    }
-}
-
-impl Service<AxumHttpRequest> for HostDispatchService {
-    type Response = AxumResponse;
-    type Error = Infallible;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
-
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, request: AxumHttpRequest) -> Self::Future {
-        let main_router = self.main_router.clone();
-        let subdomain_router = self.subdomain_router.clone();
-
-        Box::pin(async move {
-            let (mut parts, body) = request.into_parts();
-            let has_subdomain = match parts.extract::<Option<RequestedHost>>().await {
-                Ok(host) => host.is_some_and(|host| host.subdomain().is_some()),
-                Err(err) => return Ok(err.into_response()),
-            };
-            let request = AxumHttpRequest::from_parts(parts, body);
-
-            Ok(if has_subdomain {
-                subdomain_router
-                    .oneshot(request)
-                    .await
-                    .expect("axum router service is infallible")
-            } else {
-                main_router
-                    .oneshot(request)
-                    .await
-                    .expect("axum router service is infallible")
-            })
-        })
-    }
-}
-
-pub(crate) fn build_subdomain_axum_routes() -> Result<AxumRouter> {
-    // TODO:
-    // * serve robots.txt, currently forbid, later for crate?
-    // * add sitemap just for the subdomain (?)
-    // * reference these sub-sitemaps in the main sitemap.
-
-    // Keep this separate from the main router so we can evolve subdomain-only behavior
-    // without changing the non-subdomain route tree.
-    Ok(AxumRouter::new()
-        .route("/", get(|| async { "subdomain" }))
-        .route("/{*path}", get(|| async { "subdomain" }))
-        .layer(middleware::from_fn(|request, next: Next| async {
-            // temporary forbid search engines on all subdomain routes.
-            let mut response = next.run(request).await;
-            let headers = response.headers_mut();
-            headers.insert(
-                &X_ROBOTS_TAG,
-                HeaderValue::from_static("noindex, nofollow, noarchive"),
-            );
-            headers.insert("x-docsrs-subdomain-router", HeaderValue::from_static("1"));
-            response
-        })))
-}
 
 pub(crate) fn build_main_axum_routes() -> Result<AxumRouter> {
     // hint for naming axum routes:
@@ -443,21 +291,24 @@ async fn fallback() -> impl IntoResponse {
 
 #[cfg(test)]
 mod tests {
-    use crate::cache::CachePolicy;
-    use crate::extractors::RequestedHost;
-    use crate::routes::HostDispatchService;
+    use super::*;
     use crate::testing::{
         AxumResponseTestExt, AxumRouterTestExt, TestEnvironment, TestEnvironmentExt as _,
         async_wrapper,
     };
-    use anyhow::Result;
-    use axum::{Router as AxumRouter, body::Body, routing::get};
-    use docs_rs_headers::X_ROBOTS_TAG;
-    use http::header::VARY;
-    use http::{Request, header::HOST};
-    use reqwest::StatusCode;
+    use http::StatusCode;
     use test_case::test_case;
-    use tower::Service as _;
+
+    // use crate::cache::CachePolicy;
+    // use crate::extractors::RequestedHost;
+    // use crate::routes::host_dispatch::HostDispatchService;
+    // use anyhow::Result;
+    // use axum::{Router as AxumRouter, body::Body, routing::get};
+    // use docs_rs_headers::X_ROBOTS_TAG;
+    // use http::header::VARY;
+    // use http::{Request, header::HOST};
+    // use reqwest::StatusCode;
+    // use tower::Service as _;
 
     // These are "well-known" resources that will be requested from the root, but support
     // redirection
@@ -518,95 +369,5 @@ mod tests {
             );
             Ok(())
         })
-    }
-
-    #[test_case("crate.docs.rs")]
-    #[test_case("crate.localhost")]
-    #[tokio::test]
-    async fn subdomain_requests_use_subdomain_router(host: &str) {
-        let main_router = AxumRouter::new().route("/", get(|| async { "main" }));
-        let subdomain_router = AxumRouter::new().route(
-            "/",
-            get(|host: RequestedHost| async move {
-                format!("subdomain: {}", host.subdomain().unwrap())
-            }),
-        );
-        let request = Request::builder()
-            .uri("/")
-            .header(HOST, host)
-            .body(Body::empty())
-            .unwrap();
-
-        let response = HostDispatchService::new(main_router, subdomain_router)
-            .call(request)
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(response.text().await.unwrap(), "subdomain: crate");
-    }
-
-    #[tokio::test]
-    async fn built_subdomain_router_adds_response_headers() {
-        let main_router = AxumRouter::new().route("/", get(|| async { "main" }));
-        let subdomain_router = super::build_subdomain_axum_routes().unwrap();
-        let request = Request::builder()
-            .uri("/")
-            .header(HOST, "crate.docs.rs")
-            .body(Body::empty())
-            .unwrap();
-
-        let response = HostDispatchService::new(main_router, subdomain_router)
-            .call(request)
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(response.headers().get(VARY).unwrap(), "X-Forwarded-Host");
-        assert_eq!(
-            response.headers().get(&X_ROBOTS_TAG).unwrap(),
-            "noindex, nofollow, noarchive"
-        );
-        assert_eq!(
-            response.headers().get("x-docsrs-subdomain-router").unwrap(),
-            "1"
-        );
-    }
-
-    #[test_case("docs.rs")]
-    #[test_case("localhost")]
-    #[tokio::test]
-    async fn root_domain_requests_use_main_router(host: &str) {
-        let main_router = AxumRouter::new().route("/", get(|| async { "main" }));
-        let subdomain_router = AxumRouter::new().route("/", get(|| async { "subdomain" }));
-        let request = Request::builder()
-            .uri("/")
-            .header(HOST, host)
-            .body(Body::empty())
-            .unwrap();
-
-        let response = HostDispatchService::new(main_router, subdomain_router)
-            .call(request)
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(response.headers().get(VARY).unwrap(), "X-Forwarded-Host");
-        assert!(response.headers().get(&X_ROBOTS_TAG).is_none());
-        assert_eq!(response.text().await.unwrap(), "main");
-    }
-
-    #[tokio::test]
-    async fn invalid_host_is_bad_request() {
-        let main_router = AxumRouter::new().route("/", get(|| async { "main" }));
-        let subdomain_router = AxumRouter::new().route("/", get(|| async { "subdomain" }));
-        let request = Request::builder()
-            .uri("/")
-            .header(HOST, "bad/host")
-            .body(Body::empty())
-            .unwrap();
-
-        let response = HostDispatchService::new(main_router, subdomain_router)
-            .call(request)
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 }
