@@ -277,17 +277,6 @@ mod tests {
     use http::StatusCode;
     use test_case::test_case;
 
-    // use crate::cache::CachePolicy;
-    // use crate::extractors::RequestedHost;
-    // use crate::routes::host_dispatch::HostDispatchService;
-    // use anyhow::Result;
-    // use axum::{Router as AxumRouter, body::Body, routing::get};
-    // use docs_rs_headers::X_ROBOTS_TAG;
-    // use http::header::VARY;
-    // use http::{Request, header::HOST};
-    // use reqwest::StatusCode;
-    // use tower::Service as _;
-
     // These are "well-known" resources that will be requested from the root, but support
     // redirection
     #[test_case("/favicon.ico", "/-/static/favicon.ico")]
