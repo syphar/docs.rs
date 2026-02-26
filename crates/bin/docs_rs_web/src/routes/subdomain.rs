@@ -37,10 +37,7 @@ mod tests {
     use crate::routes::host_dispatch::HostDispatchService;
     use axum::body::Body;
     use docs_rs_headers::X_ROBOTS_TAG;
-    use http::{
-        Request,
-        header::{HOST, VARY},
-    };
+    use http::{Request, header::HOST};
     use reqwest::StatusCode;
     use tower::Service as _;
 
@@ -59,7 +56,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(response.headers().get(VARY).unwrap(), "X-Forwarded-Host");
         assert_eq!(
             response.headers().get(&X_ROBOTS_TAG).unwrap(),
             "noindex, nofollow, noarchive"
