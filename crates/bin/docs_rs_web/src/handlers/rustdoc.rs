@@ -5,7 +5,7 @@ use crate::{
     cache::{CachePolicy, STATIC_ASSET_CACHE_POLICY},
     error::{AxumNope, AxumResult},
     extractors::{
-        DbConnection, Path, WantedCompression,
+        DbConnection, Path, RequestedHost, WantedCompression,
         rustdoc::{PageKind, RustdocParams, UrlParams},
     },
     file::StreamingFile,
@@ -18,8 +18,7 @@ use crate::{
         TemplateData,
         templates::{RenderBrands, RenderRegular, RenderSolid, filters},
     },
-    utils,
-    utils::licenses,
+    utils::{self, licenses},
 };
 use anyhow::{Context as _, anyhow};
 use askama::Template;
@@ -177,7 +176,7 @@ async fn try_serve_legacy_toolchain_asset(
 /// into `RustdocParams`.
 #[derive(Debug, Deserialize)]
 pub(crate) struct RustdocRedirectorParams {
-    name: String,
+    name: Option<String>,
     #[serde(default)]
     version: ReqVersion,
     target: Option<String>,
@@ -189,6 +188,7 @@ pub(crate) struct RustdocRedirectorParams {
 #[instrument(skip(storage, conn))]
 pub(crate) async fn rustdoc_redirector_handler(
     Path(params): Path<RustdocRedirectorParams>,
+    requested_host: Option<RequestedHost>,
     original_uri: Uri,
     matched_path: MatchedPath,
     Extension(storage): Extension<Arc<AsyncStorage>>,
@@ -196,6 +196,16 @@ pub(crate) async fn rustdoc_redirector_handler(
     if_none_match: Option<TypedHeader<IfNoneMatch>>,
     RawQuery(original_query): RawQuery,
 ) -> AxumResult<impl IntoResponse> {
+    let name = if let Some(requested_host) = requested_host
+        && let RequestedHost::SubDomain(subdomain, _parent) = requested_host
+    {
+        subdomain
+    } else {
+        params
+            .name
+            .ok_or_else(|| AxumNope::BadRequest(anyhow!("missing crate name in path")))?
+    };
+
     fn redirect_to_doc(
         original_uri: &Uri,
         url: EscapedURI,
@@ -829,11 +839,12 @@ pub(crate) struct BadgeQueryParams {
 
 #[instrument(skip_all)]
 pub(crate) async fn badge_handler(
-    Path(name): Path<KrateName>,
+    params: RustdocParams,
     Query(query): Query<BadgeQueryParams>,
 ) -> AxumResult<impl IntoResponse> {
     let url = url::Url::parse(&format!(
-        "https://img.shields.io/docsrs/{name}/{}",
+        "https://img.shields.io/docsrs/{}/{}",
+        params.name(),
         query.version.unwrap_or_default(),
     ))
     .context("could not parse URL")?;
