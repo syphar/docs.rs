@@ -200,15 +200,11 @@ mod tests {
             async_wrapper,
         },
     };
-    use axum::{Router, body::Body};
+    use axum::Router;
     use docs_rs_headers::compute_etag;
-    use http::{
-        HeaderMap,
-        header::{CONTENT_LENGTH, CONTENT_TYPE, ETAG},
-    };
+    use http::header::{CONTENT_LENGTH, CONTENT_TYPE, ETAG};
     use std::{fs, sync::Arc};
     use test_case::test_case;
-    use tower::ServiceExt as _;
 
     fn content_length(resp: &Response) -> u64 {
         resp.headers()
@@ -224,15 +220,9 @@ mod tests {
         resp.headers().typed_get().unwrap()
     }
 
-    async fn test_conditional_get(web: &Router, path: &str) -> anyhow::Result<()> {
-        fn req(path: &str, f: impl FnOnce(&mut HeaderMap)) -> Request {
-            let mut builder = Request::builder().uri(path);
-            f(builder.headers_mut().unwrap());
-            builder.body(Body::empty()).unwrap()
-        }
-
+    async fn test_conditional_get(web: &impl AxumRouterTestExt, path: &str) -> anyhow::Result<()> {
         // original request = 200
-        let resp = web.clone().oneshot(req(path, |_| {})).await?;
+        let resp = web.get(path).await?;
 
         assert_eq!(resp.status(), StatusCode::OK);
         let etag = etag(&resp);
@@ -242,8 +232,7 @@ mod tests {
             let if_none_match: IfNoneMatch = etag.into();
 
             let cached_response = web
-                .clone()
-                .oneshot(req(path, |h| h.typed_insert(if_none_match)))
+                .get_with_headers(path, |h| h.typed_insert(if_none_match))
                 .await?;
 
             assert_eq!(cached_response.status(), StatusCode::NOT_MODIFIED);
@@ -256,8 +245,7 @@ mod tests {
                 .into();
 
             let uncached_response = web
-                .clone()
-                .oneshot(req(path, |h| h.typed_insert(other_if_none_match)))
+                .get_with_headers(path, |h| h.typed_insert(other_if_none_match))
                 .await?;
 
             assert_eq!(uncached_response.status(), StatusCode::OK);

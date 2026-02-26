@@ -1061,7 +1061,7 @@ mod test {
     async fn try_latest_version_redirect(
         krate: &str,
         path: &str,
-        web: &axum::Router,
+        web: &impl AxumRouterTestExt,
         config: &Config,
     ) -> Result<Option<String>, anyhow::Error> {
         web.assert_success(path).await?;
@@ -1098,7 +1098,7 @@ mod test {
     async fn latest_version_redirect(
         krate: &str,
         path: &str,
-        web: &axum::Router,
+        web: &impl AxumRouterTestExt,
         config: &Config,
     ) -> Result<String, anyhow::Error> {
         try_latest_version_redirect(krate, path, web, config)
@@ -1597,7 +1597,10 @@ mod test {
     #[test_case(true)]
     #[test_case(false)]
     fn yanked_release_shows_warning_in_nav(archive_storage: bool) {
-        async fn has_yanked_warning(path: &str, web: &axum::Router) -> Result<bool, anyhow::Error> {
+        async fn has_yanked_warning(
+            path: &str,
+            web: &impl AxumRouterTestExt,
+        ) -> Result<bool, anyhow::Error> {
             web.assert_success(path).await?;
             let data = web.get(path).await?.text().await?;
             Ok(kuchikiki::parse_html()
@@ -1842,7 +1845,7 @@ mod test {
     fn platform_links_go_to_current_path(archive_storage: bool) {
         async fn get_platform_links(
             path: &str,
-            web: &axum::Router,
+            web: &impl AxumRouterTestExt,
         ) -> Result<Vec<(String, String, String)>, anyhow::Error> {
             web.assert_success(path).await?;
             let data = web.get(path).await?.text().await?;
@@ -1860,7 +1863,7 @@ mod test {
                 .collect())
         }
         async fn assert_platform_links(
-            web: &axum::Router,
+            web: &impl AxumRouterTestExt,
             path: &str,
             links: &[(&str, &str)],
         ) -> Result<(), anyhow::Error> {

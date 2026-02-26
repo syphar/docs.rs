@@ -254,7 +254,7 @@ mod tests {
             .unwrap()
     }
 
-    async fn clipboard_is_present_for_path(path: &str, web: &axum::Router) -> bool {
+    async fn clipboard_is_present_for_path(path: &str, web: &impl AxumRouterTestExt) -> bool {
         let data = web.get(path).await.unwrap().text().await.unwrap();
         let node = kuchikiki::parse_html().one(data);
         node.select("#clipboard").unwrap().count() == 1
@@ -350,7 +350,7 @@ mod tests {
     #[test]
     fn standard_library_redirects() {
         async fn assert_external_redirect_success(
-            web: &axum::Router,
+            web: &impl AxumRouterTestExt,
             path: &str,
             expected_target: &str,
         ) -> Result<()> {

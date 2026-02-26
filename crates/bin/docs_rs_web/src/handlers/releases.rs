@@ -1481,7 +1481,10 @@ mod tests {
         Ok(())
     }
 
-    async fn get_release_links(path: &str, web: &axum::Router) -> Result<Vec<String>, Error> {
+    async fn get_release_links(
+        path: &str,
+        web: &impl AxumRouterTestExt,
+    ) -> Result<Vec<String>, Error> {
         let response = web.get(path).await?;
         assert!(response.status().is_success());
 
@@ -2222,7 +2225,7 @@ mod tests {
         async_wrapper(|env| async move {
             let web = env.web_app().await;
 
-            async fn inner(web: &axum::Router, krate: &str) -> Result<(), anyhow::Error> {
+            async fn inner(web: &impl AxumRouterTestExt, krate: &str) -> Result<(), anyhow::Error> {
                 let full = kuchikiki::parse_html().one(
                     web.get(&format!("/releases/search?query={krate}"))
                         .await?
