@@ -1,18 +1,17 @@
 use crate::extractors::RequestedHost;
-use anyhow::Result;
 use axum::{
-    RequestPartsExt as _, Router as AxumRouter,
+    Router as AxumRouter,
     extract::Request as AxumHttpRequest,
     response::{IntoResponse, Response as AxumResponse},
 };
 use std::{
     convert::Infallible,
     future::Future,
+    future::ready,
     pin::Pin,
     task::{Context, Poll},
 };
 use tower::Service;
-use tower::ServiceExt as _;
 
 /// small tower service that dispatches to two separate axum routers,
 /// depending on if we have a request with or without subdomain.
@@ -41,29 +40,16 @@ impl Service<AxumHttpRequest> for HostDispatchService {
     }
 
     fn call(&mut self, request: AxumHttpRequest) -> Self::Future {
-        let main_router = self.main_router.clone();
-        let subdomain_router = self.subdomain_router.clone();
+        let has_subdomain = match RequestedHost::from_headers(request.headers()) {
+            Ok(host) => host.is_some_and(|host| host.subdomain().is_some()),
+            Err(err) => return Box::pin(ready(Ok(err.into_response()))),
+        };
 
-        Box::pin(async move {
-            let (mut parts, body) = request.into_parts();
-            let has_subdomain = match parts.extract::<Option<RequestedHost>>().await {
-                Ok(host) => host.is_some_and(|host| host.subdomain().is_some()),
-                Err(err) => return Ok(err.into_response()),
-            };
-            let request = AxumHttpRequest::from_parts(parts, body);
-
-            Ok(if has_subdomain {
-                subdomain_router
-                    .oneshot(request)
-                    .await
-                    .expect("axum router service is infallible")
-            } else {
-                main_router
-                    .oneshot(request)
-                    .await
-                    .expect("axum router service is infallible")
-            })
-        })
+        if has_subdomain {
+            Box::pin(self.subdomain_router.call(request))
+        } else {
+            Box::pin(self.main_router.call(request))
+        }
     }
 }
 

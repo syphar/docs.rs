@@ -32,7 +32,7 @@ impl RequestedHost {
         }
     }
 
-    fn from_headers(headers: &HeaderMap) -> Result<Option<Self>, AxumNope> {
+    pub(crate) fn from_headers(headers: &HeaderMap) -> Result<Option<Self>, AxumNope> {
         if let Some(header) = headers
             .typed_try_get::<XForwardedHost>()
             .with_context(|| format!("invalid {} header", X_FORWARDED_HOST))
