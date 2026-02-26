@@ -12,12 +12,14 @@ pub(crate) mod source;
 pub(crate) mod statics;
 pub(crate) mod status;
 
-use crate::Config;
+use crate::cache::CachePolicy;
 use crate::metrics::WebMetrics;
 use crate::middleware::{csp, security};
 use crate::page::{self, TemplateData};
+use crate::{Config, impl_axum_webpage};
 use crate::{cache, routes, routes::host_dispatch::HostDispatchService};
 use anyhow::{Context as _, Error, Result, anyhow, bail};
+use askama::Template;
 use axum::{
     Router as AxumRouter,
     extract::{Extension, MatchedPath, Request as AxumRequest},
@@ -230,6 +232,16 @@ where
     resp.extensions_mut().insert(cache_policy);
     Ok(resp)
 }
+
+#[derive(Template)]
+#[template(path = "storage-change-detection.html")]
+#[derive(Debug, Clone)]
+pub(crate) struct StorageChangeDetection;
+
+impl_axum_webpage!(
+    StorageChangeDetection,
+    cache_policy = |_| CachePolicy::ForeverInCdnAndBrowser,
+);
 
 #[cfg(test)]
 mod tests {

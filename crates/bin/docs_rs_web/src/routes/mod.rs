@@ -91,3 +91,7 @@ fn cached_permanent_redirect(uri: &str) -> impl IntoResponse {
         Redirect::permanent(uri),
     )
 }
+
+async fn fallback() -> impl IntoResponse {
+    AxumNope::ResourceNotFound
+}

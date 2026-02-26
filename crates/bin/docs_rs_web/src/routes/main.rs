@@ -1,16 +1,16 @@
 use crate::{
-    cache::CachePolicy,
-    error::AxumNope,
     handlers::{
-        about, build_details, builds, crate_details, features, releases, rustdoc, sitemap, source,
+        StorageChangeDetection, about, build_details, builds, crate_details, features, releases,
+        rustdoc, sitemap, source,
         statics::{build_static_router, static_root_dir},
         status,
     },
-    routes::{cached_permanent_redirect, get_internal, get_rustdoc, get_static, post_internal},
+    routes::{
+        cached_permanent_redirect, fallback, get_internal, get_rustdoc, get_static, post_internal,
+    },
 };
 use anyhow::Result;
-use askama::Template;
-use axum::{Router as AxumRouter, response::IntoResponse};
+use axum::Router as AxumRouter;
 use axum_extra::routing::RouterExt;
 
 pub(crate) fn build_main_axum_routes() -> Result<AxumRouter> {
@@ -169,17 +169,7 @@ pub(crate) fn build_main_axum_routes() -> Result<AxumRouter> {
         )
         .route(
             "/-/storage-change-detection.html",
-            get_internal(|| async {
-                #[derive(Template)]
-                #[template(path = "storage-change-detection.html")]
-                #[derive(Debug, Clone)]
-                struct StorageChangeDetection;
-                crate::impl_axum_webpage!(
-                    StorageChangeDetection,
-                    cache_policy = |_| CachePolicy::ForeverInCdnAndBrowser,
-                );
-                StorageChangeDetection
-            }),
+            get_internal(|| async { StorageChangeDetection }),
         )
         .route_with_tsr(
             "/crate/{name}/{version}/download",
@@ -261,10 +251,6 @@ pub(crate) fn build_main_axum_routes() -> Result<AxumRouter> {
             get_rustdoc(rustdoc::rustdoc_html_server_handler),
         )
         .fallback(fallback))
-}
-
-async fn fallback() -> impl IntoResponse {
-    AxumNope::ResourceNotFound
 }
 
 #[cfg(test)]
