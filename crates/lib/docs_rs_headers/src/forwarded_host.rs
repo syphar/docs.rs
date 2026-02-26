@@ -79,8 +79,8 @@ mod tests {
     fn test_encode(hosts: &[&'static str], expected: &str) -> anyhow::Result<()> {
         let header = XForwardedHost(
             hosts
-                .into_iter()
-                .map(|s| Authority::from_static(*s))
+                .iter()
+                .map(|s| Authority::from_static(s))
                 .collect::<Vec<_>>(),
         );
 

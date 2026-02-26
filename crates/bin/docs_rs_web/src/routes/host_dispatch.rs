@@ -1,27 +1,10 @@
-use crate::{
-    cache::CachePolicy,
-    error::AxumNope,
-    extractors::RequestedHost,
-    handlers::{
-        about, build_details, builds, crate_details, features, releases, rustdoc, sitemap, source,
-        statics::{build_static_router, static_root_dir},
-        status,
-    },
-    metrics::request_recorder,
-};
+use crate::extractors::RequestedHost;
 use anyhow::Result;
-use askama::Template;
 use axum::{
-    Extension, RequestPartsExt as _, Router as AxumRouter,
+    RequestPartsExt as _, Router as AxumRouter,
     extract::Request as AxumHttpRequest,
-    handler::Handler as AxumHandler,
-    middleware::{self, Next},
-    response::{IntoResponse, Redirect, Response as AxumResponse},
-    routing::{MethodRouter, get, post},
+    response::{IntoResponse, Response as AxumResponse},
 };
-use axum_extra::routing::RouterExt;
-use docs_rs_headers::X_ROBOTS_TAG;
-use http::HeaderValue;
 use std::{
     convert::Infallible,
     future::Future,
@@ -30,7 +13,6 @@ use std::{
 };
 use tower::Service;
 use tower::ServiceExt as _;
-use tracing::{debug, instrument};
 
 /// small tower service that dispatches to two separate axum routers,
 /// depending on if we have a request with or without subdomain.
@@ -88,8 +70,9 @@ impl Service<AxumHttpRequest> for HostDispatchService {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{AxumResponseTestExt, AxumRouterTestExt};
-    use axum::body::Body;
+    use crate::testing::AxumResponseTestExt;
+    use axum::{body::Body, routing::get};
+    use docs_rs_headers::X_ROBOTS_TAG;
     use http::{
         Request,
         header::{HOST, VARY},

@@ -1,36 +1,11 @@
-use crate::{
-    cache::CachePolicy,
-    error::AxumNope,
-    extractors::RequestedHost,
-    handlers::{
-        about, build_details, builds, crate_details, features, releases, rustdoc, sitemap, source,
-        statics::{build_static_router, static_root_dir},
-        status,
-    },
-    metrics::request_recorder,
-};
 use anyhow::Result;
-use askama::Template;
 use axum::{
-    Extension, RequestPartsExt as _, Router as AxumRouter,
-    extract::Request as AxumHttpRequest,
-    handler::Handler as AxumHandler,
+    Router as AxumRouter,
     middleware::{self, Next},
-    response::{IntoResponse, Redirect, Response as AxumResponse},
-    routing::{MethodRouter, get, post},
+    routing::get,
 };
-use axum_extra::routing::RouterExt;
 use docs_rs_headers::X_ROBOTS_TAG;
 use http::HeaderValue;
-use std::{
-    convert::Infallible,
-    future::Future,
-    pin::Pin,
-    task::{Context, Poll},
-};
-use tower::Service;
-use tower::ServiceExt as _;
-use tracing::{debug, instrument};
 
 pub(crate) fn build_subdomain_axum_routes() -> Result<AxumRouter> {
     // TODO:
@@ -67,6 +42,7 @@ mod tests {
         header::{HOST, VARY},
     };
     use reqwest::StatusCode;
+    use tower::Service as _;
 
     #[tokio::test]
     async fn built_subdomain_router_adds_response_headers() {
