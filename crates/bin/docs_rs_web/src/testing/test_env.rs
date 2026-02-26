@@ -1,19 +1,20 @@
-use crate::{Config as WebConfig, handlers::build_axum_app, page::TemplateData};
-use axum::Router;
+use crate::{
+    Config as WebConfig, handlers::build_axum_app, page::TemplateData, routes::HostDispatchService,
+};
 use std::sync::Arc;
 
 pub(crate) type TestEnvironment = docs_rs_context::testing::TestEnvironment<WebConfig>;
 
 pub(crate) trait TestEnvironmentExt {
-    async fn web_app(&self) -> Router;
+    async fn web_app(&self) -> HostDispatchService;
 }
 
 impl TestEnvironmentExt for TestEnvironment {
-    async fn web_app(&self) -> Router {
+    async fn web_app(&self) -> HostDispatchService {
         let template_data = Arc::new(TemplateData::new(1).unwrap());
-        let app = build_axum_app(self.config().clone(), self.context().clone(), template_data)
+
+        build_axum_app(self.config().clone(), self.context().clone(), template_data)
             .await
-            .expect("could not build axum app");
-        Router::new().fallback_service(app)
+            .expect("could not build axum app")
     }
 }

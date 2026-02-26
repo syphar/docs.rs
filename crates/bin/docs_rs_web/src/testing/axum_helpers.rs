@@ -246,7 +246,7 @@ where
             .clone()
             .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
             .await
-            .unwrap_or_else(|err| match err {}))
+            .expect("infallible"))
     }
 
     async fn get_with_headers<F>(&self, path: &str, f: F) -> Result<AxumResponse>
@@ -260,7 +260,7 @@ where
             .clone()
             .oneshot(builder.body(Body::empty()).unwrap())
             .await
-            .unwrap_or_else(|err| match err {}))
+            .expect("infallible"))
     }
 
     async fn get_and_follow_redirects(&self, path: &str) -> Result<AxumResponse> {
@@ -289,7 +289,7 @@ where
                     .unwrap(),
             )
             .await
-            .unwrap_or_else(|err| match err {}))
+            .expect("infallible"))
     }
 
     async fn assert_redirect_common(
