@@ -105,8 +105,12 @@ impl FeaturesPage {
         let version = self.dependency_version(dependency);
         let dependency: KrateName = dependency.parse().ok()?;
 
-        // FIXME: how to get the original uri into the params here?
-        Some(RustdocParams::new(dependency).with_req_version(version))
+        Some(
+            RustdocParams::new(dependency)
+                .with_maybe_config(self.params.config().cloned())
+                .with_maybe_original_uri(self.params.original_uri().cloned())
+                .with_req_version(version),
+        )
     }
 }
 

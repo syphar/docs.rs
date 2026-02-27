@@ -502,6 +502,9 @@ async fn redirect_to_random_crate(
         otel_metrics.im_feeling_lucky_searches.add(1, &[]);
 
         let params = RustdocParams::new(row.name.clone())
+            .with_config(config)
+            // FIXME: add original uri so we can reuse the original host name?
+            // Or just use a default hostname when we don't have the original uri?
             .with_req_version(ReqVersion::Exact(row.version.clone()))
             .with_maybe_target_name(row.target_name.as_deref());
 

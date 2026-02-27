@@ -1,6 +1,10 @@
 //! special rustdoc extractors
 
+use std::sync::Arc;
+
 use crate::{
+    Config,
+    config::Via,
     error::AxumNope,
     extractors::{OriginalUriWithHost, Path},
     match_release::MatchedRelease,
@@ -8,9 +12,13 @@ use crate::{
 };
 use anyhow::{Result, anyhow};
 use axum::{
-    RequestPartsExt,
+    Extension, RequestPartsExt,
     extract::{FromRequestParts, MatchedPath},
-    http::{Uri, request::Parts, uri::Authority, uri::Scheme},
+    http::{
+        Uri,
+        request::Parts,
+        uri::{Authority, Scheme},
+    },
 };
 use docs_rs_types::{BuildId, CompressionAlgorithm, KrateName, ReqVersion};
 use docs_rs_uri::{EscapedURI, url_decode};
@@ -44,8 +52,13 @@ pub(crate) enum PageKind {
 /// gets better the more metadata we provide.
 #[derive(Clone, PartialEq, Serialize)]
 pub(crate) struct RustdocParams {
+    #[serde(skip)]
+    config: Option<Arc<Config>>,
+
     // optional behaviour marker
     page_kind: Option<PageKind>,
+
+    rustdoc_url_mode: Option<Via>,
 
     original_uri: Option<EscapedURI>,
     name: KrateName,
@@ -64,6 +77,8 @@ pub(crate) struct RustdocParams {
 impl std::fmt::Debug for RustdocParams {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RustdocParams")
+            .field("config", &self.config)
+            .field("rustdoc_url_mode", &self.rustdoc_url_mode)
             .field("page_kind", &self.page_kind)
             .field("original_uri", &self.original_uri)
             .field("name", &self.name)
@@ -183,7 +198,19 @@ where
             AxumNope::BadRequest(anyhow!(err).context("error extracting matched path"))
         })?;
 
-        Ok(Self::from_parts(params, original_uri.0, matched_path)?)
+        let Extension(config) = parts
+            .extract::<Extension<Arc<Config>>>()
+            .await
+            .map_err(|err| {
+                AxumNope::BadRequest(anyhow!(err).context("error extracting config extension"))
+            })?;
+
+        Ok(Self::from_parts(
+            params,
+            original_uri.0,
+            matched_path,
+            config,
+        )?)
     }
 }
 
@@ -203,6 +230,8 @@ impl RustdocParams {
             default_target: None,
             target_name: None,
             merged_inner_path: None,
+            config: None,
+            rustdoc_url_mode: None,
         }
     }
 
@@ -214,6 +243,7 @@ impl RustdocParams {
         params: UrlParams,
         original_uri: Uri,
         matched_path: MatchedPath,
+        config: Arc<Config>,
     ) -> Result<Self> {
         let static_route_suffix = {
             let uri_path = url_decode(original_uri.path())?;
@@ -223,6 +253,7 @@ impl RustdocParams {
         };
 
         Ok(RustdocParams::new(params.name)
+            .with_config(config)
             .with_req_version(params.version)
             .with_maybe_doc_target(params.target)
             .with_maybe_inner_path(params.path)
@@ -283,6 +314,19 @@ impl RustdocParams {
     pub(crate) fn with_name(self, name: impl Into<KrateName>) -> Self {
         self.update(|mut params| {
             params.name = name.into();
+            params
+        })
+    }
+
+    pub(crate) fn config(&self) -> Option<&Arc<Config>> {
+        self.config.as_ref()
+    }
+    pub(crate) fn with_config(self, config: Arc<Config>) -> Self {
+        self.with_maybe_config(Some(config))
+    }
+    pub(crate) fn with_maybe_config(self, config: Option<Arc<Config>>) -> Self {
+        self.update(|mut params| {
+            params.config = config;
             params
         })
     }
@@ -368,6 +412,19 @@ impl RustdocParams {
     }
     pub(crate) fn path_is_folder(&self) -> bool {
         path_is_folder(self.original_path())
+    }
+
+    pub(crate) fn rustdoc_url_mode(&self) -> Option<Via> {
+        self.rustdoc_url_mode
+    }
+    pub(crate) fn with_rustdoc_url_mode(self, url_mode: Via) -> Self {
+        self.with_maybe_rustdoc_url_mode(Some(url_mode))
+    }
+    pub(crate) fn with_maybe_rustdoc_url_mode(self, url_mode: Option<Via>) -> Self {
+        self.update(|mut params| {
+            params.rustdoc_url_mode = url_mode;
+            params
+        })
     }
 
     pub(crate) fn page_kind(&self) -> Option<&PageKind> {
