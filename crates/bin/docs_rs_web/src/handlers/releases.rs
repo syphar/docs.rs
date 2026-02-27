@@ -837,6 +837,8 @@ struct BuildQueuePage {
     rebuild_queue: Vec<QueuedCrate>,
     in_progress_builds: Vec<(KrateName, Version)>,
     expand_rebuild_queue: bool,
+    config: Arc<Config>,
+    original_uri: EscapedURI,
 }
 
 impl_axum_webpage! { BuildQueuePage }
@@ -849,6 +851,8 @@ pub(crate) struct BuildQueueParams {
 pub(crate) async fn build_queue_handler(
     Extension(build_queue): Extension<Arc<AsyncBuildQueue>>,
     mut conn: DbConnection,
+    Extension(config): Extension<Arc<Config>>,
+    original_uri: OriginalUriWithHost,
     Query(params): Query<BuildQueueParams>,
 ) -> AxumResult<impl IntoResponse> {
     let in_progress_builds: Vec<(KrateName, Version)> = sqlx::query!(
@@ -900,6 +904,8 @@ pub(crate) async fn build_queue_handler(
         rebuild_queue,
         in_progress_builds,
         expand_rebuild_queue: params.expand.is_some(),
+        config,
+        original_uri: original_uri.0,
     })
 }
 
