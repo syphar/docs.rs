@@ -32,6 +32,12 @@ pub(crate) enum PageKind {
     Source,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub(crate) enum Via {
+    ApexDomain,
+    SubDomain,
+}
+
 /// Extractor for rustdoc parameters from a request.
 ///
 /// Among other things, centralizes
@@ -59,6 +65,8 @@ pub(crate) struct RustdocParams {
     target_name: Option<String>,
 
     merged_inner_path: Option<String>,
+
+    via: Via,
 }
 
 impl std::fmt::Debug for RustdocParams {
@@ -66,6 +74,7 @@ impl std::fmt::Debug for RustdocParams {
         f.debug_struct("RustdocParams")
             .field("page_kind", &self.page_kind)
             .field("original_uri", &self.original_uri)
+            .field("via", &self.via)
             .field("name", &self.name)
             .field("req_version", &self.req_version)
             .field("doc_target", &self.doc_target)
@@ -142,7 +151,8 @@ where
     /// We also extract & store the original URI, and also use it to find a potential static
     /// route stuffix (e.g. the `/settings.html` in the `/{krate}/{version}/settings.html` route).
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let params = if let Some(requested_host) = parts.extract::<Option<RequestedHost>>().await?
+        let (params, via) = if let Some(requested_host) =
+            parts.extract::<Option<RequestedHost>>().await?
             && let RequestedHost::SubDomain(subdomain, _parent) = requested_host
         {
             // TODO: should we validate the parent? so it's something like `docs.rs`?
@@ -163,20 +173,26 @@ where
                         )
                     })?;
 
-            UrlParams {
-                name,
-                version: params.version,
-                target: params.target,
-                path: params.path,
-            }
+            (
+                UrlParams {
+                    name,
+                    version: params.version,
+                    target: params.target,
+                    path: params.path,
+                },
+                Via::SubDomain,
+            )
         } else {
-            parts
-                .extract::<Path<UrlParams>>()
-                .await
-                .map_err(|err| {
-                    AxumNope::BadRequest(anyhow!(err).context("error parsing full url params"))
-                })?
-                .0
+            (
+                parts
+                    .extract::<Path<UrlParams>>()
+                    .await
+                    .map_err(|err| {
+                        AxumNope::BadRequest(anyhow!(err).context("error parsing full url params"))
+                    })?
+                    .0,
+                Via::ApexDomain,
+            )
         };
 
         let original_uri = parts.extract::<Uri>().await.expect("infallible extractor");
@@ -185,18 +201,19 @@ where
             AxumNope::BadRequest(anyhow!(err).context("error extracting matched path"))
         })?;
 
-        Ok(Self::from_parts(params, original_uri, matched_path)?)
+        Ok(Self::from_parts(params, original_uri, matched_path, via)?)
     }
 }
 
 /// Builder-style methods to create & update the parameters.
 #[allow(dead_code)]
 impl RustdocParams {
-    pub(crate) fn new(name: impl Into<KrateName>) -> Self {
+    pub(crate) fn new(name: impl Into<KrateName>, via: Via) -> Self {
         Self {
             name: name.into(),
             req_version: ReqVersion::default(),
             original_uri: None,
+            via,
             doc_target: None,
             inner_path: None,
             page_kind: None,
@@ -216,6 +233,7 @@ impl RustdocParams {
         params: UrlParams,
         original_uri: Uri,
         matched_path: MatchedPath,
+        via: Via,
     ) -> Result<Self> {
         let static_route_suffix = {
             let uri_path = url_decode(original_uri.path())?;
@@ -224,7 +242,7 @@ impl RustdocParams {
             find_static_route_suffix(&matched_route, &uri_path)
         };
 
-        Ok(RustdocParams::new(params.name)
+        Ok(RustdocParams::new(params.name, via)
             .with_req_version(params.version)
             .with_maybe_doc_target(params.target)
             .with_maybe_inner_path(params.path)
@@ -252,8 +270,8 @@ impl RustdocParams {
         .expect("infallible")
     }
 
-    pub(crate) fn from_metadata(metadata: &MetaData) -> Self {
-        RustdocParams::new(metadata.name.clone()).apply_metadata(metadata)
+    pub(crate) fn from_metadata(metadata: &MetaData, via: Via) -> Self {
+        RustdocParams::new(metadata.name.clone(), via).apply_metadata(metadata)
     }
 
     pub(crate) fn apply_metadata(self, metadata: &MetaData) -> RustdocParams {
@@ -266,8 +284,8 @@ impl RustdocParams {
             .with_maybe_target_name(metadata.target_name.as_deref())
     }
 
-    pub(crate) fn from_matched_release(matched_release: &MatchedRelease) -> Self {
-        RustdocParams::new(matched_release.name.clone()).apply_matched_release(matched_release)
+    pub(crate) fn from_matched_release(matched_release: &MatchedRelease, via: Via) -> Self {
+        RustdocParams::new(matched_release.name.clone(), via).apply_matched_release(matched_release)
     }
 
     pub(crate) fn apply_matched_release(self, matched_release: &MatchedRelease) -> RustdocParams {

@@ -256,9 +256,12 @@ pub(crate) fn build_main_axum_routes() -> Result<AxumRouter> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{
-        AxumResponseTestExt, AxumRouterTestExt, TestEnvironment, TestEnvironmentExt as _,
-        async_wrapper,
+    use crate::{
+        cache::CachePolicy,
+        testing::{
+            AxumResponseTestExt, AxumRouterTestExt, TestEnvironment, TestEnvironmentExt as _,
+            async_wrapper,
+        },
     };
     use http::StatusCode;
     use test_case::test_case;

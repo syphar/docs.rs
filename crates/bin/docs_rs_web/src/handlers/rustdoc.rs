@@ -177,9 +177,14 @@ async fn try_serve_legacy_toolchain_asset(
 #[derive(Debug, Deserialize)]
 pub(crate) struct RustdocRedirectorParams {
     name: Option<String>,
-    #[serde(default)]
-    version: ReqVersion,
+    version: Option<String>,
     target: Option<String>,
+}
+
+impl RustdocRedirectorParams {
+    fn first_element(&self) -> Option<&str> {
+        self.name.as_deref().or(self.version.as_deref())
+    }
 }
 
 /// Handler called for `/:crate` and `/:crate/:version` URLs. Automatically redirects to the docs
@@ -196,14 +201,18 @@ pub(crate) async fn rustdoc_redirector_handler(
     if_none_match: Option<TypedHeader<IfNoneMatch>>,
     RawQuery(original_query): RawQuery,
 ) -> AxumResult<impl IntoResponse> {
-    let name = if let Some(requested_host) = requested_host
+    let (name, version) = if let Some(requested_host) = requested_host
         && let RequestedHost::SubDomain(subdomain, _parent) = requested_host
     {
-        subdomain
+        (subdomain, params.version.clone())
     } else {
-        params
-            .name
-            .ok_or_else(|| AxumNope::BadRequest(anyhow!("missing crate name in path")))?
+        (
+            params
+                .name
+                .clone()
+                .ok_or_else(|| AxumNope::BadRequest(anyhow!("missing crate name in path")))?,
+            params.version.clone(),
+        )
     };
 
     fn redirect_to_doc(
@@ -238,14 +247,19 @@ pub(crate) async fn rustdoc_redirector_handler(
     // edge case 1:
     // global static assets for older builds are served from the root, which ends up
     // in this handler as `params.name`.
-    if let Some((_, extension)) = params.name.rsplit_once('.')
+    if let Some(potential_filename) = params.first_element()
+        && let Some((_, extension)) = potential_filename.rsplit_once('.')
         && ["css", "js", "png", "svg", "woff", "woff2"]
             .binary_search(&extension)
             .is_ok()
     {
-        return try_serve_legacy_toolchain_asset(storage, &params.name, if_none_match.as_deref())
-            .instrument(info_span!("serve static asset"))
-            .await;
+        return try_serve_legacy_toolchain_asset(
+            storage,
+            &potential_filename,
+            if_none_match.as_deref(),
+        )
+        .instrument(info_span!("serve static asset"))
+        .await;
     }
 
     // edge case 2:
@@ -262,9 +276,12 @@ pub(crate) async fn rustdoc_redirector_handler(
 
     // edge case 3:
     // we split `{krate}::{what_to_search}` here from the `{name}` param.
-    let (crate_name, path_in_crate) = match params.name.split_once("::") {
-        Some((krate, path)) => (krate.to_owned(), Some(path.to_owned())),
-        None => (params.name.clone(), None),
+    let (crate_name, path_in_crate) = if let Some(potential_search) = params.name.as_ref()
+        && let Some((krate, path)) = potential_search.split_once("::")
+    {
+        (krate.to_owned(), Some(path.to_owned()))
+    } else {
+        (name.clone(), None)
     };
 
     // If we're here, we only should have valid crate names.
@@ -272,6 +289,14 @@ pub(crate) async fn rustdoc_redirector_handler(
         .parse()
         .context("couldn't parse crate name")
         .map_err(AxumNope::BadRequest)?;
+
+    // If we're here, we only should have valid crate names.
+    let version: ReqVersion = version
+        .map(|v| v.parse())
+        .transpose()
+        .context("couldn't parse crate name")
+        .map_err(AxumNope::BadRequest)?
+        .unwrap_or_default();
 
     // edge case 4:
     // official rust crates redirect to doc.rust-lang.org
@@ -291,7 +316,7 @@ pub(crate) async fn rustdoc_redirector_handler(
     let params = RustdocParams::from_parts(
         UrlParams {
             name: crate_name.clone(),
-            version: params.version,
+            version,
             target: params.target,
             path: None,
         },
