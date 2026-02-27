@@ -55,6 +55,8 @@ pub(crate) struct RustdocParams {
     #[serde(skip)]
     config: Option<Arc<Config>>,
 
+    override_rustdoc_url_mode: Option<Via>,
+
     // optional behaviour marker
     page_kind: Option<PageKind>,
 
@@ -76,6 +78,7 @@ impl std::fmt::Debug for RustdocParams {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RustdocParams")
             .field("config", &self.config)
+            .field("override_rustdoc_url_mode", &self.override_rustdoc_url_mode)
             .field("page_kind", &self.page_kind)
             .field("original_uri", &self.original_uri)
             .field("name", &self.name)
@@ -228,6 +231,7 @@ impl RustdocParams {
             target_name: None,
             merged_inner_path: None,
             config: None,
+            override_rustdoc_url_mode: None,
         }
     }
 
@@ -346,6 +350,22 @@ impl RustdocParams {
         self.try_update(|mut params| {
             params.req_version = version.try_into().context("couldn't parse version")?;
             Ok(params)
+        })
+    }
+
+    pub(crate) fn override_rustdoc_url_mode(&self) -> Option<Via> {
+        self.override_rustdoc_url_mode
+    }
+    pub(crate) fn with_override_rustdoc_url_mode(self, override_rustdoc_url_mode: Via) -> Self {
+        self.with_maybe_override_rustdoc_url_mode(Some(override_rustdoc_url_mode))
+    }
+    pub(crate) fn with_maybe_override_rustdoc_url_mode(
+        self,
+        override_rustdoc_url_mode: Option<Via>,
+    ) -> Self {
+        self.update(|mut params| {
+            params.override_rustdoc_url_mode = override_rustdoc_url_mode;
+            params
         })
     }
 
@@ -617,6 +637,25 @@ impl RustdocParams {
 
 /// URL & path generation for the given params.
 impl RustdocParams {
+    fn wanted_mode(&self) -> Via {
+        let original_uri = self.original_uri().expect("original uri is missing");
+        let subdomain_and_host = original_uri
+            .host()
+            .and_then(|h| split_subdomain_from_host(h));
+
+        // when the request is coming from the subdomain, we can link to subdomain.
+        //
+        // Otherwise we'll use the configured default mode.
+        if subdomain_and_host.is_some() {
+            Via::SubDomain
+        } else {
+            self.config
+                .as_ref()
+                .expect("missing config")
+                .rustdoc_url_mode
+        }
+    }
+
     fn build_url(&self, mode: Via) -> uri::Builder {
         let original_uri = self.original_uri().expect("original uri is missing");
         let subdomain_and_host = original_uri
@@ -817,10 +856,11 @@ impl RustdocParams {
         self.build_url_with_path(
             Via::ApexDomain,
             format!(
-                "/crate/{}/{}/target-redirect/{}",
+                "/crate/{}/{}/target-redirect/{}?via={}",
                 self.name,
                 self.req_version,
                 &self.path_for_rustdoc_url(),
+                self.wanted_mode().to_string()
             ),
         )
     }

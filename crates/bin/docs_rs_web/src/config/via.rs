@@ -1,8 +1,9 @@
 use anyhow::Result;
 use serde::Serialize;
-use std::str::FromStr;
+use serde_with::DeserializeFromStr;
+use std::{fmt, str::FromStr};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Default)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Default, DeserializeFromStr)]
 pub enum Via {
     #[default]
     ApexDomain,
@@ -23,6 +24,15 @@ impl FromStr for Via {
             Ok(Self::SubDomain)
         } else {
             Err(InvalidVia(s.to_string()))
+        }
+    }
+}
+
+impl fmt::Display for Via {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ApexDomain => write!(f, "apex_domain"),
+            Self::SubDomain => write!(f, "sub_domain"),
         }
     }
 }

@@ -565,6 +565,7 @@ impl_axum_webpage! {
     cpu_intensive_rendering = true,
 }
 
+// FIXME: get target-redirect to redirect to subdomain too?
 #[tracing::instrument]
 pub(crate) async fn get_all_releases(
     params: RustdocParams,
@@ -593,7 +594,11 @@ pub(crate) async fn get_all_releases(
     }
     .into_response();
 
-    // FIXME: only allow "*.docs.rs"
+    // FIXME:
+    // * only allow "*.docs.rs"
+    // * Vary: Origin ?
+    // Or echo the original origin header?
+    // tower_http::CorsLayer
     response
         .headers_mut()
         .typed_insert(AccessControlAllowOrigin::ANY);
@@ -685,7 +690,11 @@ pub(crate) async fn get_all_platforms_inner(
     }
     .into_response();
 
-    // FIXME: only allow "*.docs.rs"
+    // FIXME:
+    // * only allow "*.docs.rs"
+    // * Vary: Origin
+    // Or echo the original origin header?
+    // tower_http::CorsLayer
     response
         .headers_mut()
         .typed_insert(AccessControlAllowOrigin::ANY);

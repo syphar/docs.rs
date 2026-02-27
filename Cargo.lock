@@ -2516,6 +2516,7 @@ dependencies = [
  "sentry",
  "serde",
  "serde_json",
+ "serde_with",
  "slug",
  "sqlx",
  "syntect",
