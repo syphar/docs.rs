@@ -7,6 +7,7 @@ use axum::{
     extract::{FromRequestParts, OriginalUri},
     http::{Uri, request::Parts, uri::Scheme},
 };
+use http::HeaderMap;
 
 /// Extractor for the original URI enriched with request origin data.
 ///
@@ -31,7 +32,7 @@ where
     }
 }
 
-fn fill_request_origin(uri: Uri, headers: &axum::http::HeaderMap) -> Result<Uri, AxumNope> {
+fn fill_request_origin(uri: Uri, headers: &HeaderMap) -> Result<Uri, AxumNope> {
     let Some(authority) = requested_authority(headers)? else {
         return Ok(uri);
     };
