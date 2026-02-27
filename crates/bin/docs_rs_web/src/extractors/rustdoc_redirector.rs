@@ -32,6 +32,7 @@ pub(crate) struct RustdocRedirectorParams {
     pub(crate) name: String,
     pub(crate) version: Option<String>,
     pub(crate) target: Option<String>,
+    pub(crate) requested_host: Option<RequestedHost>,
     pub(crate) via: Via,
 }
 
@@ -51,8 +52,9 @@ where
     type Rejection = AxumNope;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        let requested_host = parts.extract::<Option<RequestedHost>>().await?;
         Ok(
-            if let Some(requested_host) = parts.extract::<Option<RequestedHost>>().await?
+            if let Some(requested_host) = &requested_host
                 && let RequestedHost::SubDomain(subdomain, _parent) = requested_host
             {
                 let Path(params) =
@@ -66,9 +68,10 @@ where
                         })?;
 
                 RustdocRedirectorParams {
-                    name: subdomain,
+                    name: subdomain.clone(),
                     version: params.version,
                     target: params.target,
+                    requested_host: Some(requested_host.clone()),
                     via: Via::SubDomain,
                 }
             } else {
@@ -79,6 +82,7 @@ where
                     name: params.name,
                     version: params.version,
                     target: params.target,
+                    requested_host: requested_host,
                     via: Via::ApexDomain,
                 }
             },
