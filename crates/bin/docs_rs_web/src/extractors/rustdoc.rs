@@ -6,7 +6,7 @@ use crate::{
     Config,
     config::Via,
     error::AxumNope,
-    extractors::{OriginalUriWithHost, Path},
+    extractors::{OriginalUriWithHost, Path, original_uri::split_subdomain_from_host},
     match_release::MatchedRelease,
     metadata::MetaData,
 };
@@ -21,6 +21,7 @@ use axum::{
 };
 use docs_rs_types::{BuildId, CompressionAlgorithm, KrateName, ReqVersion};
 use docs_rs_uri::{EscapedURI, url_decode};
+use http::{Uri, uri};
 use serde::{Deserialize, Serialize};
 
 const INDEX_HTML: &str = "index.html";
@@ -33,7 +34,7 @@ pub(crate) const ROOT_RUSTDOC_HTML_FILES: &[&str] = &[
     "scrape-examples-help.html",
 ];
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub(crate) enum PageKind {
     Rustdoc,
     Source,
@@ -49,15 +50,13 @@ pub(crate) enum PageKind {
 /// All of these have more or less detail depending on how much metadata we have here.
 /// Maintains some additional fields containing "fixed" things, whos quality
 /// gets better the more metadata we provide.
-#[derive(Clone, PartialEq, Serialize)]
+#[derive(Clone, Eq, PartialEq, Serialize)]
 pub(crate) struct RustdocParams {
     #[serde(skip)]
     config: Option<Arc<Config>>,
 
     // optional behaviour marker
     page_kind: Option<PageKind>,
-
-    rustdoc_url_mode: Option<Via>,
 
     original_uri: Option<EscapedURI>,
     name: KrateName,
@@ -77,7 +76,6 @@ impl std::fmt::Debug for RustdocParams {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RustdocParams")
             .field("config", &self.config)
-            .field("rustdoc_url_mode", &self.rustdoc_url_mode)
             .field("page_kind", &self.page_kind)
             .field("original_uri", &self.original_uri)
             .field("name", &self.name)
@@ -230,7 +228,6 @@ impl RustdocParams {
             target_name: None,
             merged_inner_path: None,
             config: None,
-            rustdoc_url_mode: None,
         }
     }
 
@@ -411,19 +408,6 @@ impl RustdocParams {
     }
     pub(crate) fn path_is_folder(&self) -> bool {
         path_is_folder(self.original_path())
-    }
-
-    pub(crate) fn rustdoc_url_mode(&self) -> Option<Via> {
-        self.rustdoc_url_mode
-    }
-    pub(crate) fn with_rustdoc_url_mode(self, url_mode: Via) -> Self {
-        self.with_maybe_rustdoc_url_mode(Some(url_mode))
-    }
-    pub(crate) fn with_maybe_rustdoc_url_mode(self, url_mode: Option<Via>) -> Self {
-        self.update(|mut params| {
-            params.rustdoc_url_mode = url_mode;
-            params
-        })
     }
 
     pub(crate) fn page_kind(&self) -> Option<&PageKind> {
@@ -633,65 +617,133 @@ impl RustdocParams {
 
 /// URL & path generation for the given params.
 impl RustdocParams {
+    fn build_url(&self, mode: Via) -> uri::Builder {
+        let original_uri = self.original_uri().expect("original uri is missing");
+        let subdomain_and_host = original_uri
+            .host()
+            .and_then(|h| split_subdomain_from_host(h));
+
+        let apex_domain = subdomain_and_host
+            .map(|(_subdomain, apex)| apex)
+            .or(original_uri.host())
+            .expect("missing host in original uri");
+
+        let scheme = original_uri.scheme().cloned().unwrap_or(
+            self.config
+                .as_ref()
+                .map(|cfg| cfg.default_url_scheme.clone())
+                .unwrap_or(Scheme::HTTP),
+        );
+
+        let host = match mode {
+            Via::SubDomain => format!("{}.{}", self.name, apex_domain),
+            Via::ApexDomain => apex_domain.to_string(),
+        };
+
+        let authority: Authority = if let Some(port) = original_uri
+            .authority()
+            .expect("missing authority/ host")
+            .port_u16()
+        {
+            format!("{host}:{port}")
+        } else {
+            host.to_string()
+        }
+        .parse()
+        .expect("can't parse authority");
+
+        Uri::builder().scheme(scheme).authority(authority)
+    }
+
+    fn build_url_with_path(&self, mode: Via, path: impl Into<String>) -> EscapedURI {
+        let path = path.into();
+        self.build_url(mode)
+            .path_and_query(path)
+            .build()
+            .map(EscapedURI::from_uri)
+            .expect("scheme and authority are set together and path is valid")
+    }
+
     pub(crate) fn rustdoc_url(&self) -> EscapedURI {
-        // FIXME: ?
-        // if let Some(requested_host) = self.requested_host()
-        //     && let RequestedHost::SubDomain(_sub, apex) = requested_host
-        // {
-        //     let authority = self.subdomain_authority(apex);
-        //     EscapedURI::from_uri(
-        //         Uri::builder()
-        //             .scheme(self.original_scheme().unwrap_or(Scheme::HTTP))
-        //             .authority(authority.as_str())
-        //             .path_and_query(encode_url_path(&format!(
-        //                 "/{}/{}",
-        //                 &self.req_version,
-        //                 &self.path_for_rustdoc_url()
-        //             )))
-        //             .build()
-        //             .expect("this can never fail because we encode the path"),
-        //     )
-        // } else {
-        EscapedURI::from_path(format!(
-            "/{}/{}/{}",
-            &self.name,
-            &self.req_version,
-            &self.path_for_rustdoc_url()
-        ))
-        // }
+        let original_uri = self.original_uri().expect("original uri is missing");
+        let subdomain_and_host = original_uri
+            .host()
+            .and_then(|h| split_subdomain_from_host(h));
+
+        // when the request is coming from the subdomain, we can link to subdomain.
+        //
+        // Otherwise we'll use the configured default mode.
+        let wanted_mode = if subdomain_and_host.is_some() {
+            Via::SubDomain
+        } else {
+            self.config
+                .as_ref()
+                .expect("missing config")
+                .rustdoc_url_mode
+        };
+
+        let path = match wanted_mode {
+            Via::SubDomain => format!("/{}/{}", &self.req_version, &self.path_for_rustdoc_url()),
+            Via::ApexDomain => {
+                format!(
+                    "/{}/{}/{}",
+                    &self.name,
+                    &self.req_version,
+                    &self.path_for_rustdoc_url()
+                )
+            }
+        };
+
+        self.build_url(wanted_mode)
+            .path_and_query(path)
+            .build()
+            .map(EscapedURI::from_uri)
+            .expect("scheme and authority are set together and path is valid")
     }
 
     pub(crate) fn crate_details_url(&self) -> EscapedURI {
-        EscapedURI::from_path(format!("/crate/{}/{}", self.name, self.req_version))
+        self.build_url_with_path(
+            Via::ApexDomain,
+            format!("/crate/{}/{}", self.name, self.req_version),
+        )
     }
 
     pub(crate) fn platforms_partial_url(&self) -> EscapedURI {
-        EscapedURI::from_path(format!(
-            "/crate/{}/{}/menus/platforms/{}",
-            self.name,
-            self.req_version,
-            self.path_for_rustdoc_url_for_partials()
-        ))
+        self.build_url_with_path(
+            Via::ApexDomain,
+            format!(
+                "/crate/{}/{}/menus/platforms/{}",
+                self.name,
+                self.req_version,
+                self.path_for_rustdoc_url_for_partials()
+            ),
+        )
     }
 
     pub(crate) fn releases_partial_url(&self) -> EscapedURI {
-        EscapedURI::from_path(format!(
-            "/crate/{}/{}/menus/releases/{}",
-            self.name,
-            self.req_version,
-            self.path_for_rustdoc_url_for_partials()
-        ))
+        self.build_url_with_path(
+            Via::ApexDomain,
+            format!(
+                "/crate/{}/{}/menus/releases/{}",
+                self.name,
+                self.req_version,
+                self.path_for_rustdoc_url_for_partials()
+            ),
+        )
     }
 
     pub(crate) fn builds_url(&self) -> EscapedURI {
-        EscapedURI::from_path(format!("/crate/{}/{}/builds", self.name, self.req_version))
+        self.build_url_with_path(
+            Via::ApexDomain,
+            format!("/crate/{}/{}/builds", self.name, self.req_version),
+        )
     }
 
     pub(crate) fn build_status_url(&self) -> EscapedURI {
-        EscapedURI::from_path(format!(
-            "/crate/{}/{}/status.json",
-            self.name, self.req_version
-        ))
+        self.build_url_with_path(
+            Via::ApexDomain,
+            format!("/crate/{}/{}/status.json", self.name, self.req_version),
+        )
     }
 
     pub(crate) fn build_details_url(&self, id: BuildId, filename: Option<&str>) -> EscapedURI {
@@ -702,14 +754,14 @@ impl RustdocParams {
             path.push_str(filename);
         }
 
-        EscapedURI::from_path(path)
+        self.build_url_with_path(Via::ApexDomain, path)
     }
 
     pub(crate) fn zip_download_url(&self) -> EscapedURI {
-        EscapedURI::from_path(format!(
-            "/crate/{}/{}/download",
-            self.name, self.req_version
-        ))
+        self.build_url_with_path(
+            Via::ApexDomain,
+            format!("/crate/{}/{}/download", self.name, self.req_version),
+        )
     }
 
     pub(crate) fn json_download_url(
@@ -733,14 +785,14 @@ impl RustdocParams {
             path.push_str(&format!(".{}", wanted_compression.file_extension()));
         }
 
-        EscapedURI::from_path(path)
+        self.build_url_with_path(Via::ApexDomain, path)
     }
 
     pub(crate) fn features_url(&self) -> EscapedURI {
-        EscapedURI::from_path(format!(
-            "/crate/{}/{}/features",
-            self.name, self.req_version
-        ))
+        self.build_url_with_path(
+            Via::ApexDomain,
+            format!("/crate/{}/{}/features", self.name, self.req_version),
+        )
     }
 
     pub(crate) fn source_url(&self) -> EscapedURI {
@@ -752,40 +804,25 @@ impl RustdocParams {
         } else {
             ""
         };
-        EscapedURI::from_path(format!(
-            "/crate/{}/{}/source/{}",
-            &self.name, &self.req_version, &inner_path
-        ))
+        self.build_url_with_path(
+            Via::ApexDomain,
+            format!(
+                "/crate/{}/{}/source/{}",
+                &self.name, &self.req_version, &inner_path
+            ),
+        )
     }
 
     pub(crate) fn target_redirect_url(&self) -> EscapedURI {
-        EscapedURI::from_path(format!(
-            "/crate/{}/{}/target-redirect/{}",
-            self.name,
-            self.req_version,
-            &self.path_for_rustdoc_url(),
-        ))
-    }
-
-    fn original_scheme(&self) -> Option<Scheme> {
-        self.original_uri()
-            .and_then(|uri| uri.scheme().map(ToOwned::to_owned))
-    }
-
-    fn subdomain_authority(&self, apex: &str) -> Authority {
-        let authority = if let Some(port) = self
-            .original_uri()
-            .and_then(|uri| uri.authority())
-            .and_then(|authority| authority.port_u16())
-        {
-            format!("{}.{apex}:{port}", self.name)
-        } else {
-            format!("{}.{apex}", self.name)
-        };
-
-        authority
-            .parse()
-            .expect("crate and apex are validated and optional port came from a valid authority")
+        self.build_url_with_path(
+            Via::ApexDomain,
+            format!(
+                "/crate/{}/{}/target-redirect/{}",
+                self.name,
+                self.req_version,
+                &self.path_for_rustdoc_url(),
+            ),
+        )
     }
 
     /// generate a potential storage path where to find the file that is described by these params.

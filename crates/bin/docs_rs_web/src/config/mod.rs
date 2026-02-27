@@ -7,7 +7,7 @@ use std::time::Duration;
 mod via;
 pub use via::Via;
 
-#[derive(Debug, PartialEq, bon::Builder)]
+#[derive(Debug, Eq, PartialEq, bon::Builder)]
 #[builder(on(_, overwritable))]
 pub struct Config {
     // Access token for APIs for crates.io

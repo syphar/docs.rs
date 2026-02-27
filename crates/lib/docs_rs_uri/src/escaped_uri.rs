@@ -18,7 +18,7 @@ use url::form_urlencoded;
 ///
 /// Also we support fragments, with http::Uri doesn't support yet.
 /// See https://github.com/hyperium/http/issues/775
-#[derive(Debug, Clone, PartialEq, SerializeDisplay, DeserializeFromStr)]
+#[derive(Debug, Clone, Eq, PartialEq, SerializeDisplay, DeserializeFromStr)]
 pub struct EscapedURI {
     uri: Uri,
     fragment: Option<String>,

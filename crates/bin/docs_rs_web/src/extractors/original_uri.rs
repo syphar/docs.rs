@@ -28,29 +28,7 @@ impl OriginalUriWithHost {
     pub(crate) fn subdomain(&self) -> Option<&str> {
         // FIXME: store this on the struct to safe time
 
-        let host = self.0.host()?.trim().trim_matches('.');
-
-        if host.is_empty() {
-            return None;
-        }
-
-        if let Ok(_ip_addr) = host.trim_matches(['[', ']']).parse::<IpAddr>() {
-            return None;
-        }
-
-        if let Some((subdomain, host)) = host.rsplit_once('.')
-            && host.eq_ignore_ascii_case("localhost")
-        {
-            return Some(subdomain);
-        }
-
-        let mut dots = host.rmatch_indices('.').map(|(i, _)| i);
-
-        if let Some(sep) = dots.nth(1) {
-            Some(&host[0..sep])
-        } else {
-            None
-        }
+        split_subdomain_from_host(self.0.host()?).map(|(subdomain, _)| subdomain)
     }
 }
 
@@ -87,6 +65,32 @@ fn fill_request_origin(uri: Uri, config: &Config, headers: &HeaderMap) -> Result
     parts.scheme = Some(config.default_url_scheme.clone());
 
     Ok(Uri::from_parts(parts).expect("scheme and authority are set together"))
+}
+
+pub(crate) fn split_subdomain_from_host(host: &str) -> Option<(&str, &str)> {
+    let host = host.trim().trim_matches('.');
+
+    if host.is_empty() {
+        return None;
+    }
+
+    if let Ok(_ip_addr) = host.trim_matches(['[', ']']).parse::<IpAddr>() {
+        return None;
+    }
+
+    if let Some((subdomain, host)) = host.rsplit_once('.')
+        && host.eq_ignore_ascii_case("localhost")
+    {
+        return Some((subdomain, host));
+    }
+
+    let mut dots = host.rmatch_indices('.').map(|(i, _)| i);
+
+    if let Some(sep) = dots.nth(1) {
+        Some((&host[0..sep], &host[sep + 1..]))
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
