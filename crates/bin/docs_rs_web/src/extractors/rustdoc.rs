@@ -609,7 +609,7 @@ impl RustdocParams {
             EscapedURI::from_uri(
                 Uri::builder()
                     .scheme("http") // FIXME: find original scheme?
-                    .authority(format!("{}.{apex}", self.name))
+                    .authority(format!("{}.{apex}:3000", self.name))
                     .path_and_query(encode_url_path(&format!(
                         "/{}/{}",
                         &self.req_version,
