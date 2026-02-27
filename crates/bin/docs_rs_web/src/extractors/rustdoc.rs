@@ -9,7 +9,7 @@ use crate::{
 use anyhow::{Result, anyhow};
 use axum::{
     RequestPartsExt,
-    extract::{FromRequestParts, MatchedPath},
+    extract::{FromRequestParts, MatchedPath, OriginalUri},
     http::{Uri, request::Parts},
 };
 use docs_rs_types::{BuildId, CompressionAlgorithm, KrateName, ReqVersion};
@@ -184,7 +184,10 @@ where
                 .0
         };
 
-        let original_uri = parts.extract::<Uri>().await.expect("infallible extractor");
+        let original_uri = parts
+            .extract::<OriginalUri>()
+            .await
+            .expect("infallible extractor");
 
         let matched_path = parts.extract::<MatchedPath>().await.map_err(|err| {
             AxumNope::BadRequest(anyhow!(err).context("error extracting matched path"))
@@ -192,7 +195,7 @@ where
 
         Ok(Self::from_parts(
             params,
-            original_uri,
+            original_uri.0,
             matched_path,
             requested_host,
         )?)
