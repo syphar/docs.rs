@@ -2,21 +2,18 @@
 
 use crate::{
     error::AxumNope,
-    extractors::{Path, RequestedHost},
+    extractors::{OriginalUriWithHost, Path, RequestedHost},
     match_release::MatchedRelease,
     metadata::MetaData,
 };
 use anyhow::{Result, anyhow};
 use axum::{
     RequestPartsExt,
-    extract::{FromRequestParts, MatchedPath, OriginalUri},
-    http::{HeaderMap, Uri, request::Parts, uri::Authority, uri::Scheme},
+    extract::{FromRequestParts, MatchedPath},
+    http::{Uri, request::Parts, uri::Authority, uri::Scheme},
 };
-use axum_extra::headers::HeaderMapExt;
-use docs_rs_headers::{XForwardedHost, XForwardedProto};
 use docs_rs_types::{BuildId, CompressionAlgorithm, KrateName, ReqVersion};
 use docs_rs_uri::{EscapedURI, encode_url_path, url_decode};
-use http::header::HOST;
 use serde::{Deserialize, Serialize};
 
 const INDEX_HTML: &str = "index.html";
@@ -187,11 +184,7 @@ where
                 .0
         };
 
-        let original_uri = parts
-            .extract::<OriginalUri>()
-            .await
-            .expect("infallible extractor");
-        let original_uri = fill_request_origin(original_uri.0, &parts.headers);
+        let original_uri = parts.extract::<OriginalUriWithHost>().await?.0;
 
         let matched_path = parts.extract::<MatchedPath>().await.map_err(|err| {
             AxumNope::BadRequest(anyhow!(err).context("error extracting matched path"))
@@ -1017,42 +1010,6 @@ fn find_static_route_suffix<'a, 'b>(route: &'a str, path: &'b str) -> Option<Str
             acc
         }))
     }
-}
-
-fn fill_request_origin(uri: Uri, headers: &HeaderMap) -> Uri {
-    let Some(authority) = original_authority(headers) else {
-        return uri;
-    };
-
-    let mut parts = uri.into_parts();
-    parts.authority = Some(authority);
-    parts.scheme = Some(original_scheme(headers).unwrap_or(Scheme::HTTP));
-
-    Uri::from_parts(parts).expect("scheme and authority are set together")
-}
-
-fn original_scheme(headers: &HeaderMap) -> Option<Scheme> {
-    headers
-        .typed_try_get::<XForwardedProto>()
-        .ok()
-        .flatten()
-        .map(|proto| proto.proto().to_owned())
-}
-
-fn original_authority(headers: &HeaderMap) -> Option<Authority> {
-    if let Some(forwarded) = headers
-        .typed_try_get::<XForwardedHost>()
-        .ok()
-        .flatten()
-        .and_then(|hosts| hosts.iter().next().cloned())
-    {
-        return Some(forwarded);
-    }
-
-    headers
-        .get(HOST)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse().ok())
 }
 
 #[cfg(test)]
