@@ -15,7 +15,6 @@ use axum::{
     Extension, RequestPartsExt,
     extract::{FromRequestParts, MatchedPath},
     http::{
-        Uri,
         request::Parts,
         uri::{Authority, Scheme},
     },
@@ -241,7 +240,7 @@ impl RustdocParams {
     /// for example when you manually change things.
     pub(crate) fn from_parts(
         params: UrlParams,
-        original_uri: Uri,
+        original_uri: EscapedURI,
         matched_path: MatchedPath,
         config: Arc<Config>,
     ) -> Result<Self> {

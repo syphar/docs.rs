@@ -5,6 +5,7 @@ use axum::{
     extract::{FromRequestParts, OriginalUri},
     http::{Uri, request::Parts},
 };
+use docs_rs_uri::EscapedURI;
 use http::HeaderMap;
 use std::{net::IpAddr, ops::Deref, sync::Arc};
 
@@ -13,10 +14,10 @@ use std::{net::IpAddr, ops::Deref, sync::Arc};
 /// Uses axum's `OriginalUri` and augments it with scheme and authority from
 /// forwarded/host headers, preserving original host and port.
 #[derive(Debug, Clone)]
-pub(crate) struct OriginalUriWithHost(pub(crate) Uri);
+pub(crate) struct OriginalUriWithHost(pub(crate) EscapedURI);
 
 impl Deref for OriginalUriWithHost {
-    type Target = Uri;
+    type Target = EscapedURI;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -70,11 +71,9 @@ where
             .await
             .context("could not extract config extension")?;
 
-        Ok(Self(fill_request_origin(
-            original_uri.0,
-            &config,
-            &parts.headers,
-        )?))
+        let uri = fill_request_origin(original_uri.0, &config, &parts.headers)?;
+
+        Ok(Self(EscapedURI::from_uri(uri)))
     }
 }
 

@@ -114,6 +114,10 @@ impl EscapedURI {
         self.uri.authority()
     }
 
+    pub fn host(&self) -> Option<&str> {
+        self.uri.authority().map(|a| a.host())
+    }
+
     pub fn path(&self) -> &str {
         self.uri.path()
     }

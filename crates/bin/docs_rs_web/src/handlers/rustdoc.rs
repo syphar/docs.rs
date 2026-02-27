@@ -186,7 +186,7 @@ pub(crate) async fn rustdoc_redirector_handler(
     RawQuery(original_query): RawQuery,
 ) -> AxumResult<impl IntoResponse> {
     fn redirect_to_doc(
-        original_uri: &Uri,
+        original_uri: &EscapedURI,
         url: EscapedURI,
         cache_policy: CachePolicy,
         path_in_crate: Option<&str>,
