@@ -3,10 +3,10 @@ use anyhow::{Context as _, anyhow};
 use axum::{
     RequestPartsExt,
     extract::{FromRequestParts, OptionalFromRequestParts},
-    http::{HeaderMap, request::Parts, uri::Authority, uri::Scheme},
+    http::{HeaderMap, request::Parts, uri::Authority},
 };
 use axum_extra::headers::HeaderMapExt;
-use docs_rs_headers::{Host, X_FORWARDED_HOST, X_FORWARDED_PROTO, XForwardedHost, XForwardedProto};
+use docs_rs_headers::{Host, X_FORWARDED_HOST, XForwardedHost};
 use http::header::HOST;
 use serde::Serialize;
 use std::net::IpAddr;
@@ -67,14 +67,6 @@ pub(crate) fn requested_authority(headers: &HeaderMap) -> Result<Option<Authorit
     } else {
         Ok(None)
     }
-}
-
-pub(crate) fn requested_scheme(headers: &HeaderMap) -> Result<Option<Scheme>, AxumNope> {
-    headers
-        .typed_try_get::<XForwardedProto>()
-        .with_context(|| format!("invalid {} header", X_FORWARDED_PROTO))
-        .map_err(AxumNope::BadRequest)
-        .map(|proto| proto.map(|proto| proto.proto().to_owned()))
 }
 
 impl FromStr for RequestedHost {

@@ -1,11 +1,11 @@
-use crate::{
-    error::AxumNope,
-    extractors::host::{requested_authority, requested_scheme},
-};
+use std::sync::Arc;
+
+use crate::{Config, error::AxumNope, extractors::host::requested_authority};
+use anyhow::Context as _;
 use axum::{
-    RequestPartsExt,
+    Extension, RequestPartsExt,
     extract::{FromRequestParts, OriginalUri},
-    http::{Uri, request::Parts, uri::Scheme},
+    http::{Uri, request::Parts},
 };
 use http::HeaderMap;
 
@@ -28,18 +28,27 @@ where
             .await
             .expect("infallible extractor");
 
-        Ok(Self(fill_request_origin(original_uri.0, &parts.headers)?))
+        let Extension(config) = parts
+            .extract::<Extension<Arc<Config>>>()
+            .await
+            .context("could not extract config extension")?;
+
+        Ok(Self(fill_request_origin(
+            original_uri.0,
+            &config,
+            &parts.headers,
+        )?))
     }
 }
 
-fn fill_request_origin(uri: Uri, headers: &HeaderMap) -> Result<Uri, AxumNope> {
+fn fill_request_origin(uri: Uri, config: &Config, headers: &HeaderMap) -> Result<Uri, AxumNope> {
     let Some(authority) = requested_authority(headers)? else {
         return Ok(uri);
     };
 
     let mut parts = uri.into_parts();
     parts.authority = Some(authority);
-    parts.scheme = Some(requested_scheme(headers)?.unwrap_or(Scheme::HTTP));
+    parts.scheme = Some(config.default_url_scheme.clone());
 
     Ok(Uri::from_parts(parts).expect("scheme and authority are set together"))
 }
@@ -49,7 +58,7 @@ mod tests {
     use super::*;
     use crate::testing::{AxumResponseTestExt, AxumRouterTestExt};
     use axum::{Router, routing::get};
-    use docs_rs_headers::{X_FORWARDED_HOST, X_FORWARDED_PROTO};
+    use docs_rs_headers::X_FORWARDED_HOST;
     use http::header::HOST;
 
     #[tokio::test]
@@ -81,7 +90,6 @@ mod tests {
             .get_with_headers("/hello", |h| {
                 h.insert(HOST, "internal.docs.rs:3000".parse().unwrap());
                 h.insert(&X_FORWARDED_HOST, "docs.rs:8443".parse().unwrap());
-                h.insert(&X_FORWARDED_PROTO, "https".parse().unwrap());
             })
             .await?;
 
