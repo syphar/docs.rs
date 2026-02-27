@@ -61,7 +61,7 @@ pub(crate) struct RustdocParams {
 
     merged_inner_path: Option<String>,
 
-    via: Via,
+    requested_host: Option<RequestedHost>,
 }
 
 impl std::fmt::Debug for RustdocParams {
@@ -69,7 +69,7 @@ impl std::fmt::Debug for RustdocParams {
         f.debug_struct("RustdocParams")
             .field("page_kind", &self.page_kind)
             .field("original_uri", &self.original_uri)
-            .field("via", &self.via)
+            .field("requested_host", &self.requested_host)
             .field("name", &self.name)
             .field("req_version", &self.req_version)
             .field("doc_target", &self.doc_target)
@@ -203,12 +203,12 @@ where
 /// Builder-style methods to create & update the parameters.
 #[allow(dead_code)]
 impl RustdocParams {
-    pub(crate) fn new(name: impl Into<KrateName>, via: Via) -> Self {
+    pub(crate) fn new(name: impl Into<KrateName>, requested_host: Option<RequestedHost>) -> Self {
         Self {
             name: name.into(),
             req_version: ReqVersion::default(),
             original_uri: None,
-            via,
+            requested_host,
             doc_target: None,
             inner_path: None,
             page_kind: None,
@@ -605,7 +605,12 @@ impl RustdocParams {
 /// URL & path generation for the given params.
 impl RustdocParams {
     pub(crate) fn rustdoc_url(&self) -> EscapedURI {
-        generate_rustdoc_url(&self.name, &self.req_version, &self.path_for_rustdoc_url())
+        EscapedURI::from_path(format!(
+            "/{}/{}/{}",
+            &self.name,
+            &self.req_version,
+            &self.path_for_rustdoc_url()
+        ))
     }
 
     pub(crate) fn crate_details_url(&self) -> EscapedURI {
@@ -821,10 +826,6 @@ fn get_file_extension(path: &str) -> Option<&str> {
             Some(ext)
         }
     })
-}
-
-fn generate_rustdoc_url(name: &KrateName, version: &ReqVersion, path: &str) -> EscapedURI {
-    EscapedURI::from_path(format!("/{}/{}/{}", name, version, path))
 }
 
 fn generate_rustdoc_path_for_url(

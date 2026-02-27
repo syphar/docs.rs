@@ -8,6 +8,7 @@ use axum::{
 use axum_extra::headers::HeaderMapExt;
 use docs_rs_headers::{Host, X_FORWARDED_HOST, XForwardedHost};
 use http::header::HOST;
+use serde::Serialize;
 use std::net::IpAddr;
 use std::str::FromStr;
 
@@ -17,7 +18,7 @@ use std::str::FromStr;
 ///
 /// Use `Option<RequestedHost>` when the header is optional.
 /// Use `RequestedHost` when the header is required.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) enum RequestedHost {
     IPAddr(IpAddr),
     ApexDomain(String),
