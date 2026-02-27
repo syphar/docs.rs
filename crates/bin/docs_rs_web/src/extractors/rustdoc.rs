@@ -603,12 +603,22 @@ impl RustdocParams {
 /// URL & path generation for the given params.
 impl RustdocParams {
     pub(crate) fn rustdoc_url(&self) -> EscapedURI {
-        EscapedURI::from_path(format!(
-            "/{}/{}/{}",
-            &self.name,
-            &self.req_version,
-            &self.path_for_rustdoc_url()
-        ))
+        if let Some(requested_host) = self.requested_host()
+            && let RequestedHost::SubDomain(sub, apex) = requested_host
+        {
+            EscapedURI::from_path(format!(
+                "/{}/{}",
+                &self.req_version,
+                &self.path_for_rustdoc_url()
+            ))
+        } else {
+            EscapedURI::from_path(format!(
+                "/{}/{}/{}",
+                &self.name,
+                &self.req_version,
+                &self.path_for_rustdoc_url()
+            ))
+        }
     }
 
     pub(crate) fn crate_details_url(&self) -> EscapedURI {
