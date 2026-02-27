@@ -780,21 +780,13 @@ pub(crate) async fn rustdoc_html_server_handler(
         .await)
 }
 
-#[derive(Debug, Deserialize)]
-pub(crate) struct TargetRedirectQuery {
-    via: Option<Via>,
-}
-
 #[instrument(skip_all)]
 pub(crate) async fn target_redirect_handler(
     params: RustdocParams,
     mut conn: DbConnection,
     Extension(storage): Extension<Arc<AsyncStorage>>,
-    Query(query): Query<TargetRedirectQuery>,
 ) -> AxumResult<impl IntoResponse> {
-    let params = params
-        .with_page_kind(PageKind::Rustdoc)
-        .with_maybe_override_rustdoc_url_mode(query.via);
+    let params = params.with_page_kind(PageKind::Rustdoc);
 
     trace!(params=?params, "target redirect endpoint with params");
 
