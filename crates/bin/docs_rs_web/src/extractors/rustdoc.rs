@@ -2,7 +2,7 @@
 
 use crate::{
     error::AxumNope,
-    extractors::{OriginalUriWithHost, Path, RequestedHost},
+    extractors::{OriginalUriWithHost, Path},
     match_release::MatchedRelease,
     metadata::MetaData,
 };
@@ -13,7 +13,7 @@ use axum::{
     http::{Uri, request::Parts, uri::Authority, uri::Scheme},
 };
 use docs_rs_types::{BuildId, CompressionAlgorithm, KrateName, ReqVersion};
-use docs_rs_uri::{EscapedURI, encode_url_path, url_decode};
+use docs_rs_uri::{EscapedURI, url_decode};
 use serde::{Deserialize, Serialize};
 
 const INDEX_HTML: &str = "index.html";
@@ -59,8 +59,6 @@ pub(crate) struct RustdocParams {
     target_name: Option<String>,
 
     merged_inner_path: Option<String>,
-
-    requested_host: Option<RequestedHost>,
 }
 
 impl std::fmt::Debug for RustdocParams {
@@ -68,7 +66,6 @@ impl std::fmt::Debug for RustdocParams {
         f.debug_struct("RustdocParams")
             .field("page_kind", &self.page_kind)
             .field("original_uri", &self.original_uri)
-            .field("requested_host", &self.requested_host)
             .field("name", &self.name)
             .field("req_version", &self.req_version)
             .field("doc_target", &self.doc_target)
@@ -145,11 +142,9 @@ where
     /// We also extract & store the original URI, and also use it to find a potential static
     /// route stuffix (e.g. the `/settings.html` in the `/{krate}/{version}/settings.html` route).
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let requested_host = parts.extract::<Option<RequestedHost>>().await?;
+        let original_uri = parts.extract::<OriginalUriWithHost>().await?;
 
-        let params = if let Some(requested_host) = &requested_host
-            && let RequestedHost::SubDomain(subdomain, _parent) = requested_host
-        {
+        let params = if let Some(subdomain) = original_uri.subdomain() {
             // TODO: should we validate the parent? so it's something like `docs.rs`?
             // The hostname do privately access the server might also have a subdomain.
             let name: KrateName = subdomain.parse().map_err(|err| {
@@ -184,30 +179,22 @@ where
                 .0
         };
 
-        let original_uri = parts.extract::<OriginalUriWithHost>().await?.0;
-
         let matched_path = parts.extract::<MatchedPath>().await.map_err(|err| {
             AxumNope::BadRequest(anyhow!(err).context("error extracting matched path"))
         })?;
 
-        Ok(Self::from_parts(
-            params,
-            original_uri,
-            matched_path,
-            requested_host,
-        )?)
+        Ok(Self::from_parts(params, original_uri.0, matched_path)?)
     }
 }
 
 /// Builder-style methods to create & update the parameters.
 #[allow(dead_code)]
 impl RustdocParams {
-    pub(crate) fn new(name: impl Into<KrateName>, requested_host: Option<RequestedHost>) -> Self {
+    pub(crate) fn new(name: impl Into<KrateName>) -> Self {
         Self {
             name: name.into(),
             req_version: ReqVersion::default(),
             original_uri: None,
-            requested_host,
             doc_target: None,
             inner_path: None,
             page_kind: None,
@@ -227,7 +214,6 @@ impl RustdocParams {
         params: UrlParams,
         original_uri: Uri,
         matched_path: MatchedPath,
-        requested_host: Option<RequestedHost>,
     ) -> Result<Self> {
         let static_route_suffix = {
             let uri_path = url_decode(original_uri.path())?;
@@ -236,7 +222,7 @@ impl RustdocParams {
             find_static_route_suffix(&matched_route, &uri_path)
         };
 
-        Ok(RustdocParams::new(params.name, requested_host)
+        Ok(RustdocParams::new(params.name)
             .with_req_version(params.version)
             .with_maybe_doc_target(params.target)
             .with_maybe_inner_path(params.path)
@@ -264,11 +250,8 @@ impl RustdocParams {
         .expect("infallible")
     }
 
-    pub(crate) fn from_metadata(
-        metadata: &MetaData,
-        requested_host: Option<RequestedHost>,
-    ) -> Self {
-        RustdocParams::new(metadata.name.clone(), requested_host).apply_metadata(metadata)
+    pub(crate) fn from_metadata(metadata: &MetaData) -> Self {
+        RustdocParams::new(metadata.name.clone()).apply_metadata(metadata)
     }
 
     pub(crate) fn apply_metadata(self, metadata: &MetaData) -> RustdocParams {
@@ -281,12 +264,8 @@ impl RustdocParams {
             .with_maybe_target_name(metadata.target_name.as_deref())
     }
 
-    pub(crate) fn from_matched_release(
-        matched_release: &MatchedRelease,
-        requested_host: Option<RequestedHost>,
-    ) -> Self {
-        RustdocParams::new(matched_release.name.clone(), requested_host)
-            .apply_matched_release(matched_release)
+    pub(crate) fn from_matched_release(matched_release: &MatchedRelease) -> Self {
+        RustdocParams::new(matched_release.name.clone()).apply_matched_release(matched_release)
     }
 
     pub(crate) fn apply_matched_release(self, matched_release: &MatchedRelease) -> RustdocParams {
@@ -306,10 +285,6 @@ impl RustdocParams {
             params.name = name.into();
             params
         })
-    }
-
-    pub(crate) fn requested_host(&self) -> Option<&RequestedHost> {
-        self.requested_host.as_ref()
     }
 
     pub(crate) fn req_version(&self) -> &ReqVersion {
@@ -603,30 +578,31 @@ impl RustdocParams {
 /// URL & path generation for the given params.
 impl RustdocParams {
     pub(crate) fn rustdoc_url(&self) -> EscapedURI {
-        if let Some(requested_host) = self.requested_host()
-            && let RequestedHost::SubDomain(_sub, apex) = requested_host
-        {
-            let authority = self.subdomain_authority(apex);
-            EscapedURI::from_uri(
-                Uri::builder()
-                    .scheme(self.original_scheme().unwrap_or(Scheme::HTTP))
-                    .authority(authority.as_str())
-                    .path_and_query(encode_url_path(&format!(
-                        "/{}/{}",
-                        &self.req_version,
-                        &self.path_for_rustdoc_url()
-                    )))
-                    .build()
-                    .expect("this can never fail because we encode the path"),
-            )
-        } else {
-            EscapedURI::from_path(format!(
-                "/{}/{}/{}",
-                &self.name,
-                &self.req_version,
-                &self.path_for_rustdoc_url()
-            ))
-        }
+        // FIXME: ?
+        // if let Some(requested_host) = self.requested_host()
+        //     && let RequestedHost::SubDomain(_sub, apex) = requested_host
+        // {
+        //     let authority = self.subdomain_authority(apex);
+        //     EscapedURI::from_uri(
+        //         Uri::builder()
+        //             .scheme(self.original_scheme().unwrap_or(Scheme::HTTP))
+        //             .authority(authority.as_str())
+        //             .path_and_query(encode_url_path(&format!(
+        //                 "/{}/{}",
+        //                 &self.req_version,
+        //                 &self.path_for_rustdoc_url()
+        //             )))
+        //             .build()
+        //             .expect("this can never fail because we encode the path"),
+        //     )
+        // } else {
+        EscapedURI::from_path(format!(
+            "/{}/{}/{}",
+            &self.name,
+            &self.req_version,
+            &self.path_for_rustdoc_url()
+        ))
+        // }
     }
 
     pub(crate) fn crate_details_url(&self) -> EscapedURI {

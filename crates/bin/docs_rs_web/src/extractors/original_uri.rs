@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use crate::{Config, error::AxumNope, extractors::host::requested_authority};
 use anyhow::Context as _;
 use axum::{
@@ -8,6 +6,7 @@ use axum::{
     http::{Uri, request::Parts},
 };
 use http::HeaderMap;
+use std::{net::IpAddr, sync::Arc};
 
 /// Extractor for the original URI enriched with request origin data.
 ///
@@ -15,6 +14,36 @@ use http::HeaderMap;
 /// forwarded/host headers, preserving original host and port.
 #[derive(Debug, Clone)]
 pub(crate) struct OriginalUriWithHost(pub(crate) Uri);
+
+impl OriginalUriWithHost {
+    pub(crate) fn subdomain(&self) -> Option<&str> {
+        // FIXME: store this on the struct to safe time
+
+        let host = self.0.host()?.trim().trim_matches('.');
+
+        if host.is_empty() {
+            return None;
+        }
+
+        if let Ok(_ip_addr) = host.trim_matches(['[', ']']).parse::<IpAddr>() {
+            return None;
+        }
+
+        if let Some((subdomain, host)) = host.rsplit_once('.')
+            && host.eq_ignore_ascii_case("localhost")
+        {
+            return Some(subdomain);
+        }
+
+        let mut dots = host.rmatch_indices('.').map(|(i, _)| i);
+
+        if let Some(sep) = dots.nth(1) {
+            Some(&host[0..sep])
+        } else {
+            None
+        }
+    }
+}
 
 impl<S> FromRequestParts<S> for OriginalUriWithHost
 where

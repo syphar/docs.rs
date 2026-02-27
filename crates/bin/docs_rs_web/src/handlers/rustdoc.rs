@@ -294,7 +294,6 @@ pub(crate) async fn rustdoc_redirector_handler(
         },
         original_uri.clone(),
         matched_path,
-        params.requested_host,
     )
     .map_err(AxumNope::BadRequest)?
     .with_page_kind(PageKind::Rustdoc);
