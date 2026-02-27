@@ -2,7 +2,7 @@ use crate::{
     cache::CachePolicy,
     error::{AxumNope, AxumResult},
     extractors::{
-        DbConnection,
+        DbConnection, OriginalUriWithHost,
         rustdoc::{PageKind, RustdocParams},
     },
     impl_axum_webpage,
@@ -17,6 +17,7 @@ use axum::{
     extract::Extension,
     response::{IntoResponse, Response as AxumResponse},
 };
+use axum_extra::headers::{AccessControlAllowOrigin, HeaderMapExt as _};
 use chrono::{DateTime, Utc};
 use docs_rs_cargo_metadata::{Dependency, ReleaseDependencyList};
 use docs_rs_database::crate_details::{Release, latest_release, parse_doc_targets};
@@ -568,6 +569,7 @@ impl_axum_webpage! {
 pub(crate) async fn get_all_releases(
     params: RustdocParams,
     mut conn: DbConnection,
+    original_uri: OriginalUriWithHost,
 ) -> AxumResult<AxumResponse> {
     let params = params.with_page_kind(PageKind::Rustdoc);
     // NOTE: we're getting RustDocParams here, where both target and path are optional.
@@ -584,12 +586,19 @@ pub(crate) async fn get_all_releases(
         return Err(AxumNope::CrateNotFound);
     }
 
-    Ok(ReleaseList {
+    let mut response = ReleaseList {
         crate_name: matched_release.name.clone(),
         releases: matched_release.all_releases,
         params,
     }
-    .into_response())
+    .into_response();
+
+    // FIXME: only allow "*.docs.rs"
+    response
+        .headers_mut()
+        .typed_insert(AccessControlAllowOrigin::ANY);
+
+    Ok(response)
 }
 
 #[derive(Template)]
@@ -668,13 +677,20 @@ pub(crate) async fn get_all_platforms_inner(
         String::new()
     };
 
-    Ok(PlatformList {
+    let mut response = PlatformList {
         crate_name: matched_release.name.clone(),
         use_direct_platform_links: is_crate_root,
         current_target,
         params,
     }
-    .into_response())
+    .into_response();
+
+    // FIXME: only allow "*.docs.rs"
+    response
+        .headers_mut()
+        .typed_insert(AccessControlAllowOrigin::ANY);
+
+    Ok(response)
 }
 
 pub(crate) async fn get_all_platforms_root(

@@ -25,6 +25,15 @@ impl Deref for OriginalUriWithHost {
 }
 
 impl OriginalUriWithHost {
+    pub(crate) fn apex_domain(&self) -> &str {
+        // FIXME: store this on the struct to safe time
+        let host = self.0.host().expect("missing host in original uri");
+
+        split_subdomain_from_host(host)
+            .map(|(_subdomain, apex_domain)| apex_domain)
+            .unwrap_or(host)
+    }
+
     pub(crate) fn subdomain(&self) -> Option<&str> {
         // FIXME: store this on the struct to safe time
 
