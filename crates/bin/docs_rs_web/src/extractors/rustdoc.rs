@@ -10,10 +10,13 @@ use anyhow::{Result, anyhow};
 use axum::{
     RequestPartsExt,
     extract::{FromRequestParts, MatchedPath, OriginalUri},
-    http::{Uri, request::Parts},
+    http::{HeaderMap, Uri, request::Parts, uri::Authority, uri::Scheme},
 };
+use axum_extra::headers::HeaderMapExt;
+use docs_rs_headers::{XForwardedHost, XForwardedProto};
 use docs_rs_types::{BuildId, CompressionAlgorithm, KrateName, ReqVersion};
 use docs_rs_uri::{EscapedURI, encode_url_path, url_decode};
+use http::header::HOST;
 use serde::{Deserialize, Serialize};
 
 const INDEX_HTML: &str = "index.html";
@@ -188,6 +191,7 @@ where
             .extract::<OriginalUri>()
             .await
             .expect("infallible extractor");
+        let original_uri = fill_request_origin(original_uri.0, &parts.headers);
 
         let matched_path = parts.extract::<MatchedPath>().await.map_err(|err| {
             AxumNope::BadRequest(anyhow!(err).context("error extracting matched path"))
@@ -195,7 +199,7 @@ where
 
         Ok(Self::from_parts(
             params,
-            original_uri.0,
+            original_uri,
             matched_path,
             requested_host,
         )?)
@@ -609,10 +613,11 @@ impl RustdocParams {
         if let Some(requested_host) = self.requested_host()
             && let RequestedHost::SubDomain(_sub, apex) = requested_host
         {
+            let authority = self.subdomain_authority(apex);
             EscapedURI::from_uri(
                 Uri::builder()
-                    .scheme("http") // FIXME: find original scheme?
-                    .authority(format!("{}.{apex}:3000", self.name))
+                    .scheme(self.original_scheme().unwrap_or(Scheme::HTTP))
+                    .authority(authority.as_str())
                     .path_and_query(encode_url_path(&format!(
                         "/{}/{}",
                         &self.req_version,
@@ -735,6 +740,27 @@ impl RustdocParams {
             self.req_version,
             &self.path_for_rustdoc_url(),
         ))
+    }
+
+    fn original_scheme(&self) -> Option<Scheme> {
+        self.original_uri()
+            .and_then(|uri| uri.scheme().map(ToOwned::to_owned))
+    }
+
+    fn subdomain_authority(&self, apex: &str) -> Authority {
+        let authority = if let Some(port) = self
+            .original_uri()
+            .and_then(|uri| uri.authority())
+            .and_then(|authority| authority.port_u16())
+        {
+            format!("{}.{apex}:{port}", self.name)
+        } else {
+            format!("{}.{apex}", self.name)
+        };
+
+        authority
+            .parse()
+            .expect("crate and apex are validated and optional port came from a valid authority")
     }
 
     /// generate a potential storage path where to find the file that is described by these params.
@@ -993,11 +1019,48 @@ fn find_static_route_suffix<'a, 'b>(route: &'a str, path: &'b str) -> Option<Str
     }
 }
 
+fn fill_request_origin(uri: Uri, headers: &HeaderMap) -> Uri {
+    let Some(authority) = original_authority(headers) else {
+        return uri;
+    };
+
+    let mut parts = uri.into_parts();
+    parts.authority = Some(authority);
+    parts.scheme = Some(original_scheme(headers).unwrap_or(Scheme::HTTP));
+
+    Uri::from_parts(parts).expect("scheme and authority are set together")
+}
+
+fn original_scheme(headers: &HeaderMap) -> Option<Scheme> {
+    headers
+        .typed_try_get::<XForwardedProto>()
+        .ok()
+        .flatten()
+        .map(|proto| proto.proto().to_owned())
+}
+
+fn original_authority(headers: &HeaderMap) -> Option<Authority> {
+    if let Some(forwarded) = headers
+        .typed_try_get::<XForwardedHost>()
+        .ok()
+        .flatten()
+        .and_then(|hosts| hosts.iter().next().cloned())
+    {
+        return Some(forwarded);
+    }
+
+    headers
+        .get(HOST)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse().ok())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::testing::{AxumResponseTestExt, AxumRouterTestExt};
     use axum::{Router, routing::get};
+    use docs_rs_headers::{X_FORWARDED_HOST, X_FORWARDED_PROTO};
     use docs_rs_types::{Version, testing::V1};
     use http::header::HOST;
     use test_case::test_case;
@@ -1153,7 +1216,9 @@ mod tests {
     async fn test_extract_rustdoc_params_from_request_uses_subdomain_name() -> anyhow::Result<()> {
         let expected = RustdocParams::new(KRATE)
             .try_with_req_version("1.2.3")?
-            .try_with_original_uri(format!("/1.2.3/{OTHER_TARGET}/some/path/to/a/file.html"))?
+            .try_with_original_uri(format!(
+                "http://krate.docs.rs/1.2.3/{OTHER_TARGET}/some/path/to/a/file.html"
+            ))?
             .with_doc_target(OTHER_TARGET)
             .with_inner_path("some/path/to/a/file.html")
             .with_page_kind(PageKind::Rustdoc);
@@ -1170,6 +1235,42 @@ mod tests {
                 "/1.2.3/x86_64-pc-windows-msvc/some/path/to/a/file.html",
                 |h| {
                     h.insert(HOST, "krate.docs.rs".parse().unwrap());
+                },
+            )
+            .await?;
+
+        assert!(res.status().is_success());
+        assert_eq!(res.text().await?, format!("{:?}", expected));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_extract_rustdoc_params_from_request_uses_forwarded_origin() -> anyhow::Result<()>
+    {
+        let expected = RustdocParams::new(KRATE)
+            .try_with_req_version("1.2.3")?
+            .try_with_original_uri(format!(
+                "https://krate.docs.rs:8443/1.2.3/{OTHER_TARGET}/some/path/to/a/file.html"
+            ))?
+            .with_doc_target(OTHER_TARGET)
+            .with_inner_path("some/path/to/a/file.html")
+            .with_page_kind(PageKind::Rustdoc);
+
+        let app = Router::new().route(
+            "/{version}/{target}/{*path}",
+            get(|params: RustdocParams| async move {
+                format!("{:?}", params.with_page_kind(PageKind::Rustdoc))
+            }),
+        );
+
+        let res = app
+            .get_with_headers(
+                "/1.2.3/x86_64-pc-windows-msvc/some/path/to/a/file.html",
+                |h| {
+                    h.insert(HOST, "internal.docs.rs:3000".parse().unwrap());
+                    h.insert(&X_FORWARDED_HOST, "krate.docs.rs:8443".parse().unwrap());
+                    h.insert(&X_FORWARDED_PROTO, "https".parse().unwrap());
                 },
             )
             .await?;
@@ -1759,6 +1860,27 @@ mod tests {
         assert!(debug_output.contains("EscapedURI"));
         assert!(debug_output.contains("rustdoc_url()"));
         assert!(debug_output.contains("generate_fallback_url()"));
+    }
+
+    #[test]
+    fn test_subdomain_rustdoc_url_preserves_original_scheme_and_port() {
+        let params = RustdocParams::new(
+            KRATE,
+            Some(RequestedHost::SubDomain(
+                "other".to_string(),
+                "docs.rs".to_string(),
+            )),
+        )
+        .with_req_version(ReqVersion::Latest)
+        .with_default_target(DEFAULT_TARGET)
+        .with_target_name(KRATE.to_string())
+        .try_with_original_uri("https://other.docs.rs:8443/krate/latest/krate/")
+        .unwrap();
+
+        assert_eq!(
+            params.rustdoc_url(),
+            "https://krate.docs.rs:8443/latest/krate/"
+        );
     }
 
     #[test]
