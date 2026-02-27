@@ -1,6 +1,5 @@
 use anyhow::anyhow;
 use axum::{RequestPartsExt as _, extract::FromRequestParts};
-use docs_rs_types::{KrateName, ReqVersion};
 use http::request::Parts;
 use serde::Deserialize;
 

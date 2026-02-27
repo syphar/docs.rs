@@ -146,8 +146,9 @@ where
     /// We also extract & store the original URI, and also use it to find a potential static
     /// route stuffix (e.g. the `/settings.html` in the `/{krate}/{version}/settings.html` route).
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let (params, via) = if let Some(requested_host) =
-            parts.extract::<Option<RequestedHost>>().await?
+        let requested_host = parts.extract::<Option<RequestedHost>>().await?;
+
+        let params = if let Some(requested_host) = &requested_host
             && let RequestedHost::SubDomain(subdomain, _parent) = requested_host
         {
             // TODO: should we validate the parent? so it's something like `docs.rs`?
@@ -168,26 +169,20 @@ where
                         )
                     })?;
 
-            (
-                UrlParams {
-                    name,
-                    version: params.version,
-                    target: params.target,
-                    path: params.path,
-                },
-                Via::SubDomain,
-            )
+            UrlParams {
+                name,
+                version: params.version,
+                target: params.target,
+                path: params.path,
+            }
         } else {
-            (
-                parts
-                    .extract::<Path<UrlParams>>()
-                    .await
-                    .map_err(|err| {
-                        AxumNope::BadRequest(anyhow!(err).context("error parsing full url params"))
-                    })?
-                    .0,
-                Via::ApexDomain,
-            )
+            parts
+                .extract::<Path<UrlParams>>()
+                .await
+                .map_err(|err| {
+                    AxumNope::BadRequest(anyhow!(err).context("error parsing full url params"))
+                })?
+                .0
         };
 
         let original_uri = parts.extract::<Uri>().await.expect("infallible extractor");
@@ -196,7 +191,12 @@ where
             AxumNope::BadRequest(anyhow!(err).context("error extracting matched path"))
         })?;
 
-        Ok(Self::from_parts(params, original_uri, matched_path, via)?)
+        Ok(Self::from_parts(
+            params,
+            original_uri,
+            matched_path,
+            requested_host,
+        )?)
     }
 }
 
@@ -228,13 +228,21 @@ impl RustdocParams {
         params: UrlParams,
         original_uri: Uri,
         matched_path: MatchedPath,
-        via: Via,
+        requested_host: Option<RequestedHost>,
     ) -> Result<Self> {
         let static_route_suffix = {
             let uri_path = url_decode(original_uri.path())?;
             let matched_route = url_decode(matched_path.as_str())?;
 
             find_static_route_suffix(&matched_route, &uri_path)
+        };
+
+        let via = if let Some(requested_host) = requested_host
+            && let RequestedHost::SubDomain(_, _parent) = requested_host
+        {
+            Via::SubDomain
+        } else {
+            Via::ApexDomain
         };
 
         Ok(RustdocParams::new(params.name, via)
@@ -300,6 +308,10 @@ impl RustdocParams {
             params.name = name.into();
             params
         })
+    }
+
+    pub(crate) fn via(&self) -> Via {
+        self.via
     }
 
     pub(crate) fn req_version(&self) -> &ReqVersion {

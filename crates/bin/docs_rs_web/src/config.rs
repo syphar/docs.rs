@@ -4,8 +4,8 @@ use docs_rs_env_vars::maybe_env;
 use serde::Serialize;
 use std::{str::FromStr, time::Duration};
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Default)]
-pub(crate) enum Via {
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Default)]
+pub enum Via {
     #[default]
     ApexDomain,
     SubDomain,

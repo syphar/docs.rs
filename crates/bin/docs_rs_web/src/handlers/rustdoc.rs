@@ -6,7 +6,7 @@ use crate::{
     config::Via,
     error::{AxumNope, AxumResult},
     extractors::{
-        DbConnection, Path, RequestedHost, WantedCompression,
+        DbConnection, Path, WantedCompression,
         rustdoc::{PageKind, RustdocParams, UrlParams},
         rustdoc_redirector::RustdocRedirectorParams,
     },

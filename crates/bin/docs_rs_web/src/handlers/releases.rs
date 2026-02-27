@@ -3,6 +3,7 @@
 use crate::{
     Config,
     cache::CachePolicy,
+    config::Via,
     error::{AxumNope, AxumResult},
     extractors::{DbConnection, Path, rustdoc::RustdocParams},
     handlers::{axum_redirect, rustdoc::OfficialCrateDescription},
@@ -55,8 +56,8 @@ pub struct Release {
 }
 
 impl Release {
-    pub fn rustdoc_params(&self) -> RustdocParams {
-        RustdocParams::new(self.name.clone())
+    pub fn rustdoc_params(&self, via: Via) -> RustdocParams {
+        RustdocParams::new(self.name.clone(), via)
             .with_req_version(self.version.clone())
             .with_maybe_target_name(self.target_name.clone())
     }
@@ -257,6 +258,7 @@ async fn get_search_results(
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HomePage {
     recent_releases: Vec<Release>,
+    via: Via,
 }
 
 impl_axum_webpage! {
@@ -264,11 +266,17 @@ impl_axum_webpage! {
     cache_policy = |_| CachePolicy::ShortInCdnAndBrowser,
 }
 
-pub(crate) async fn home_page(mut conn: DbConnection) -> AxumResult<impl IntoResponse> {
+pub(crate) async fn home_page(
+    mut conn: DbConnection,
+    Extension(config): Extension<Arc<Config>>,
+) -> AxumResult<impl IntoResponse> {
     let recent_releases =
         get_releases(&mut conn, 1, RELEASES_IN_HOME, Order::ReleaseTime, true).await?;
 
-    Ok(HomePage { recent_releases })
+    Ok(HomePage {
+        recent_releases,
+        via: config.mode,
+    })
 }
 
 #[derive(Template)]
@@ -300,6 +308,7 @@ struct ViewReleases {
     show_previous_page: bool,
     page_number: i64,
     owner: Option<String>,
+    via: Via,
 }
 
 impl_axum_webpage! { ViewReleases }
@@ -340,6 +349,7 @@ pub(crate) async fn releases_handler(
     conn: &mut sqlx::PgConnection,
     page: Option<i64>,
     release_type: ReleaseType,
+    config: &Config,
 ) -> AxumResult<impl IntoResponse + use<>> {
     let page_number = page.unwrap_or(1);
 
@@ -388,35 +398,46 @@ pub(crate) async fn releases_handler(
         show_previous_page,
         page_number,
         owner: None,
+        via: config.mode,
     })
 }
 
 pub(crate) async fn recent_releases_handler(
     page: Option<Path<i64>>,
     mut conn: DbConnection,
+    Extension(config): Extension<Arc<Config>>,
 ) -> AxumResult<impl IntoResponse> {
-    releases_handler(&mut conn, page.map(|p| p.0), ReleaseType::Recent).await
+    releases_handler(&mut conn, page.map(|p| p.0), ReleaseType::Recent, &config).await
 }
 
 pub(crate) async fn releases_by_stars_handler(
     page: Option<Path<i64>>,
     mut conn: DbConnection,
+    Extension(config): Extension<Arc<Config>>,
 ) -> AxumResult<impl IntoResponse> {
-    releases_handler(&mut conn, page.map(|p| p.0), ReleaseType::Stars).await
+    releases_handler(&mut conn, page.map(|p| p.0), ReleaseType::Stars, &config).await
 }
 
 pub(crate) async fn releases_recent_failures_handler(
     page: Option<Path<i64>>,
     mut conn: DbConnection,
+    Extension(config): Extension<Arc<Config>>,
 ) -> AxumResult<impl IntoResponse> {
-    releases_handler(&mut conn, page.map(|p| p.0), ReleaseType::RecentFailures).await
+    releases_handler(
+        &mut conn,
+        page.map(|p| p.0),
+        ReleaseType::RecentFailures,
+        &config,
+    )
+    .await
 }
 
 pub(crate) async fn releases_failures_by_stars_handler(
     page: Option<Path<i64>>,
     mut conn: DbConnection,
+    Extension(config): Extension<Arc<Config>>,
 ) -> AxumResult<impl IntoResponse> {
-    releases_handler(&mut conn, page.map(|p| p.0), ReleaseType::Failures).await
+    releases_handler(&mut conn, page.map(|p| p.0), ReleaseType::Failures, &config).await
 }
 
 pub(crate) async fn owner_handler(Path(owner): Path<String>) -> AxumResult<impl IntoResponse> {
@@ -441,6 +462,7 @@ pub(crate) struct Search {
     /// This should always be `ReleaseType::Search`
     pub(crate) release_type: ReleaseType,
     pub(crate) status: http::StatusCode,
+    pub(crate) via: Via,
 }
 
 impl Default for Search {
@@ -455,6 +477,7 @@ impl Default for Search {
             search_sort_by: None,
             release_type: ReleaseType::Search,
             status: http::StatusCode::OK,
+            via: Via::ApexDomain,
         }
     }
 }
@@ -733,6 +756,7 @@ struct BuildQueuePage {
     rebuild_queue: Vec<QueuedCrate>,
     in_progress_builds: Vec<(KrateName, Version)>,
     expand_rebuild_queue: bool,
+    via: Via,
 }
 
 impl_axum_webpage! { BuildQueuePage }
@@ -746,6 +770,7 @@ pub(crate) async fn build_queue_handler(
     Extension(build_queue): Extension<Arc<AsyncBuildQueue>>,
     mut conn: DbConnection,
     Query(params): Query<BuildQueueParams>,
+    Extension(config): Extension<Arc<Config>>,
 ) -> AxumResult<impl IntoResponse> {
     let in_progress_builds: Vec<(KrateName, Version)> = sqlx::query!(
         r#"SELECT
@@ -796,6 +821,7 @@ pub(crate) async fn build_queue_handler(
         rebuild_queue,
         in_progress_builds,
         expand_rebuild_queue: params.expand.is_some(),
+        via: config.mode,
     })
 }
 
