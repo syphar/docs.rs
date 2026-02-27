@@ -675,6 +675,7 @@ impl RustdocParams {
     }
 
     fn build_url_with_path(&self, mode: Via, path: impl Into<String>) -> EscapedURI {
+        // FIXME: perhaps use relative links when the original domain & target domain is the same?
         let path = path.into();
         self.build_url(mode)
             .path_and_query(path)
