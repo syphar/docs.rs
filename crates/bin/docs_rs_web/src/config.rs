@@ -1,7 +1,33 @@
 use anyhow::Result;
 use docs_rs_config::AppConfig;
 use docs_rs_env_vars::maybe_env;
-use std::time::Duration;
+use serde::Serialize;
+use std::{str::FromStr, time::Duration};
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Default)]
+pub(crate) enum Via {
+    #[default]
+    ApexDomain,
+    SubDomain,
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("invalid via format: {0}")]
+pub struct InvalidVia(String);
+
+impl FromStr for Via {
+    type Err = InvalidVia;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s.eq_ignore_ascii_case("apex_domain") {
+            Ok(Self::ApexDomain)
+        } else if s.eq_ignore_ascii_case("sub_domain") {
+            Ok(Self::SubDomain)
+        } else {
+            Err(InvalidVia(s.to_string()))
+        }
+    }
+}
 
 #[derive(Debug, bon::Builder)]
 #[builder(on(_, overwritable))]
@@ -50,6 +76,9 @@ pub struct Config {
     // This only affects pages that depend on invalidations to work.
     #[builder(default = true)]
     pub(crate) cache_invalidatable_responses: bool,
+
+    #[builder(default)]
+    pub(crate) mode: Via,
 }
 
 use config_builder::State;
@@ -69,7 +98,8 @@ impl<S: State> ConfigBuilder<S> {
             )?)
             .maybe_cache_invalidatable_responses(maybe_env(
                 "DOCSRS_CACHE_INVALIDATEABLE_RESPONSES",
-            )?))
+            )?)
+            .maybe_mode(maybe_env("DOCSRS_WEB_MODE")?))
     }
 
     #[cfg(test)]

@@ -500,7 +500,7 @@ async fn redirect_to_random_crate(
     if let Some(row) = row {
         otel_metrics.im_feeling_lucky_searches.add(1, &[]);
 
-        let params = RustdocParams::new(row.name.clone())
+        let params = RustdocParams::new(row.name.clone(), config.mode)
             .with_req_version(ReqVersion::Exact(row.version.clone()))
             .with_maybe_target_name(row.target_name.as_deref());
 
@@ -565,7 +565,7 @@ pub(crate) async fn search_handler(
             queries.extend(query_params);
 
             let rustdoc_status = matchver.rustdoc_status();
-            let params = RustdocParams::from_matched_release(&matchver);
+            let params = RustdocParams::from_matched_release(&matchver, config.mode);
 
             trace!(
                 %krate,

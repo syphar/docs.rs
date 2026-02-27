@@ -3,10 +3,12 @@
 use crate::{
     BUILD_VERSION, Config, RUSTDOC_STATIC_STORAGE_PREFIX,
     cache::{CachePolicy, STATIC_ASSET_CACHE_POLICY},
+    config::Via,
     error::{AxumNope, AxumResult},
     extractors::{
         DbConnection, Path, RequestedHost, WantedCompression,
         rustdoc::{PageKind, RustdocParams, UrlParams},
+        rustdoc_redirector::RustdocRedirectorParams,
     },
     file::StreamingFile,
     handlers::{axum_cached_redirect, crate_details::CrateDetails},
@@ -169,31 +171,12 @@ async fn try_serve_legacy_toolchain_asset(
         .into_response(if_none_match, STATIC_ASSET_CACHE_POLICY))
 }
 
-/// Intermediate struct to accept more variants than
-/// `RustdocParams` would accept.
-///
-/// After we handled the edge cases we convert this struct
-/// into `RustdocParams`.
-#[derive(Debug, Deserialize)]
-pub(crate) struct RustdocRedirectorParams {
-    name: Option<String>,
-    version: Option<String>,
-    target: Option<String>,
-}
-
-impl RustdocRedirectorParams {
-    fn first_element(&self) -> Option<&str> {
-        self.name.as_deref().or(self.version.as_deref())
-    }
-}
-
 /// Handler called for `/:crate` and `/:crate/:version` URLs. Automatically redirects to the docs
 /// or crate details page based on whether the given crate version was successfully built.
 #[allow(clippy::too_many_arguments)]
 #[instrument(skip(storage, conn))]
 pub(crate) async fn rustdoc_redirector_handler(
-    Path(params): Path<RustdocRedirectorParams>,
-    requested_host: Option<RequestedHost>,
+    params: RustdocRedirectorParams,
     original_uri: Uri,
     matched_path: MatchedPath,
     Extension(storage): Extension<Arc<AsyncStorage>>,
@@ -201,20 +184,6 @@ pub(crate) async fn rustdoc_redirector_handler(
     if_none_match: Option<TypedHeader<IfNoneMatch>>,
     RawQuery(original_query): RawQuery,
 ) -> AxumResult<impl IntoResponse> {
-    let (name, version) = if let Some(requested_host) = requested_host
-        && let RequestedHost::SubDomain(subdomain, _parent) = requested_host
-    {
-        (subdomain, params.version.clone())
-    } else {
-        (
-            params
-                .name
-                .clone()
-                .ok_or_else(|| AxumNope::BadRequest(anyhow!("missing crate name in path")))?,
-            params.version.clone(),
-        )
-    };
-
     fn redirect_to_doc(
         original_uri: &Uri,
         url: EscapedURI,
@@ -247,7 +216,7 @@ pub(crate) async fn rustdoc_redirector_handler(
     // edge case 1:
     // global static assets for older builds are served from the root, which ends up
     // in this handler as `params.name`.
-    if let Some(potential_filename) = params.first_element()
+    if let Some(potential_filename) = params.first_path_element()
         && let Some((_, extension)) = potential_filename.rsplit_once('.')
         && ["css", "js", "png", "svg", "woff", "woff2"]
             .binary_search(&extension)
@@ -274,14 +243,16 @@ pub(crate) async fn rustdoc_redirector_handler(
         )?);
     }
 
+    // FIXME: add test that this search hack only works on apex domain, not on subdomain
+
     // edge case 3:
     // we split `{krate}::{what_to_search}` here from the `{name}` param.
-    let (crate_name, path_in_crate) = if let Some(potential_search) = params.name.as_ref()
-        && let Some((krate, path)) = potential_search.split_once("::")
+    let (crate_name, path_in_crate) = if let Via::ApexDomain = params.via
+        && let Some((krate, path)) = params.name.split_once("::")
     {
         (krate.to_owned(), Some(path.to_owned()))
     } else {
-        (name.clone(), None)
+        (params.name.clone(), None)
     };
 
     // If we're here, we only should have valid crate names.
@@ -291,7 +262,8 @@ pub(crate) async fn rustdoc_redirector_handler(
         .map_err(AxumNope::BadRequest)?;
 
     // If we're here, we only should have valid crate names.
-    let version: ReqVersion = version
+    let version: ReqVersion = params
+        .version
         .map(|v| v.parse())
         .transpose()
         .context("couldn't parse crate name")
@@ -322,6 +294,7 @@ pub(crate) async fn rustdoc_redirector_handler(
         },
         original_uri.clone(),
         matched_path,
+        params.via,
     )
     .map_err(AxumNope::BadRequest)?
     .with_page_kind(PageKind::Rustdoc);

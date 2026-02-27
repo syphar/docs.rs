@@ -1,6 +1,7 @@
 //! special rustdoc extractors
 
 use crate::{
+    config::Via,
     error::AxumNope,
     extractors::{Path, RequestedHost},
     match_release::MatchedRelease,
@@ -30,12 +31,6 @@ pub(crate) const ROOT_RUSTDOC_HTML_FILES: &[&str] = &[
 pub(crate) enum PageKind {
     Rustdoc,
     Source,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub(crate) enum Via {
-    ApexDomain,
-    SubDomain,
 }
 
 /// Extractor for rustdoc parameters from a request.
