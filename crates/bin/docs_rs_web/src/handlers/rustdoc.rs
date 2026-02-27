@@ -6,7 +6,7 @@ use crate::{
     config::Via,
     error::{AxumNope, AxumResult},
     extractors::{
-        DbConnection, Path, WantedCompression,
+        DbConnection, OriginalUriWithHost, Path, WantedCompression,
         rustdoc::{PageKind, RustdocParams, UrlParams},
         rustdoc_redirector::RustdocRedirectorParams,
     },
@@ -177,9 +177,10 @@ async fn try_serve_legacy_toolchain_asset(
 #[instrument(skip(storage, conn))]
 pub(crate) async fn rustdoc_redirector_handler(
     params: RustdocRedirectorParams,
-    original_uri: Uri,
+    original_uri: OriginalUriWithHost,
     matched_path: MatchedPath,
     Extension(storage): Extension<Arc<AsyncStorage>>,
+    Extension(config): Extension<Arc<Config>>,
     mut conn: DbConnection,
     if_none_match: Option<TypedHeader<IfNoneMatch>>,
     RawQuery(original_query): RawQuery,
@@ -276,7 +277,7 @@ pub(crate) async fn rustdoc_redirector_handler(
         let target_uri =
             EscapedURI::from_uri(description.href.clone()).append_raw_query(original_query);
         return redirect_to_doc(
-            &original_uri,
+            &original_uri.0,
             target_uri,
             CachePolicy::ForeverInCdnAndStaleInBrowser(crate_name.into()),
             path_in_crate.as_deref(),
@@ -292,8 +293,9 @@ pub(crate) async fn rustdoc_redirector_handler(
             target: params.target,
             path: None,
         },
-        original_uri.clone(),
+        original_uri.0.clone(),
         matched_path,
+        config,
     )
     .map_err(AxumNope::BadRequest)?
     .with_page_kind(PageKind::Rustdoc);

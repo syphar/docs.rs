@@ -6,7 +6,7 @@ use axum::{
     http::{Uri, request::Parts},
 };
 use http::HeaderMap;
-use std::{net::IpAddr, sync::Arc};
+use std::{net::IpAddr, ops::Deref, sync::Arc};
 
 /// Extractor for the original URI enriched with request origin data.
 ///
@@ -14,6 +14,14 @@ use std::{net::IpAddr, sync::Arc};
 /// forwarded/host headers, preserving original host and port.
 #[derive(Debug, Clone)]
 pub(crate) struct OriginalUriWithHost(pub(crate) Uri);
+
+impl Deref for OriginalUriWithHost {
+    type Target = Uri;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 impl OriginalUriWithHost {
     pub(crate) fn subdomain(&self) -> Option<&str> {
