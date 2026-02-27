@@ -3,9 +3,8 @@
 use crate::{
     Config,
     cache::CachePolicy,
-    config::Via,
     error::{AxumNope, AxumResult},
-    extractors::{DbConnection, Path, rustdoc::RustdocParams},
+    extractors::{DbConnection, Path, RequestedHost, rustdoc::RustdocParams},
     handlers::{axum_redirect, rustdoc::OfficialCrateDescription},
     impl_axum_webpage,
     match_release::match_version,
@@ -56,8 +55,8 @@ pub struct Release {
 }
 
 impl Release {
-    pub fn rustdoc_params(&self, via: Via) -> RustdocParams {
-        RustdocParams::new(self.name.clone(), via)
+    pub fn rustdoc_params(&self, requested_host: Option<RequestedHost>) -> RustdocParams {
+        RustdocParams::new(self.name.clone(), requested_host)
             .with_req_version(self.version.clone())
             .with_maybe_target_name(self.target_name.clone())
     }
@@ -258,7 +257,7 @@ async fn get_search_results(
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HomePage {
     recent_releases: Vec<Release>,
-    via: Via,
+    requested_host: Option<RequestedHost>,
 }
 
 impl_axum_webpage! {
@@ -268,14 +267,14 @@ impl_axum_webpage! {
 
 pub(crate) async fn home_page(
     mut conn: DbConnection,
-    Extension(config): Extension<Arc<Config>>,
+    requested_host: Option<RequestedHost>,
 ) -> AxumResult<impl IntoResponse> {
     let recent_releases =
         get_releases(&mut conn, 1, RELEASES_IN_HOME, Order::ReleaseTime, true).await?;
 
     Ok(HomePage {
         recent_releases,
-        via: config.mode,
+        requested_host,
     })
 }
 
@@ -308,7 +307,7 @@ struct ViewReleases {
     show_previous_page: bool,
     page_number: i64,
     owner: Option<String>,
-    via: Via,
+    requested_host: Option<RequestedHost>,
 }
 
 impl_axum_webpage! { ViewReleases }
@@ -349,7 +348,7 @@ pub(crate) async fn releases_handler(
     conn: &mut sqlx::PgConnection,
     page: Option<i64>,
     release_type: ReleaseType,
-    config: &Config,
+    requested_host: Option<RequestedHost>,
 ) -> AxumResult<impl IntoResponse + use<>> {
     let page_number = page.unwrap_or(1);
 
@@ -398,36 +397,48 @@ pub(crate) async fn releases_handler(
         show_previous_page,
         page_number,
         owner: None,
-        via: config.mode,
+        requested_host,
     })
 }
 
 pub(crate) async fn recent_releases_handler(
     page: Option<Path<i64>>,
     mut conn: DbConnection,
-    Extension(config): Extension<Arc<Config>>,
+    requested_host: Option<RequestedHost>,
 ) -> AxumResult<impl IntoResponse> {
-    releases_handler(&mut conn, page.map(|p| p.0), ReleaseType::Recent, &config).await
+    releases_handler(
+        &mut conn,
+        page.map(|p| p.0),
+        ReleaseType::Recent,
+        requested_host,
+    )
+    .await
 }
 
 pub(crate) async fn releases_by_stars_handler(
     page: Option<Path<i64>>,
     mut conn: DbConnection,
-    Extension(config): Extension<Arc<Config>>,
+    requested_host: Option<RequestedHost>,
 ) -> AxumResult<impl IntoResponse> {
-    releases_handler(&mut conn, page.map(|p| p.0), ReleaseType::Stars, &config).await
+    releases_handler(
+        &mut conn,
+        page.map(|p| p.0),
+        ReleaseType::Stars,
+        requested_host,
+    )
+    .await
 }
 
 pub(crate) async fn releases_recent_failures_handler(
     page: Option<Path<i64>>,
     mut conn: DbConnection,
-    Extension(config): Extension<Arc<Config>>,
+    requested_host: Option<RequestedHost>,
 ) -> AxumResult<impl IntoResponse> {
     releases_handler(
         &mut conn,
         page.map(|p| p.0),
         ReleaseType::RecentFailures,
-        &config,
+        requested_host,
     )
     .await
 }
@@ -435,9 +446,15 @@ pub(crate) async fn releases_recent_failures_handler(
 pub(crate) async fn releases_failures_by_stars_handler(
     page: Option<Path<i64>>,
     mut conn: DbConnection,
-    Extension(config): Extension<Arc<Config>>,
+    requested_host: Option<RequestedHost>,
 ) -> AxumResult<impl IntoResponse> {
-    releases_handler(&mut conn, page.map(|p| p.0), ReleaseType::Failures, &config).await
+    releases_handler(
+        &mut conn,
+        page.map(|p| p.0),
+        ReleaseType::Failures,
+        requested_host,
+    )
+    .await
 }
 
 pub(crate) async fn owner_handler(Path(owner): Path<String>) -> AxumResult<impl IntoResponse> {
@@ -462,7 +479,7 @@ pub(crate) struct Search {
     /// This should always be `ReleaseType::Search`
     pub(crate) release_type: ReleaseType,
     pub(crate) status: http::StatusCode,
-    pub(crate) via: Via,
+    pub(crate) requested_host: Option<RequestedHost>,
 }
 
 impl Default for Search {
@@ -477,12 +494,13 @@ impl Default for Search {
             search_sort_by: None,
             release_type: ReleaseType::Search,
             status: http::StatusCode::OK,
-            via: Via::ApexDomain,
+            requested_host: None,
         }
     }
 }
 
 async fn redirect_to_random_crate(
+    requested_host: Option<RequestedHost>,
     config: Arc<Config>,
     otel_metrics: Arc<WebMetrics>,
     conn: &mut sqlx::PgConnection,
@@ -523,7 +541,7 @@ async fn redirect_to_random_crate(
     if let Some(row) = row {
         otel_metrics.im_feeling_lucky_searches.add(1, &[]);
 
-        let params = RustdocParams::new(row.name.clone(), config.mode)
+        let params = RustdocParams::new(row.name.clone(), requested_host)
             .with_req_version(ReqVersion::Exact(row.version.clone()))
             .with_maybe_target_name(row.target_name.as_deref());
 
@@ -546,6 +564,7 @@ pub(crate) async fn search_handler(
     Extension(config): Extension<Arc<Config>>,
     Extension(registry): Extension<Arc<RegistryApi>>,
     Extension(otel_metrics): Extension<Arc<WebMetrics>>,
+    requested_host: Option<RequestedHost>,
     Query(mut query_params): Query<HashMap<String, String>>,
 ) -> AxumResult<AxumResponse> {
     let mut query = query_params
@@ -561,9 +580,11 @@ pub(crate) async fn search_handler(
     if query_params.remove("i-am-feeling-lucky").is_some() || query.contains("::") {
         // redirect to a random crate if query is empty
         if query.is_empty() {
-            return Ok(redirect_to_random_crate(config, otel_metrics, &mut conn)
-                .await?
-                .into_response());
+            return Ok(
+                redirect_to_random_crate(requested_host, config, otel_metrics, &mut conn)
+                    .await?
+                    .into_response(),
+            );
         }
 
         let mut queries = BTreeMap::new();
@@ -588,7 +609,7 @@ pub(crate) async fn search_handler(
             queries.extend(query_params);
 
             let rustdoc_status = matchver.rustdoc_status();
-            let params = RustdocParams::from_matched_release(&matchver, config.mode);
+            let params = RustdocParams::from_matched_release(&matchver, requested_host);
 
             trace!(
                 %krate,
@@ -756,7 +777,7 @@ struct BuildQueuePage {
     rebuild_queue: Vec<QueuedCrate>,
     in_progress_builds: Vec<(KrateName, Version)>,
     expand_rebuild_queue: bool,
-    via: Via,
+    requested_host: Option<RequestedHost>,
 }
 
 impl_axum_webpage! { BuildQueuePage }
@@ -770,7 +791,7 @@ pub(crate) async fn build_queue_handler(
     Extension(build_queue): Extension<Arc<AsyncBuildQueue>>,
     mut conn: DbConnection,
     Query(params): Query<BuildQueueParams>,
-    Extension(config): Extension<Arc<Config>>,
+    requested_host: Option<RequestedHost>,
 ) -> AxumResult<impl IntoResponse> {
     let in_progress_builds: Vec<(KrateName, Version)> = sqlx::query!(
         r#"SELECT
@@ -821,7 +842,7 @@ pub(crate) async fn build_queue_handler(
         rebuild_queue,
         in_progress_builds,
         expand_rebuild_queue: params.expand.is_some(),
-        via: config.mode,
+        requested_host,
     })
 }
 

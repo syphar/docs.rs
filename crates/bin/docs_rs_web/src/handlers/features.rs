@@ -105,7 +105,10 @@ impl FeaturesPage {
         let version = self.dependency_version(dependency);
         let dependency: KrateName = dependency.parse().ok()?;
 
-        Some(RustdocParams::new(dependency, self.params.via()).with_req_version(version))
+        Some(
+            RustdocParams::new(dependency, self.params.requested_host().cloned())
+                .with_req_version(version),
+        )
     }
 }
 

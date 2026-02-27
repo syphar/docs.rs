@@ -1,7 +1,6 @@
 //! special rustdoc extractors
 
 use crate::{
-    config::Via,
     error::AxumNope,
     extractors::{Path, RequestedHost},
     match_release::MatchedRelease,
@@ -237,15 +236,7 @@ impl RustdocParams {
             find_static_route_suffix(&matched_route, &uri_path)
         };
 
-        let via = if let Some(requested_host) = requested_host
-            && let RequestedHost::SubDomain(_, _parent) = requested_host
-        {
-            Via::SubDomain
-        } else {
-            Via::ApexDomain
-        };
-
-        Ok(RustdocParams::new(params.name, via)
+        Ok(RustdocParams::new(params.name, requested_host)
             .with_req_version(params.version)
             .with_maybe_doc_target(params.target)
             .with_maybe_inner_path(params.path)
@@ -273,8 +264,11 @@ impl RustdocParams {
         .expect("infallible")
     }
 
-    pub(crate) fn from_metadata(metadata: &MetaData, via: Via) -> Self {
-        RustdocParams::new(metadata.name.clone(), via).apply_metadata(metadata)
+    pub(crate) fn from_metadata(
+        metadata: &MetaData,
+        requested_host: Option<RequestedHost>,
+    ) -> Self {
+        RustdocParams::new(metadata.name.clone(), requested_host).apply_metadata(metadata)
     }
 
     pub(crate) fn apply_metadata(self, metadata: &MetaData) -> RustdocParams {
@@ -287,8 +281,12 @@ impl RustdocParams {
             .with_maybe_target_name(metadata.target_name.as_deref())
     }
 
-    pub(crate) fn from_matched_release(matched_release: &MatchedRelease, via: Via) -> Self {
-        RustdocParams::new(matched_release.name.clone(), via).apply_matched_release(matched_release)
+    pub(crate) fn from_matched_release(
+        matched_release: &MatchedRelease,
+        requested_host: Option<RequestedHost>,
+    ) -> Self {
+        RustdocParams::new(matched_release.name.clone(), requested_host)
+            .apply_matched_release(matched_release)
     }
 
     pub(crate) fn apply_matched_release(self, matched_release: &MatchedRelease) -> RustdocParams {
@@ -310,8 +308,8 @@ impl RustdocParams {
         })
     }
 
-    pub(crate) fn via(&self) -> Via {
-        self.via
+    pub(crate) fn requested_host(&self) -> Option<&RequestedHost> {
+        self.requested_host.as_ref()
     }
 
     pub(crate) fn req_version(&self) -> &ReqVersion {

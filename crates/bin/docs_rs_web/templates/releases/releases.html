@@ -58,9 +58,9 @@ centered
                             {%- decl release_params -%}
                             {%- set has_unyanked_releases = release.has_unyanked_releases.unwrap_or(true) -%}
                             {%- if release_type == "search" && has_unyanked_releases -%}
-                                {%- set release_params = release.rustdoc_params(*via).with_req_version(ReqVersion::Latest) -%}
+                                {%- set release_params = release.rustdoc_params(requested_host.clone()).with_req_version(ReqVersion::Latest) -%}
                             {%- else -%}
-                                {%- set release_params = release.rustdoc_params(*via) -%}
+                                {%- set release_params = release.rustdoc_params(requested_host.clone()) -%}
                             {%- endif -%}
                             {%- decl link -%}
                             {%- if release.rustdoc_status -%}
