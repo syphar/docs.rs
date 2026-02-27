@@ -13,7 +13,7 @@ use axum::{
     http::{Uri, request::Parts},
 };
 use docs_rs_types::{BuildId, CompressionAlgorithm, KrateName, ReqVersion};
-use docs_rs_uri::{EscapedURI, url_decode};
+use docs_rs_uri::{EscapedURI, encode_url_path, url_decode};
 use serde::{Deserialize, Serialize};
 
 const INDEX_HTML: &str = "index.html";
@@ -604,13 +604,20 @@ impl RustdocParams {
 impl RustdocParams {
     pub(crate) fn rustdoc_url(&self) -> EscapedURI {
         if let Some(requested_host) = self.requested_host()
-            && let RequestedHost::SubDomain(sub, apex) = requested_host
+            && let RequestedHost::SubDomain(_sub, apex) = requested_host
         {
-            EscapedURI::from_path(format!(
-                "/{}/{}",
-                &self.req_version,
-                &self.path_for_rustdoc_url()
-            ))
+            EscapedURI::from_uri(
+                Uri::builder()
+                    .scheme("http") // FIXME: find original scheme?
+                    .authority(format!("{}.{apex}", self.name))
+                    .path_and_query(encode_url_path(&format!(
+                        "/{}/{}",
+                        &self.req_version,
+                        &self.path_for_rustdoc_url()
+                    )))
+                    .build()
+                    .expect("this can never fail because we encode the path"),
+            )
         } else {
             EscapedURI::from_path(format!(
                 "/{}/{}/{}",
