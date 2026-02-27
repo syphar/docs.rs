@@ -566,6 +566,7 @@ impl_axum_webpage! {
 }
 
 // FIXME: get target-redirect to redirect to subdomain too?
+// perhaps expose the partial on the subdomain too?
 #[tracing::instrument]
 pub(crate) async fn get_all_releases(
     params: RustdocParams,

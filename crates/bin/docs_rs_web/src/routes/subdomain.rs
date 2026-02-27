@@ -8,7 +8,7 @@ use http::HeaderValue;
 
 use crate::{
     handlers::{
-        StorageChangeDetection, rustdoc,
+        StorageChangeDetection, crate_details, rustdoc,
         statics::{build_static_router, static_root_dir},
     },
     routes::{cached_permanent_redirect, fallback, get_internal, get_rustdoc, get_static},
@@ -94,6 +94,26 @@ pub(crate) fn build_subdomain_axum_routes() -> Result<AxumRouter> {
         .route(
             "/{version}/{target}/{*path}",
             get_rustdoc(rustdoc::rustdoc_html_server_handler),
+        )
+        .route(
+            "/crate/{version}/target-redirect/{*path}",
+            get_internal(rustdoc::target_redirect_handler),
+        )
+        .route(
+            "/crate/{version}/menus/platforms/{target}/",
+            get_internal(crate_details::get_all_platforms),
+        )
+        .route(
+            "/crate/{version}/menus/platforms/{target}/{*path}",
+            get_internal(crate_details::get_all_platforms),
+        )
+        .route(
+            "/crate/{version}/menus/platforms/",
+            get_internal(crate_details::get_all_platforms_root),
+        )
+        .route(
+            "/crate/{version}/menus/releases/{*path}",
+            get_internal(crate_details::get_all_releases),
         )
         .fallback(fallback)
         .layer(middleware::from_fn(|request, next: Next| async {

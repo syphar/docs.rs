@@ -728,26 +728,50 @@ impl RustdocParams {
     }
 
     pub(crate) fn platforms_partial_url(&self) -> EscapedURI {
+        let mode = self.wanted_mode();
         self.build_url_with_path(
-            Via::ApexDomain,
-            format!(
-                "/crate/{}/{}/menus/platforms/{}",
-                self.name,
-                self.req_version,
-                self.path_for_rustdoc_url_for_partials()
-            ),
+            mode,
+            match mode {
+                Via::SubDomain => {
+                    format!(
+                        "/crate/{}/menus/platforms/{}",
+                        self.req_version,
+                        self.path_for_rustdoc_url_for_partials()
+                    )
+                }
+                Via::ApexDomain => {
+                    format!(
+                        "/crate/{}/{}/menus/platforms/{}",
+                        self.name,
+                        self.req_version,
+                        self.path_for_rustdoc_url_for_partials()
+                    )
+                }
+            },
         )
     }
 
     pub(crate) fn releases_partial_url(&self) -> EscapedURI {
+        let mode = self.wanted_mode();
         self.build_url_with_path(
-            Via::ApexDomain,
-            format!(
-                "/crate/{}/{}/menus/releases/{}",
-                self.name,
-                self.req_version,
-                self.path_for_rustdoc_url_for_partials()
-            ),
+            mode,
+            match mode {
+                Via::SubDomain => {
+                    format!(
+                        "/crate/{}/menus/releases/{}",
+                        self.req_version,
+                        self.path_for_rustdoc_url_for_partials()
+                    )
+                }
+                Via::ApexDomain => {
+                    format!(
+                        "/crate/{}/{}/menus/releases/{}",
+                        self.name,
+                        self.req_version,
+                        self.path_for_rustdoc_url_for_partials()
+                    )
+                }
+            },
         )
     }
 
@@ -833,15 +857,26 @@ impl RustdocParams {
     }
 
     pub(crate) fn target_redirect_url(&self) -> EscapedURI {
+        let mode = self.wanted_mode();
         self.build_url_with_path(
-            Via::ApexDomain,
-            format!(
-                "/crate/{}/{}/target-redirect/{}?via={}",
-                self.name,
-                self.req_version,
-                &self.path_for_rustdoc_url(),
-                self.wanted_mode().to_string()
-            ),
+            mode,
+            match mode {
+                Via::SubDomain => {
+                    format!(
+                        "/crate/{}/target-redirect/{}",
+                        self.req_version,
+                        &self.path_for_rustdoc_url(),
+                    )
+                }
+                Via::ApexDomain => {
+                    format!(
+                        "/crate/{}/{}/target-redirect/{}",
+                        self.name,
+                        self.req_version,
+                        &self.path_for_rustdoc_url(),
+                    )
+                }
+            },
         )
     }
 
