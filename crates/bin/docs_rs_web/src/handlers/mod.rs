@@ -231,6 +231,7 @@ mod tests {
         AxumResponseTestExt, AxumRouterTestExt, TestEnvironment, TestEnvironmentExt as _,
         async_wrapper,
     };
+    use docs_rs_database::service_config::{ConfigName, set_config};
     use docs_rs_types::{DocCoverage, ReleaseId, Version};
     use kuchikiki::traits::TendrilSink;
     use pretty_assertions::assert_eq;
@@ -258,6 +259,49 @@ mod tests {
         async_wrapper(|env| async move {
             let web = env.web_app().await;
             assert!(web.get("/").await?.status().is_success());
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_global_alert_is_not_rendered_when_unset() {
+        async_wrapper(|env| async move {
+            let web = env.web_app().await;
+            let page = kuchikiki::parse_html().one(web.assert_success("/").await?.text().await?);
+
+            assert_eq!(page.select("a.pure-menu-link.error").unwrap().count(), 0);
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn test_global_alert_is_rendered_when_configured() {
+        async_wrapper(|env| async move {
+            let mut conn = env.async_conn().await?;
+            set_config(
+                &mut conn,
+                ConfigName::GlobalAlert,
+                serde_json::json!({
+                    "url": "https://example.com/maintenance",
+                    "text": "Scheduled maintenance",
+                    "css_class": "warn",
+                }),
+            )
+            .await?;
+
+            let web = env.web_app().await;
+            let page = kuchikiki::parse_html().one(web.assert_success("/").await?.text().await?);
+            let alert = page
+                .select("a.pure-menu-link.warn")
+                .unwrap()
+                .next()
+                .expect("missing global alert");
+
+            assert_eq!(
+                alert.attributes.borrow().get("href"),
+                Some("https://example.com/maintenance")
+            );
+            assert!(alert.text_contents().contains("Scheduled maintenance"));
             Ok(())
         });
     }

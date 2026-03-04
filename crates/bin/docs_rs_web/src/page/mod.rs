@@ -3,10 +3,11 @@ pub(crate) mod web_page;
 
 pub(crate) use templates::TemplateData;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct GlobalAlert {
-    pub(crate) url: &'static str,
-    pub(crate) text: &'static str,
-    pub(crate) css_class: &'static str,
-    pub(crate) fa_icon: crate::icons::IconTriangleExclamation,
+    pub(crate) url: String,
+    pub(crate) text: String,
+    pub(crate) css_class: String,
 }

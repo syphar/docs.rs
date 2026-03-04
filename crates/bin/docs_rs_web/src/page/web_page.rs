@@ -1,16 +1,29 @@
-use crate::{error::AxumNope, middleware::csp::Csp, page::templates::TemplateData};
+use crate::{
+    error::AxumNope,
+    middleware::csp::Csp,
+    page::{GlobalAlert, templates::TemplateData},
+};
 use axum::{
     body::Body,
     extract::Request as AxumRequest,
     middleware::Next,
     response::{IntoResponse, Response as AxumResponse},
 };
+use docs_rs_database::{
+    Pool,
+    service_config::{ConfigName, get_config},
+};
 use futures_util::future::{BoxFuture, FutureExt};
 use http::header::CONTENT_LENGTH;
 use std::sync::Arc;
+use tracing::error;
 
 pub(crate) trait AddCspNonce: IntoResponse {
-    fn render_with_csp_nonce(&mut self, csp_nonce: String) -> askama::Result<String>;
+    fn render_with_template_values(
+        &mut self,
+        csp_nonce: String,
+        global_alert: Option<GlobalAlert>,
+    ) -> askama::Result<String>;
 }
 
 #[macro_export]
@@ -25,8 +38,17 @@ macro_rules! impl_axum_webpage {
         $(,)?
     ) => {
         impl $crate::page::web_page::AddCspNonce for $page {
-            fn render_with_csp_nonce(&mut self, csp_nonce: String) -> askama::Result<String> {
-                let values: (&str, &dyn std::any::Any) = ("csp_nonce", &csp_nonce);
+            fn render_with_template_values(
+                &mut self,
+                csp_nonce: String,
+                global_alert: Option<$crate::page::GlobalAlert>,
+            ) -> askama::Result<String> {
+                let values: std::collections::HashMap<&str, &dyn std::any::Any> = [
+                    ("csp_nonce", &csp_nonce as &dyn std::any::Any),
+                    ("global_alert", &global_alert as &dyn std::any::Any),
+                ]
+                .into_iter()
+                .collect();
                 self.render_with_values(&values)
             }
         }
@@ -103,6 +125,7 @@ fn render_response(
     mut response: AxumResponse,
     templates: Arc<TemplateData>,
     csp_nonce: String,
+    global_alert: Option<GlobalAlert>,
 ) -> BoxFuture<'static, AxumResponse> {
     async move {
         if let Some(render) = response.extensions_mut().remove::<DelayedTemplateRender>() {
@@ -112,18 +135,19 @@ fn render_response(
             } = render;
             let mut template = Arc::into_inner(template).unwrap();
             let csp_nonce_clone = csp_nonce.clone();
+            let global_alert_clone = global_alert.clone();
 
             let result: Result<String, anyhow::Error> = if cpu_intensive_rendering {
                 templates
                     .render_in_threadpool(move || {
                         template
-                            .render_with_csp_nonce(csp_nonce_clone)
+                            .render_with_template_values(csp_nonce_clone, global_alert_clone)
                             .map_err(|err| err.into())
                     })
                     .await
             } else {
                 template
-                    .render_with_csp_nonce(csp_nonce_clone)
+                    .render_with_template_values(csp_nonce_clone, global_alert_clone)
                     .map_err(|err| err.into())
             };
 
@@ -138,6 +162,7 @@ fn render_response(
                             AxumNope::InternalError(err).into_response(),
                             templates,
                             csp_nonce,
+                            global_alert,
                         )
                         .await;
                     }
@@ -156,6 +181,24 @@ fn render_response(
     .boxed()
 }
 
+async fn load_global_alert(pool: &Pool) -> Option<GlobalAlert> {
+    let mut conn = match pool.get_async().await {
+        Ok(conn) => conn,
+        Err(err) => {
+            error!(?err, "failed to get DB connection for global alert");
+            return None;
+        }
+    };
+
+    match get_config::<GlobalAlert>(&mut conn, ConfigName::GlobalAlert).await {
+        Ok(alert) => alert,
+        Err(err) => {
+            error!(?err, "failed to load global alert from config");
+            None
+        }
+    }
+}
+
 pub(crate) async fn render_templates_middleware(req: AxumRequest, next: Next) -> AxumResponse {
     let templates: Arc<TemplateData> = req
         .extensions()
@@ -169,8 +212,23 @@ pub(crate) async fn render_templates_middleware(req: AxumRequest, next: Next) ->
         .expect("csp request extension not found")
         .nonce()
         .to_owned();
+    let pool: Pool = req
+        .extensions()
+        .get::<Pool>()
+        .expect("database pool request extension not found")
+        .clone();
 
     let response = next.run(req).await;
 
-    render_response(response, templates, csp_nonce).await
+    if response
+        .extensions()
+        .get::<DelayedTemplateRender>()
+        .is_none()
+    {
+        return response;
+    }
+
+    let global_alert = load_global_alert(&pool).await;
+
+    render_response(response, templates, csp_nonce, global_alert).await
 }
