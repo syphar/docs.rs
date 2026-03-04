@@ -19,6 +19,12 @@ centered
 {%- block body -%}
     <div class="container">
         <div class="recent-releases-container">
+            {%- if queue.len() >= 0 -%}
+                <div class="warning">
+                    The build queue is currently very long ({{ queue.len() }} releases), and processing times may be delayed.
+                </div>
+            {%- endif -%}
+
             <div class="release pure-g">
                 <div class="pure-u-1-2">
                     <strong>currently being built</strong>

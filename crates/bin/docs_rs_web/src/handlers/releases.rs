@@ -1885,6 +1885,29 @@ mod tests {
     }
 
     #[test]
+    fn test_releases_queue_warning_for_large_queue() {
+        async_wrapper(|env| async move {
+            let web = env.web_app().await;
+            let queue = env.build_queue()?;
+            for i in 0..1001 {
+                let crate_name = format!("queue-item-{i}").parse()?;
+                queue.add_crate(&crate_name, &V1, 0, None).await?;
+            }
+
+            let page = kuchikiki::parse_html().one(web.get("/releases/queue").await?.text().await?);
+            assert!(
+                page.select(".warning")
+                    .expect("missing warning blocks")
+                    .any(|el| el
+                        .text_contents()
+                        .contains("The build queue is currently very long (1001 items)"))
+            );
+
+            Ok(())
+        });
+    }
+
+    #[test]
     fn test_releases_rebuild_queue_empty() {
         async_wrapper(|env| async move {
             let web = env.web_app().await;
