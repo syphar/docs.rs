@@ -69,7 +69,12 @@ where
                         let head_html = Head::new(&data).render().unwrap();
                         let vendored_html = Vendored.render().unwrap();
                         let body_html = Body.render().unwrap();
-                        let topbar_html = data.render().unwrap();
+                        let global_alert: Option<crate::page::GlobalAlert> = None;
+                        let values: std::collections::HashMap<&str, &dyn std::any::Any> =
+                            [("global_alert", &global_alert as &dyn std::any::Any)]
+                                .into_iter()
+                                .collect();
+                        let topbar_html = data.render_with_values(&values).unwrap();
 
                         // Before: <body> ... rustdoc content ... </body>
                         // After:
