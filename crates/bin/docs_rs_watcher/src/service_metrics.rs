@@ -1,5 +1,6 @@
 use anyhow::{Error, Result};
 use docs_rs_build_queue::AsyncBuildQueue;
+use docs_rs_database::{Pool, service_config::sync_build_queue_global_alert};
 use docs_rs_opentelemetry::AnyMeterProvider;
 use opentelemetry::{KeyValue, metrics::Gauge};
 use std::collections::HashSet;
@@ -36,13 +37,16 @@ impl OtelServiceMetrics {
         }
     }
 
-    pub(crate) async fn gather(&self, queue: &AsyncBuildQueue) -> Result<(), Error> {
+    pub(crate) async fn gather(&self, queue: &AsyncBuildQueue, pool: &Pool) -> Result<(), Error> {
+        let queued_crates_count = queue.pending_count().await? as usize;
         self.queue_is_locked
             .record(queue.is_locked().await? as u64, &[]);
         self.queued_crates_count
-            .record(queue.pending_count().await? as u64, &[]);
+            .record(queued_crates_count as u64, &[]);
         self.prioritized_crates_count
             .record(queue.prioritized_count().await? as u64, &[]);
+        let mut conn = pool.get_async().await?;
+        sync_build_queue_global_alert(&mut conn, queued_crates_count).await?;
 
         let queue_pending_count = queue.pending_count_by_priority().await?;
 

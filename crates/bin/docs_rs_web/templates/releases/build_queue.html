@@ -19,9 +19,9 @@ centered
 {%- block body -%}
     <div class="container">
         <div class="recent-releases-container">
-            {%- if queue.len() >= 0 -%}
+            {%- if show_queue_warning -%}
                 <div class="warning">
-                    The build queue is currently very long ({{ queue.len() }} releases), and processing times may be delayed.
+                    The build queue is currently very long ({{ queue.len() }} items), and processing times may be delayed.
                 </div>
             {%- endif -%}
 

@@ -54,6 +54,7 @@ pub async fn watch_registry(config: &Config, context: &Context) -> Result<()> {
 
 pub async fn start_background_service_metric_collector(context: &Context) -> Result<()> {
     let build_queue = context.build_queue()?.clone();
+    let pool = context.pool()?.clone();
     let service_metrics = Arc::new(OtelServiceMetrics::new(&context.meter_provider));
 
     start_async_cron(
@@ -63,10 +64,11 @@ pub async fn start_background_service_metric_collector(context: &Context) -> Res
         Duration::from_secs(30),
         move || {
             let build_queue = build_queue.clone();
+            let pool = pool.clone();
             let service_metrics = service_metrics.clone();
             async move {
                 trace!("collecting service metrics");
-                service_metrics.gather(&build_queue).await
+                service_metrics.gather(&build_queue, &pool).await
             }
         },
     );

@@ -8,6 +8,8 @@ pub struct GlobalAlert {
     pub css_class: String,
 }
 
+pub const BUILD_QUEUE_WARNING_THRESHOLD: usize = 1000;
+
 #[derive(strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum ConfigName {
@@ -16,6 +18,39 @@ pub enum ConfigName {
     QueueLocked,
     Toolchain,
     GlobalAlert,
+}
+
+pub fn should_display_build_queue_warning(queued_crates_count: usize) -> bool {
+    queued_crates_count > BUILD_QUEUE_WARNING_THRESHOLD
+}
+
+pub fn build_queue_global_alert() -> GlobalAlert {
+    GlobalAlert {
+        url: "/releases/queue".to_string(),
+        text: "Build queue is currently very long, and processing may be delayed.".to_string(),
+        css_class: "warn".to_string(),
+    }
+}
+
+pub async fn sync_build_queue_global_alert(
+    conn: &mut sqlx::PgConnection,
+    queued_crates_count: usize,
+) -> anyhow::Result<()> {
+    let managed_alert = build_queue_global_alert();
+    let current = get_config::<GlobalAlert>(conn, ConfigName::GlobalAlert).await?;
+
+    if should_display_build_queue_warning(queued_crates_count) {
+        if current.as_ref() != Some(&managed_alert) {
+            set_config(conn, ConfigName::GlobalAlert, managed_alert).await?;
+        }
+    } else if current.as_ref() == Some(&managed_alert) {
+        let key: &'static str = ConfigName::GlobalAlert.into();
+        sqlx::query!("DELETE FROM config WHERE name = $1;", key)
+            .execute(conn)
+            .await?;
+    }
+
+    Ok(())
 }
 
 pub async fn set_config(
@@ -114,6 +149,41 @@ mod tests {
             get_config(&mut conn, ConfigName::RustcVersion).await?,
             Some("some value".to_string())
         );
+        Ok(())
+    }
+
+    #[test_case(0, false)]
+    #[test_case(BUILD_QUEUE_WARNING_THRESHOLD, false)]
+    #[test_case(BUILD_QUEUE_WARNING_THRESHOLD + 1, true)]
+    fn test_should_display_build_queue_warning(queued_crates_count: usize, expected: bool) {
+        assert_eq!(
+            should_display_build_queue_warning(queued_crates_count),
+            expected
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_sync_build_queue_global_alert() -> anyhow::Result<()> {
+        let test_metrics = TestMetrics::new();
+        let db = TestDatabase::new(&Config::test_config()?, test_metrics.provider()).await?;
+
+        let mut conn = db.async_conn().await?;
+        sqlx::query!("DELETE FROM config")
+            .execute(&mut *conn)
+            .await?;
+
+        sync_build_queue_global_alert(&mut conn, BUILD_QUEUE_WARNING_THRESHOLD + 1).await?;
+        assert_eq!(
+            get_config(&mut conn, ConfigName::GlobalAlert).await?,
+            Some(build_queue_global_alert())
+        );
+
+        sync_build_queue_global_alert(&mut conn, BUILD_QUEUE_WARNING_THRESHOLD).await?;
+        assert_eq!(
+            get_config::<GlobalAlert>(&mut conn, ConfigName::GlobalAlert).await?,
+            None
+        );
+
         Ok(())
     }
 }

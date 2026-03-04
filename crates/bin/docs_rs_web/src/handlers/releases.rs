@@ -20,6 +20,7 @@ use axum::{
 use base64::{Engine, engine::general_purpose::STANDARD as b64};
 use chrono::{DateTime, Utc};
 use docs_rs_build_queue::{AsyncBuildQueue, PRIORITY_CONTINUOUS, QueuedCrate};
+use docs_rs_database::service_config::should_display_build_queue_warning;
 use docs_rs_registry_api::{self as registry_api, RegistryApi};
 use docs_rs_types::{KrateName, ReqVersion, Version};
 use docs_rs_uri::encode_url_path;
@@ -732,6 +733,7 @@ struct BuildQueuePage {
     queue: Vec<QueuedCrate>,
     rebuild_queue: Vec<QueuedCrate>,
     in_progress_builds: Vec<(KrateName, Version)>,
+    show_queue_warning: bool,
     expand_rebuild_queue: bool,
 }
 
@@ -792,6 +794,7 @@ pub(crate) async fn build_queue_handler(
 
     Ok(BuildQueuePage {
         description: "crate documentation scheduled to build & deploy",
+        show_queue_warning: should_display_build_queue_warning(queue.len()),
         queue,
         rebuild_queue,
         in_progress_builds,
@@ -1809,6 +1812,10 @@ mod tests {
                 .select(".queue-list > li")
                 .expect("missing list items")
                 .collect::<Vec<_>>();
+            assert_eq!(
+                full.select(".warning").expect("missing warnings").count(),
+                0
+            );
 
             assert_eq!(items.len(), 3);
             let expected = [
