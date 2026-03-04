@@ -1,5 +1,12 @@
 use anyhow::Result;
-use serde::{Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GlobalAlert {
+    pub url: String,
+    pub text: String,
+    pub css_class: String,
+}
 
 #[derive(strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
