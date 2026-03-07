@@ -11,7 +11,7 @@ use crate::{
     metrics::StorageMetrics,
     types::{FileRange, StorageKind},
     utils::{
-        file_list::get_file_list,
+        file_list::{get_file_list, walk_dir_recursive},
         storage_path::{rustdoc_archive_path, source_archive_path},
     },
 };
@@ -28,9 +28,10 @@ use std::{
     io::{self, BufReader},
     path::{Path, PathBuf},
     sync::Arc,
+    time::SystemTime,
 };
 use tokio::sync::Mutex;
-use tracing::{debug, info_span, instrument, trace, warn};
+use tracing::{debug, info, info_span, instrument, trace, warn};
 
 pub struct AsyncStorage {
     backend: StorageBackend,
@@ -238,6 +239,7 @@ impl AsyncStorage {
             .clone()
     }
 
+    /// purge a single archive index file
     async fn purge_archive_index_cache(
         &self,
         archive_path: &str,
@@ -257,6 +259,43 @@ impl AsyncStorage {
         if tokio::fs::try_exists(&local_index_path).await? {
             tokio::fs::remove_file(&local_index_path).await?;
         }
+
+        Ok(())
+    }
+
+    /// remove old cached archive index files.
+    ///
+    /// We're using the access-time from the filesystem to determine the last access time.
+    ///
+    /// On linux, this field is updated only once every 24h, and on mac & windows not at all.
+    /// So we manually update the access-time when we use the file, debounced to once per hour.
+    #[instrument(skip(self))]
+    pub async fn prune_archive_index_cache(&self) -> Result<()> {
+        let ttl = self.config.local_archive_cache_ttl;
+        let cache_dir = &self.config.local_archive_cache_path;
+        let now = SystemTime::now();
+
+        info!(?ttl, ?now, cache_dir=%cache_dir.display(), "pruning archive index cache");
+
+        walk_dir_recursive(&cache_dir)
+            .for_each_concurrent(8, |item| async move {
+                let Ok((path, meta)) = item else { return };
+
+                if path.is_dir() {
+                    // this shouldn't happen, since walk_dir_recursive only emits files, not
+                    // directories
+                    return;
+                }
+
+                if let Some(ext) = path.extension()
+                    && ext != ARCHIVE_INDEX_FILE_EXTENSION
+                {
+                    return;
+                }
+
+                self.check_and_prune_archive_index_file(path, meta).await;
+            })
+            .await;
 
         Ok(())
     }

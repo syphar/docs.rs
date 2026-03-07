@@ -1,6 +1,9 @@
 use anyhow::Result;
+use async_stream::try_stream;
+use futures_util::Stream;
 use std::{
-    iter,
+    fs::Metadata,
+    io, iter,
     path::{Path, PathBuf},
 };
 use walkdir::WalkDir;
@@ -41,20 +44,87 @@ pub fn get_file_list<P: AsRef<Path>>(path: P) -> Box<dyn Iterator<Item = Result<
     }
 }
 
+/// Recursively walks a directory and yields all files (not directories) found within it.
+///
+/// Roughly an async version of `get_file_list` below.
+pub(crate) fn walk_dir_recursive(
+    root: impl AsRef<Path>,
+) -> impl Stream<Item = Result<(PathBuf, Metadata), io::Error>> {
+    let root = root.as_ref().to_path_buf();
+    try_stream! {
+        let mut dirs = vec![root];
+
+        while let Some(dir) = dirs.pop() {
+            let mut entries = tokio::fs::read_dir(&dir).await?;
+            while let Some(entry) = entries.next_entry().await? {
+                let path = entry.path();
+                let meta = entry.metadata().await?;
+                if meta.is_dir() {
+                    dirs.push(path.clone());
+                } else {
+                    yield (path, meta);
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::env;
+    use futures_util::TryStreamExt;
 
     #[test]
     fn test_get_file_list() -> Result<()> {
-        let dir = env::current_dir().unwrap();
+        use std::fs;
 
-        let files: Vec<_> = get_file_list(&dir).collect::<Result<Vec<_>>>()?;
-        assert!(!files.is_empty());
+        let dir = tempfile::tempdir()?;
+        let root = dir.path();
 
-        let files: Vec<_> = get_file_list(dir.join("Cargo.toml")).collect::<Result<Vec<_>>>()?;
-        assert_eq!(files[0], std::path::Path::new("Cargo.toml"));
+        fs::create_dir_all(root.join("nested"))?;
+        fs::write(root.join("root.txt"), b"root")?;
+        fs::write(root.join("nested").join("child.txt"), b"child")?;
+
+        let mut files: Vec<_> = get_file_list(root).collect::<Result<Vec<_>>>()?;
+        files.sort();
+        assert_eq!(
+            files,
+            vec![PathBuf::from("nested/child.txt"), PathBuf::from("root.txt"),]
+        );
+
+        let files: Vec<_> = get_file_list(root.join("root.txt")).collect::<Result<Vec<_>>>()?;
+        assert_eq!(files, vec![PathBuf::from("root.txt")]);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_walk_dir_recursive() -> Result<()> {
+        use tokio::fs;
+
+        let dir = tempfile::tempdir()?;
+        let root = dir.path();
+
+        let nested = root.join("a/b");
+        fs::create_dir_all(&nested).await?;
+        fs::write(root.join("root.txt"), b"root").await?;
+        fs::write(root.join("a").join("child.txt"), b"child").await?;
+        fs::write(nested.join("leaf.txt"), b"leaf").await?;
+
+        let mut files: Vec<_> = walk_dir_recursive(root)
+            .map_ok(|(path, _)| path.strip_prefix(root).unwrap().to_path_buf())
+            .try_collect()
+            .await?;
+        files.sort();
+
+        assert_eq!(
+            files,
+            vec![
+                PathBuf::from("a/b/leaf.txt"),
+                PathBuf::from("a/child.txt"),
+                PathBuf::from("root.txt"),
+            ]
+        );
 
         Ok(())
     }

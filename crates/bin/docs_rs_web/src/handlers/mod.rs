@@ -29,15 +29,10 @@ use axum::{
 use axum_extra::middleware::option_layer;
 use docs_rs_context::Context;
 use sentry::integrations::tower as sentry_tower;
-use std::{
-    net::{IpAddr, Ipv4Addr, SocketAddr},
-    sync::Arc,
-};
+use std::sync::Arc;
 use tower::ServiceBuilder;
 use tower_http::{catch_panic::CatchPanicLayer, timeout::TimeoutLayer, trace::TraceLayer};
-use tracing::{info, instrument};
-
-const DEFAULT_BIND: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 3000);
+use tracing::instrument;
 
 async fn log_timeouts_to_sentry(req: AxumRequest, next: Next) -> AxumResponse {
     let uri = req.uri().clone();
@@ -124,62 +119,6 @@ pub(crate) async fn build_axum_app(
         Some(template_data),
     )
     .await
-}
-
-#[instrument(skip_all)]
-pub async fn run_web_server(
-    addr: Option<SocketAddr>,
-    config: Arc<Config>,
-    context: Arc<Context>,
-) -> Result<(), Error> {
-    let template_data = Arc::new(TemplateData::new(config.render_threads)?);
-
-    let axum_addr = addr.unwrap_or(DEFAULT_BIND);
-
-    tracing::info!(
-        "Starting web server on `{}:{}`",
-        axum_addr.ip(),
-        axum_addr.port()
-    );
-
-    let app = build_axum_app(config, context, template_data)
-        .await?
-        .into_make_service();
-    let listener = tokio::net::TcpListener::bind(axum_addr)
-        .await
-        .context("error binding socket for web server")?;
-
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
-
-    Ok(())
-}
-
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("failed to install Ctrl+C handler");
-    };
-
-    #[cfg(unix)]
-    let terminate = async {
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("failed to install signal handler")
-            .recv()
-            .await;
-    };
-
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
-    }
-
-    info!("signal received, starting graceful shutdown");
 }
 
 #[instrument]

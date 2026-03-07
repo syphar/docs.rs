@@ -1,6 +1,7 @@
 use crate::types::StorageKind;
 use docs_rs_config::AppConfig;
 use docs_rs_env_vars::{env, maybe_env, require_env};
+use docs_rs_types::Duration;
 use std::{
     io,
     path::{self, Path, PathBuf},
@@ -57,6 +58,9 @@ pub struct Config {
     // and we already know in advance we need these 50k entries.
     // So we can preallocate the DashMap with this number to avoid resizes.
     pub local_archive_cache_expected_count: usize,
+
+    // How long do we want to keep the locally cached index files?
+    pub local_archive_cache_ttl: Duration,
 }
 
 impl AppConfig for Config {
@@ -74,6 +78,10 @@ impl AppConfig for Config {
                 "DOCSRS_ARCHIVE_INDEX_CACHE_PATH",
                 prefix.join("archive_cache"),
             )?)?,
+            local_archive_cache_ttl: Duration::from_secs(env(
+                "DOCSRS_ARCHIVE_INDEX_CACHE_TTL",
+                48 * 3600, // 48 hours
+            )?),
             local_archive_cache_expected_count: env(
                 "DOCSRS_ARCHIVE_INDEX_EXPECTED_COUNT",
                 100_000usize,
