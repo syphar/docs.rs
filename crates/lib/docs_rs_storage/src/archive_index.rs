@@ -2,7 +2,7 @@ use crate::types::FileRange;
 use anyhow::{Context as _, Result, anyhow, bail};
 use docs_rs_types::CompressionAlgorithm;
 use docs_rs_utils::spawn_blocking;
-use sqlx::{Acquire as _, QueryBuilder, Row as _, Sqlite};
+use sqlx::{Acquire as _, ConnectOptions as _, QueryBuilder, Row as _, Sqlite};
 use std::path::Path;
 use tokio::{
     fs,
@@ -52,17 +52,16 @@ async fn sqlite_create<P: AsRef<Path>>(path: P) -> Result<sqlx::SqlitePool> {
 /// open existing SQLite database, return a configured connection poll
 /// to connect to the DB.
 /// Will error when the database doesn't exist at that path.
-async fn sqlite_open<P: AsRef<Path>>(path: P) -> Result<sqlx::SqlitePool> {
-    sqlx::SqlitePool::connect_with(
-        sqlx::sqlite::SqliteConnectOptions::new()
-            .filename(path)
-            .read_only(true)
-            .pragma("synchronous", "off") // not needed for readonly db
-            .serialized(false) // same as OPEN_NOMUTEX
-            .create_if_missing(false),
-    )
-    .await
-    .map_err(Into::into)
+async fn sqlite_open<P: AsRef<Path>>(path: P) -> Result<sqlx::SqliteConnection> {
+    sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(path)
+        .read_only(true)
+        .pragma("synchronous", "off") // not needed for readonly db
+        .serialized(false) // same as OPEN_NOMUTEX
+        .create_if_missing(false)
+        .connect()
+        .await
+        .map_err(Into::into)
 }
 
 /// create an archive index based on a zipfile.
@@ -199,10 +198,9 @@ pub(crate) async fn find_in_file<P: AsRef<Path> + std::fmt::Debug>(
     archive_index_path: P,
     search_for: &str,
 ) -> Result<Option<FileInfo>> {
-    let pool = sqlite_open(archive_index_path).await?;
-    let mut conn = pool.acquire().await?;
+    let mut conn = sqlite_open(archive_index_path).await?;
 
-    find_in_sqlite_index(&mut *conn, search_for).await
+    find_in_sqlite_index(&mut conn, search_for).await
 }
 
 #[cfg(test)]

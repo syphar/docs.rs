@@ -502,10 +502,8 @@ impl AsyncStorage {
 
         trace!(path=%local_index_path.display(), "updating access time of local archive index cache");
 
-        self.access_time_last_touch
-            .insert(local_index_path.clone(), now_instant);
-
         spawn_blocking({
+            let local_index_path = local_index_path.clone();
             move || {
                 let file = std::fs::OpenOptions::new()
                     .read(true)
@@ -519,6 +517,9 @@ impl AsyncStorage {
             }
         })
         .await?;
+
+        self.access_time_last_touch
+            .insert(local_index_path, now_instant);
 
         Ok(())
     }
