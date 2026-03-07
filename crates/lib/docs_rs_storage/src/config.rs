@@ -61,6 +61,12 @@ pub struct Config {
 
     // How long do we want to keep the locally cached index files?
     pub local_archive_cache_ttl: Duration,
+
+    // How much we want to parallelize local filesystem logic.
+    // For pure I/O this could be quite high (32/64), but
+    // we often also add compression on top of it, which is CPU-bound,
+    // even when just light / simpler compression.
+    pub local_filesystem_parallelism: usize,
 }
 
 impl AppConfig for Config {
@@ -90,6 +96,10 @@ impl AppConfig for Config {
             max_file_size_html: env("DOCSRS_MAX_FILE_SIZE_HTML", 50 * 1024 * 1024)?,
             #[cfg(any(test, feature = "testing"))]
             s3_bucket_is_temporary: false,
+            local_filesystem_parallelism: env(
+                "DOCSRS_LOCAL_FILESYSTEM_PARALLELISM",
+                std::thread::available_parallelism()?.get(),
+            )?,
         })
     }
 

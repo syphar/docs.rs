@@ -44,15 +44,28 @@ pub fn get_file_list<P: AsRef<Path>>(path: P) -> Box<dyn Iterator<Item = Result<
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct FileItem {
+    pub(crate) absolute: PathBuf,
+    pub(crate) relative: PathBuf,
+    pub(crate) metadata: Metadata,
+}
+
+impl AsRef<Path> for FileItem {
+    fn as_ref(&self) -> &Path {
+        &self.absolute
+    }
+}
+
 /// Recursively walks a directory and yields all files (not directories) found within it.
 ///
-/// Roughly an async version of `get_file_list` below.
+/// Roughly an async version of `get_file_list`.
 pub(crate) fn walk_dir_recursive(
     root: impl AsRef<Path>,
-) -> impl Stream<Item = Result<(PathBuf, Metadata), io::Error>> {
+) -> impl Stream<Item = Result<FileItem, io::Error>> {
     let root = root.as_ref().to_path_buf();
     try_stream! {
-        let mut dirs = vec![root];
+        let mut dirs = vec![root.clone()];
 
         while let Some(dir) = dirs.pop() {
             let mut entries = tokio::fs::read_dir(&dir).await?;
@@ -62,7 +75,9 @@ pub(crate) fn walk_dir_recursive(
                 if meta.is_dir() {
                     dirs.push(path.clone());
                 } else {
-                    yield (path, meta);
+                    let relative =  path.strip_prefix(&root).unwrap().to_path_buf();
+
+                    yield FileItem { absolute: path, relative, metadata: meta };
                 }
             }
         }
@@ -112,7 +127,7 @@ mod test {
         fs::write(nested.join("leaf.txt"), b"leaf").await?;
 
         let mut files: Vec<_> = walk_dir_recursive(root)
-            .map_ok(|(path, _)| path.strip_prefix(root).unwrap().to_path_buf())
+            .map_ok(|item| item.relative)
             .try_collect()
             .await?;
         files.sort();
