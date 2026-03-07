@@ -368,12 +368,12 @@ impl AsyncStorage {
         );
 
         // Best-effort: remove WAL/SHM companions first, then the DB file.
-        let wal = path.with_extension(format!("{ARCHIVE_INDEX_FILE_EXTENSION}-wal"));
-        let shm = path.with_extension(format!("{ARCHIVE_INDEX_FILE_EXTENSION}-shm"));
-        let _ = tokio::fs::remove_file(&wal).await;
-        let _ = tokio::fs::remove_file(&shm).await;
+        for ext in &["wal", "shm"] {
+            let to_delete = path.with_extension(format!("{ARCHIVE_INDEX_FILE_EXTENSION}-{ext}"));
+            let _ = fs::remove_file(&to_delete).await;
+        }
 
-        match tokio::fs::remove_file(&path).await {
+        match fs::remove_file(&path).await {
             Ok(_) => {
                 self.locks.remove(&path);
                 self.access_time_last_touch.remove(&path);
