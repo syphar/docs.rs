@@ -292,20 +292,21 @@ impl AsyncStorage {
                 self.config.local_filesystem_parallelism,
                 |item| async move {
                     let Ok(item) = item else { return };
+                    let path = item.absolute;
 
-                    if item.absolute.is_dir() {
+                    if path.is_dir() {
                         // this shouldn't happen, since walk_dir_recursive only emits files, not
                         // directories
                         return;
                     }
 
-                    if let Some(ext) = item.absolute.extension()
+                    if let Some(ext) = path.extension()
                         && ext != ARCHIVE_INDEX_FILE_EXTENSION
                     {
                         return;
                     }
 
-                    self.check_and_prune_archive_index_file(item.absolute, item.metadata)
+                    self.check_and_prune_archive_index_file(path, item.metadata)
                         .await;
                 },
             )
