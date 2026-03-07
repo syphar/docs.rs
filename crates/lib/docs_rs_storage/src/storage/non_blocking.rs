@@ -21,23 +21,28 @@ use docs_rs_mimes::{self as mimes, detect_mime};
 use docs_rs_opentelemetry::AnyMeterProvider;
 use docs_rs_types::{BuildId, CompressionAlgorithm, KrateName, Version};
 use docs_rs_utils::spawn_blocking;
-use futures_util::stream::BoxStream;
+use futures_util::{StreamExt as _, stream::BoxStream};
 use std::{
-    fmt,
+    cmp, fmt,
     fs::{self, File},
     io::{self, BufReader},
     path::{Path, PathBuf},
     sync::Arc,
-    time::SystemTime,
+    time::{Duration, Instant, SystemTime},
 };
 use tokio::sync::Mutex;
 use tracing::{debug, info, info_span, instrument, trace, warn};
+
+const ARCHIVE_INDEX_ACCESS_TIME_DEBOUNCE: Duration = Duration::from_secs(3600);
 
 pub struct AsyncStorage {
     backend: StorageBackend,
     config: Arc<Config>,
     /// Locks to synchronize write-access to the locally cached archive index files.
     locks: DashMap<PathBuf, Arc<Mutex<()>>>,
+    /// for debouncing the update to last-access-time on the locally cached
+    /// archive index files.
+    access_time_last_touch: DashMap<PathBuf, Instant>,
 }
 
 impl AsyncStorage {
@@ -51,6 +56,9 @@ impl AsyncStorage {
                 StorageKind::S3 => StorageBackend::S3(S3Backend::new(&config, otel_metrics).await?),
             },
             locks: DashMap::with_capacity(config.local_archive_cache_expected_count),
+            access_time_last_touch: DashMap::with_capacity(
+                config.local_archive_cache_expected_count,
+            ),
             config,
         })
     }
@@ -271,11 +279,14 @@ impl AsyncStorage {
     /// So we manually update the access-time when we use the file, debounced to once per hour.
     #[instrument(skip(self))]
     pub async fn prune_archive_index_cache(&self) -> Result<()> {
-        let ttl = self.config.local_archive_cache_ttl;
         let cache_dir = &self.config.local_archive_cache_path;
-        let now = SystemTime::now();
 
-        info!(?ttl, ?now, cache_dir=%cache_dir.display(), "pruning archive index cache");
+        info!(
+            ttl=?self.config.local_archive_cache_ttl,
+            now=?SystemTime::now(),
+            cache_dir=%cache_dir.display(),
+            "pruning archive index cache"
+        );
 
         walk_dir_recursive(&cache_dir)
             .for_each_concurrent(8, |item| async move {
@@ -298,6 +309,75 @@ impl AsyncStorage {
             .await;
 
         Ok(())
+    }
+
+    #[instrument(skip(self, meta))]
+    async fn check_and_prune_archive_index_file(&self, path: PathBuf, meta: fs::Metadata) {
+        let ttl = self.config.local_archive_cache_ttl;
+
+        let rwlock = self.local_index_cache_lock(&path);
+
+        let Ok(_write_guard) = rwlock.try_lock() else {
+            // if we can't acquire the write/exclusive lock, we assume
+            // the file is still in use, so we don't have to check its age,
+            // because we would never delete it.
+            trace!("archive index file is in use, skipping prune");
+            return;
+        };
+
+        // typically mtime is just the download-time of the index, and atime is newer.
+        // In case it's not, we use the latest of both.
+        let last_recorded_access = match (meta.modified(), meta.accessed()) {
+            (Ok(mtime), Ok(atime)) => Some(cmp::max(atime, mtime)),
+            (Err(err), Ok(atime)) => {
+                debug!(?err, "error fetching modified-time, using access-time");
+                Some(atime)
+            }
+            (Ok(mtime), Err(err)) => {
+                debug!(?err, "error fetching access-time, using modified-time");
+                Some(mtime)
+            }
+            (Err(err_mtime), Err(err_atime)) => {
+                debug!(
+                    ?err_mtime,
+                    ?err_atime,
+                    "error fetching either modified-time or access-time"
+                );
+                None
+            }
+        };
+
+        let now = SystemTime::now();
+        let age = last_recorded_access.and_then(|atime| now.duration_since(atime).ok());
+        let should_delete = age.map(|age| age > ttl).unwrap_or(false);
+
+        if !should_delete {
+            trace!(?last_recorded_access, ?age, "file is recent, skipping");
+
+            return;
+        }
+
+        trace!(
+            ?last_recorded_access,
+            ?age,
+            "removing cached archive index file"
+        );
+
+        // Best-effort: remove WAL/SHM companions first, then the DB file.
+        let wal = path.with_extension(format!("{ARCHIVE_INDEX_FILE_EXTENSION}-wal"));
+        let shm = path.with_extension(format!("{ARCHIVE_INDEX_FILE_EXTENSION}-shm"));
+        let _ = tokio::fs::remove_file(&wal).await;
+        let _ = tokio::fs::remove_file(&shm).await;
+
+        match tokio::fs::remove_file(&path).await {
+            Ok(_) => {
+                self.locks.remove(&path);
+                self.access_time_last_touch.remove(&path);
+            }
+            Err(err) => {
+                debug!(?err, "couldn't delete archive index file");
+            }
+        }
     }
 
     #[instrument(skip(self))]
@@ -361,7 +441,10 @@ impl AsyncStorage {
 
         // fast path: try to use whatever is there, no locking
         match archive_index::find_in_file(&local_index_path, path_in_archive).await {
-            Ok(res) => return Ok(res),
+            Ok(res) => {
+                self.touch_archive_index(&local_index_path).await?;
+                return Ok(res);
+            }
             Err(err) => {
                 debug!(?err, "archive index lookup failed, will try repair.");
             }
@@ -372,6 +455,7 @@ impl AsyncStorage {
 
         // Double-check: maybe someone fixed it between our first failure and now.
         if let Ok(res) = archive_index::find_in_file(&local_index_path, path_in_archive).await {
+            self.touch_archive_index(&local_index_path).await?;
             return Ok(res);
         }
 
@@ -384,8 +468,55 @@ impl AsyncStorage {
         // Write lock is dropped here (end of scope), so others can proceed.
         drop(write_guard);
 
+        self.touch_archive_index(&local_index_path).await?;
         // Final attempt: if this still fails, bubble the error.
         archive_index::find_in_file(local_index_path, path_in_archive).await
+    }
+
+    // update last-access-time, debounced
+    //
+    // Linux is the only system that updates atime on file access by default, when the mount
+    // option is set. But even then, it's only updated once every 24h.
+    // We want to update more often, so we do it ourselves here, but only once per hour.
+    async fn touch_archive_index(&self, local_index_path: impl AsRef<Path>) -> Result<()> {
+        // FIXME:
+        // * move this to some archive_index specific struct in that module
+        // * what in case of errors? delete the file?
+
+        let local_index_path = local_index_path.as_ref().to_path_buf();
+
+        let now_instant = Instant::now();
+
+        if let Some(prev) = self
+            .access_time_last_touch
+            .get(&local_index_path)
+            .map(|t| *t)
+            && now_instant.duration_since(prev) < ARCHIVE_INDEX_ACCESS_TIME_DEBOUNCE
+        {
+            return Ok(());
+        }
+
+        trace!(path=%local_index_path.display(), "updating access time of local archive index cache");
+
+        self.access_time_last_touch
+            .insert(local_index_path.clone(), now_instant);
+
+        spawn_blocking({
+            move || {
+                let file = fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .open(&local_index_path)?;
+
+                let now = SystemTime::now();
+                let times = fs::FileTimes::new().set_accessed(now);
+                file.set_times(times)?;
+                Ok(())
+            }
+        })
+        .await?;
+
+        Ok(())
     }
 
     #[instrument]
@@ -676,10 +807,12 @@ impl AsyncStorage {
         source_path: impl AsRef<Path> + std::fmt::Debug,
     ) -> Result<CompressionAlgorithm> {
         let target_path = target_path.into();
-        let source_path = source_path.as_ref();
+        let source_path = source_path.as_ref().to_path_buf();
 
         let alg = CompressionAlgorithm::default();
-        let content = compress(BufReader::new(File::open(source_path)?), alg)?;
+        // FIXME: or convert to async i/o & compression?
+        let content =
+            spawn_blocking(move || compress(BufReader::new(File::open(source_path)?), alg)).await?;
 
         let mime = detect_mime(&target_path).to_owned();
 
