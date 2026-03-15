@@ -49,10 +49,10 @@ impl ResponseCacheHeaders {
             headers.typed_insert(surrogate_keys);
         }
 
-        // FIXME: do we need to add HOST here? Or is it ok to rely on the CDN to always
-        // set X-Forwarded-Host?
-        // See also https://github.com/hyperium/headers/pull/223 ,
-        // or change to setting the non-typed header
+        // in the chain between the browser, CDN, shield POP and our origin, there
+        // will be different host/domain names used.
+        // For the cache (so on the edge POP and the shield POP), we only
+        // need X-Forwarded-Host to be part of the cache key, so we add it to the Vary header.
         headers.typed_insert(Vary::from(X_FORWARDED_HOST.clone()));
     }
 }
