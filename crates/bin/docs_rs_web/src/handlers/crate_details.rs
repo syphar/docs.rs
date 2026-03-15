@@ -569,8 +569,6 @@ impl_axum_webpage! {
     cpu_intensive_rendering = true,
 }
 
-// FIXME: get target-redirect to redirect to subdomain too?
-// perhaps expose the partial on the subdomain too?
 #[tracing::instrument]
 pub(crate) async fn get_all_releases(
     params: RustdocParams,
@@ -592,23 +590,12 @@ pub(crate) async fn get_all_releases(
         return Err(AxumNope::CrateNotFound);
     }
 
-    let mut response = ReleaseList {
+    Ok(ReleaseList {
         crate_name: matched_release.name.clone(),
         releases: matched_release.all_releases,
         params,
     }
-    .into_response();
-
-    // FIXME:
-    // * only allow "*.docs.rs"
-    // * Vary: Origin ?
-    // Or echo the original origin header?
-    // tower_http::CorsLayer
-    response
-        .headers_mut()
-        .typed_insert(AccessControlAllowOrigin::ANY);
-
-    Ok(response)
+    .into_response())
 }
 
 #[derive(Template)]
@@ -687,24 +674,13 @@ pub(crate) async fn get_all_platforms_inner(
         String::new()
     };
 
-    let mut response = PlatformList {
+    Ok(PlatformList {
         crate_name: matched_release.name.clone(),
         use_direct_platform_links: is_crate_root,
         current_target,
         params,
     }
-    .into_response();
-
-    // FIXME:
-    // * only allow "*.docs.rs"
-    // * Vary: Origin
-    // Or echo the original origin header?
-    // tower_http::CorsLayer
-    response
-        .headers_mut()
-        .typed_insert(AccessControlAllowOrigin::ANY);
-
-    Ok(response)
+    .into_response())
 }
 
 pub(crate) async fn get_all_platforms_root(

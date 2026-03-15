@@ -1,7 +1,4 @@
 //! special rustdoc extractors
-
-use std::sync::Arc;
-
 use crate::{
     Config,
     config::Via,
@@ -23,6 +20,7 @@ use docs_rs_types::{BuildId, CompressionAlgorithm, KrateName, ReqVersion};
 use docs_rs_uri::{EscapedURI, url_decode};
 use http::{Uri, uri};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 const INDEX_HTML: &str = "index.html";
 const FOLDER_AND_INDEX_HTML: &str = "/index.html";
