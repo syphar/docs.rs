@@ -35,6 +35,7 @@ use axum_extra::{
     typed_header::TypedHeader,
 };
 use docs_rs_cargo_metadata::Dependency;
+use docs_rs_database::Pool;
 use docs_rs_headers::{ETagComputer, IfNoneMatch, X_ROBOTS_TAG};
 use docs_rs_registry_api::OwnerKind;
 use docs_rs_rustdoc_json::RustdocJsonFormatVersion;
@@ -174,14 +175,14 @@ async fn try_serve_legacy_toolchain_asset(
 /// Handler called for `/:crate` and `/:crate/:version` URLs. Automatically redirects to the docs
 /// or crate details page based on whether the given crate version was successfully built.
 #[allow(clippy::too_many_arguments)]
-#[instrument(skip(storage, conn))]
+#[instrument(skip(storage, pool))]
 pub(crate) async fn rustdoc_redirector_handler(
     params: RustdocRedirectorParams,
     original_uri: OriginalUriWithHost,
     matched_path: MatchedPath,
     Extension(storage): Extension<Arc<AsyncStorage>>,
     Extension(config): Extension<Arc<Config>>,
-    mut conn: DbConnection,
+    Extension(pool): Extension<Pool>,
     if_none_match: Option<TypedHeader<IfNoneMatch>>,
     RawQuery(original_query): RawQuery,
 ) -> AxumResult<impl IntoResponse> {
@@ -300,6 +301,9 @@ pub(crate) async fn rustdoc_redirector_handler(
     .map_err(AxumNope::BadRequest)?
     .with_page_kind(PageKind::Rustdoc);
 
+    // NOTE: we try to shorten the time we hold the database connection from the pool.
+    let mut conn = pool.get_async().await?;
+
     // it doesn't matter if the version that was given was exact or not, since we're redirecting
     // anyway
     let matched_release = match_version(&mut conn, &crate_name, &params.req_version().clone())
@@ -324,6 +328,10 @@ pub(crate) async fn rustdoc_redirector_handler(
         // this URL is actually from a crate-internal path, serve it there instead
         return async {
             let krate = CrateDetails::from_matched_release(&mut conn, matched_release).await?;
+
+            // NOTE: we want to give back the db connection to the pool
+            // before we do the long S3 requests.
+            drop(conn);
 
             match storage
                 .stream_rustdoc_file(
@@ -607,6 +615,10 @@ pub(crate) async fn rustdoc_html_server_handler(
 
     let krate = CrateDetails::from_matched_release(&mut conn, matched_release).await?;
 
+    // NOTE: we want to give back the db connection to the pool
+    // before we do the long S3 requests.
+    drop(conn);
+
     trace!(
         ?params,
         doc_targets=?krate.metadata.doc_targets,
@@ -794,9 +806,13 @@ pub(crate) async fn target_redirect_handler(
         .await?
         .into_canonical_req_version_or_else(|_, _| AxumNope::VersionNotFound)?;
     let params = params.apply_matched_release(&matched_release);
+    trace!(?params, "parsed params");
 
     let crate_details = CrateDetails::from_matched_release(&mut conn, matched_release).await?;
-    trace!(?params, "parsed params");
+
+    // NOTE: we want to give back the db connection to the pool
+    // before we do the long S3 requests.
+    drop(conn);
 
     let storage_path = params.storage_path();
     trace!(storage_path, "checking if path exists in other version");
@@ -904,6 +920,10 @@ pub(crate) async fn json_download_handler(
 
     let krate = CrateDetails::from_matched_release(&mut conn, matched_release).await?;
 
+    // NOTE: we want to give back the db connection to the pool
+    // before we do the long S3 requests.
+    drop(conn);
+
     let wanted_format_version = if let Some(request_format_version) = json_params.format_version {
         // axum doesn't support extension suffixes in the route yet, not as parameter, and not
         // statically, when combined with a parameter (like `.../{format_version}.gz`).
@@ -924,7 +944,8 @@ pub(crate) async fn json_download_handler(
 
         stripped_format_version
             .parse::<RustdocJsonFormatVersion>()
-            .context("can't parse format version")?
+            .context("can't parse format version")
+            .map_err(AxumNope::BadRequest)?
     } else {
         RustdocJsonFormatVersion::Latest
     };
@@ -1012,6 +1033,11 @@ pub(crate) async fn download_handler(
                 CachePolicy::ForeverInCdn(confirmed_name.into()),
             )
         })?;
+
+    // NOTE: we want to give back the db connection to the pool
+    // before we do the long S3 requests.
+    drop(conn);
+
     params = params.apply_matched_release(&matched_release);
 
     let version = &matched_release.release.version;
@@ -1060,7 +1086,10 @@ mod test {
         RUSTDOC_JSON_COMPRESSION_ALGORITHMS, read_format_version_from_rustdoc_json,
     };
     use docs_rs_storage::{decompress, testing::check_archive_consistency};
-    use docs_rs_types::Version;
+    use docs_rs_types::{
+        Version,
+        testing::{KRATE, V2},
+    };
     use docs_rs_uri::encode_url_path;
     use kuchikiki::traits::TendrilSink;
     use pretty_assertions::assert_eq;
@@ -3625,6 +3654,34 @@ mod test {
             &format!("attachment; filename=\"{NAME}_{VERSION}_{TARGET}_latest.json\""),
         );
         web.assert_conditional_get(&path, &resp).await?;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn json_download_bad_request() -> Result<()> {
+        let env = TestEnvironment::new().await?;
+
+        env.fake_release()
+            .await
+            .name(KRATE)
+            .version(V2)
+            .archive_storage(true)
+            .default_target("x86_64-unknown-linux-gnu")
+            .create()
+            .await?;
+
+        let web = env.web_app().await;
+
+        let response = web
+            .get(&format!("/crate/{KRATE}/{V2}/json/963570%40"))
+            .await?;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert!(
+            response
+                .text()
+                .await?
+                .contains("can&#39;t parse format version")
+        );
         Ok(())
     }
 
