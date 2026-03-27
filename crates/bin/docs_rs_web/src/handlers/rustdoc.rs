@@ -6,7 +6,7 @@ use crate::{
     config::Via,
     error::{AxumNope, AxumResult},
     extractors::{
-        DbConnection, OriginalUriWithHost, Path, WantedCompression,
+        DbConnection, OriginalUriWithHost, Path, RequestedHost, WantedCompression,
         rustdoc::{PageKind, RustdocParams, UrlParams},
         rustdoc_redirector::RustdocRedirectorParams,
     },
@@ -496,6 +496,7 @@ impl RustdocPage {
     #[instrument(skip_all)]
     async fn into_response(
         self: &Arc<Self>,
+        requested_host: RequestedHost,
         template_data: Arc<TemplateData>,
         otel_metrics: Arc<WebMetrics>,
         rustdoc_html: StreamingBlob,
@@ -535,6 +536,7 @@ impl RustdocPage {
                 Extension(cache_policy),
                 TypedHeader(ContentType::from(mime::TEXT_HTML_UTF_8)),
                 Body::from_stream(utils::html_rewrite::rewrite_rustdoc_html_stream(
+                    requested_host,
                     template_data,
                     rustdoc_html.content,
                     max_parse_memory,
@@ -559,6 +561,7 @@ impl RustdocPage {
 #[instrument(skip_all)]
 pub(crate) async fn rustdoc_html_server_handler(
     params: RustdocParams,
+    requested_host: RequestedHost,
     Extension(otel_metrics): Extension<Arc<WebMetrics>>,
     Extension(templates): Extension<Arc<TemplateData>>,
     Extension(storage): Extension<Arc<AsyncStorage>>,
@@ -783,6 +786,7 @@ pub(crate) async fn rustdoc_html_server_handler(
     });
     Ok(page
         .into_response(
+            requested_host,
             templates,
             otel_metrics,
             blob,

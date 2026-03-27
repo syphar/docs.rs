@@ -1,4 +1,5 @@
 use crate::{
+    extractors::RequestedHost,
     handlers::rustdoc::RustdocPage,
     metrics::WebMetrics,
     page::{
@@ -69,7 +70,12 @@ where
                         let head_html = Head::new(&data).render().unwrap();
                         let vendored_html = Vendored.render().unwrap();
                         let body_html = Body.render().unwrap();
-                        let topbar_html = data.render().unwrap();
+                        let requested_host = data.requested_host();
+                        let values = [(
+                            "requested_host",
+                            Box::new(requested_host) as Box<dyn std::any::Any>,
+                        )];
+                        let topbar_html = data.render_with_values(&values).unwrap();
 
                         // Before: <body> ... rustdoc content ... </body>
                         // After:
