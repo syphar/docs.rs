@@ -1,4 +1,6 @@
 {%- import "macros.html" as macros -%}
+{%- let requested_host = askama::get_value::<Option<crate::extractors::RequestedHost>>("requested_host").unwrap() -%}
+{%- let docsrs_base_url = crate::page::templates::docsrs_base_url(requested_host) -%}
 
                 <div class="spacer"></div>
                 {# The global alert, if there is one #}
@@ -11,42 +13,42 @@
                         <a href="#" class="pure-menu-link" aria-label="docs.rs">docs.rs</a>
                         <ul class="pure-menu-children aligned-icons">
                             {%- call macros::menu_link_with_icon_solid(
-                                href="/about",
+                                href=docsrs_base_url.clone() + "/about",
                                 text="About docs.rs",
                                 icon=crate::icons::IconCircleInfo,
                             ) -%}{% endcall %}
                             {%- call macros::menu_link_with_icon_brand(
-                                href="/about/badges",
+                                href=docsrs_base_url.clone() + "/about/badges",
                                 text="Badges",
                                 icon=crate::icons::IconFonticons,
                             ) -%}{% endcall %}
                             {%- call macros::menu_link_with_icon_solid(
-                                href="/about/builds",
+                                href=docsrs_base_url.clone() + "/about/builds",
                                 text="Builds",
                                 icon=crate::icons::IconGears,
                             ) -%}{% endcall %}
                             {%- call macros::menu_link_with_icon_solid(
-                                href="/about/metadata",
+                                href=docsrs_base_url.clone() + "/about/metadata",
                                 text="Metadata",
                                 icon=crate::icons::IconTable,
                             ) -%}{% endcall %}
                             {%- call macros::menu_link_with_icon_solid(
-                                href="/about/redirections",
+                                href=docsrs_base_url.clone() + "/about/redirections",
                                 text="Shorthand URLs",
                                 icon=crate::icons::IconRoad,
                             ) -%}{% endcall %}
                             {%- call macros::menu_link_with_icon_solid(
-                                href="/about/download",
+                                href=docsrs_base_url.clone() + "/about/download",
                                 text="Download",
                                 icon=crate::icons::IconDownload,
                             ) -%}{% endcall %}
                             {%- call macros::menu_link_with_icon_solid(
-                                href="/about/rustdoc-json",
+                                href=docsrs_base_url.clone() + "/about/rustdoc-json",
                                 text="Rustdoc JSON",
                                 icon=crate::icons::IconFileCode,
                             ) -%}{% endcall %}
                             {%- call macros::menu_link_with_icon_solid(
-                                href="/releases/queue",
+                                href=docsrs_base_url.clone() + "/releases/queue",
                                 text="Build queue",
                                 icon=crate::icons::IconGears,
                             ) -%}{% endcall %}
