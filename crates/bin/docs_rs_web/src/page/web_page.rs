@@ -1,4 +1,6 @@
-use crate::{error::AxumNope, middleware::csp::Csp, page::templates::TemplateData};
+use crate::{
+    error::AxumNope, extractors::RequestedHost, middleware::csp::Csp, page::templates::TemplateData,
+};
 use axum::{
     body::Body,
     extract::Request as AxumRequest,
@@ -10,7 +12,11 @@ use http::header::CONTENT_LENGTH;
 use std::sync::Arc;
 
 pub(crate) trait AddCspNonce: IntoResponse {
-    fn render_with_csp_nonce(&mut self, csp_nonce: String) -> askama::Result<String>;
+    fn render_with_request_context(
+        &mut self,
+        csp_nonce: String,
+        requested_host: Option<RequestedHost>,
+    ) -> askama::Result<String>;
 }
 
 #[macro_export]
@@ -25,8 +31,21 @@ macro_rules! impl_axum_webpage {
         $(,)?
     ) => {
         impl $crate::page::web_page::AddCspNonce for $page {
-            fn render_with_csp_nonce(&mut self, csp_nonce: String) -> askama::Result<String> {
-                let values: (&str, &dyn std::any::Any) = ("csp_nonce", &csp_nonce);
+            fn render_with_request_context(
+                &mut self,
+                csp_nonce: String,
+                requested_host: Option<$crate::extractors::RequestedHost>,
+            ) -> askama::Result<String> {
+                let values = [
+                    (
+                        "csp_nonce",
+                        Box::new(csp_nonce) as Box<dyn std::any::Any>,
+                    ),
+                    (
+                        "requested_host",
+                        Box::new(requested_host) as Box<dyn std::any::Any>,
+                    ),
+                ];
                 self.render_with_values(&values)
             }
         }
@@ -103,6 +122,7 @@ fn render_response(
     mut response: AxumResponse,
     templates: Arc<TemplateData>,
     csp_nonce: String,
+    requested_host: Option<RequestedHost>,
 ) -> BoxFuture<'static, AxumResponse> {
     async move {
         if let Some(render) = response.extensions_mut().remove::<DelayedTemplateRender>() {
@@ -112,18 +132,19 @@ fn render_response(
             } = render;
             let mut template = Arc::into_inner(template).unwrap();
             let csp_nonce_clone = csp_nonce.clone();
+            let requested_host_clone = requested_host.clone();
 
             let result: Result<String, anyhow::Error> = if cpu_intensive_rendering {
                 templates
                     .render_in_threadpool(move || {
                         template
-                            .render_with_csp_nonce(csp_nonce_clone)
+                            .render_with_request_context(csp_nonce_clone, requested_host_clone)
                             .map_err(|err| err.into())
                     })
                     .await
             } else {
                 template
-                    .render_with_csp_nonce(csp_nonce_clone)
+                    .render_with_request_context(csp_nonce_clone, requested_host_clone)
                     .map_err(|err| err.into())
             };
 
@@ -138,6 +159,7 @@ fn render_response(
                             AxumNope::InternalError(err).into_response(),
                             templates,
                             csp_nonce,
+                            requested_host,
                         )
                         .await;
                     }
@@ -157,6 +179,8 @@ fn render_response(
 }
 
 pub(crate) async fn render_templates_middleware(req: AxumRequest, next: Next) -> AxumResponse {
+    let requested_host = RequestedHost::from_headers(req.headers()).ok().flatten();
+
     let templates: Arc<TemplateData> = req
         .extensions()
         .get::<Arc<TemplateData>>()
@@ -172,5 +196,5 @@ pub(crate) async fn render_templates_middleware(req: AxumRequest, next: Next) ->
 
     let response = next.run(req).await;
 
-    render_response(response, templates, csp_nonce).await
+    render_response(response, templates, csp_nonce, requested_host).await
 }
