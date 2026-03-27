@@ -81,7 +81,7 @@ where
                     name: params.name,
                     version: params.version,
                     target: params.target,
-                    requested_host,
+                    requested_host: requested_host,
                     via: Via::ApexDomain,
                 }
             },

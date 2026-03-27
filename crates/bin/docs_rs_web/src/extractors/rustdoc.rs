@@ -48,7 +48,7 @@ pub(crate) enum PageKind {
 /// All of these have more or less detail depending on how much metadata we have here.
 /// Maintains some additional fields containing "fixed" things, whos quality
 /// gets better the more metadata we provide.
-#[derive(Clone, PartialEq, Serialize)]
+#[derive(Clone, Eq, PartialEq, Serialize)]
 pub(crate) struct RustdocParams {
     #[serde(skip)]
     config: Option<Arc<Config>>,
@@ -618,8 +618,7 @@ impl RustdocParams {
     fn wanted_mode(&self) -> Via {
         let original_uri = self.original_uri().expect("original uri is missing");
         let subdomain_and_host = original_uri
-            .authority()
-            .map(|authority| authority.host())
+            .host()
             .and_then(|h| split_subdomain_from_host(h));
 
         // when the request is coming from the subdomain, we can link to subdomain.
@@ -638,13 +637,12 @@ impl RustdocParams {
     fn build_url(&self, mode: Via) -> uri::Builder {
         let original_uri = self.original_uri().expect("original uri is missing");
         let subdomain_and_host = original_uri
-            .authority()
-            .map(|authority| authority.host())
+            .host()
             .and_then(|h| split_subdomain_from_host(h));
 
         let apex_domain = subdomain_and_host
             .map(|(_subdomain, apex)| apex)
-            .or(original_uri.authority().map(|authority| authority.host()))
+            .or(original_uri.host())
             .expect("missing host in original uri");
 
         let scheme = original_uri.scheme().cloned().unwrap_or(
@@ -687,8 +685,7 @@ impl RustdocParams {
     pub(crate) fn rustdoc_url(&self) -> EscapedURI {
         let original_uri = self.original_uri().expect("original uri is missing");
         let subdomain_and_host = original_uri
-            .authority()
-            .map(|authority| authority.host())
+            .host()
             .and_then(|h| split_subdomain_from_host(h));
 
         // when the request is coming from the subdomain, we can link to subdomain.
@@ -1141,9 +1138,9 @@ fn find_static_route_suffix<'a, 'b>(route: &'a str, path: &'b str) -> Option<Str
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::extractors::X_FORWARDED_HOST;
     use crate::testing::{AxumResponseTestExt, AxumRouterTestExt};
     use axum::{Router, routing::get};
+    use docs_rs_headers::X_FORWARDED_HOST;
     use docs_rs_types::{Version, testing::V1};
     use http::header::HOST;
     use test_case::test_case;

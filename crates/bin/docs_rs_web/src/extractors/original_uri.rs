@@ -1,4 +1,4 @@
-use crate::{Config, error::AxumNope, extractors::requested_authority};
+use crate::{Config, error::AxumNope, extractors::host::requested_authority};
 use anyhow::Context as _;
 use axum::{
     Extension, RequestPartsExt,
@@ -27,11 +27,7 @@ impl Deref for OriginalUriWithHost {
 impl OriginalUriWithHost {
     pub(crate) fn apex_domain(&self) -> &str {
         // FIXME: store this on the struct to safe time
-        let host = self
-            .0
-            .authority()
-            .map(|authority| authority.host())
-            .expect("missing host in original uri");
+        let host = self.0.host().expect("missing host in original uri");
 
         split_subdomain_from_host(host)
             .map(|(_subdomain, apex_domain)| apex_domain)
@@ -41,8 +37,7 @@ impl OriginalUriWithHost {
     pub(crate) fn subdomain(&self) -> Option<&str> {
         // FIXME: store this on the struct to safe time
 
-        split_subdomain_from_host(self.0.authority().map(|authority| authority.host())?)
-            .map(|(subdomain, _)| subdomain)
+        split_subdomain_from_host(self.0.host()?).map(|(subdomain, _)| subdomain)
     }
 }
 
@@ -110,9 +105,9 @@ pub(crate) fn split_subdomain_from_host(host: &str) -> Option<(&str, &str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::extractors::X_FORWARDED_HOST;
     use crate::testing::{AxumResponseTestExt, AxumRouterTestExt};
     use axum::{Router, routing::get};
+    use docs_rs_headers::X_FORWARDED_HOST;
     use http::header::HOST;
 
     #[tokio::test]

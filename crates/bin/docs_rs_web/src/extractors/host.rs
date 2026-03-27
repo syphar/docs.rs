@@ -3,14 +3,14 @@ use anyhow::{Context as _, anyhow};
 use axum::{
     RequestPartsExt,
     extract::{FromRequestParts, OptionalFromRequestParts},
-    http::{HeaderMap, HeaderName, request::Parts, uri::Authority},
+    http::{HeaderMap, request::Parts, uri::Authority},
 };
+use axum_extra::headers::HeaderMapExt;
+use docs_rs_headers::{Host, X_FORWARDED_HOST, XForwardedHost};
 use http::header::HOST;
 use serde::Serialize;
 use std::net::IpAddr;
 use std::str::FromStr;
-
-pub(crate) static X_FORWARDED_HOST: HeaderName = HeaderName::from_static("x-forwarded-host");
 
 /// Extractor for the requested hostname.
 ///
@@ -43,37 +43,30 @@ impl RequestedHost {
 }
 
 pub(crate) fn requested_authority(headers: &HeaderMap) -> Result<Option<Authority>, AxumNope> {
-    if let Some(header) = headers.get(&X_FORWARDED_HOST) {
-        let header = header
-            .to_str()
-            .with_context(|| format!("invalid {} header", X_FORWARDED_HOST))
-            .map_err(AxumNope::BadRequest)?;
-
-        if let Some(authority) = header
-            .split(',')
-            .map(str::trim)
-            .find(|authority| !authority.is_empty())
-        {
-            return Ok(Some(authority.parse().map_err(|err| {
-                AxumNope::BadRequest(anyhow!(
-                    "invalid {X_FORWARDED_HOST} header authority: {err}"
-                ))
-            })?));
-        }
+    if let Some(header) = headers
+        .typed_try_get::<XForwardedHost>()
+        .with_context(|| format!("invalid {} header", X_FORWARDED_HOST))
+        .map_err(AxumNope::BadRequest)?
+        .filter(|h| !h.is_empty())
+    {
+        Ok(header.iter().next().cloned())
+    } else if let Some(header) = headers
+        .typed_try_get::<Host>()
+        .with_context(|| format!("invalid {} header", HOST))
+        .map_err(AxumNope::BadRequest)?
+    {
+        let host = header.hostname();
+        let authority = if let Some(port) = header.port() {
+            format!("{host}:{port}")
+        } else {
+            host.to_string()
+        };
+        Ok(Some(authority.parse().map_err(|err| {
+            AxumNope::BadRequest(anyhow!("invalid {HOST} header authority: {err}"))
+        })?))
+    } else {
+        Ok(None)
     }
-
-    let Some(header) = headers.get(HOST) else {
-        return Ok(None);
-    };
-
-    let header = header
-        .to_str()
-        .with_context(|| format!("invalid {HOST} header"))
-        .map_err(AxumNope::BadRequest)?;
-
-    Ok(Some(header.parse().map_err(|err| {
-        AxumNope::BadRequest(anyhow!("invalid {HOST} header authority: {err}"))
-    })?))
 }
 
 impl FromStr for RequestedHost {

@@ -6,6 +6,6 @@ pub(crate) mod rustdoc;
 pub(crate) mod rustdoc_redirector;
 
 pub(crate) use context::DbConnection;
-pub(crate) use host::{RequestedHost, X_FORWARDED_HOST, requested_authority};
+pub(crate) use host::RequestedHost;
 pub(crate) use original_uri::OriginalUriWithHost;
 pub(crate) use path::{Path, WantedCompression};
