@@ -22,7 +22,7 @@ use chrono::{DateTime, Utc};
 use docs_rs_build_queue::{AsyncBuildQueue, PRIORITY_CONTINUOUS, QueuedCrate};
 use docs_rs_registry_api::{self as registry_api, RegistryApi};
 use docs_rs_types::{Duration, KrateName, ReqVersion, Version};
-use docs_rs_uri::encode_url_path;
+use docs_rs_uri::{EscapedURI, encode_url_path};
 use futures_util::stream::TryStreamExt;
 use http::StatusCode;
 use serde::Deserialize;

@@ -17,7 +17,6 @@ use axum::{
     extract::Extension,
     response::{IntoResponse, Response as AxumResponse},
 };
-use axum_extra::headers::{AccessControlAllowOrigin, HeaderMapExt as _};
 use chrono::{DateTime, Utc};
 use docs_rs_cargo_metadata::{Dependency, ReleaseDependencyList};
 use docs_rs_database::crate_details::{Release, latest_release, parse_doc_targets};

@@ -1,13 +1,12 @@
-use anyhow::anyhow;
-use axum::{RequestPartsExt as _, extract::FromRequestParts};
-use http::request::Parts;
-use serde::Deserialize;
-
 use crate::{
     config::Via,
     error::AxumNope,
     extractors::{Path, RequestedHost},
 };
+use anyhow::anyhow;
+use axum::{RequestPartsExt as _, extract::FromRequestParts};
+use http::request::Parts;
+use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 struct UrlParams {
