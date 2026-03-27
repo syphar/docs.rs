@@ -42,7 +42,7 @@ const RELEASES_IN_RELEASES: i64 = 30;
 /// Releases in recent releases feed
 const RELEASES_IN_FEED: i64 = 150;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Release {
     pub(crate) name: KrateName,
     pub(crate) version: Version,
@@ -147,7 +147,7 @@ pub(crate) async fn get_releases(
         .await?)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ReleaseStatus {
     Available(Release),
     External(&'static OfficialCrateDescription),
@@ -274,7 +274,7 @@ async fn get_search_results(
 
 #[derive(Template)]
 #[template(path = "core/home.html")]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 struct HomePage {
     recent_releases: Vec<Release>,
 }
@@ -305,7 +305,7 @@ pub(crate) async fn home_page(
 
 #[derive(Template)]
 #[template(path = "releases/feed.xml")]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 struct ReleaseFeed {
     recent_releases: Vec<Release>,
 }
@@ -335,7 +335,7 @@ pub(crate) async fn releases_feed_handler(
 
 #[derive(Template)]
 #[template(path = "releases/releases.html")]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 struct ViewReleases {
     releases: Vec<ReleaseStatus>,
     description: String,
@@ -959,6 +959,7 @@ mod tests {
     fn test_release_list_with_incomplete_release_and_successful_build() {
         async_wrapper(|env| async move {
             let mut conn = env.async_conn().await?;
+            let original_uri: EscapedURI = "https://docs.rs".parse().unwrap();
 
             let crate_id = initialize_crate(&mut conn, &FOO).await?;
             let release_id = initialize_release(&mut conn, crate_id, &V1).await?;
@@ -975,7 +976,16 @@ mod tests {
             )
             .await?;
 
-            let releases = get_releases(&mut conn, 1, 10, Order::ReleaseTime, false).await?;
+            let releases = get_releases(
+                &mut conn,
+                1,
+                10,
+                Order::ReleaseTime,
+                false,
+                env.config(),
+                &original_uri,
+            )
+            .await?;
 
             assert_eq!(
                 vec!["foo"],
@@ -993,6 +1003,7 @@ mod tests {
     fn get_releases_by_stars() {
         async_wrapper(|env| async move {
             let db = env.pool()?;
+            let original_uri: EscapedURI = "https://docs.rs".parse().unwrap();
 
             env.fake_release()
                 .await
@@ -1037,10 +1048,17 @@ mod tests {
                 .create()
                 .await?;
 
-            let releases =
-                get_releases(&mut *db.get_async().await?, 1, 10, Order::GithubStars, true)
-                    .await
-                    .unwrap();
+            let releases = get_releases(
+                &mut *db.get_async().await?,
+                1,
+                10,
+                Order::GithubStars,
+                true,
+                env.config(),
+                &original_uri,
+            )
+            .await
+            .unwrap();
             assert_eq!(
                 vec![
                     "bar", // 20 stars
