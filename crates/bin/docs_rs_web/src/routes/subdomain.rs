@@ -41,7 +41,7 @@ pub(crate) fn build_subdomain_axum_routes() -> Result<AxumRouter> {
         )
         // `.nest` with fallbacks is currently broken, `.nest_service works
         // https://github.com/tokio-rs/axum/issues/3138
-        .nest("/-/static", build_static_router(static_root_dir()?))
+        .nest_service("/-/static", build_static_router(static_root_dir()?))
         .route(
             "/-/rustdoc.static/{*path}",
             get_internal(rustdoc::static_asset_handler),
