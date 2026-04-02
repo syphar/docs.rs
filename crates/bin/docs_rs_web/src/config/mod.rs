@@ -62,9 +62,6 @@ pub struct Config {
     /// Temporary setting for the transition phase.
     #[builder(default)]
     pub(crate) rustdoc_url_mode: Via,
-
-    #[builder(default = Scheme::HTTP)]
-    pub(crate) default_url_scheme: Scheme,
 }
 
 use config_builder::State;
@@ -85,7 +82,6 @@ impl<S: State> ConfigBuilder<S> {
             .maybe_cache_invalidatable_responses(maybe_env(
                 "DOCSRS_CACHE_INVALIDATEABLE_RESPONSES",
             )?)
-            .maybe_default_url_scheme(maybe_env("DOCSRS_DEFAULT_URL_SCHEME")?)
             .maybe_rustdoc_url_mode(maybe_env("DOCSRS_WEB_MODE")?))
     }
 

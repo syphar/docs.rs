@@ -7,7 +7,11 @@ use axum::{
 };
 use axum_extra::headers::HeaderMapExt;
 use docs_rs_headers::{Host, X_FORWARDED_HOST, XForwardedHost};
-use http::header::HOST;
+use docs_rs_uri::EscapedURI;
+use http::{
+    header::HOST,
+    uri::{self, InvalidUri, PathAndQuery, Scheme},
+};
 use serde::Serialize;
 use std::net::IpAddr;
 use url::Url;
@@ -24,49 +28,87 @@ pub(crate) struct RequestedHost {
     subdomain: Option<String>,
     #[serde(skip)]
     authority: Authority,
-    // IPAddr(IpAddr),
-    // ApexDomain(String),
-    // SubDomain(String, String),
+    #[serde(skip)]
+    scheme: Scheme,
 }
 
 impl RequestedHost {
     pub fn subdomain(&self) -> Option<&str> {
         self.subdomain.as_deref()
-        // match self {
-        //     Self::SubDomain(subdomain, _) => Some(subdomain),
-        //     _ => None,
-        // }
     }
 
     pub fn apex_domain(&self) -> &str {
         &self.apex_domain
-
-        // match self {
-        //     RequestedHost::IPAddr(host) => format!("{host}"),
-        //     RequestedHost::ApexDomain(host) => format!("{host}"),
-        //     RequestedHost::SubDomain(_, apex_domain) => format!("{apex_domain}"),
-        // }
     }
 
-    pub fn build_apex_url(&self, path: impl AsRef<str>) -> String {
+    pub fn subdomain_url_builder(&self, subdomain: impl AsRef<str>) -> uri::Builder {
         let port = self
             .authority
             .port_u16()
             .map(|port| format!(":{port}"))
             .unwrap_or_default();
 
-        let mut url = Url::parse(&format!("https://{}{port}", self.apex_domain()))
-            .expect("the host is always valid here");
+        // FIXME: validate subdomain? or are crate names valid domain names?
 
-        url.set_path(path.as_ref());
+        let authority: Authority = format!("{}.{}{port}", subdomain.as_ref(), self.apex_domain)
+            .parse()
+            .expect("can't fail, coming from parsed auth");
 
-        url.as_str()
-            .strip_prefix("https:")
-            .expect("we add it ourselves")
-            .to_string()
+        uri::Builder::new()
+            .scheme(self.scheme.clone())
+            .authority(authority)
     }
 
-    pub(crate) fn from_headers(headers: &HeaderMap) -> Result<Option<Self>, AxumNope> {
+    pub fn build_subdomain_url<T>(
+        &self,
+        subdomain: impl AsRef<str>,
+        path_and_query: T,
+    ) -> Result<EscapedURI, http::Error>
+    where
+        T: TryInto<PathAndQuery>,
+        <T as TryInto<PathAndQuery>>::Error: Into<http::Error>,
+    {
+        let path_and_query = path_and_query.try_into().map_err(Into::into)?;
+
+        self.subdomain_url_builder()
+            .path_and_query(path_and_query)
+            .build()
+            .map(|uri| EscapedURI::from_uri(uri))
+    }
+
+    pub fn apex_url_builder(&self) -> uri::Builder {
+        let port = self
+            .authority
+            .port_u16()
+            .map(|port| format!(":{port}"))
+            .unwrap_or_default();
+
+        let authority: Authority = format!("{}{port}", self.apex_domain)
+            .parse()
+            .expect("can't fail, coming from parsed auth");
+
+        uri::Builder::new()
+            .scheme(self.scheme.clone())
+            .authority(authority)
+    }
+
+    pub fn build_apex_url<T>(&self, path_and_query: T) -> Result<EscapedURI, http::Error>
+    where
+        T: TryInto<PathAndQuery>,
+        <T as TryInto<PathAndQuery>>::Error: Into<http::Error>,
+    {
+        let path_and_query = path_and_query.try_into().map_err(Into::into)?;
+
+        self.apex_url_builder()
+            .path_and_query(path_and_query)
+            .build()
+            .map(|uri| EscapedURI::from_uri(uri))
+    }
+
+    pub(crate) fn from_headers(
+        scheme: Scheme,
+        headers: &HeaderMap,
+    ) -> Result<Option<Self>, AxumNope> {
         requested_authority(headers).and_then(|authority| {
             let Some(authority) = authority else {
                 return Ok(None);
@@ -76,6 +118,7 @@ impl RequestedHost {
                 split_subdomain(authority.host()).map_err(AxumNope::BadRequest)?;
 
             Ok(Some(Self {
+                scheme,
                 apex_domain: apex_domain,
                 subdomain: subdomain,
                 authority,

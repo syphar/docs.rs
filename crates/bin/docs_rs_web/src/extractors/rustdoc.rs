@@ -3,7 +3,9 @@ use crate::{
     Config,
     config::Via,
     error::AxumNope,
-    extractors::{OriginalUriWithHost, Path, original_uri::split_subdomain_from_host},
+    extractors::{
+        OriginalUriWithHost, Path, RequestedHost, original_uri::split_subdomain_from_host,
+    },
     match_release::MatchedRelease,
     metadata::MetaData,
 };
@@ -57,6 +59,7 @@ pub(crate) struct RustdocParams {
     page_kind: Option<PageKind>,
 
     original_uri: Option<EscapedURI>,
+    requested_host: Option<RequestedHost>,
     name: KrateName,
     req_version: ReqVersion,
     doc_target: Option<String>,
@@ -237,6 +240,7 @@ impl RustdocParams {
         params: UrlParams,
         original_uri: EscapedURI,
         matched_path: MatchedPath,
+        requested_host: RequestedHost,
         config: Arc<Config>,
     ) -> Result<Self> {
         let static_route_suffix = {
@@ -252,6 +256,7 @@ impl RustdocParams {
             .with_maybe_doc_target(params.target)
             .with_maybe_inner_path(params.path)
             .with_original_uri(original_uri)
+            .with_requested_host(requested_host)
             .with_maybe_static_route_suffix(static_route_suffix))
     }
 
@@ -362,6 +367,19 @@ impl RustdocParams {
     pub(crate) fn with_maybe_inner_path(self, inner_path: Option<impl Into<String>>) -> Self {
         self.update(|mut params| {
             params.inner_path = inner_path.map(|t| t.into().trim().to_owned());
+            params
+        })
+    }
+
+    pub(crate) fn requested_host(&self) -> Option<&RequestedHost> {
+        self.requested_host.as_ref()
+    }
+    pub(crate) fn with_requested_host(self, requested_host: RequestedHost) -> Self {
+        self.with_maybe_requested_host(Some(requested_host))
+    }
+    pub(crate) fn with_maybe_requested_host(self, requested_host: Option<RequestedHost>) -> Self {
+        self.update(|mut params| {
+            params.requested_host = requested_host;
             params
         })
     }
@@ -635,41 +653,12 @@ impl RustdocParams {
     }
 
     fn build_url(&self, mode: Via) -> uri::Builder {
-        let original_uri = self.original_uri().expect("original uri is missing");
-        let subdomain_and_host = original_uri
-            .host()
-            .and_then(|h| split_subdomain_from_host(h));
+        let requested_host = self.requested_host().expect("requested host missing");
 
-        let apex_domain = subdomain_and_host
-            .map(|(_subdomain, apex)| apex)
-            .or(original_uri.host())
-            .expect("missing host in original uri");
-
-        let scheme = original_uri.scheme().cloned().unwrap_or(
-            self.config
-                .as_ref()
-                .map(|cfg| cfg.default_url_scheme.clone())
-                .unwrap_or(Scheme::HTTP),
-        );
-
-        let host = match mode {
-            Via::SubDomain => format!("{}.{}", self.name, apex_domain),
-            Via::ApexDomain => apex_domain.to_string(),
-        };
-
-        let authority: Authority = if let Some(port) = original_uri
-            .authority()
-            .expect("missing authority/ host")
-            .port_u16()
-        {
-            format!("{host}:{port}")
-        } else {
-            host.to_string()
+        match mode {
+            Via::SubDomain => requested_host.apex_url_builder(),
+            Via::ApexDomain => requested_host.subdomain_url_builder(&self.name),
         }
-        .parse()
-        .expect("can't parse authority");
-
-        Uri::builder().scheme(scheme).authority(authority)
     }
 
     fn build_url_with_path(&self, mode: Via, path: impl Into<String>) -> EscapedURI {
@@ -683,15 +672,12 @@ impl RustdocParams {
     }
 
     pub(crate) fn rustdoc_url(&self) -> EscapedURI {
-        let original_uri = self.original_uri().expect("original uri is missing");
-        let subdomain_and_host = original_uri
-            .host()
-            .and_then(|h| split_subdomain_from_host(h));
-
         // when the request is coming from the subdomain, we can link to subdomain.
         //
         // Otherwise we'll use the configured default mode.
-        let wanted_mode = if subdomain_and_host.is_some() {
+        let wanted_mode = if let Some(requested_host) = self.requested_host
+            && requested_host.subdomain().is_some()
+        {
             Via::SubDomain
         } else {
             self.config
