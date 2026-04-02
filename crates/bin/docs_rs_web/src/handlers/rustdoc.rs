@@ -296,6 +296,7 @@ pub(crate) async fn rustdoc_redirector_handler(
         },
         original_uri.0.clone(),
         matched_path,
+        params.requested_host.clone(),
         config,
     )
     .map_err(AxumNope::BadRequest)?

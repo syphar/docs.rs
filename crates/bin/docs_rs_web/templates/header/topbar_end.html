@@ -12,42 +12,42 @@
                         <a href="#" class="pure-menu-link" aria-label="docs.rs">docs.rs</a>
                         <ul class="pure-menu-children aligned-icons">
                             {%- call macros::menu_link_with_icon_solid(
-                                href=requested_host.build_apex_url("/about"),
+                                href=requested_host.build_apex_url("/about")?,
                                 text="About docs.rs",
                                 icon=crate::icons::IconCircleInfo,
                             ) -%}{% endcall %}
                             {%- call macros::menu_link_with_icon_brand(
-                                href=requested_host.build_apex_url("/about/badges"),
+                                href=requested_host.build_apex_url("/about/badges")?,
                                 text="Badges",
                                 icon=crate::icons::IconFonticons,
                             ) -%}{% endcall %}
                             {%- call macros::menu_link_with_icon_solid(
-                                href=requested_host.build_apex_url("/about/builds"),
+                                href=requested_host.build_apex_url("/about/builds")?,
                                 text="Builds",
                                 icon=crate::icons::IconGears,
                             ) -%}{% endcall %}
                             {%- call macros::menu_link_with_icon_solid(
-                                href=requested_host.build_apex_url("/about/metadata"),
+                                href=requested_host.build_apex_url("/about/metadata")?,
                                 text="Metadata",
                                 icon=crate::icons::IconTable,
                             ) -%}{% endcall %}
                             {%- call macros::menu_link_with_icon_solid(
-                                href=requested_host.build_apex_url("/about/redirections"),
+                                href=requested_host.build_apex_url("/about/redirections")?,
                                 text="Shorthand URLs",
                                 icon=crate::icons::IconRoad,
                             ) -%}{% endcall %}
                             {%- call macros::menu_link_with_icon_solid(
-                                href=requested_host.build_apex_url("/about/download"),
+                                href=requested_host.build_apex_url("/about/download")?,
                                 text="Download",
                                 icon=crate::icons::IconDownload,
                             ) -%}{% endcall %}
                             {%- call macros::menu_link_with_icon_solid(
-                                href=requested_host.build_apex_url("/about/rustdoc-json"),
+                                href=requested_host.build_apex_url("/about/rustdoc-json")?,
                                 text="Rustdoc JSON",
                                 icon=crate::icons::IconFileCode,
                             ) -%}{% endcall %}
                             {%- call macros::menu_link_with_icon_solid(
-                                href=requested_host.build_apex_url("/releases/queue"),
+                                href=requested_host.build_apex_url("/releases/queue")?,
                                 text="Build queue",
                                 icon=crate::icons::IconGears,
                             ) -%}{% endcall %}

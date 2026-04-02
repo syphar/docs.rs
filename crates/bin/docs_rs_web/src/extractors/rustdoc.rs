@@ -13,14 +13,11 @@ use anyhow::{Result, anyhow};
 use axum::{
     Extension, RequestPartsExt,
     extract::{FromRequestParts, MatchedPath},
-    http::{
-        request::Parts,
-        uri::{Authority, Scheme},
-    },
+    http::request::Parts,
 };
 use docs_rs_types::{BuildId, CompressionAlgorithm, KrateName, ReqVersion};
 use docs_rs_uri::{EscapedURI, url_decode};
-use http::{Uri, uri};
+use http::uri;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -196,6 +193,10 @@ where
             AxumNope::BadRequest(anyhow!(err).context("error extracting matched path"))
         })?;
 
+        let requested_host = parts.extract::<RequestedHost>().await.map_err(|err| {
+            AxumNope::BadRequest(anyhow!(err).context("error extracting requested host"))
+        })?;
+
         let Extension(config) = parts
             .extract::<Extension<Arc<Config>>>()
             .await
@@ -207,6 +208,7 @@ where
             params,
             original_uri.0,
             matched_path,
+            requested_host,
             config,
         )?)
     }
@@ -220,6 +222,7 @@ impl RustdocParams {
             name: name.into(),
             req_version: ReqVersion::default(),
             original_uri: None,
+            requested_host: None,
             doc_target: None,
             inner_path: None,
             page_kind: None,
@@ -675,7 +678,7 @@ impl RustdocParams {
         // when the request is coming from the subdomain, we can link to subdomain.
         //
         // Otherwise we'll use the configured default mode.
-        let wanted_mode = if let Some(requested_host) = self.requested_host
+        let wanted_mode = if let Some(requested_host) = &self.requested_host
             && requested_host.subdomain().is_some()
         {
             Via::SubDomain

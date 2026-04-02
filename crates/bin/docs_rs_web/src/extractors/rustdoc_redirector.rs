@@ -32,6 +32,7 @@ pub(crate) struct RustdocRedirectorParams {
     pub(crate) version: Option<String>,
     pub(crate) target: Option<String>,
     pub(crate) via: Via,
+    pub(crate) requested_host: RequestedHost,
 }
 
 impl RustdocRedirectorParams {
@@ -67,6 +68,7 @@ where
                 version: params.version,
                 target: params.target,
                 via: Via::SubDomain,
+                requested_host,
             }
         } else {
             let Path(params) = parts.extract::<Path<UrlParams>>().await.map_err(|err| {
@@ -77,6 +79,7 @@ where
                 version: params.version,
                 target: params.target,
                 via: Via::ApexDomain,
+                requested_host,
             }
         })
     }

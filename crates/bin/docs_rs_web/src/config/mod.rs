@@ -1,7 +1,6 @@
 use anyhow::Result;
 use docs_rs_config::AppConfig;
 use docs_rs_env_vars::maybe_env;
-use http::uri::Scheme;
 use std::time::Duration;
 
 mod via;

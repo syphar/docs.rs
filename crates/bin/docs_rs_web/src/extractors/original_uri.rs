@@ -71,7 +71,7 @@ fn fill_request_origin(uri: Uri, config: &Config, headers: &HeaderMap) -> Result
 
     let mut parts = uri.into_parts();
     parts.authority = Some(authority);
-    parts.scheme = Some(config.default_url_scheme.clone());
+    parts.scheme = Some(parts.scheme.expect("missing scheme").clone());
 
     Ok(Uri::from_parts(parts).expect("scheme and authority are set together"))
 }

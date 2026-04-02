@@ -10,11 +10,10 @@ use docs_rs_headers::{Host, X_FORWARDED_HOST, XForwardedHost};
 use docs_rs_uri::EscapedURI;
 use http::{
     header::HOST,
-    uri::{self, InvalidUri, PathAndQuery, Scheme},
+    uri::{self, PathAndQuery, Scheme},
 };
 use serde::Serialize;
 use std::net::IpAddr;
-use url::Url;
 
 /// Extractor for the requested hostname.
 ///
@@ -70,7 +69,7 @@ impl RequestedHost {
     {
         let path_and_query = path_and_query.try_into().map_err(Into::into)?;
 
-        self.subdomain_url_builder()
+        self.subdomain_url_builder(subdomain)
             .path_and_query(path_and_query)
             .build()
             .map(|uri| EscapedURI::from_uri(uri))
@@ -106,7 +105,7 @@ impl RequestedHost {
     }
 
     pub(crate) fn from_headers(
-        scheme: Scheme,
+        scheme: impl Into<Scheme>,
         headers: &HeaderMap,
     ) -> Result<Option<Self>, AxumNope> {
         requested_authority(headers).and_then(|authority| {
@@ -118,7 +117,7 @@ impl RequestedHost {
                 split_subdomain(authority.host()).map_err(AxumNope::BadRequest)?;
 
             Ok(Some(Self {
-                scheme,
+                scheme: scheme.into(),
                 apex_domain: apex_domain,
                 subdomain: subdomain,
                 authority,
@@ -205,7 +204,10 @@ where
         parts: &mut Parts,
         _state: &S,
     ) -> Result<Option<Self>, Self::Rejection> {
-        Self::from_headers(&parts.headers)
+        Self::from_headers(
+            parts.uri.scheme().cloned().unwrap_or(Scheme::HTTPS),
+            &parts.headers,
+        )
     }
 }
 

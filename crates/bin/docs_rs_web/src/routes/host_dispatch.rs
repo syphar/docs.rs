@@ -40,7 +40,8 @@ impl Service<AxumHttpRequest> for HostDispatchService {
     }
 
     fn call(&mut self, request: AxumHttpRequest) -> Self::Future {
-        let has_subdomain = match RequestedHost::from_headers(request.headers()) {
+        let scheme = request.uri().scheme().expect("missing scheme");
+        let has_subdomain = match RequestedHost::from_headers(scheme.clone(), request.headers()) {
             Ok(host) => host.is_some_and(|host| host.subdomain().is_some()),
             Err(err) => return Box::pin(ready(Ok(err.into_response()))),
         };
