@@ -253,7 +253,8 @@ pub(crate) fn build_main_axum_routes() -> Result<AxumRouter> {
         .route(
             "/{name}/{version}/{target}/{*path}",
             get_rustdoc(rustdoc::rustdoc_html_server_handler),
-        )
+        ) // TODO: when rustdoc-url-mode is subdomain, where do we need to forbid searching?
+        // Or is canonical urls enough?
         .fallback(fallback))
 }
 

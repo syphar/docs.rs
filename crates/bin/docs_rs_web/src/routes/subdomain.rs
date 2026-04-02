@@ -15,10 +15,15 @@ use crate::{
 };
 
 pub(crate) fn build_subdomain_axum_routes() -> Result<AxumRouter> {
-    // TODO:
+    // NOTE: sitemaps
+    // * sitemaps have to be limited to one domain name
+    // * so we still serve the main sitemap from the apex domain,
+    // * pointing to apex domain URLs.
+    // * these redirect to the subdomain urls.
+    // * canonical URLs will be the subdomain url.
+    //
+    // TODO: when this is outside testing mode
     // * serve robots.txt, currently forbid, later for crate?
-    // * add sitemap just for the subdomain (?)
-    // * reference these sub-sitemaps in the main sitemap.
 
     // Keep this separate from the main router so we can evolve subdomain-only behavior
     // without changing the non-subdomain route tree.
@@ -32,23 +37,13 @@ pub(crate) fn build_subdomain_axum_routes() -> Result<AxumRouter> {
         )
         .route(
             "/favicon.ico",
-            get_static(|| async {
-                // FIXME: crate specific favicon? where would that be?
-                cached_permanent_redirect("/-/static/favicon.ico")
-            }),
+            get_static(|| async { cached_permanent_redirect("/-/static/favicon.ico") }),
         )
         // `.nest` with fallbacks is currently broken, `.nest_service works
         // https://github.com/tokio-rs/axum/issues/3138
-        // FIXME: caching: could we somehow cache the assets across the crate subdomains?
-        .nest_service("/-/static", build_static_router(static_root_dir()?))
-        // .route(
-        //     "/opensearch.xml",
-        //     get_static(|| async { cached_permanent_redirect("/-/static/opensearch.xml") }),
-        // )
-        // .route_with_tsr("/sitemap.xml", get_internal(sitemap::sitemapindex_handler))
+        .nest("/-/static", build_static_router(static_root_dir()?))
         .route(
             "/-/rustdoc.static/{*path}",
-            // FIXME: caching: could we somehow cache the assets across the crate subdomains?
             get_internal(rustdoc::static_asset_handler),
         )
         .route(
@@ -56,8 +51,6 @@ pub(crate) fn build_subdomain_axum_routes() -> Result<AxumRouter> {
             get_internal(|| async { StorageChangeDetection }),
         )
         .route("/badge.svg", get_internal(rustdoc::badge_handler))
-        // FIXME: redirects need to redirect to subdomain or main domain, depending on where the
-        // request came from
         .route("/", get_rustdoc(rustdoc::rustdoc_redirector_handler))
         .route(
             "/{version}",
@@ -121,6 +114,7 @@ pub(crate) fn build_subdomain_axum_routes() -> Result<AxumRouter> {
             let headers = response.headers_mut();
 
             // for now, forbid everyone to crawl on subdomains
+            // TODO: make depending on config.rustdoc_url_mode
             headers.insert(
                 &X_ROBOTS_TAG,
                 HeaderValue::from_static("noindex, nofollow, noarchive"),
