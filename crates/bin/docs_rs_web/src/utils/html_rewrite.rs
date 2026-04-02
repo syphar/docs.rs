@@ -37,6 +37,7 @@ pub(crate) enum RustdocRewritingError {
 /// In practice, the output should always be valid UTF-8.
 #[instrument(skip_all, fields(memory_limit = max_allowed_memory_usage))]
 pub(crate) fn rewrite_rustdoc_html_stream<R>(
+    requested_host: RequestedHost,
     template_data: Arc<TemplateData>,
     mut reader: R,
     max_allowed_memory_usage: usize,
@@ -70,11 +71,7 @@ where
                         let head_html = Head::new(&data).render().unwrap();
                         let vendored_html = Vendored.render().unwrap();
                         let body_html = Body.render().unwrap();
-                        let requested_host = data.requested_host();
-                        let values = [(
-                            "requested_host",
-                            Box::new(requested_host) as Box<dyn std::any::Any>,
-                        )];
+                        let values = [("requested_host", &requested_host as &dyn std::any::Any)];
                         let topbar_html = data.render_with_values(&values).unwrap();
 
                         // Before: <body> ... rustdoc content ... </body>
