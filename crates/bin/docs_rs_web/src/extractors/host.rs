@@ -1,5 +1,5 @@
 use crate::error::AxumNope;
-use anyhow::{Context as _, anyhow};
+use anyhow::{Context as _, Result, anyhow, bail};
 use axum::{
     RequestPartsExt,
     extract::{FromRequestParts, OptionalFromRequestParts},
@@ -10,7 +10,7 @@ use docs_rs_headers::{Host, X_FORWARDED_HOST, XForwardedHost};
 use http::header::HOST;
 use serde::Serialize;
 use std::net::IpAddr;
-use std::str::FromStr;
+use url::Url;
 
 /// Extractor for the requested hostname.
 ///
@@ -19,25 +19,67 @@ use std::str::FromStr;
 /// Use `Option<RequestedHost>` when the header is optional.
 /// Use `RequestedHost` when the header is required.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) enum RequestedHost {
-    IPAddr(IpAddr),
-    ApexDomain(String),
-    SubDomain(String, String),
+pub(crate) struct RequestedHost {
+    apex_domain: String,
+    subdomain: Option<String>,
+    #[serde(skip)]
+    authority: Authority,
+    // IPAddr(IpAddr),
+    // ApexDomain(String),
+    // SubDomain(String, String),
 }
 
 impl RequestedHost {
     pub fn subdomain(&self) -> Option<&str> {
-        match self {
-            Self::SubDomain(subdomain, _) => Some(subdomain),
-            _ => None,
-        }
+        self.subdomain.as_deref()
+        // match self {
+        //     Self::SubDomain(subdomain, _) => Some(subdomain),
+        //     _ => None,
+        // }
+    }
+
+    pub fn apex_domain(&self) -> &str {
+        &self.apex_domain
+
+        // match self {
+        //     RequestedHost::IPAddr(host) => format!("{host}"),
+        //     RequestedHost::ApexDomain(host) => format!("{host}"),
+        //     RequestedHost::SubDomain(_, apex_domain) => format!("{apex_domain}"),
+        // }
+    }
+
+    pub fn build_apex_url(&self, path: impl AsRef<str>) -> String {
+        let port = self
+            .authority
+            .port_u16()
+            .map(|port| format!(":{port}"))
+            .unwrap_or_default();
+
+        let mut url = Url::parse(&format!("https://{}{port}", self.apex_domain()))
+            .expect("the host is always valid here");
+
+        url.set_path(path.as_ref());
+
+        url.as_str()
+            .strip_prefix("https:")
+            .expect("we add it ourselves")
+            .to_string()
     }
 
     pub(crate) fn from_headers(headers: &HeaderMap) -> Result<Option<Self>, AxumNope> {
         requested_authority(headers).and_then(|authority| {
-            authority
-                .map(|authority| authority.host().parse().map_err(AxumNope::BadRequest))
-                .transpose()
+            let Some(authority) = authority else {
+                return Ok(None);
+            };
+
+            let (subdomain, apex_domain) =
+                split_subdomain(authority.host()).map_err(AxumNope::BadRequest)?;
+
+            Ok(Some(Self {
+                apex_domain: apex_domain,
+                subdomain: subdomain,
+                authority,
+            }))
         })
     }
 }
@@ -69,36 +111,32 @@ pub(crate) fn requested_authority(headers: &HeaderMap) -> Result<Option<Authorit
     }
 }
 
-impl FromStr for RequestedHost {
-    type Err = anyhow::Error;
+fn split_subdomain(host: &str) -> Result<(Option<String>, String)> {
+    let host = host.trim().trim_matches('.');
 
-    fn from_str(host: &str) -> Result<Self, Self::Err> {
-        let host = host.trim().trim_matches('.');
-
-        if host.is_empty() {
-            return Err(anyhow!("host is empty"));
-        }
-
-        if let Ok(ip_addr) = host.trim_matches(['[', ']']).parse::<IpAddr>() {
-            return Ok(Self::IPAddr(ip_addr));
-        }
-
-        if host.eq_ignore_ascii_case("localhost") {
-            return Ok(Self::ApexDomain(host.to_string()));
-        } else if let Some((subdomain, host)) = host.rsplit_once('.')
-            && host.eq_ignore_ascii_case("localhost")
-        {
-            return Ok(Self::SubDomain(subdomain.to_string(), host.to_string()));
-        }
-
-        let mut dots = host.rmatch_indices('.').map(|(i, _)| i);
-
-        Ok(if let Some(sep) = dots.nth(1) {
-            Self::SubDomain(host[0..sep].to_string(), host[sep + 1..].to_string())
-        } else {
-            Self::ApexDomain(host.to_string())
-        })
+    if host.is_empty() {
+        bail!("host is empty");
     }
+
+    if let Ok(ip_addr) = host.trim_matches(['[', ']']).parse::<IpAddr>() {
+        return Ok((None, ip_addr.to_string()));
+    }
+
+    if host.eq_ignore_ascii_case("localhost") {
+        return Ok((None, host.to_string()));
+    } else if let Some((subdomain, host)) = host.rsplit_once('.')
+        && host.eq_ignore_ascii_case("localhost")
+    {
+        return Ok((Some(subdomain.to_string()), host.to_string()));
+    }
+
+    let mut dots = host.rmatch_indices('.').map(|(i, _)| i);
+
+    Ok(if let Some(sep) = dots.nth(1) {
+        (Some(host[0..sep].to_string()), host[sep + 1..].to_string())
+    } else {
+        (None, host.to_string())
+    })
 }
 
 impl<S> FromRequestParts<S> for RequestedHost

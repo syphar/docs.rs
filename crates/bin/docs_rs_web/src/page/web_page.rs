@@ -15,7 +15,7 @@ pub(crate) trait AddCspNonce: IntoResponse {
     fn render_with_request_context(
         &mut self,
         csp_nonce: String,
-        requested_host: Option<RequestedHost>,
+        requested_host: RequestedHost,
     ) -> askama::Result<String>;
 }
 
@@ -34,7 +34,7 @@ macro_rules! impl_axum_webpage {
             fn render_with_request_context(
                 &mut self,
                 csp_nonce: String,
-                requested_host: Option<$crate::extractors::RequestedHost>,
+                requested_host: $crate::extractors::RequestedHost,
             ) -> askama::Result<String> {
                 let values = [
                     (
@@ -122,7 +122,7 @@ fn render_response(
     mut response: AxumResponse,
     templates: Arc<TemplateData>,
     csp_nonce: String,
-    requested_host: Option<RequestedHost>,
+    requested_host: RequestedHost,
 ) -> BoxFuture<'static, AxumResponse> {
     async move {
         if let Some(render) = response.extensions_mut().remove::<DelayedTemplateRender>() {
@@ -178,9 +178,11 @@ fn render_response(
     .boxed()
 }
 
-pub(crate) async fn render_templates_middleware(req: AxumRequest, next: Next) -> AxumResponse {
-    let requested_host = RequestedHost::from_headers(req.headers()).ok().flatten();
-
+pub(crate) async fn render_templates_middleware(
+    requested_host: RequestedHost,
+    req: AxumRequest,
+    next: Next,
+) -> AxumResponse {
     let templates: Arc<TemplateData> = req
         .extensions()
         .get::<Arc<TemplateData>>()

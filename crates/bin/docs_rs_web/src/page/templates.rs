@@ -1,18 +1,8 @@
-use crate::extractors::RequestedHost;
 use crate::handlers::rustdoc::RustdocPage;
 use anyhow::{Context as _, Result};
 use askama::Template;
 use std::sync::Arc;
 use tracing::trace;
-
-pub(crate) fn docsrs_base_url(requested_host: &Option<RequestedHost>) -> String {
-    match requested_host {
-        Some(RequestedHost::IPAddr(host)) => format!("//{host}"),
-        Some(RequestedHost::ApexDomain(host)) => format!("//{host}"),
-        Some(RequestedHost::SubDomain(_, apex_domain)) => format!("//{apex_domain}"),
-        None => String::new(),
-    }
-}
 
 #[derive(Template)]
 #[template(path = "rustdoc/head.html")]
