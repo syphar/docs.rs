@@ -3,9 +3,7 @@ use crate::{
     Config,
     config::Via,
     error::AxumNope,
-    extractors::{
-        OriginalUriWithHost, Path, RequestedHost, original_uri::split_subdomain_from_host,
-    },
+    extractors::{Path, RequestedHost},
     match_release::MatchedRelease,
     metadata::MetaData,
 };
@@ -17,7 +15,7 @@ use axum::{
 };
 use docs_rs_types::{BuildId, CompressionAlgorithm, KrateName, ReqVersion};
 use docs_rs_uri::{EscapedURI, url_decode};
-use http::uri;
+use http::{Uri, uri};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -152,9 +150,11 @@ where
     /// We also extract & store the original URI, and also use it to find a potential static
     /// route stuffix (e.g. the `/settings.html` in the `/{krate}/{version}/settings.html` route).
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let original_uri = parts.extract::<OriginalUriWithHost>().await?;
+        let requested_host = parts.extract::<RequestedHost>().await.map_err(|err| {
+            AxumNope::BadRequest(anyhow!(err).context("error extracting requested host"))
+        })?;
 
-        let params = if let Some(subdomain) = original_uri.subdomain() {
+        let params = if let Some(subdomain) = requested_host.subdomain() {
             // TODO: should we validate the parent? so it's something like `docs.rs`?
             // The hostname do privately access the server might also have a subdomain.
             let name: KrateName = subdomain.parse().map_err(|err| {
@@ -193,10 +193,6 @@ where
             AxumNope::BadRequest(anyhow!(err).context("error extracting matched path"))
         })?;
 
-        let requested_host = parts.extract::<RequestedHost>().await.map_err(|err| {
-            AxumNope::BadRequest(anyhow!(err).context("error extracting requested host"))
-        })?;
-
         let Extension(config) = parts
             .extract::<Extension<Arc<Config>>>()
             .await
@@ -204,9 +200,11 @@ where
                 AxumNope::BadRequest(anyhow!(err).context("error extracting config extension"))
             })?;
 
+        let original_uri = parts.extract::<Uri>().await.expect("infallible extractor");
+
         Ok(Self::from_parts(
             params,
-            original_uri.0,
+            original_uri.into(),
             matched_path,
             requested_host,
             config,
@@ -241,7 +239,7 @@ impl RustdocParams {
     /// for example when you manually change things.
     pub(crate) fn from_parts(
         params: UrlParams,
-        original_uri: EscapedURI,
+        original_uri: Uri,
         matched_path: MatchedPath,
         requested_host: RequestedHost,
         config: Arc<Config>,
@@ -637,15 +635,13 @@ impl RustdocParams {
 /// URL & path generation for the given params.
 impl RustdocParams {
     fn wanted_mode(&self) -> Via {
-        let original_uri = self.original_uri().expect("original uri is missing");
-        let subdomain_and_host = original_uri
-            .host()
-            .and_then(|h| split_subdomain_from_host(h));
-
         // when the request is coming from the subdomain, we can link to subdomain.
         //
         // Otherwise we'll use the configured default mode.
-        if subdomain_and_host.is_some() {
+
+        if let Some(requested_host) = &self.requested_host
+            && requested_host.subdomain().is_some()
+        {
             Via::SubDomain
         } else {
             self.config
@@ -675,19 +671,7 @@ impl RustdocParams {
     }
 
     pub(crate) fn rustdoc_url(&self) -> EscapedURI {
-        // when the request is coming from the subdomain, we can link to subdomain.
-        //
-        // Otherwise we'll use the configured default mode.
-        let wanted_mode = if let Some(requested_host) = &self.requested_host
-            && requested_host.subdomain().is_some()
-        {
-            Via::SubDomain
-        } else {
-            self.config
-                .as_ref()
-                .expect("missing config")
-                .rustdoc_url_mode
-        };
+        let wanted_mode = self.wanted_mode();
 
         let path = match wanted_mode {
             Via::SubDomain => format!("/{}/{}", &self.req_version, &self.path_for_rustdoc_url()),

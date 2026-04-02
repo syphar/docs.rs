@@ -2,7 +2,7 @@ use crate::{
     cache::CachePolicy,
     error::{AxumNope, AxumResult},
     extractors::{
-        DbConnection, OriginalUriWithHost,
+        DbConnection,
         rustdoc::{PageKind, RustdocParams},
     },
     impl_axum_webpage,
@@ -572,7 +572,6 @@ impl_axum_webpage! {
 pub(crate) async fn get_all_releases(
     params: RustdocParams,
     mut conn: DbConnection,
-    original_uri: OriginalUriWithHost,
 ) -> AxumResult<AxumResponse> {
     let params = params.with_page_kind(PageKind::Rustdoc);
     // NOTE: we're getting RustDocParams here, where both target and path are optional.

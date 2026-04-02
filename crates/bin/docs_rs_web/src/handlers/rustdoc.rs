@@ -6,7 +6,7 @@ use crate::{
     config::Via,
     error::{AxumNope, AxumResult},
     extractors::{
-        DbConnection, OriginalUriWithHost, Path, RequestedHost, WantedCompression,
+        DbConnection, Path, RequestedHost, WantedCompression,
         rustdoc::{PageKind, RustdocParams, UrlParams},
         rustdoc_redirector::RustdocRedirectorParams,
     },
@@ -178,7 +178,7 @@ async fn try_serve_legacy_toolchain_asset(
 #[instrument(skip(storage, pool))]
 pub(crate) async fn rustdoc_redirector_handler(
     params: RustdocRedirectorParams,
-    original_uri: OriginalUriWithHost,
+    original_uri: Uri,
     matched_path: MatchedPath,
     Extension(storage): Extension<Arc<AsyncStorage>>,
     Extension(config): Extension<Arc<Config>>,
@@ -187,7 +187,7 @@ pub(crate) async fn rustdoc_redirector_handler(
     RawQuery(original_query): RawQuery,
 ) -> AxumResult<impl IntoResponse> {
     fn redirect_to_doc(
-        original_uri: &EscapedURI,
+        original_uri: &Uri,
         url: EscapedURI,
         cache_policy: CachePolicy,
         path_in_crate: Option<&str>,
@@ -278,7 +278,7 @@ pub(crate) async fn rustdoc_redirector_handler(
         let target_uri =
             EscapedURI::from_uri(description.href.clone()).append_raw_query(original_query);
         return redirect_to_doc(
-            &original_uri.0,
+            &original_uri,
             target_uri,
             CachePolicy::ForeverInCdnAndStaleInBrowser(crate_name.into()),
             path_in_crate.as_deref(),
@@ -294,7 +294,7 @@ pub(crate) async fn rustdoc_redirector_handler(
             target: params.target,
             path: None,
         },
-        original_uri.0.clone(),
+        original_uri.clone(),
         matched_path,
         params.requested_host.clone(),
         config,

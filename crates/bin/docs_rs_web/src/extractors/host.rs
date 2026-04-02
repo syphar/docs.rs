@@ -36,10 +36,6 @@ impl RequestedHost {
         self.subdomain.as_deref()
     }
 
-    pub fn apex_domain(&self) -> &str {
-        &self.apex_domain
-    }
-
     pub fn subdomain_url_builder(&self, subdomain: impl AsRef<str>) -> uri::Builder {
         let port = self
             .authority
@@ -56,23 +52,6 @@ impl RequestedHost {
         uri::Builder::new()
             .scheme(self.scheme.clone())
             .authority(authority)
-    }
-
-    pub fn build_subdomain_url<T>(
-        &self,
-        subdomain: impl AsRef<str>,
-        path_and_query: T,
-    ) -> Result<EscapedURI, http::Error>
-    where
-        T: TryInto<PathAndQuery>,
-        <T as TryInto<PathAndQuery>>::Error: Into<http::Error>,
-    {
-        let path_and_query = path_and_query.try_into().map_err(Into::into)?;
-
-        self.subdomain_url_builder(subdomain)
-            .path_and_query(path_and_query)
-            .build()
-            .map(|uri| EscapedURI::from_uri(uri))
     }
 
     pub fn apex_url_builder(&self) -> uri::Builder {
