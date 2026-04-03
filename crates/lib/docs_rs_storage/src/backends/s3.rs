@@ -1,7 +1,7 @@
 use crate::{
     Config,
     backends::StorageBackendMethods,
-    blob::{BlobUpload, StreamUpload, StreamingBlob},
+    blob::{StreamUpload, StreamingBlob},
     errors::PathNotFoundError,
     metrics::StorageMetrics,
     types::FileRange,
@@ -20,13 +20,13 @@ use aws_smithy_types_convert::date_time::DateTimeExt;
 use chrono::Utc;
 use docs_rs_headers::{ETag, compute_etag};
 use futures_util::{
-    TryFutureExt, TryStreamExt,
-    stream::{BoxStream, FuturesUnordered, StreamExt},
+    TryStreamExt,
+    stream::{BoxStream, StreamExt},
 };
 use http_body::Frame;
 use http_body_util::StreamBody;
 use tokio_util::io::ReaderStream;
-use tracing::{error, warn};
+use tracing::error;
 
 // error codes to check for when trying to determine if an error is
 // a "NOT FOUND" error.
@@ -249,47 +249,6 @@ impl StorageBackendMethods for S3Backend {
 
         self.otel_metrics.uploaded_files.add(1, &[]);
         Ok(())
-    }
-
-    async fn store_batch(&self, mut batch: Vec<BlobUpload>) -> Result<(), Error> {
-        // Attempt to upload the batch 3 times
-        for _ in 0..3 {
-            let mut futures = FuturesUnordered::new();
-            for blob in batch.drain(..) {
-                futures.push(
-                    self.client
-                        .put_object()
-                        .bucket(&self.bucket)
-                        .key(&blob.path)
-                        .body(blob.content.clone().into())
-                        .content_type(blob.mime.to_string())
-                        .set_content_encoding(blob.compression.map(|alg| alg.to_string()))
-                        .send()
-                        .map_ok(|_| {
-                            self.otel_metrics.uploaded_files.add(1, &[]);
-                        })
-                        .map_err(|err| {
-                            warn!(?err, "Failed to upload blob to S3");
-                            // Reintroduce failed blobs for a retry
-                            blob
-                        }),
-                );
-            }
-
-            while let Some(result) = futures.next().await {
-                // Push each failed blob back into the batch
-                if let Err(blob) = result {
-                    batch.push(blob);
-                }
-            }
-
-            // If we uploaded everything in the batch, we're done
-            if batch.is_empty() {
-                return Ok(());
-            }
-        }
-
-        panic!("failed to upload 3 times, exiting");
     }
 
     async fn list_prefix<'a>(&'a self, prefix: &'a str) -> BoxStream<'a, Result<String, Error>> {

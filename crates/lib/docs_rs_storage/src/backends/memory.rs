@@ -48,7 +48,6 @@ impl StorageBackendMethods for MemoryBackend {
         }
         Ok(blob.into())
     }
-
     async fn upload_stream(&self, blob: StreamUpload) -> Result<()> {
         let StreamUpload {
             path,
@@ -72,19 +71,6 @@ impl StorageBackendMethods for MemoryBackend {
 
         self.otel_metrics.uploaded_files.add(1, &[]);
         self.objects.insert(blob.path.clone(), blob);
-        Ok(())
-    }
-
-    async fn store_batch(&self, batch: Vec<BlobUpload>) -> Result<()> {
-        self.otel_metrics
-            .uploaded_files
-            .add(batch.len() as u64, &[]);
-
-        for upload in batch {
-            let blob: Blob = upload.into();
-            self.objects.insert(blob.path.clone(), blob);
-        }
-
         Ok(())
     }
 

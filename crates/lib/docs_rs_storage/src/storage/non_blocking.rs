@@ -4,7 +4,7 @@ use crate::{
     Config,
     archive_index::{self, ARCHIVE_INDEX_FILE_EXTENSION},
     backends::{StorageBackend, StorageBackendMethods, s3::S3Backend},
-    blob::{Blob, BlobUpload, StreamingBlob},
+    blob::{Blob, BlobUpload, StreamUpload, StreamingBlob},
     compression::{compress, compress_async},
     errors::PathNotFoundError,
     file::FileEntry,
@@ -368,20 +368,23 @@ impl AsyncStorage {
         };
 
         self.backend
-            .store_batch(vec![
-                BlobUpload {
-                    path: archive_path.to_string(),
-                    mime: mimes::APPLICATION_ZIP.clone(),
-                    content: zip_content,
-                    compression: None,
-                },
-                BlobUpload {
-                    path: remote_index_path,
-                    mime: mime::APPLICATION_OCTET_STREAM,
-                    content: compressed_index_content,
-                    compression: Some(alg),
-                },
-            ])
+            .upload_stream(StreamUpload {
+                path: archive_path.to_string(),
+                mime: mimes::APPLICATION_ZIP.clone(),
+                content: Box::new(tokio::io::BufReader::new(std::io::Cursor::new(zip_content))),
+                compression: None,
+            })
+            .await?;
+
+        self.backend
+            .upload_stream(StreamUpload {
+                path: remote_index_path,
+                mime: mime::APPLICATION_OCTET_STREAM,
+                content: Box::new(tokio::io::BufReader::new(std::io::Cursor::new(
+                    compressed_index_content,
+                ))),
+                compression: Some(alg),
+            })
             .await?;
 
         Ok((file_paths, CompressionAlgorithm::Bzip2))
@@ -446,7 +449,19 @@ impl AsyncStorage {
             )
             .await?;
 
-        self.backend.store_batch(blobs).await?;
+        for blob in blobs {
+            self.backend
+                .upload_stream(StreamUpload {
+                    path: blob.path,
+                    mime: blob.mime,
+                    content: Box::new(tokio::io::BufReader::new(std::io::Cursor::new(
+                        blob.content,
+                    ))),
+                    compression: blob.compression,
+                })
+                .await?;
+        }
+
         Ok((file_paths_and_mimes, alg))
     }
 
@@ -468,12 +483,12 @@ impl AsyncStorage {
         let mime = detect_mime(&path).to_owned();
 
         self.backend
-            .store_batch(vec![BlobUpload {
-                path,
-                mime,
-                content,
+            .upload_stream(StreamUpload {
+                path: path,
+                mime: mime,
+                content: Box::new(tokio::io::BufReader::new(std::io::Cursor::new(content))),
                 compression: None,
-            }])
+            })
             .await?;
 
         Ok(())
@@ -494,12 +509,12 @@ impl AsyncStorage {
         let mime = detect_mime(&path).to_owned();
 
         self.backend
-            .store_batch(vec![BlobUpload {
-                path,
-                mime,
-                content,
+            .upload_stream(StreamUpload {
+                path: path,
+                mime: mime,
+                content: Box::new(tokio::io::BufReader::new(std::io::Cursor::new(content))),
                 compression: Some(alg),
-            }])
+            })
             .await?;
 
         Ok(alg)
@@ -530,12 +545,12 @@ impl AsyncStorage {
         let mime = detect_mime(&target_path).to_owned();
 
         self.backend
-            .store_batch(vec![BlobUpload {
+            .upload_stream(StreamUpload {
                 path: target_path,
                 mime,
-                content,
+                content: Box::new(tokio::io::BufReader::new(std::io::Cursor::new(content))),
                 compression: Some(alg),
-            }])
+            })
             .await?;
 
         Ok(alg)
