@@ -1,5 +1,7 @@
 # TODO
 
+- where to get the scheme from?
+
 ## need domain name in templates
 
 - home
