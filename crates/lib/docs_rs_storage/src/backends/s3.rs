@@ -1,7 +1,7 @@
 use crate::{
     Config,
     backends::StorageBackendMethods,
-    blob::{BlobUpload, StreamingBlob},
+    blob::{BlobUpload, StreamUpload, StreamingBlob},
     errors::PathNotFoundError,
     metrics::StorageMetrics,
     types::FileRange,
@@ -13,15 +13,19 @@ use aws_sdk_s3::{
     Client,
     config::{Region, retry::RetryConfig},
     error::{ProvideErrorMetadata, SdkError},
+    primitives::ByteStream,
     types::{Delete, ObjectIdentifier},
 };
 use aws_smithy_types_convert::date_time::DateTimeExt;
 use chrono::Utc;
 use docs_rs_headers::{ETag, compute_etag};
 use futures_util::{
-    future::TryFutureExt,
+    TryFutureExt, TryStreamExt,
     stream::{BoxStream, FuturesUnordered, StreamExt},
 };
+use http_body::Frame;
+use http_body_util::StreamBody;
+use tokio_util::io::ReaderStream;
 use tracing::{error, warn};
 
 // error codes to check for when trying to determine if an error is
@@ -228,6 +232,23 @@ impl StorageBackendMethods for S3Backend {
             content: Box::new(res.body.into_async_read()),
             compression,
         })
+    }
+
+    async fn upload_stream(&self, blob: StreamUpload) -> Result<(), Error> {
+        let body = ReaderStream::new(blob.content).map_ok(Frame::data);
+
+        self.client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(&blob.path)
+            .body(ByteStream::from_body_1_x(StreamBody::new(body)))
+            .content_type(blob.mime.to_string())
+            .set_content_encoding(blob.compression.map(|alg| alg.to_string()))
+            .send()
+            .await?;
+
+        self.otel_metrics.uploaded_files.add(1, &[]);
+        Ok(())
     }
 
     async fn store_batch(&self, mut batch: Vec<BlobUpload>) -> Result<(), Error> {

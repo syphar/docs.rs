@@ -1,16 +1,19 @@
 use crate::{
     Blob,
     backends::StorageBackendMethods,
-    blob::{BlobUpload, StreamingBlob},
+    blob::{BlobUpload, StreamUpload, StreamingBlob},
     errors::PathNotFoundError,
     metrics::StorageMetrics,
     types::FileRange,
+    utils::sized_buffer::SizedBuffer,
 };
 use anyhow::{Result, anyhow};
+use chrono::Utc;
 use dashmap::DashMap;
 use docs_rs_headers::compute_etag;
 use futures_util::stream::{self, BoxStream};
 use itertools::Itertools as _;
+use tokio::io;
 
 pub(crate) struct MemoryBackend {
     otel_metrics: StorageMetrics,
@@ -44,6 +47,32 @@ impl StorageBackendMethods for MemoryBackend {
             blob.etag = Some(compute_etag(&blob.content));
         }
         Ok(blob.into())
+    }
+
+    async fn upload_stream(&self, blob: StreamUpload) -> Result<()> {
+        let StreamUpload {
+            path,
+            mime,
+            mut content,
+            compression,
+        } = blob;
+
+        let mut buffer = SizedBuffer::new(usize::MAX);
+        io::copy(&mut content, &mut buffer).await?;
+
+        let content = buffer.into_inner();
+        let blob = Blob {
+            path,
+            mime,
+            date_updated: Utc::now(),
+            etag: Some(compute_etag(&content)),
+            content,
+            compression,
+        };
+
+        self.otel_metrics.uploaded_files.add(1, &[]);
+        self.objects.insert(blob.path.clone(), blob);
+        Ok(())
     }
 
     async fn store_batch(&self, batch: Vec<BlobUpload>) -> Result<()> {

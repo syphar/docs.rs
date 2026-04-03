@@ -7,6 +7,14 @@ use mime::Mime;
 use std::io;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt};
 
+/// represents a stream blob to be uploaded to storage.
+pub struct StreamUpload {
+    pub path: String,
+    pub mime: Mime,
+    pub content: Box<dyn AsyncBufRead + Unpin + Send + Sync>,
+    pub compression: Option<CompressionAlgorithm>,
+}
+
 /// represents a blob to be uploaded to storage.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlobUpload {
