@@ -1,9 +1,10 @@
+use crate::utils::file_list::{FileItem, walk_dir_recursive};
 use anyhow::{Result, bail};
 use crossbeam_deque::{Injector, Steal};
 use docs_rs_utils::spawn_blocking;
-use futures_util::{StreamExt, TryStreamExt as _};
+use futures_util::TryStreamExt as _;
 use std::{
-    fs,
+    fs, future,
     io::{self, Seek as _, Write as _},
     path::Path,
     sync::{
@@ -12,11 +13,7 @@ use std::{
     },
     thread,
 };
-use tempfile::NamedTempFile;
-use walkdir::WalkDir;
 use zip::write::SimpleFileOptions;
-
-use crate::utils::file_list::walk_dir_recursive;
 
 const BUFFER_SIZE: usize = 1024 * 1024;
 
@@ -27,10 +24,10 @@ fn compression_options() -> SimpleFileOptions {
 }
 
 fn build_subarchive(
-    injector: Arc<Injector<InputFile>>,
+    injector: Arc<Injector<FileItem>>,
     producer_done: Arc<AtomicBool>,
-) -> Result<Option<NamedTempFile>> {
-    let tempfile = NamedTempFile::new()?;
+) -> Result<Option<fs::File>> {
+    let tempfile = tempfile::tempfile()?;
     let mut archive = zip::ZipWriter::new(io::BufWriter::with_capacity(BUFFER_SIZE, tempfile));
     let mut file_count = 0_usize;
 
@@ -48,9 +45,9 @@ fn build_subarchive(
             break;
         };
 
-        archive.start_file(&file.rel_path, compression_options())?;
+        archive.start_file(&file.relative.to_string_lossy(), compression_options())?;
 
-        let mut source = io::BufReader::with_capacity(BUFFER_SIZE, fs::File::open(&file.abs_path)?);
+        let mut source = io::BufReader::with_capacity(BUFFER_SIZE, fs::File::open(&file.absolute)?);
         io::copy(&mut source, &mut archive)?;
         file_count += 1;
     }
@@ -62,14 +59,13 @@ fn build_subarchive(
     let mut writer = archive.finish()?;
     writer.flush()?;
     let mut tempfile = writer.into_inner()?;
-    tempfile.as_file_mut().rewind()?;
+    tempfile.rewind()?;
     Ok(Some(tempfile))
 }
 
 pub(crate) async fn archive_from_path(
     root: impl AsRef<Path>,
     cpu_parallelism: Option<usize>,
-    filesystem_parallelism: usize,
 ) -> Result<tempfile::NamedTempFile> {
     let root = root.as_ref();
 
@@ -94,9 +90,9 @@ pub(crate) async fn archive_from_path(
     }
 
     walk_dir_recursive(&root)
-        .try_for_each_concurrent(filesystem_parallelism, |item| async move {
+        .try_for_each(|item| {
             injector.push(item);
-            Ok(())
+            future::ready(Ok(()))
         })
         .await?;
 
@@ -121,12 +117,13 @@ pub(crate) async fn archive_from_path(
             merged_archive_file,
         ));
         for tempfile in subarchives {
-            let subarchive = zip::ZipArchive::new(tempfile.reopen()?)?;
+            let subarchive =
+                zip::ZipArchive::new(io::BufReader::with_capacity(BUFFER_SIZE, tempfile))?;
             merged_archive.merge_archive(subarchive)?;
         }
 
-        let writer = merged_archive.finish()?;
-        writer.flush();
+        let mut writer = merged_archive.finish()?;
+        writer.flush()?;
 
         Ok(writer.into_inner()?)
     })
