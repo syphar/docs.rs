@@ -1,16 +1,13 @@
 use crate::utils::file_list::{FileItem, walk_dir_recursive};
-use anyhow::{Result, bail};
-use crossbeam_deque::{Injector, Steal};
+use anyhow::Result;
 use docs_rs_utils::spawn_blocking;
 use futures_util::TryStreamExt as _;
 use std::{
+    collections::VecDeque,
     fs, future,
     io::{self, Seek as _, Write as _},
     path::Path,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, Condvar, Mutex},
     thread,
 };
 use zip::write::SimpleFileOptions;
@@ -23,29 +20,62 @@ fn compression_options() -> SimpleFileOptions {
         .compression_level(Some(1))
 }
 
-fn build_subarchive(
-    injector: Arc<Injector<FileItem>>,
-    producer_done: Arc<AtomicBool>,
-) -> Result<Option<fs::File>> {
+struct QueueState {
+    files: VecDeque<FileItem>,
+    producer_done: bool,
+}
+
+struct WorkQueue {
+    state: Mutex<QueueState>,
+    ready: Condvar,
+}
+
+impl WorkQueue {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(QueueState {
+                files: VecDeque::new(),
+                producer_done: false,
+            }),
+            ready: Condvar::new(),
+        }
+    }
+
+    fn push(&self, file: FileItem) {
+        let mut state = self.state.lock().unwrap();
+        state.files.push_back(file);
+        self.ready.notify_one();
+    }
+
+    fn close(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.producer_done = true;
+        self.ready.notify_all();
+    }
+
+    fn pop(&self) -> Option<FileItem> {
+        let mut state = self.state.lock().unwrap();
+        loop {
+            if let Some(file) = state.files.pop_front() {
+                return Some(file);
+            }
+
+            if state.producer_done {
+                return None;
+            }
+
+            state = self.ready.wait(state).unwrap();
+        }
+    }
+}
+
+fn build_subarchive(queue: Arc<WorkQueue>) -> Result<Option<fs::File>> {
     let tempfile = tempfile::tempfile()?;
     let mut archive = zip::ZipWriter::new(io::BufWriter::with_capacity(BUFFER_SIZE, tempfile));
     let mut file_count = 0_usize;
 
-    loop {
-        let file = loop {
-            match injector.steal() {
-                Steal::Success(file) => break Some(file),
-                Steal::Retry => continue,
-                Steal::Empty if producer_done.load(Ordering::Acquire) => break None,
-                Steal::Empty => thread::yield_now(),
-            }
-        };
-
-        let Some(file) = file else {
-            break;
-        };
-
-        archive.start_file(&file.relative.to_string_lossy(), compression_options())?;
+    while let Some(file) = queue.pop() {
+        archive.start_file(file.relative.to_string_lossy(), compression_options())?;
 
         let mut source = io::BufReader::with_capacity(BUFFER_SIZE, fs::File::open(&file.absolute)?);
         io::copy(&mut source, &mut archive)?;
@@ -75,39 +105,48 @@ pub(crate) async fn archive_from_path(
         thread::available_parallelism().map(|count| count.get())?
     };
 
-    let injector = Arc::new(Injector::new());
-    let producer_done = Arc::new(AtomicBool::new(false));
+    let queue = Arc::new(WorkQueue::new());
     let mut workers = Vec::with_capacity(worker_count);
 
     for _ in 0..worker_count {
-        let injector = injector.clone();
-        let producer_done = producer_done.clone();
+        let queue = queue.clone();
         let span = tracing::Span::current();
         workers.push(thread::spawn(move || {
             let _guard = span.enter();
-            build_subarchive(injector, producer_done)
+            build_subarchive(queue)
         }));
     }
 
-    walk_dir_recursive(&root)
+    let produce_result = walk_dir_recursive(&root)
         .try_for_each(|item| {
-            injector.push(item);
+            queue.push(item);
             future::ready(Ok(()))
         })
-        .await?;
+        .await;
 
-    producer_done.store(true, Ordering::Release);
+    queue.close();
 
     let mut subarchives = Vec::new();
+    let mut worker_error = None;
     for worker in workers {
         match worker.join() {
-            Ok(result) => {
-                if let Some(tempfile) = result? {
-                    subarchives.push(tempfile);
-                }
+            Ok(result) => match result {
+                Ok(Some(tempfile)) => subarchives.push(tempfile),
+                Ok(None) => {}
+                Err(err) if worker_error.is_none() => worker_error = Some(err),
+                Err(_) => {}
+            },
+            Err(payload) if worker_error.is_none() => {
+                worker_error = Some(anyhow::anyhow!("error joining thread: {:?}", payload));
             }
-            Err(payload) => bail!("error joining thread: {:?}", payload),
+            Err(_) => {}
         }
+    }
+
+    produce_result?;
+
+    if let Some(err) = worker_error {
+        return Err(err);
     }
 
     let merged_archive_file = spawn_blocking(move || {
