@@ -5,6 +5,7 @@ use futures_util::TryStreamExt as _;
 use std::{
     fs,
     io::{self, Seek as _, Write as _},
+    ops::AddAssign,
     path::Path,
     thread,
     time::Duration,
@@ -13,6 +14,19 @@ use tokio_util::sync::CancellationToken;
 use zip::write::SimpleFileOptions;
 
 const BUFFER_SIZE: usize = 1024 * 1024;
+
+#[derive(Default)]
+pub(crate) struct ArchiveStats {
+    pub(crate) file_count: u64,
+    pub(crate) file_size: u64,
+}
+
+impl AddAssign for ArchiveStats {
+    fn add_assign(&mut self, rhs: Self) {
+        self.file_count += rhs.file_count;
+        self.file_size += rhs.file_size;
+    }
+}
 
 fn compression_options() -> SimpleFileOptions {
     SimpleFileOptions::default()
@@ -23,10 +37,10 @@ fn compression_options() -> SimpleFileOptions {
 fn build_subarchive(
     receiver: flume::Receiver<FileItem>,
     cancel: CancellationToken,
-) -> Result<Option<fs::File>> {
+) -> Result<(Option<fs::File>, ArchiveStats)> {
     let tempfile = tempfile::tempfile()?;
     let mut archive = zip::ZipWriter::new(io::BufWriter::with_capacity(BUFFER_SIZE, tempfile));
-    let mut file_count = 0_usize;
+    let mut stats = ArchiveStats::default();
 
     loop {
         if cancel.is_cancelled() {
@@ -47,25 +61,28 @@ fn build_subarchive(
 
         let mut source = io::BufReader::with_capacity(BUFFER_SIZE, fs::File::open(&file.absolute)?);
         io::copy(&mut source, &mut archive)?;
-        file_count += 1;
+        stats.file_count += 1;
+        stats.file_size += file.metadata.len();
     }
 
-    if file_count == 0 {
-        return Ok(None);
+    if stats.file_count == 0 {
+        return Ok((None, stats));
     }
 
     let mut bufwriter = archive.finish()?;
     bufwriter.flush()?;
     let mut tempfile = bufwriter.into_inner()?;
     tempfile.rewind()?;
-    Ok(Some(tempfile))
+    Ok((Some(tempfile), stats))
 }
 
 pub(crate) async fn archive_from_path(
     root: impl AsRef<Path>,
+    target: impl AsRef<Path>,
     cpu_parallelism: Option<usize>,
-) -> Result<tempfile::NamedTempFile> {
+) -> Result<ArchiveStats> {
     let root = root.as_ref();
+    let target = target.as_ref().to_path_buf();
 
     let worker_count = if let Some(p) = cpu_parallelism {
         p
@@ -102,12 +119,18 @@ pub(crate) async fn archive_from_path(
     drop(sender);
 
     let mut subarchives = Vec::new();
+    let mut stats = ArchiveStats::default();
     let mut worker_error = None;
     for worker in workers {
         match worker.join() {
             Ok(result) => match result {
-                Ok(Some(tempfile)) => subarchives.push(tempfile),
-                Ok(None) => {}
+                Ok((Some(tempfile), worker_stats)) => {
+                    subarchives.push(tempfile);
+                    stats += worker_stats;
+                }
+                Ok((None, worker_stats)) => {
+                    stats += worker_stats;
+                }
                 Err(err) if worker_error.is_none() => worker_error = Some(err),
                 Err(_) => {}
             },
@@ -126,12 +149,13 @@ pub(crate) async fn archive_from_path(
         return Err(err);
     }
 
-    let merged_archive_file = spawn_blocking(move || {
-        let merged_archive_file = tempfile::NamedTempFile::new()?;
+    spawn_blocking(move || {
+        let merged_archive_file = fs::File::create(&target)?;
         let mut merged_archive = zip::ZipWriter::new(io::BufWriter::with_capacity(
             BUFFER_SIZE,
             merged_archive_file,
         ));
+
         for tempfile in subarchives {
             let subarchive =
                 zip::ZipArchive::new(io::BufReader::with_capacity(BUFFER_SIZE, tempfile))?;
@@ -147,5 +171,5 @@ pub(crate) async fn archive_from_path(
     })
     .await?;
 
-    Ok(merged_archive_file)
+    Ok(stats)
 }

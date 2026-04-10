@@ -11,8 +11,9 @@ use crate::{
     metrics::StorageMetrics,
     types::{FileRange, StorageKind},
     utils::{
-        file_list::{get_file_list, walk_dir_recursive},
+        file_list::walk_dir_recursive,
         storage_path::{rustdoc_archive_path, source_archive_path},
+        zipfile::archive_from_path,
     },
 };
 use anyhow::{Context as _, Result};
@@ -23,16 +24,14 @@ use docs_rs_utils::spawn_blocking;
 use futures_util::{TryStreamExt as _, future, stream::BoxStream};
 use std::{
     fmt,
-    io::{Cursor, Write as _},
-    path::Path,
+    io::Cursor,
+    path::{Path, PathBuf},
     pin::Pin,
     sync::Arc,
 };
 use tokio::{fs, io, io::AsyncWriteExt as _};
 use tracing::{info_span, instrument, trace, warn};
-
-/// buffer size when writing zip files.
-pub(crate) const ZIP_BUFFER_SIZE: usize = 1024 * 1024;
+use zip::ZipArchive;
 
 pub struct AsyncStorage {
     backend: StorageBackend,
@@ -306,58 +305,8 @@ impl AsyncStorage {
         let root_dir = root_dir.as_ref();
 
         let zip_temp_path = tempfile::NamedTempFile::new()?.into_temp_path();
+        archive_from_path(root_dir, &zip_temp_path, Some(8)).await?;
         let zip_path = zip_temp_path.to_path_buf();
-
-        let file_paths =
-            spawn_blocking({
-                use std::{io, fs};
-                let archive_path = archive_path.to_owned();
-                let root_dir = root_dir.to_owned();
-                let zip_path = zip_path.clone();
-
-                move || {
-                    let mut file_paths = Vec::new();
-
-                    // We are only using the `zip` library to create the archives and the matching
-                    // index-file. The ZIP format allows more compression formats, and these can even be mixed
-                    // in a single archive.
-                    //
-                    // Decompression happens by fetching only the part of the remote archive that contains
-                    // the compressed stream of the object we put into the archive.
-                    // For decompression we are sharing the compression algorithms defined in
-                    // `storage::compression`. So every new algorithm to be used inside ZIP archives
-                    // also has to be added as supported algorithm for storage compression, together
-                    // with a mapping in `storage::archive_index::Index::new_from_zip`.
-
-
-                    {
-                        let _span =
-                            info_span!("create_zip_archive", %archive_path, root_dir=%root_dir.display()).entered();
-
-                        let options = zip::write::SimpleFileOptions::default()
-                            .compression_method(zip::CompressionMethod::Bzip2)
-                            .compression_level(Some(3));
-
-                        // rustdoc archives can become a couple of GiB big, so we better use a tempfile.
-                        let zip_file = fs::File::create(&zip_path)?;
-                        let mut zip = zip::ZipWriter::new(io::BufWriter::with_capacity(ZIP_BUFFER_SIZE, zip_file));
-                        for file_path in get_file_list(&root_dir) {
-                            let file_path = file_path?;
-
-                            let mut file = fs::File::open(root_dir.join(&file_path))?;
-                            zip.start_file(file_path.to_str().unwrap(), options)?;
-                            io::copy(&mut file, &mut zip)?;
-                            file_paths.push(FileEntry{path: file_path, size: file.metadata()?.len()});
-                        }
-
-                        let mut zip_file = zip.finish()?.into_inner()?;
-                        zip_file.flush()?;
-                    }
-
-                    Ok(file_paths)
-                }
-            })
-            .await?;
 
         let alg = CompressionAlgorithm::default();
         let remote_index_path = format!("{}.{ARCHIVE_INDEX_FILE_EXTENSION}", &archive_path);
@@ -392,7 +341,7 @@ impl AsyncStorage {
             self.backend.upload_stream(StreamUpload {
                 path: archive_path.to_string(),
                 mime: mimes::APPLICATION_ZIP.clone(),
-                source: StreamUploadSource::File(zip_path),
+                source: StreamUploadSource::File(zip_path.clone()),
                 compression: None,
             }),
             self.backend.upload_stream(StreamUpload {
@@ -402,6 +351,33 @@ impl AsyncStorage {
                 compression: Some(alg),
             })
         )?;
+
+        // NOTE: this is temporary.
+        // Right now some places need the full file list in memory.
+        // I want to get rid of this by using the source package archive index,
+        // but I don't want to add this on top of the current PR.
+        // So we quickly read the zip central directory.
+        let file_paths = spawn_blocking(move || {
+            use std::{fs, io};
+            let mut archive = ZipArchive::new(io::BufReader::new(fs::File::open(&zip_path)?))?;
+
+            let mut paths = Vec::with_capacity(1000);
+
+            for i in 0..archive.len() {
+                let entry = archive.by_index(i)?;
+
+                let path: PathBuf = entry.name().into();
+                debug_assert!(path.is_relative());
+
+                paths.push(FileEntry {
+                    path,
+                    size: entry.size(),
+                });
+            }
+
+            Ok(paths)
+        })
+        .await?;
 
         Ok((file_paths, CompressionAlgorithm::Bzip2))
     }
