@@ -27,7 +27,6 @@ base64 = { workspace = true }
 bzip2 = "0.6.0"
 chrono = { workspace = true }
 crc32fast = "1.4.2"
-crossbeam-deque = "0.8.6"
 dashmap = { version = "6.0.0", optional = true }
 docs_rs_config = { path = "../docs_rs_config" }
 docs_rs_env_vars = { path = "../docs_rs_env_vars" }
@@ -38,6 +37,7 @@ docs_rs_rustdoc_json = { path = "../docs_rs_rustdoc_json" }
 docs_rs_types = { path = "../docs_rs_types" }
 docs_rs_utils = { path = "../docs_rs_utils" }
 flate2 = "1.1.1"
+flume = "0.11.1"
 futures-util = { workspace = true }
 http = { workspace = true }
 itertools = { workspace = true }

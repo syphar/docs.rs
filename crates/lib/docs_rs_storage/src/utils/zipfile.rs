@@ -1,13 +1,11 @@
 use crate::utils::file_list::{FileItem, walk_dir_recursive};
 use anyhow::Result;
-use crossbeam_deque::{Injector, Steal};
 use docs_rs_utils::spawn_blocking;
 use futures_util::TryStreamExt as _;
 use std::{
-    fs, future,
+    fs,
     io::{self, Seek as _, Write as _},
     path::Path,
-    sync::{Arc, Condvar, Mutex},
     thread,
 };
 use zip::write::SimpleFileOptions;
@@ -20,80 +18,12 @@ fn compression_options() -> SimpleFileOptions {
         .compression_level(Some(1))
 }
 
-struct QueueState {
-    generation: usize,
-    producer_done: bool,
-}
-
-struct WorkQueue {
-    injector: Injector<FileItem>,
-    state: Mutex<QueueState>,
-    ready: Condvar,
-}
-
-impl WorkQueue {
-    fn new() -> Self {
-        Self {
-            injector: Injector::new(),
-            state: Mutex::new(QueueState {
-                generation: 0,
-                producer_done: false,
-            }),
-            ready: Condvar::new(),
-        }
-    }
-
-    fn push(&self, file: FileItem) {
-        self.injector.push(file);
-        let mut state = self.state.lock().unwrap();
-        state.generation = state.generation.wrapping_add(1);
-        drop(state);
-        self.ready.notify_one();
-    }
-
-    fn close(&self) {
-        let mut state = self.state.lock().unwrap();
-        state.generation = state.generation.wrapping_add(1);
-        state.producer_done = true;
-        drop(state);
-        self.ready.notify_all();
-    }
-
-    fn pop(&self) -> Option<FileItem> {
-        'outer: loop {
-            match self.injector.steal() {
-                Steal::Success(file) => return Some(file),
-                Steal::Retry => continue,
-                Steal::Empty => {}
-            }
-
-            let mut state = self.state.lock().unwrap();
-            loop {
-                match self.injector.steal() {
-                    Steal::Success(file) => return Some(file),
-                    Steal::Retry => continue 'outer,
-                    Steal::Empty if state.producer_done => return None,
-                    Steal::Empty => {
-                        let generation = state.generation;
-                        state = self
-                            .ready
-                            .wait_while(state, |state| {
-                                !state.producer_done && state.generation == generation
-                            })
-                            .unwrap();
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn build_subarchive(queue: Arc<WorkQueue>) -> Result<Option<fs::File>> {
+fn build_subarchive(receiver: flume::Receiver<FileItem>) -> Result<Option<fs::File>> {
     let tempfile = tempfile::tempfile()?;
     let mut archive = zip::ZipWriter::new(io::BufWriter::with_capacity(BUFFER_SIZE, tempfile));
     let mut file_count = 0_usize;
 
-    while let Some(file) = queue.pop() {
+    while let Ok(file) = receiver.recv() {
         archive.start_file(file.relative.to_string_lossy(), compression_options())?;
 
         let mut source = io::BufReader::with_capacity(BUFFER_SIZE, fs::File::open(&file.absolute)?);
@@ -124,26 +54,28 @@ pub(crate) async fn archive_from_path(
         thread::available_parallelism().map(|count| count.get())?
     };
 
-    let queue = Arc::new(WorkQueue::new());
+    let (sender, receiver) = flume::bounded(worker_count.saturating_mul(2).max(1));
     let mut workers = Vec::with_capacity(worker_count);
 
     for _ in 0..worker_count {
-        let queue = queue.clone();
+        let receiver = receiver.clone();
         let span = tracing::Span::current();
         workers.push(thread::spawn(move || {
             let _guard = span.enter();
-            build_subarchive(queue)
+            build_subarchive(receiver)
         }));
     }
+    drop(receiver);
 
     let produce_result = walk_dir_recursive(&root)
-        .try_for_each(|item| {
-            queue.push(item);
-            future::ready(Ok(()))
+        .try_for_each(|item| async {
+            sender.send_async(item).await.map_err(|_| {
+                io::Error::new(io::ErrorKind::BrokenPipe, "zip workers stopped receiving")
+            })
         })
         .await;
 
-    queue.close();
+    drop(sender);
 
     let mut subarchives = Vec::new();
     let mut worker_error = None;
