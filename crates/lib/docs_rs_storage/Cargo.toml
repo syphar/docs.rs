@@ -26,7 +26,11 @@ aws-smithy-types-convert = { version = "0.60.0", features = ["convert-chrono"] }
 base64 = { workspace = true }
 bzip2 = "0.6.0"
 chrono = { workspace = true }
+<<<<<<< Updated upstream
 crc32fast = "1.4.2"
+=======
+crossbeam-deque = "0.8.6"
+>>>>>>> Stashed changes
 dashmap = { version = "6.0.0", optional = true }
 docs_rs_config = { path = "../docs_rs_config" }
 docs_rs_env_vars = { path = "../docs_rs_env_vars" }

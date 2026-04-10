@@ -2277,6 +2277,7 @@ dependencies = [
  "chrono",
  "crc32fast",
  "criterion",
+ "crossbeam-deque",
  "dashmap",
  "docs_rs_config",
  "docs_rs_env_vars",
