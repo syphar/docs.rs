@@ -1,9 +1,9 @@
 use crate::utils::file_list::{FileItem, walk_dir_recursive};
 use anyhow::Result;
+use crossbeam_deque::{Injector, Steal};
 use docs_rs_utils::spawn_blocking;
 use futures_util::TryStreamExt as _;
 use std::{
-    collections::VecDeque,
     fs, future,
     io::{self, Seek as _, Write as _},
     path::Path,
@@ -21,11 +21,12 @@ fn compression_options() -> SimpleFileOptions {
 }
 
 struct QueueState {
-    files: VecDeque<FileItem>,
+    generation: usize,
     producer_done: bool,
 }
 
 struct WorkQueue {
+    injector: Injector<FileItem>,
     state: Mutex<QueueState>,
     ready: Condvar,
 }
@@ -33,8 +34,9 @@ struct WorkQueue {
 impl WorkQueue {
     fn new() -> Self {
         Self {
+            injector: Injector::new(),
             state: Mutex::new(QueueState {
-                files: VecDeque::new(),
+                generation: 0,
                 producer_done: false,
             }),
             ready: Condvar::new(),
@@ -42,29 +44,46 @@ impl WorkQueue {
     }
 
     fn push(&self, file: FileItem) {
+        self.injector.push(file);
         let mut state = self.state.lock().unwrap();
-        state.files.push_back(file);
+        state.generation = state.generation.wrapping_add(1);
+        drop(state);
         self.ready.notify_one();
     }
 
     fn close(&self) {
         let mut state = self.state.lock().unwrap();
+        state.generation = state.generation.wrapping_add(1);
         state.producer_done = true;
+        drop(state);
         self.ready.notify_all();
     }
 
     fn pop(&self) -> Option<FileItem> {
-        let mut state = self.state.lock().unwrap();
-        loop {
-            if let Some(file) = state.files.pop_front() {
-                return Some(file);
+        'outer: loop {
+            match self.injector.steal() {
+                Steal::Success(file) => return Some(file),
+                Steal::Retry => continue,
+                Steal::Empty => {}
             }
 
-            if state.producer_done {
-                return None;
+            let mut state = self.state.lock().unwrap();
+            loop {
+                match self.injector.steal() {
+                    Steal::Success(file) => return Some(file),
+                    Steal::Retry => continue 'outer,
+                    Steal::Empty if state.producer_done => return None,
+                    Steal::Empty => {
+                        let generation = state.generation;
+                        state = self
+                            .ready
+                            .wait_while(state, |state| {
+                                !state.producer_done && state.generation == generation
+                            })
+                            .unwrap();
+                    }
+                }
             }
-
-            state = self.ready.wait(state).unwrap();
         }
     }
 }
