@@ -1780,7 +1780,7 @@ mod tests {
                 &ReleaseData::default(),
                 true,
                 false,
-                iter::once(CompressionAlgorithm::Bzip2),
+                iter::once(CompressionAlgorithm::Deflate),
                 None,
                 true,
                 42,

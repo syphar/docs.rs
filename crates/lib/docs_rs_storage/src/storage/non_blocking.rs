@@ -321,8 +321,8 @@ impl AsyncStorage {
                             info_span!("create_zip_archive", %archive_path, root_dir=%root_dir.display()).entered();
 
                         let options = zip::write::SimpleFileOptions::default()
-                            .compression_method(zip::CompressionMethod::Bzip2)
-                            .compression_level(Some(3));
+                            .compression_method(zip::CompressionMethod::Deflated)
+                            .compression_level(Some(6));
 
                         let mut zip = zip::ZipWriter::new(io::Cursor::new(Vec::new()));
                         for file_path in get_file_list(&root_dir) {
@@ -385,7 +385,7 @@ impl AsyncStorage {
             ])
             .await?;
 
-        Ok((file_paths, CompressionAlgorithm::Bzip2))
+        Ok((file_paths, CompressionAlgorithm::Deflate))
     }
 
     /// Store all files in `root_dir` into the backend under `prefix`.
@@ -867,7 +867,7 @@ mod backend_tests {
                 .await?
         );
 
-        assert_eq!(compression_alg, CompressionAlgorithm::Bzip2);
+        assert_eq!(compression_alg, CompressionAlgorithm::Deflate);
         assert_eq!(stored_files.len(), files.len());
         for name in &files {
             assert!(get_file_info(&stored_files, name).is_some());

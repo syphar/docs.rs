@@ -1,4 +1,4 @@
-use criterion::{Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use docs_rs_storage::{compress, decompress};
 use docs_rs_types::CompressionAlgorithm;
 use std::hint::black_box;
@@ -43,6 +43,18 @@ pub fn regex_capture_matches(c: &mut Criterion) {
                 decompress(
                     black_box(html_slice),
                     CompressionAlgorithm::Gzip,
+                    5 * 1024 * 1024,
+                )
+            });
+        })
+        .bench_function("compress deflate", |b| {
+            b.iter(|| compress(black_box(html_slice), CompressionAlgorithm::Deflate));
+        })
+        .bench_function("decompress deflate", |b| {
+            b.iter(|| {
+                decompress(
+                    black_box(html_slice),
+                    CompressionAlgorithm::Deflate,
                     5 * 1024 * 1024,
                 )
             });
