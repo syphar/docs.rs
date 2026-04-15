@@ -342,6 +342,10 @@ impl CrateDetails {
     pub fn latest_release(&self) -> Result<&Release> {
         latest_release(&self.releases).ok_or_else(|| anyhow!("crate without releases"))
     }
+
+    pub(crate) fn latest_unyanked_release(&self) -> Option<&Release> {
+        crate::match_release::latest_release(&self.releases)
+    }
 }
 
 #[derive(Debug, Clone, Default)]

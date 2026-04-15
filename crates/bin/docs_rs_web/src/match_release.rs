@@ -136,6 +136,24 @@ fn semver_match<'a, F: Fn(&Release) -> bool>(
     }
 }
 
+fn not_yanked(release: &Release) -> bool {
+    release.yanked.is_none() || release.yanked == Some(false)
+}
+
+fn best_release_for_req<'a>(
+    releases: &'a [Release],
+    req_semver: &VersionReq,
+) -> Option<&'a Release> {
+    semver_match(releases, req_semver, |release: &Release| {
+        release.build_status != BuildStatus::InProgress && not_yanked(release)
+    })
+    .or_else(|| semver_match(releases, req_semver, not_yanked))
+}
+
+pub(crate) fn latest_release(releases: &[Release]) -> Option<&Release> {
+    best_release_for_req(releases, &VersionReq::STAR)
+}
+
 /// Checks the database for crate releases that match the given name and version.
 ///
 /// `version` may be an exact version number or loose semver version requirement. The return value
@@ -210,25 +228,10 @@ pub(crate) async fn match_version(
         ReqVersion::Semver(version_req) => version_req.clone(),
     };
 
-    // when matching semver requirements,
-    // we generally only want to look at non-yanked releases,
-    // excluding releases which just contain in-progress builds
-    if let Some(release) = semver_match(&releases, &req_semver, |r: &Release| {
-        r.build_status != BuildStatus::InProgress && (r.yanked.is_none() || r.yanked == Some(false))
-    }) {
-        return Ok(MatchedRelease {
-            name: name.to_owned(),
-            corrected_name,
-            req_version: input_version.clone(),
-            release: release.clone(),
-            all_releases: releases,
-        });
-    }
-
-    // when we don't find any match with "normal" releases, we also look into in-progress releases
-    if let Some(release) = semver_match(&releases, &req_semver, |r: &Release| {
-        r.yanked.is_none() || r.yanked == Some(false)
-    }) {
+    // when matching semver requirements, we generally only want to look at non-yanked
+    // releases, excluding releases which just contain in-progress builds. If there are no
+    // matching non-in-progress releases, we also look into in-progress releases.
+    if let Some(release) = best_release_for_req(&releases, &req_semver) {
         return Ok(MatchedRelease {
             name: name.to_owned(),
             corrected_name,
