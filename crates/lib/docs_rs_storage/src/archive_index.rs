@@ -895,31 +895,23 @@ impl Index {
             .unwrap_or_default();
 
         try_stream! {
-            // Fetch all paths that start with the prefix in one query, then classify
-            // each as a direct file or a subdirectory entry in Rust.
             let glob = format!("{prefix}*");
 
-            let all_rows: Vec<String> = sqlx::query(
-                "SELECT path FROM files WHERE path GLOB ?"
-            )
-            .bind(&glob)
-            .fetch_all(&mut self.conn)
-            .await
-            .context("error fetching entries from SQLite")?
-            .into_iter()
-            .map(|row| row.try_get::<String, _>(0).map_err(anyhow::Error::from))
-            .collect::<Result<_>>()?;
-
-            // Classify: paths with no further '/' after the prefix are direct files;
-            // paths with a '/' are inside a subdirectory (emit only the subdir name, deduplicated).
+            // Seen-dirs is the only state we must accumulate: one String per unique
+            // immediate subdirectory name. File rows are yielded as they arrive.
             let mut seen_dirs: std::collections::HashSet<String> = std::collections::HashSet::new();
 
-            for full_path in all_rows {
+            let mut rows = sqlx::query("SELECT path FROM files WHERE path GLOB ?")
+                .bind(&glob)
+                .fetch(&mut self.conn);
+
+            while let Some(row) = rows.try_next().await.context("error fetching entries from SQLite")? {
+                let full_path: String = row.try_get(0)?;
                 // The relative part is everything after the prefix.
                 let rel = &full_path[prefix.len()..];
 
                 if let Some(slash_pos) = rel.find('/') {
-                    // It's inside a subdirectory. Extract the first component.
+                    // It's inside a subdirectory. Extract and deduplicate the first component.
                     let dir_name = &rel[..slash_pos];
                     if seen_dirs.insert(dir_name.to_string()) {
                         yield FolderEntry::Dir(dir_name.to_string());
