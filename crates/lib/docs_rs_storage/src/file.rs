@@ -50,10 +50,10 @@ impl FolderEntry {
         matches!(self, Self::Dir(_))
     }
 
-    pub fn mime(&self) -> Mime {
+    pub fn mime(&self) -> Option<Mime> {
         match self {
-            Self::File(name) => detect_mime(name),
-            Self::Dir(_) => mime::APPLICATION_OCTET_STREAM,
+            Self::File(name) => Some(detect_mime(name)),
+            Self::Dir(_) => None,
         }
     }
 }
