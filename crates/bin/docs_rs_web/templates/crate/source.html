@@ -50,19 +50,19 @@
                                         {{ crate::icons::IconFolderOpen.render_regular(false, false, "") }}
 
                                     {# Rust files #}
-                                    {%- elif file.mime().unwrap() == "text/rust" -%}
+                                    {%- elif file.mime() == "text/rust" -%}
                                         {{ crate::icons::IconRust.render_brands(false, false, "") }}
 
                                     {# Cargo.lock #}
-                                    {%- elif file.mime().unwrap() == "text/plain" && file.name() == "Cargo.lock" -%}
+                                    {%- elif file.mime() == "text/plain" && file.name() == "Cargo.lock" -%}
                                         {{ crate::icons::IconLock.render_solid(false, false, "") }}
 
                                     {# Markdown files #}
-                                    {% elif file.mime().unwrap() == "text/markdown" %}
+                                    {% elif file.mime() == "text/markdown" %}
                                         {{ crate::icons::IconMarkdown.render_brands(false, false, "") }}
 
                                     {# .gitignore #}
-                                    {% elif file.mime().unwrap() == "text/plain" && file.name() == ".gitignore" %}
+                                    {% elif file.mime() == "text/plain" && file.name() == ".gitignore" %}
                                         {{ crate::icons::IconGitAlt.render_brands(false, false, "") }}
 
                                     {#
@@ -84,7 +84,7 @@
                                     #}
 
                                     {# Text files or files which mime starts with `text` #}
-                                    {%- elif file.mime().unwrap() == "text/plain" || file.mime().unwrap().type_() == "text" -%}
+                                    {%- elif file.mime() == "text/plain" || file.mime().type_() == "text" -%}
                                         {{ crate::icons::IconFileLines.render_regular(false, false, "") }}
 
                                         {# Binary files and any unrecognized types #}

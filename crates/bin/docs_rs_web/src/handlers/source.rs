@@ -18,10 +18,10 @@ use askama::Template;
 use axum::{Extension, response::IntoResponse};
 use axum_extra::{TypedHeader, headers::HeaderMapExt};
 use docs_rs_headers::{CanonicalUrl, IfNoneMatch};
-use docs_rs_storage::{AsyncStorage, FolderEntry, PathNotFoundError};
+use docs_rs_storage::{AsyncStorage, FolderEntry, PathNotFoundError, source_archive_path};
 use docs_rs_types::{BuildId, KrateName, ReqVersion, Version};
-use mime::Mime;
-use std::{cmp::Ordering, sync::Arc};
+use futures_util::TryStreamExt as _;
+use std::sync::Arc;
 use tracing::instrument;
 
 /// A list of source files
@@ -37,6 +37,23 @@ impl FileList {
         } else {
             FolderEntry::File(path.to_string())
         }
+    }
+
+    async fn from_archive_index(
+        storage: &AsyncStorage,
+        name: &KrateName,
+        version: &Version,
+        latest_build_id: Option<BuildId>,
+        folder: Option<&str>,
+    ) -> Result<FileList> {
+        Ok(Self {
+            files: storage
+                .find_archive_index(&source_archive_path(name, version), latest_build_id)
+                .await?
+                .folder_contents(folder)
+                .try_collect::<Vec<_>>()
+                .await?,
+        })
     }
 
     /// Gets legacy FileList from a request path
@@ -213,16 +230,31 @@ pub(crate) async fn source_browser_handler(
 
     let inner_path = params.inner_path();
 
-    let current_folder = if let Some(last_slash_pos) = inner_path.rfind('/') {
-        &inner_path[..last_slash_pos + 1]
-    } else {
-        ""
-    };
-    let show_parent_link = !current_folder.is_empty();
+    let current_folder = inner_path
+        .rfind('/')
+        .map(|last_slash_pos| &inner_path[..last_slash_pos + 1]);
 
-    let file_list = FileList::from_path(&mut conn, params.name(), version, current_folder)
+    let show_parent_link = current_folder.is_some();
+
+    let file_list = if row.archive_storage {
+        FileList::from_archive_index(
+            &storage,
+            params.name(),
+            version,
+            row.latest_build_id,
+            current_folder,
+        )
         .await?
-        .unwrap_or_default();
+    } else {
+        FileList::from_path(
+            &mut conn,
+            params.name(),
+            version,
+            current_folder.unwrap_or(""),
+        )
+        .await?
+        .unwrap_or_default()
+    };
 
     let metadata = MetaData::from_crate(
         &mut conn,

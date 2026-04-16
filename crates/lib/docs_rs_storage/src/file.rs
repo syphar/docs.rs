@@ -41,8 +41,8 @@ pub enum FolderEntry {
 impl FolderEntry {
     pub fn name(&self) -> &str {
         match self {
-            FolderEntry::File(name) => &name,
-            FolderEntry::Dir(name) => &name,
+            FolderEntry::File(name) => name,
+            FolderEntry::Dir(name) => name,
         }
     }
 
@@ -50,11 +50,10 @@ impl FolderEntry {
         matches!(self, Self::Dir(_))
     }
 
-    pub fn mime(&self) -> Option<Mime> {
-        if let Self::File(name) = self {
-            Some(detect_mime(name))
-        } else {
-            None
+    pub fn mime(&self) -> Mime {
+        match self {
+            Self::File(name) => detect_mime(name),
+            Self::Dir(_) => mime::APPLICATION_OCTET_STREAM,
         }
     }
 }

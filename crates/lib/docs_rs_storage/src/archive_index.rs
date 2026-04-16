@@ -4,12 +4,10 @@ use crate::{
 };
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_stream::try_stream;
-use docs_rs_mimes::detect_mime;
 use docs_rs_opentelemetry::AnyMeterProvider;
 use docs_rs_types::{BuildId, CompressionAlgorithm};
 use docs_rs_utils::spawn_blocking;
 use futures_util::{Stream, TryStreamExt as _};
-use mime::Mime;
 use moka::future::Cache as MokaCache;
 use opentelemetry::{
     KeyValue,
@@ -135,7 +133,7 @@ impl Metrics {
 }
 
 #[derive(PartialEq, Eq, Debug)]
-pub(crate) struct FileInfo {
+pub struct FileInfo {
     path: PathBuf,
     range: FileRange,
     compression: CompressionAlgorithm,
@@ -633,9 +631,6 @@ impl Drop for Cache {
 }
 
 impl FileInfo {
-    pub(crate) fn path(&self) -> &Path {
-        &self.path
-    }
     pub(crate) fn range(&self) -> FileRange {
         self.range.clone()
     }
@@ -875,6 +870,7 @@ impl Index {
     /// get the folder contents inside the zip archive.
     /// * missing folder = list the root
     /// * given folder: just lists the files in there, and subfolders, but not their contents.
+    ///
     /// You'll need this method when you build a file-browser for the archive, like
     /// in our source pages.
     pub fn folder_contents(
