@@ -540,11 +540,16 @@ impl Cache {
         downloader: &impl Downloader,
     ) -> Result<Option<FileInfo>> {
         for attempt in 1..=FIND_ATTEMPTS {
-            match self
-                .find_index(archive_path, latest_build_id, downloader)
-                .await
-            {
-                Ok(mut index) => {
+            let result = async {
+                let mut index = self
+                    .find_index(archive_path, latest_build_id, downloader)
+                    .await?;
+                index.find(path_in_archive).await
+            }
+            .await;
+
+            match result {
+                Ok(file_info) => {
                     self.metrics.find_calls.add(
                         1,
                         &[
@@ -552,14 +557,13 @@ impl Cache {
                             KeyValue::new("outcome", "success"),
                         ],
                     );
-                    // FIXME: can sqlite errors happen here in find? that don't happen on open?
-                    return index.find(path_in_archive).await;
+                    return Ok(file_info);
                 }
                 Err(err) if attempt < FIND_ATTEMPTS => {
                     warn!(
                         ?err,
                         %attempt,
-                        "error resolving archive index, purging local cache and retrying"
+                        "error in archive index lookup, purging local cache and retrying"
                     );
                     self.purge(archive_path, latest_build_id).await?;
                 }
