@@ -1692,7 +1692,7 @@ mod tests {
         let mut dirs = Vec::new();
         for entry in entries {
             match entry {
-                FolderEntry::File(path) => files.push(path),
+                FolderEntry::File(path, _) => files.push(path),
                 FolderEntry::Dir(name) => dirs.push(name),
             }
         }
@@ -1799,23 +1799,23 @@ mod tests {
 
     #[test]
     fn folder_entry_ordering() {
+        let file = |name: &str| FolderEntry::File(name.to_string(), detect_mime(name));
+        let dir = |name: &str| FolderEntry::Dir(name.to_string());
+
         let mut entries = vec![
-            FolderEntry::File("zebra.txt".to_string()),
-            FolderEntry::Dir("alpha".to_string()),
-            FolderEntry::File("apple.txt".to_string()),
-            FolderEntry::Dir("zulu".to_string()),
+            file("zebra.txt"),
+            dir("alpha"),
+            file("apple.txt"),
+            dir("zulu"),
         ];
 
         entries.sort();
 
-        assert_eq!(
-            entries,
-            vec![
-                FolderEntry::Dir("alpha".to_string()),
-                FolderEntry::Dir("zulu".to_string()),
-                FolderEntry::File("apple.txt".to_string()),
-                FolderEntry::File("zebra.txt".to_string()),
-            ]
-        );
+        assert_eq!(entries, vec![
+            dir("alpha"),
+            dir("zulu"),
+            file("apple.txt"),
+            file("zebra.txt"),
+        ]);
     }
 }
