@@ -18,6 +18,7 @@ use askama::Template;
 use axum::{Extension, response::IntoResponse};
 use axum_extra::{TypedHeader, headers::HeaderMapExt};
 use docs_rs_headers::{CanonicalUrl, IfNoneMatch};
+use docs_rs_mimes::detect_mime;
 use docs_rs_storage::{AsyncStorage, FolderEntry, PathNotFoundError, source_archive_path};
 use docs_rs_types::{BuildId, KrateName, ReqVersion, Version};
 use futures_util::TryStreamExt as _;
@@ -35,7 +36,7 @@ impl FileList {
         if let Some((dir, _)) = path.split_once('/') {
             FolderEntry::Dir(dir.to_string())
         } else {
-            FolderEntry::File(path.to_string())
+            FolderEntry::File(path.to_string(), detect_mime(path))
         }
     }
 

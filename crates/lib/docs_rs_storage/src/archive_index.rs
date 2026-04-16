@@ -4,6 +4,7 @@ use crate::{
 };
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_stream::try_stream;
+use docs_rs_mimes::detect_mime;
 use docs_rs_opentelemetry::AnyMeterProvider;
 use docs_rs_types::{BuildId, CompressionAlgorithm};
 use docs_rs_utils::spawn_blocking;
@@ -918,7 +919,9 @@ impl Index {
                     }
                 } else {
                     // Direct file — yield only the name relative to the queried folder.
-                    yield FolderEntry::File(rel.to_string());
+                    let rel = rel.to_string();
+                    let mime = detect_mime(&rel);
+                    yield FolderEntry::File(rel, mime);
                 }
             }
         }

@@ -34,14 +34,14 @@ pub fn file_list_to_json(files: impl IntoIterator<Item = FileEntry>) -> Value {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FolderEntry {
-    File(String),
+    File(String, Mime),
     Dir(String),
 }
 
 impl FolderEntry {
     pub fn name(&self) -> &str {
         match self {
-            FolderEntry::File(name) => name,
+            FolderEntry::File(name, _) => name,
             FolderEntry::Dir(name) => name,
         }
     }
@@ -50,9 +50,9 @@ impl FolderEntry {
         matches!(self, Self::Dir(_))
     }
 
-    pub fn mime(&self) -> Option<Mime> {
+    pub fn mime(&self) -> Option<&Mime> {
         match self {
-            Self::File(name) => Some(detect_mime(name)),
+            Self::File(_, mime) => Some(mime),
             Self::Dir(_) => None,
         }
     }
@@ -68,9 +68,9 @@ impl Ord for FolderEntry {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         match (self, other) {
             (FolderEntry::Dir(a), FolderEntry::Dir(b)) => a.cmp(b),
-            (FolderEntry::File(a), FolderEntry::File(b)) => a.cmp(b),
-            (FolderEntry::Dir(_), FolderEntry::File(_)) => std::cmp::Ordering::Less,
-            (FolderEntry::File(_), FolderEntry::Dir(_)) => std::cmp::Ordering::Greater,
+            (FolderEntry::File(a, _), FolderEntry::File(b, _)) => a.cmp(b),
+            (FolderEntry::Dir(_), FolderEntry::File(_, _)) => std::cmp::Ordering::Less,
+            (FolderEntry::File(_, _), FolderEntry::Dir(_)) => std::cmp::Ordering::Greater,
         }
     }
 }
