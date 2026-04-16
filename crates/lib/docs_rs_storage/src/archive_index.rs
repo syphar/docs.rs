@@ -881,35 +881,36 @@ impl Index {
         // Build the path prefix string used in GLOB patterns.
         // For root (None): prefix = ""
         // For a folder:    prefix = "some/folder/"
-        let prefix: String = folder
-            .as_ref()
-            .map(|f| {
-                let s = f.as_ref().to_string_lossy();
-                // Normalise: strip any trailing slash, then re-add exactly one.
-                format!("{}/", s.trim_end_matches('/'))
-            })
-            .unwrap_or_default();
+        let prefix: Option<String> = folder.as_ref().map(|f| {
+            let s = f.as_ref().to_string_lossy();
+            // Normalise: strip any trailing slash, then re-add exactly one.
+            format!("{}/", s.trim_end_matches('/'))
+        });
 
         try_stream! {
             // Seen-dirs is the only state we must accumulate: one String per unique
             // immediate subdirectory name. File rows are yielded as they arrive.
             let mut seen_dirs: HashSet<String> = HashSet::new();
 
-            let mut rows = if prefix.is_empty() {
+            let mut rows = if let Some(prefix) = &prefix {
+                sqlx::query("SELECT path FROM files WHERE path GLOB ?")
+                    .bind(format!("{prefix}*"))
+                    .fetch(&mut self.conn)
+            } else {
                 // Root listing: no WHERE clause — avoids a GLOB '*' predicate that
                 // SQLite would evaluate on every row without being able to optimize away.
                 sqlx::query("SELECT path FROM files")
-                    .fetch(&mut self.conn)
-            } else {
-                sqlx::query("SELECT path FROM files WHERE path GLOB ?")
-                    .bind(format!("{prefix}*"))
                     .fetch(&mut self.conn)
             };
 
             while let Some(row) = rows.try_next().await.context("error fetching entries from SQLite")? {
                 let full_path: String = row.try_get(0)?;
                 // The relative part is everything after the prefix.
-                let rel = &full_path[prefix.len()..];
+                let rel = if let Some(prefix) = &prefix {
+                    &full_path[prefix.len()..]
+                } else {
+                    &full_path
+                };
 
                 if let Some(slash_pos) = rel.find('/') {
                     // It's inside a subdirectory. Extract and deduplicate the first component.
@@ -1797,6 +1798,106 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn list_returns_all_entries() -> Result<()> {
+        let mut index = index_from_entries(vec![
+            ("index.html", b""),
+            ("src/main.rs", b""),
+            ("src/lib.rs", b""),
+        ])
+        .await?;
+
+        let mut entries: Vec<FileInfo> = index.list().try_collect().await?;
+        entries.sort_by(|a, b| a.path.cmp(&b.path));
+
+        let paths: Vec<&Path> = entries.iter().map(|e| e.path.as_path()).collect();
+        assert_eq!(
+            paths,
+            vec![
+                Path::new("index.html"),
+                Path::new("src/lib.rs"),
+                Path::new("src/main.rs"),
+            ]
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_empty_archive() -> Result<()> {
+        let mut index = index_from_entries(vec![]).await?;
+        let entries: Vec<FileInfo> = index.list().try_collect().await?;
+        assert!(entries.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_preserves_range_and_compression() -> Result<()> {
+        let mut index = index_from_entries(vec![("file.txt", b"hello")]).await?;
+        let entries: Vec<FileInfo> = index.list().try_collect().await?;
+
+        assert_eq!(entries.len(), 1);
+        // The range should be non-empty and compression should be Bzip2
+        // (set by create_archive_from_entries).
+        let fi = &entries[0];
+        assert!(!fi.range().is_empty());
+        assert_eq!(fi.compression(), CompressionAlgorithm::Bzip2);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn folder_contents_file_mime_correct() -> Result<()> {
+        let mut index = index_from_entries(vec![
+            ("main.rs", b""),
+            ("README.md", b""),
+            ("style.css", b""),
+            ("data.json", b""),
+            ("index.html", b""),
+        ])
+        .await?;
+
+        let entries: Vec<FolderEntry> = index.folder_contents(None::<&Path>).try_collect().await?;
+
+        let mut mime_map: Vec<(&str, String)> = entries
+            .iter()
+            .filter_map(|e| match e {
+                FolderEntry::File(name, mime) => Some((name.as_str(), mime.to_string())),
+                FolderEntry::Dir(_) => None,
+            })
+            .collect();
+        mime_map.sort_by_key(|(name, _)| *name);
+
+        assert_eq!(
+            mime_map,
+            vec![
+                ("README.md", "text/markdown".to_string()),
+                ("data.json", "application/json".to_string()),
+                ("index.html", "text/html".to_string()),
+                ("main.rs", "text/rust".to_string()),
+                ("style.css", "text/css".to_string()),
+            ]
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn folder_contents_dirs_have_no_mime() -> Result<()> {
+        let mut index =
+            index_from_entries(vec![("src/main.rs", b""), ("docs/readme.md", b"")]).await?;
+
+        let entries: Vec<FolderEntry> = index.folder_contents(None::<&Path>).try_collect().await?;
+
+        for entry in &entries {
+            if let FolderEntry::Dir(_) = entry {
+                assert!(entry.mime().is_none());
+            }
+        }
+
+        Ok(())
+    }
+
     #[test]
     fn folder_entry_ordering() {
         let file = |name: &str| FolderEntry::File(name.to_string(), detect_mime(name));
@@ -1811,11 +1912,14 @@ mod tests {
 
         entries.sort();
 
-        assert_eq!(entries, vec![
-            dir("alpha"),
-            dir("zulu"),
-            file("apple.txt"),
-            file("zebra.txt"),
-        ]);
+        assert_eq!(
+            entries,
+            vec![
+                dir("alpha"),
+                dir("zulu"),
+                file("apple.txt"),
+                file("zebra.txt"),
+            ]
+        );
     }
 }
