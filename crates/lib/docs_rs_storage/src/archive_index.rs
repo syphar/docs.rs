@@ -3,6 +3,7 @@ use crate::{
     utils::file_list::walk_dir_recursive,
 };
 use anyhow::{Context as _, Result, anyhow, bail};
+use async_stream::try_stream;
 use docs_rs_opentelemetry::AnyMeterProvider;
 use docs_rs_types::{BuildId, CompressionAlgorithm};
 use docs_rs_utils::spawn_blocking;
@@ -132,9 +133,15 @@ impl Metrics {
 
 #[derive(PartialEq, Eq, Debug)]
 pub(crate) struct FileInfo {
-    path: String,
+    path: PathBuf,
     range: FileRange,
     compression: CompressionAlgorithm,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum FolderEntry {
+    File(String),
+    Dir(String),
 }
 
 pub(crate) struct Entry {
@@ -629,7 +636,7 @@ impl Drop for Cache {
 }
 
 impl FileInfo {
-    pub(crate) fn path(&self) -> &str {
+    pub(crate) fn path(&self) -> &Path {
         &self.path
     }
     pub(crate) fn range(&self) -> FileRange {
@@ -791,7 +798,13 @@ impl Index {
         })
     }
 
-    pub(crate) async fn find(&mut self, search_for: &str) -> Result<Option<FileInfo>> {
+    pub(crate) async fn find(&mut self, search_for: impl AsRef<Path>) -> Result<Option<FileInfo>> {
+        let search_for = search_for.as_ref();
+
+        if search_for.is_absolute() {
+            bail!("search path in archive index has to be relative");
+        }
+
         // Keep moka's recency/frequency view in sync with successful fast-path
         // file lookups so TTI and admission decisions reflect real usage.
         if self.manager.get(&self.archive_index_path).await.is_none() {
@@ -802,13 +815,17 @@ impl Index {
                 .await;
         }
 
+        let search_str = search_for
+            .to_str()
+            .ok_or_else(|| anyhow!("non-UTF-8 path in archive index lookup"))?;
+
         // now actually find the entry in the index
         let row = sqlx::query(
             "SELECT start, end, compression
                 FROM files
                 WHERE path = ?",
         )
-        .bind(search_for)
+        .bind(search_str)
         .fetch_optional(&mut self.conn)
         .await
         .context("error fetching SQLite data")?;
@@ -819,7 +836,7 @@ impl Index {
             let compression_raw: i32 = row.try_get(2)?;
 
             Ok(Some(FileInfo {
-                path: search_for.to_string(),
+                path: search_for.to_path_buf(),
                 range: start..=end,
                 compression: compression_raw.try_into().map_err(|value| {
                     anyhow::anyhow!(format!(
@@ -833,7 +850,7 @@ impl Index {
     }
 
     pub(crate) fn list(&mut self) -> impl Stream<Item = Result<FileInfo>> + '_ {
-        async_stream::try_stream! {
+        try_stream! {
             let mut rows = sqlx::query(
                 "SELECT path, start, end, compression FROM files"
             )
@@ -844,6 +861,8 @@ impl Index {
                 let start: u64 = row.try_get(1)?;
                 let end: u64 = row.try_get(2)?;
                 let compression_raw: i32 = row.try_get(3)?;
+                let path = PathBuf::from(path);
+                debug_assert!(path.is_relative());
 
                 yield FileInfo {
                     path,
@@ -852,6 +871,63 @@ impl Index {
                         anyhow::anyhow!("invalid compression algorithm '{value}' in database")
                     })?,
                 };
+            }
+        }
+    }
+
+    /// get the folder contents inside the zip archive.
+    /// * missing folder = list the root
+    /// * given folder: just lists the files in there, and subfolders, but not their contents.
+    pub(crate) fn folder_contents(
+        &mut self,
+        folder: Option<impl AsRef<Path>>,
+    ) -> impl Stream<Item = Result<FolderEntry>> + '_ {
+        // Build the path prefix string used in GLOB patterns.
+        // For root (None): prefix = ""
+        // For a folder:    prefix = "some/folder/"
+        let prefix: String = folder
+            .as_ref()
+            .map(|f| {
+                let s = f.as_ref().to_string_lossy();
+                // Normalise: strip any trailing slash, then re-add exactly one.
+                format!("{}/", s.trim_end_matches('/'))
+            })
+            .unwrap_or_default();
+
+        try_stream! {
+            // Fetch all paths that start with the prefix in one query, then classify
+            // each as a direct file or a subdirectory entry in Rust.
+            let glob = format!("{prefix}*");
+
+            let all_rows: Vec<String> = sqlx::query(
+                "SELECT path FROM files WHERE path GLOB ?"
+            )
+            .bind(&glob)
+            .fetch_all(&mut self.conn)
+            .await
+            .context("error fetching entries from SQLite")?
+            .into_iter()
+            .map(|row| row.try_get::<String, _>(0).map_err(anyhow::Error::from))
+            .collect::<Result<_>>()?;
+
+            // Classify: paths with no further '/' after the prefix are direct files;
+            // paths with a '/' are inside a subdirectory (emit only the subdir name, deduplicated).
+            let mut seen_dirs: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+            for full_path in all_rows {
+                // The relative part is everything after the prefix.
+                let rel = &full_path[prefix.len()..];
+
+                if let Some(slash_pos) = rel.find('/') {
+                    // It's inside a subdirectory. Extract the first component.
+                    let dir_name = &rel[..slash_pos];
+                    if seen_dirs.insert(dir_name.to_string()) {
+                        yield FolderEntry::Dir(dir_name.to_string());
+                    }
+                } else {
+                    // Direct file — yield only the name relative to the queried folder.
+                    yield FolderEntry::File(rel.to_string());
+                }
             }
         }
     }
@@ -867,6 +943,25 @@ mod tests {
     use sqlx::error::DatabaseError as _;
     use std::{collections::HashMap, io::Cursor, ops::Deref, pin::Pin, sync::Arc};
     use zip::write::SimpleFileOptions;
+
+    /// Creates a test archive from a list of (path, content) pairs.
+    async fn create_archive_from_entries(entries: Vec<(&'static str, &'static [u8])>) -> Result<fs::File> {
+        spawn_blocking(move || {
+            use std::io::Write as _;
+            let tf = tempfile::tempfile()?;
+            let mut archive = zip::ZipWriter::new(tf);
+            let options = SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Bzip2)
+                .compression_level(Some(1));
+            for (path, content) in entries {
+                archive.start_file(path, options)?;
+                archive.write_all(content)?;
+            }
+            Ok(archive.finish()?)
+        })
+        .await
+        .map(fs::File::from_std)
+    }
 
     async fn create_test_archive(file_count: u32) -> Result<fs::File> {
         spawn_blocking(move || {
@@ -1573,6 +1668,134 @@ mod tests {
             assert!(result.is_some());
         }
         assert_eq!(downloader.download_count(&remote_index_path), 1);
+
+        Ok(())
+    }
+
+    /// Build an index from a set of (path, content) pairs and open it as an `Index`.
+    async fn index_from_entries(entries: Vec<(&'static str, &'static [u8])>) -> Result<Index> {
+        let archive = create_archive_from_entries(entries).await?;
+        let tmp = tempfile::NamedTempFile::new()?.into_temp_path();
+        create(archive, &tmp).await?;
+
+        let manager = CacheManager::builder().build();
+        Index::open(&tmp, manager).await
+    }
+
+    async fn collect_folder_contents(
+        index: &mut Index,
+        folder: Option<&str>,
+    ) -> Result<(Vec<String>, Vec<String>)> {
+        let entries: Vec<FolderEntry> = index
+            .folder_contents(folder.map(Path::new))
+            .try_collect()
+            .await?;
+
+        let mut files = Vec::new();
+        let mut dirs = Vec::new();
+        for entry in entries {
+            match entry {
+                FolderEntry::File(path) => files.push(path),
+                FolderEntry::Dir(name) => dirs.push(name),
+            }
+        }
+        files.sort();
+        dirs.sort();
+        Ok((files, dirs))
+    }
+
+    #[tokio::test]
+    async fn folder_contents_root_lists_files_and_dirs() -> Result<()> {
+        let mut index = index_from_entries(vec![
+            ("index.html", b""),
+            ("style.css", b""),
+            ("sub/page.html", b""),
+            ("other/file.js", b""),
+        ])
+        .await?;
+
+        let (files, dirs) = collect_folder_contents(&mut index, None).await?;
+
+        assert_eq!(files, vec!["index.html", "style.css"]);
+        assert_eq!(dirs, vec!["other", "sub"]);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn folder_contents_subfolder_lists_direct_children_only() -> Result<()> {
+        let mut index = index_from_entries(vec![
+            ("src/main.rs", b""),
+            ("src/lib.rs", b""),
+            ("src/utils/helper.rs", b""),
+            ("src/utils/mod.rs", b""),
+            ("README.md", b""),
+        ])
+        .await?;
+
+        let (files, dirs) = collect_folder_contents(&mut index, Some("src")).await?;
+
+        assert_eq!(files, vec!["lib.rs", "main.rs"]);
+        assert_eq!(dirs, vec!["utils"]);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn folder_contents_nested_subfolder() -> Result<()> {
+        let mut index = index_from_entries(vec![
+            ("a/b/c/deep.txt", b""),
+            ("a/b/file.txt", b""),
+            ("a/b/other.txt", b""),
+        ])
+        .await?;
+
+        let (files, dirs) = collect_folder_contents(&mut index, Some("a/b")).await?;
+
+        assert_eq!(files, vec!["file.txt", "other.txt"]);
+        assert_eq!(dirs, vec!["c"]);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn folder_contents_empty_folder_returns_nothing() -> Result<()> {
+        let mut index = index_from_entries(vec![("a/file.txt", b"")]).await?;
+
+        let (files, dirs) = collect_folder_contents(&mut index, Some("nonexistent")).await?;
+
+        assert!(files.is_empty());
+        assert!(dirs.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn folder_contents_root_with_only_files() -> Result<()> {
+        let mut index = index_from_entries(vec![("a.txt", b""), ("b.txt", b"")]).await?;
+
+        let (files, dirs) = collect_folder_contents(&mut index, None).await?;
+
+        assert_eq!(files, vec!["a.txt", "b.txt"]);
+        assert!(dirs.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn folder_contents_subdir_deduplicated() -> Result<()> {
+        let mut index = index_from_entries(vec![
+            ("sub/a.txt", b""),
+            ("sub/b.txt", b""),
+            ("sub/c.txt", b""),
+        ])
+        .await?;
+
+        let (files, dirs) = collect_folder_contents(&mut index, None).await?;
+
+        assert!(files.is_empty());
+        // "sub" should appear exactly once despite three files inside it
+        assert_eq!(dirs, vec!["sub"]);
 
         Ok(())
     }
