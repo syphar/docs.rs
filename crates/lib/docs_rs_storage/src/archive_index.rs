@@ -6,7 +6,7 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use docs_rs_opentelemetry::AnyMeterProvider;
 use docs_rs_types::{BuildId, CompressionAlgorithm};
 use docs_rs_utils::spawn_blocking;
-use futures_util::TryStreamExt as _;
+use futures_util::{Stream, TryStreamExt as _};
 use moka::future::Cache as MokaCache;
 use opentelemetry::{
     KeyValue,
@@ -132,6 +132,7 @@ impl Metrics {
 
 #[derive(PartialEq, Eq, Debug)]
 pub(crate) struct FileInfo {
+    path: String,
     range: FileRange,
     compression: CompressionAlgorithm,
 }
@@ -628,6 +629,9 @@ impl Drop for Cache {
 }
 
 impl FileInfo {
+    pub(crate) fn path(&self) -> &str {
+        &self.path
+    }
     pub(crate) fn range(&self) -> FileRange {
         self.range.clone()
     }
@@ -815,6 +819,7 @@ impl Index {
             let compression_raw: i32 = row.try_get(2)?;
 
             Ok(Some(FileInfo {
+                path: search_for.to_string(),
                 range: start..=end,
                 compression: compression_raw.try_into().map_err(|value| {
                     anyhow::anyhow!(format!(
@@ -824,6 +829,30 @@ impl Index {
             }))
         } else {
             Ok(None)
+        }
+    }
+
+    pub(crate) fn list(&mut self) -> impl Stream<Item = Result<FileInfo>> + '_ {
+        async_stream::try_stream! {
+            let mut rows = sqlx::query(
+                "SELECT path, start, end, compression FROM files"
+            )
+            .fetch(&mut self.conn);
+
+            while let Some(row) = rows.try_next().await.context("error fetching SQLite data")? {
+                let path: String = row.try_get(0)?;
+                let start: u64 = row.try_get(1)?;
+                let end: u64 = row.try_get(2)?;
+                let compression_raw: i32 = row.try_get(3)?;
+
+                yield FileInfo {
+                    path,
+                    range: start..=end,
+                    compression: compression_raw.try_into().map_err(|value| {
+                        anyhow::anyhow!("invalid compression algorithm '{value}' in database")
+                    })?,
+                };
+            }
         }
     }
 }
