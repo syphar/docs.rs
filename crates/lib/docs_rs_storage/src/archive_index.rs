@@ -136,7 +136,7 @@ pub(crate) struct FileInfo {
     compression: CompressionAlgorithm,
 }
 
-struct Entry {
+pub(crate) struct Entry {
     // file size of the local sqlite database.
     // Will be used to "weigh" cache entries, so that the cache can evict based on
     // total size of cached files instead of number of entries.
@@ -433,34 +433,20 @@ impl Cache {
         Ok(())
     }
 
-    async fn find_inner(
+    pub(crate) async fn find_index(
         &self,
         archive_path: &str,
         latest_build_id: Option<BuildId>,
-        path_in_archive: &str,
         downloader: &impl Downloader,
-    ) -> Result<Option<FileInfo>> {
+    ) -> Result<Index> {
         let local_index_path = self.local_index_path(archive_path, latest_build_id);
 
         // fast path: try to use whatever is there, no locking
-        let force_redownload = match find_in_file(&local_index_path, path_in_archive).await {
-            Ok(res) => {
-                // Keep moka's recency/frequency view in sync with successful fast-path
-                // file lookups so TTI and admission decisions reflect real usage.
-                if self.manager.get(&local_index_path).await.is_none() {
-                    let entry_path = local_index_path.clone();
-                    self.manager
-                        .entry(local_index_path.clone())
-                        .or_insert_with(
-                            async move { Arc::new(Entry::from_path(&entry_path).await) },
-                        )
-                        .await;
-                }
-                return Ok(res);
-            }
+        let force_redownload = match Index::open(&local_index_path, self.manager.clone()).await {
+            Ok(index) => return Ok(index),
             Err(err) => {
                 let force_redownload = !err.is::<PathNotFoundError>();
-                debug!(?err, "archive index lookup failed, will try repair.");
+                debug!(?err, "archive index open failed, will try repair.");
                 force_redownload
             }
         };
@@ -535,7 +521,7 @@ impl Cache {
             })?;
 
         // Final attempt: if this still fails, bubble the error.
-        find_in_file(local_index_path, path_in_archive).await
+        Index::open(local_index_path, self.manager.clone()).await
     }
 
     /// Find the file metadata needed to fetch a certain path inside a remote archive.
@@ -551,10 +537,10 @@ impl Cache {
     ) -> Result<Option<FileInfo>> {
         for attempt in 1..=FIND_ATTEMPTS {
             match self
-                .find_inner(archive_path, latest_build_id, path_in_archive, downloader)
+                .find_index(archive_path, latest_build_id, downloader)
                 .await
             {
-                Ok(file_info) => {
+                Ok(mut index) => {
                     self.metrics.find_calls.add(
                         1,
                         &[
@@ -562,7 +548,8 @@ impl Cache {
                             KeyValue::new("outcome", "success"),
                         ],
                     );
-                    return Ok(file_info);
+                    // FIXME: can sqlite errors happen here in find? that don't happen on open?
+                    return index.find(path_in_archive).await;
                 }
                 Err(err) if attempt < FIND_ATTEMPTS => {
                     warn!(
@@ -780,51 +767,65 @@ where
     Ok(zipfile)
 }
 
-async fn find_in_sqlite_index<'e, E>(executor: E, search_for: &str) -> Result<Option<FileInfo>>
-where
-    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
-{
-    let row = sqlx::query(
-        "
-        SELECT start, end, compression
-        FROM files
-        WHERE path = ?
-        ",
-    )
-    .bind(search_for)
-    .fetch_optional(executor)
-    .await
-    .context("error fetching SQLite data")?;
-
-    if let Some(row) = row {
-        let start: u64 = row.try_get(0)?;
-        let end: u64 = row.try_get(1)?;
-        let compression_raw: i32 = row.try_get(2)?;
-
-        Ok(Some(FileInfo {
-            range: start..=end,
-            compression: compression_raw.try_into().map_err(|value| {
-                anyhow::anyhow!(format!(
-                    "invalid compression algorithm '{value}' in database"
-                ))
-            })?,
-        }))
-    } else {
-        Ok(None)
-    }
+pub(crate) struct Index {
+    conn: sqlx::SqliteConnection,
+    archive_index_path: PathBuf,
+    manager: CacheManager,
 }
 
-#[instrument]
-pub(crate) async fn find_in_file<P>(
-    archive_index_path: P,
-    search_for: &str,
-) -> Result<Option<FileInfo>>
-where
-    P: AsRef<Path> + std::fmt::Debug,
-{
-    let mut conn = sqlite_open(archive_index_path).await?;
+impl Index {
+    pub(crate) async fn open<P>(archive_index_path: P, manager: CacheManager) -> Result<Self>
+    where
+        P: AsRef<Path>,
+    {
+        let archive_index_path = archive_index_path.as_ref().to_path_buf();
+        let conn = sqlite_open(&archive_index_path).await?;
+        Ok(Self {
+            conn,
+            archive_index_path,
+            manager,
+        })
+    }
 
-    find_in_sqlite_index(&mut conn, search_for).await
+    pub(crate) async fn find(&mut self, search_for: &str) -> Result<Option<FileInfo>> {
+        // Keep moka's recency/frequency view in sync with successful fast-path
+        // file lookups so TTI and admission decisions reflect real usage.
+        if self.manager.get(&self.archive_index_path).await.is_none() {
+            let entry_path = self.archive_index_path.clone();
+            self.manager
+                .entry(self.archive_index_path.clone())
+                .or_insert_with(async move { Arc::new(Entry::from_path(&entry_path).await) })
+                .await;
+        }
+
+        // now actually find the entry in the index
+        let row = sqlx::query(
+            "SELECT start, end, compression
+                FROM files
+                WHERE path = ?",
+        )
+        .bind(search_for)
+        .fetch_optional(&mut self.conn)
+        .await
+        .context("error fetching SQLite data")?;
+
+        if let Some(row) = row {
+            let start: u64 = row.try_get(0)?;
+            let end: u64 = row.try_get(1)?;
+            let compression_raw: i32 = row.try_get(2)?;
+
+            Ok(Some(FileInfo {
+                range: start..=end,
+                compression: compression_raw.try_into().map_err(|value| {
+                    anyhow::anyhow!(format!(
+                        "invalid compression algorithm '{value}' in database"
+                    ))
+                })?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1019,12 +1020,13 @@ mod tests {
         let tempfile = tempfile::NamedTempFile::new()?.into_temp_path();
         create(tf, &tempfile).await?;
 
-        let fi = find_in_file(&tempfile, "testfile0").await?.unwrap();
+        let mut index = Index::open(&tempfile, CacheManager::builder().build()).await?;
+        let fi = index.find("testfile0").await?.unwrap();
 
         assert_eq!(fi.range, FileRange::new(39, 459));
         assert_eq!(fi.compression, CompressionAlgorithm::Bzip2);
 
-        assert!(find_in_file(&tempfile, "some_other_file",).await?.is_none());
+        assert!(index.find("some_other_file").await?.is_none());
         Ok(())
     }
 
