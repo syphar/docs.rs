@@ -46,14 +46,16 @@ impl FileList {
         latest_build_id: Option<BuildId>,
         folder: Option<&str>,
     ) -> Result<FileList> {
-        Ok(Self {
-            files: storage
-                .find_archive_index(&source_archive_path(name, version), latest_build_id)
-                .await?
-                .folder_contents(folder)
-                .try_collect::<Vec<_>>()
-                .await?,
-        })
+        let mut files = storage
+            .find_archive_index(&source_archive_path(name, version), latest_build_id)
+            .await?
+            .folder_contents(folder)
+            .try_collect::<Vec<_>>()
+            .await?;
+
+        files.sort_unstable();
+
+        Ok(Self { files })
     }
 
     /// Gets legacy FileList from a request path
@@ -116,7 +118,12 @@ impl FileList {
 
                     // look only files for req_path
                     if let Some(path) = path.strip_prefix(folder) {
-                        file_list.push(Self::entry_from_path(path));
+                        let file = Self::entry_from_path(path);
+
+                        // avoid adding duplicates, a directory may occur more than once
+                        if !file_list.contains(&file) {
+                            file_list.push(file);
+                        }
                     }
                 }
             }

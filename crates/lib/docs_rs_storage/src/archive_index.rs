@@ -890,16 +890,20 @@ impl Index {
             .unwrap_or_default();
 
         try_stream! {
-            let glob = format!("{prefix}*");
-
             // Seen-dirs is the only state we must accumulate: one String per unique
             // immediate subdirectory name. File rows are yielded as they arrive.
             let mut seen_dirs: HashSet<String> = HashSet::new();
 
-            // we try to keep the query simple and do some additional filtering in rust.
-            let mut rows = sqlx::query("SELECT path FROM files WHERE path GLOB ?")
-                .bind(&glob)
-                .fetch(&mut self.conn);
+            let mut rows = if prefix.is_empty() {
+                // Root listing: no WHERE clause — avoids a GLOB '*' predicate that
+                // SQLite would evaluate on every row without being able to optimize away.
+                sqlx::query("SELECT path FROM files")
+                    .fetch(&mut self.conn)
+            } else {
+                sqlx::query("SELECT path FROM files WHERE path GLOB ?")
+                    .bind(format!("{prefix}*"))
+                    .fetch(&mut self.conn)
+            };
 
             while let Some(row) = rows.try_next().await.context("error fetching entries from SQLite")? {
                 let full_path: String = row.try_get(0)?;
