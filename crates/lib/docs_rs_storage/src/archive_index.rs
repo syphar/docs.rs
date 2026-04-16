@@ -1,13 +1,15 @@
 use crate::{
-    PathNotFoundError, blob::StreamingBlob, config::ArchiveIndexCacheConfig, types::FileRange,
-    utils::file_list::walk_dir_recursive,
+    PathNotFoundError, blob::StreamingBlob, config::ArchiveIndexCacheConfig, file::FolderEntry,
+    types::FileRange, utils::file_list::walk_dir_recursive,
 };
 use anyhow::{Context as _, Result, anyhow, bail};
 use async_stream::try_stream;
+use docs_rs_mimes::detect_mime;
 use docs_rs_opentelemetry::AnyMeterProvider;
 use docs_rs_types::{BuildId, CompressionAlgorithm};
 use docs_rs_utils::spawn_blocking;
 use futures_util::{Stream, TryStreamExt as _};
+use mime::Mime;
 use moka::future::Cache as MokaCache;
 use opentelemetry::{
     KeyValue,
@@ -137,12 +139,6 @@ pub(crate) struct FileInfo {
     path: PathBuf,
     range: FileRange,
     compression: CompressionAlgorithm,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum FolderEntry {
-    File(String),
-    Dir(String),
 }
 
 pub(crate) struct Entry {
@@ -779,7 +775,7 @@ where
     Ok(zipfile)
 }
 
-pub(crate) struct Index {
+pub struct Index {
     conn: sqlx::SqliteConnection,
     archive_index_path: PathBuf,
     manager: CacheManager,
@@ -799,7 +795,7 @@ impl Index {
         })
     }
 
-    pub(crate) async fn find(&mut self, search_for: impl AsRef<Path>) -> Result<Option<FileInfo>> {
+    pub async fn find(&mut self, search_for: impl AsRef<Path>) -> Result<Option<FileInfo>> {
         let search_for = search_for.as_ref();
 
         if search_for.is_absolute() {
@@ -850,7 +846,7 @@ impl Index {
         }
     }
 
-    pub(crate) fn list(&mut self) -> impl Stream<Item = Result<FileInfo>> + '_ {
+    pub fn list(&mut self) -> impl Stream<Item = Result<FileInfo>> + '_ {
         try_stream! {
             let mut rows = sqlx::query(
                 "SELECT path, start, end, compression FROM files"
@@ -881,7 +877,7 @@ impl Index {
     /// * given folder: just lists the files in there, and subfolders, but not their contents.
     /// You'll need this method when you build a file-browser for the archive, like
     /// in our source pages.
-    pub(crate) fn folder_contents(
+    pub fn folder_contents(
         &mut self,
         folder: Option<impl AsRef<Path>>,
     ) -> impl Stream<Item = Result<FolderEntry>> + '_ {
@@ -1796,5 +1792,27 @@ mod tests {
         assert_eq!(dirs, vec!["sub"]);
 
         Ok(())
+    }
+
+    #[test]
+    fn folder_entry_ordering() {
+        let mut entries = vec![
+            FolderEntry::File("zebra.txt".to_string()),
+            FolderEntry::Dir("alpha".to_string()),
+            FolderEntry::File("apple.txt".to_string()),
+            FolderEntry::Dir("zulu".to_string()),
+        ];
+
+        entries.sort();
+
+        assert_eq!(
+            entries,
+            vec![
+                FolderEntry::Dir("alpha".to_string()),
+                FolderEntry::Dir("zulu".to_string()),
+                FolderEntry::File("apple.txt".to_string()),
+                FolderEntry::File("zebra.txt".to_string()),
+            ]
+        );
     }
 }

@@ -44,25 +44,25 @@
                                     Show a link to the file with a fancy icon. If the file is a directory,
                                     `/` is appended to show the contents of the folder
                                 #}
-                                <a href="./{{ file.name }}{% if file.mime == "dir" %}/{% endif %}" class="pure-menu-link">
+                                <a href="./{{ file.name() }}{% if file.is_dir() %}/{% endif %}" class="pure-menu-link">
                                     {# Directories #}
-                                    {%- if file.mime == "dir" -%}
+                                    {%- if file.is_dir() -%}
                                         {{ crate::icons::IconFolderOpen.render_regular(false, false, "") }}
 
                                     {# Rust files #}
-                                    {%- elif file.mime == "text/rust" -%}
+                                    {%- elif file.mime().unwrap() == "text/rust" -%}
                                         {{ crate::icons::IconRust.render_brands(false, false, "") }}
 
                                     {# Cargo.lock #}
-                                    {%- elif file.mime == "text/plain" && file.name == "Cargo.lock" -%}
+                                    {%- elif file.mime().unwrap() == "text/plain" && file.name() == "Cargo.lock" -%}
                                         {{ crate::icons::IconLock.render_solid(false, false, "") }}
 
                                     {# Markdown files #}
-                                    {% elif file.mime == "text/markdown" %}
+                                    {% elif file.mime().unwrap() == "text/markdown" %}
                                         {{ crate::icons::IconMarkdown.render_brands(false, false, "") }}
 
                                     {# .gitignore #}
-                                    {% elif file.mime == "text/plain" && file.name == ".gitignore" %}
+                                    {% elif file.mime().unwrap() == "text/plain" && file.name() == ".gitignore" %}
                                         {{ crate::icons::IconGitAlt.render_brands(false, false, "") }}
 
                                     {#
@@ -84,7 +84,7 @@
                                     #}
 
                                     {# Text files or files which mime starts with `text` #}
-                                    {%- elif file.mime == "text/plain" || file.mime.split('/').next() == Some("text") -%}
+                                    {%- elif file.mime().unwrap() == "text/plain" || file.mime().unwrap().type_() == "text" -%}
                                         {{ crate::icons::IconFileLines.render_regular(false, false, "") }}
 
                                         {# Binary files and any unrecognized types #}
@@ -92,7 +92,7 @@
                                         {{ crate::icons::IconFile.render_regular(false, false, "") }}
                                     {%- endif -%}
 
-                                    <span class="text">{{ file.name }}</span>
+                                    <span class="text">{{ file.name() }}</span>
                                 </a>
                             </li>
                         {%- endfor -%}
@@ -115,7 +115,7 @@
             {%- if let Some(file_content) = file_content -%}
                 {% decl file_name %}
                 {% if let Some(file) = file %}
-                    {% set file_name = file.name.as_str() %}
+                    {% set file_name = file.name() %}
                 {% else %}
                     {% set file_name = "" %}
                 {% endif %}
@@ -123,7 +123,7 @@
                     <div data-nosnippet class="source-code"><pre id="line-numbers"><code>
                         {%- for line in 1..=file_content.lines().count() -%}
                             <a href="#{{line}}" id="{{line}}">{{line}}</a>
-                        {%~ endfor -%}
+                        {%- endfor -%}
                     </code></pre></div>
                     <div id="source-code" class="source-code">
                         {{- file_content|highlight(file_name) -}}

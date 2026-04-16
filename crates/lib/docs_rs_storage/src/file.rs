@@ -31,3 +31,47 @@ pub fn file_list_to_json(files: impl IntoIterator<Item = FileEntry>) -> Value {
             .collect(),
     )
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FolderEntry {
+    File(String),
+    Dir(String),
+}
+
+impl FolderEntry {
+    pub fn name(&self) -> &str {
+        match self {
+            FolderEntry::File(name) => &name,
+            FolderEntry::Dir(name) => &name,
+        }
+    }
+
+    pub fn is_dir(&self) -> bool {
+        matches!(self, Self::Dir(_))
+    }
+
+    pub fn mime(&self) -> Option<Mime> {
+        if let Self::File(name) = self {
+            Some(detect_mime(name))
+        } else {
+            None
+        }
+    }
+}
+
+impl PartialOrd for FolderEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for FolderEntry {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match (self, other) {
+            (FolderEntry::Dir(a), FolderEntry::Dir(b)) => a.cmp(b),
+            (FolderEntry::File(a), FolderEntry::File(b)) => a.cmp(b),
+            (FolderEntry::Dir(_), FolderEntry::File(_)) => std::cmp::Ordering::Less,
+            (FolderEntry::File(_), FolderEntry::Dir(_)) => std::cmp::Ordering::Greater,
+        }
+    }
+}
