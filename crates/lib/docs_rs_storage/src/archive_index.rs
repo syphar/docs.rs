@@ -15,6 +15,7 @@ use opentelemetry::{
 };
 use sqlx::{ConnectOptions as _, Connection as _, QueryBuilder, Row as _, Sqlite};
 use std::{
+    collections::HashSet,
     future::Future,
     path::{Path, PathBuf},
     pin::Pin,
@@ -878,6 +879,8 @@ impl Index {
     /// get the folder contents inside the zip archive.
     /// * missing folder = list the root
     /// * given folder: just lists the files in there, and subfolders, but not their contents.
+    /// You'll need this method when you build a file-browser for the archive, like
+    /// in our source pages.
     pub(crate) fn folder_contents(
         &mut self,
         folder: Option<impl AsRef<Path>>,
@@ -899,8 +902,9 @@ impl Index {
 
             // Seen-dirs is the only state we must accumulate: one String per unique
             // immediate subdirectory name. File rows are yielded as they arrive.
-            let mut seen_dirs: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut seen_dirs: HashSet<String> = HashSet::new();
 
+            // we try to keep the query simple and do some additional filtering in rust.
             let mut rows = sqlx::query("SELECT path FROM files WHERE path GLOB ?")
                 .bind(&glob)
                 .fetch(&mut self.conn);
@@ -937,7 +941,9 @@ mod tests {
     use zip::write::SimpleFileOptions;
 
     /// Creates a test archive from a list of (path, content) pairs.
-    async fn create_archive_from_entries(entries: Vec<(&'static str, &'static [u8])>) -> Result<fs::File> {
+    async fn create_archive_from_entries(
+        entries: Vec<(&'static str, &'static [u8])>,
+    ) -> Result<fs::File> {
         spawn_blocking(move || {
             use std::io::Write as _;
             let tf = tempfile::tempfile()?;
