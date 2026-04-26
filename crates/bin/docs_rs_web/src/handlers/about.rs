@@ -22,6 +22,8 @@ struct AboutBuilds {
     limits: Limits,
     /// Just for the template, since this isn't shared with AboutPage
     active_tab: &'static str,
+    /// used build image
+    build_image: Option<String>,
 }
 
 impl_axum_webpage!(
@@ -36,9 +38,10 @@ pub(crate) async fn about_builds_handler(
     Extension(context): Extension<Arc<Context>>,
 ) -> AxumResult<impl IntoResponse> {
     Ok(AboutBuilds {
-        rustc_version: get_config::<String>(&mut conn, ConfigName::RustcVersion).await?,
+        rustc_version: get_config(&mut conn, ConfigName::RustcVersion).await?,
         limits: Limits::new(context.config().build_limits()?),
         active_tab: "builds",
+        build_image: get_config(&mut conn, ConfigName::BuildImage).await?,
     })
 }
 

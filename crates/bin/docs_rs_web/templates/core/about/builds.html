@@ -20,6 +20,14 @@
                 {%- endif -%}
             </p>
 
+            {%- if let Some(build_image) = build_image %}
+                <p>
+                    Currently used build image:
+                    <a href="https://{{ build_image }}"><code>{{ build_image }}</code></a>
+                </p>
+            {%- endif -%}
+
+
             <h3 id="notes-on-docsrs"> <a href="#notes-on-docsrs">Notes on using Docs.rs</a> </h3>
 
             <h4 id="setting-a-readme"> <a href="#setting-a-readme">Setting a README</a> </h4>
