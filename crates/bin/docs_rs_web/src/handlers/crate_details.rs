@@ -469,13 +469,17 @@ pub(crate) async fn crate_details_handler(
 
     let mut details = CrateDetails::from_matched_release(&mut conn, matched_release).await?;
 
+    let build_statistics =
+        BuildStatistics::fetch_for_release(&mut conn, details.crate_id, details.release_id).await?;
+
+    // NOTE: we want to give back the db connection to the pool
+    // before we do the long S3 requests.
+    drop(conn);
+
     match details.fetch_readme(&storage).await {
         Ok(readme) => details.readme = readme.or(details.readme),
         Err(e) => warn!(?e, "error fetching readme"),
     }
-
-    let build_statistics =
-        BuildStatistics::fetch_for_release(&mut conn, details.crate_id, details.release_id).await?;
 
     let CrateDetails {
         version,
@@ -703,8 +707,8 @@ mod tests {
     use docs_rs_database::{crate_details::releases_for_crate, releases::update_build_status};
     use docs_rs_registry_api::CrateOwner;
     use docs_rs_test_fakes::{FakeBuild, fake_release_that_failed_before_build};
-    use docs_rs_types::KrateName;
     use docs_rs_types::testing::{FOO, V1};
+    use docs_rs_types::{KrateName, SimpleBuildError};
     use http::StatusCode;
     use kuchikiki::traits::TendrilSink;
     use pretty_assertions::assert_eq;
@@ -1740,7 +1744,13 @@ mod tests {
     fn test_minimal_failed_release_doesnt_error_features() {
         async_wrapper(|env| async move {
             let mut conn = env.async_conn().await?;
-            fake_release_that_failed_before_build(&mut conn, "foo", "0.1.0", "some errors").await?;
+            fake_release_that_failed_before_build(
+                &mut conn,
+                "foo",
+                "0.1.0",
+                SimpleBuildError("some errors".into()),
+            )
+            .await?;
 
             let text_content = env
                 .web_app()
@@ -1764,7 +1774,13 @@ mod tests {
     fn test_minimal_failed_release_doesnt_error() {
         async_wrapper(|env| async move {
             let mut conn = env.async_conn().await?;
-            fake_release_that_failed_before_build(&mut conn, "foo", "0.1.0", "some errors").await?;
+            fake_release_that_failed_before_build(
+                &mut conn,
+                "foo",
+                "0.1.0",
+                SimpleBuildError("some errors".into()),
+            )
+            .await?;
 
             let text_content = env
                 .web_app()
@@ -1800,8 +1816,6 @@ mod tests {
                 })
                 .collect();
 
-            dbg!(&platform_links);
-
             assert_eq!(platform_links.len(), 2);
 
             for (_, url, rel) in &platform_links {
@@ -1824,7 +1838,7 @@ mod tests {
             url: &str,
             should_contain_redirect: bool,
         ) {
-            let response = env.web_app().await.get(dbg!(url)).await.unwrap();
+            let response = env.web_app().await.get(url).await.unwrap();
             let status = response.status();
             assert!(
                 status.is_success(),
@@ -1834,11 +1848,7 @@ mod tests {
                 response.redirect_target().unwrap_or_default(),
             );
             let text = response.text().await.unwrap();
-            let list1 = dbg!(check_links(
-                text.clone(),
-                false,
-                dbg!(should_contain_redirect)
-            ));
+            let list1 = check_links(text.clone(), false, should_contain_redirect);
 
             // Same test with AJAX endpoint.
             let platform_menu_url = kuchikiki::parse_html()
@@ -1850,12 +1860,7 @@ mod tests {
                 .get("data-url")
                 .expect("data-url")
                 .to_string();
-            let response = env
-                .web_app()
-                .await
-                .get(&dbg!(platform_menu_url))
-                .await
-                .unwrap();
+            let response = env.web_app().await.get(&platform_menu_url).await.unwrap();
             assert!(
                 response.status().is_success(),
                 "{}",
@@ -1865,11 +1870,11 @@ mod tests {
                 CachePolicy::ForeverInCdn(KrateName::from_str("dummy").unwrap().into()),
                 env.config(),
             );
-            let list2 = dbg!(check_links(
+            let list2 = check_links(
                 response.text().await.unwrap(),
                 true,
                 should_contain_redirect,
-            ));
+            );
             assert_eq!(list1, list2);
         }
 
@@ -2222,7 +2227,7 @@ path = "src/lib.rs"
                 .create()
                 .await?;
 
-            let resp = env.web_app().await.get("/crate/dummy%3E").await?;
+            let resp = env.web_app().await.get("/crate/dummy%7B").await?;
             assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
             Ok(())

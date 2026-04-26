@@ -27,6 +27,7 @@ pub(crate) struct BuildDetails {
     build_time: Option<DateTime<Utc>>,
     output: String,
     errors: Option<String>,
+    error_kind: Option<String>,
 }
 
 #[derive(Template)]
@@ -90,6 +91,7 @@ pub(crate) async fn build_details_handler(
              COALESCE(builds.build_finished, builds.build_started) as build_time,
              builds.output,
              builds.errors,
+             builds.error_kind,
              releases.default_target
          FROM builds
          INNER JOIN releases ON releases.id = builds.rid
@@ -102,6 +104,19 @@ pub(crate) async fn build_details_handler(
     .fetch_optional(&mut *conn)
     .await?
     .ok_or(AxumNope::BuildNotFound)?;
+
+    let metadata = MetaData::from_crate(
+        &mut conn,
+        params.name(),
+        &version,
+        Some(params.req_version().clone()),
+    )
+    .await?;
+    let params = params.apply_metadata(&metadata);
+
+    // NOTE: we want to give back the db connection to the pool
+    // before we do the long S3 requests.
+    drop(conn);
 
     let (output, all_log_filenames, current_filename) = if let Some(output) = row.output {
         // legacy case, for old builds the build log was stored in the database.
@@ -153,15 +168,6 @@ pub(crate) async fn build_details_handler(
         (file_content, all_log_filenames, current_filename)
     };
 
-    let metadata = MetaData::from_crate(
-        &mut conn,
-        params.name(),
-        &version,
-        Some(params.req_version().clone()),
-    )
-    .await?;
-    let params = params.apply_metadata(&metadata);
-
     Ok(BuildDetailsPage {
         metadata,
         build_details: BuildDetails {
@@ -172,6 +178,7 @@ pub(crate) async fn build_details_handler(
             build_time: row.build_time,
             output,
             errors: row.errors,
+            error_kind: row.error_kind,
         },
         all_log_filenames,
         current_filename,
@@ -187,7 +194,7 @@ mod tests {
         async_wrapper,
     };
     use docs_rs_test_fakes::{FakeBuild, fake_release_that_failed_before_build};
-    use docs_rs_types::{BuildId, ReleaseId, testing::V0_1};
+    use docs_rs_types::{BuildId, ReleaseId, SimpleBuildError, testing::V0_1};
     use kuchikiki::traits::TendrilSink;
     use test_case::test_case;
 
@@ -228,7 +235,7 @@ mod tests {
                 &mut conn,
                 "foo",
                 "0.1.0",
-                "some random error",
+                SimpleBuildError("some random error".into()),
             )
             .await?;
 
@@ -243,6 +250,9 @@ mod tests {
             );
 
             let info_text = page.select("pre").unwrap().next().unwrap().text_contents();
+
+            assert!(info_text.contains("# error kind"), "{}", info_text);
+            assert!(info_text.contains("SimpleBuildError"), "{}", info_text);
 
             assert!(info_text.contains("# pre-build errors"), "{}", info_text);
             assert!(info_text.contains("some random error"), "{}", info_text);
@@ -259,7 +269,7 @@ mod tests {
                 &mut conn,
                 "foo",
                 "0.1.0",
-                "some random error",
+                SimpleBuildError("some random error".into()),
             )
             .await?;
 
@@ -281,6 +291,9 @@ mod tests {
             );
 
             let info_text = page.select("pre").unwrap().next().unwrap().text_contents();
+
+            assert!(info_text.contains("# error kind"), "{}", info_text);
+            assert!(info_text.contains("SimpleBuildError"), "{}", info_text);
 
             assert!(info_text.contains("# pre-build errors"), "{}", info_text);
             assert!(info_text.contains("some random error"), "{}", info_text);

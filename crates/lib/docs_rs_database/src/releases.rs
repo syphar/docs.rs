@@ -3,8 +3,8 @@ use anyhow::{Context, Result, anyhow};
 use docs_rs_cargo_metadata::{MetadataPackage, ReleaseDependencyList};
 use docs_rs_registry_api::{CrateData, CrateOwner, ReleaseData};
 use docs_rs_types::{
-    BuildId, BuildStatus, CompressionAlgorithm, CrateId, DocCoverage, Feature, KrateName,
-    ReleaseId, Version,
+    BuildError, BuildId, BuildStatus, CompressionAlgorithm, CrateId, DocCoverage, Feature,
+    KrateName, ReleaseId, Version,
 };
 use docs_rs_utils::rustc_version::parse_rustc_date;
 use futures_util::stream::TryStreamExt;
@@ -220,16 +220,21 @@ pub async fn add_doc_coverage(
 }
 
 /// Adds a build into database
+#[allow(clippy::too_many_arguments)]
 #[instrument(skip(conn))]
-pub async fn finish_build(
+pub async fn finish_build<E>(
     conn: &mut sqlx::PgConnection,
     build_id: BuildId,
     rustc_version: &str,
     docsrs_version: &str,
     build_status: BuildStatus,
     documentation_size: Option<u64>,
-    errors: Option<&str>,
-) -> Result<()> {
+    memory_peak: Option<u64>,
+    build_error: Option<&E>,
+) -> Result<()>
+where
+    E: BuildError,
+{
     debug!("updating build after finishing");
     let hostname = hostname::get()?;
 
@@ -257,18 +262,22 @@ pub async fn finish_build(
              errors = $5,
              documentation_size = $6,
              rustc_nightly_date = $7,
-             build_finished = NOW()
+             build_finished = NOW(),
+             error_kind = $8,
+             memory_peak = $9
          WHERE
-            id = $8
+            id = $10
          RETURNING rid as "rid: ReleaseId" "#,
         rustc_version,
         docsrs_version,
         build_status as BuildStatus,
         hostname.to_str().unwrap_or(""),
-        errors,
+        build_error.map(|err| err.to_string()),
         documentation_size.map(|v| v as i64),
         rustc_date,
-        build_id.0,
+        build_error.map(|err| err.kind()),
+        memory_peak.map(|v| v as i64),
+        build_id as _,
     )
     .fetch_one(&mut *conn)
     .await?;
@@ -279,21 +288,26 @@ pub async fn finish_build(
 }
 
 #[instrument(skip(conn))]
-pub async fn update_build_with_error(
+pub async fn update_build_with_error<E>(
     conn: &mut sqlx::PgConnection,
     build_id: BuildId,
-    errors: Option<&str>,
-) -> Result<BuildId> {
+    build_error: Option<&E>,
+) -> Result<BuildId>
+where
+    E: BuildError,
+{
     debug!("updating build with error");
     let release_id = sqlx::query_scalar!(
         r#"UPDATE builds
          SET
              build_status = $1,
-             errors = $2
-         WHERE id = $3
+             errors = $2,
+             error_kind = $3
+         WHERE id = $4
          RETURNING rid as "rid: ReleaseId" "#,
         BuildStatus::Failure as BuildStatus,
-        errors,
+        build_error.map(|err| err.to_string()),
+        build_error.map(|err| err.kind()),
         build_id.0,
     )
     .fetch_one(&mut *conn)
@@ -348,6 +362,21 @@ pub async fn initialize_build(
     release_id: ReleaseId,
 ) -> Result<BuildId> {
     let hostname = hostname::get()?;
+
+    sqlx::query!(
+        r#"UPDATE builds
+           SET
+               build_status = 'failure',
+               errors = $1,
+               build_finished = NOW()
+           WHERE
+               rid = $2
+               AND build_status = 'in_progress'"#,
+        "build aborted: builder process restarted before completion",
+        release_id as _,
+    )
+    .execute(&mut *conn)
+    .await?;
 
     let build_id = sqlx::query_scalar!(
         r#"INSERT INTO builds(rid, build_status, build_server, build_started)
@@ -608,7 +637,7 @@ mod test {
     use docs_rs_opentelemetry::testing::TestMetrics;
     use docs_rs_registry_api::OwnerKind;
     use docs_rs_types::{
-        KrateName,
+        KrateName, SimpleBuildError,
         testing::{DEFAULT_TARGET, KRATE, V0_1, V1},
     };
     use std::{collections::BTreeMap, iter, slice};
@@ -677,7 +706,12 @@ mod test {
         let release_id = initialize_release(&mut conn, crate_id, &V0_1).await?;
         let build_id = initialize_build(&mut conn, release_id).await?;
 
-        update_build_with_error(&mut conn, build_id, Some("error message")).await?;
+        update_build_with_error(
+            &mut conn,
+            build_id,
+            Some(&SimpleBuildError("error message".into())),
+        )
+        .await?;
 
         let row = sqlx::query!(
             r#"SELECT
@@ -685,10 +719,11 @@ mod test {
                 docsrs_version,
                 build_started,
                 build_status as "build_status: BuildStatus",
-                errors
-                FROM builds
-                WHERE id = $1"#,
-            build_id.0
+                errors,
+                error_kind
+               FROM builds
+               WHERE id = $1"#,
+            build_id as _
         )
         .fetch_one(&mut *conn)
         .await?;
@@ -697,7 +732,8 @@ mod test {
         assert!(row.docsrs_version.is_none());
         assert!(row.build_started.is_some());
         assert_eq!(row.build_status, BuildStatus::Failure);
-        assert_eq!(row.errors, Some("error message".into()));
+        assert_eq!(row.errors, Some("build error: error message".into()));
+        assert_eq!(row.error_kind, Some("SimpleBuildError".into()));
 
         Ok(())
     }
@@ -720,6 +756,7 @@ mod test {
             BuildStatus::Success,
             None,
             None,
+            None::<&SimpleBuildError>,
         )
         .await?;
 
@@ -729,6 +766,7 @@ mod test {
                 docsrs_version,
                 build_status as "build_status: BuildStatus",
                 errors,
+                error_kind,
                 rustc_nightly_date
                 FROM builds
                 WHERE id = $1"#,
@@ -748,6 +786,7 @@ mod test {
             Some(NaiveDate::from_ymd_opt(2024, 10, 15).unwrap())
         );
         assert!(row.errors.is_none());
+        assert!(row.error_kind.is_none());
 
         Ok(())
     }
@@ -769,7 +808,8 @@ mod test {
             "docsrs_version",
             BuildStatus::Success,
             Some(42),
-            None,
+            Some(23),
+            None::<&SimpleBuildError>,
         )
         .await?;
 
@@ -779,7 +819,9 @@ mod test {
                 docsrs_version,
                 build_status as "build_status: BuildStatus",
                 documentation_size,
+                memory_peak,
                 errors,
+                error_kind,
                 rustc_nightly_date
                 FROM builds
                 WHERE id = $1"#,
@@ -792,8 +834,10 @@ mod test {
         assert_eq!(row.docsrs_version, Some("docsrs_version".into()));
         assert_eq!(row.build_status, BuildStatus::Success);
         assert_eq!(row.documentation_size, Some(42));
+        assert_eq!(row.memory_peak, Some(23));
         assert!(row.rustc_nightly_date.is_none());
         assert!(row.errors.is_none());
+        assert!(row.error_kind.is_none());
 
         Ok(())
     }
@@ -815,7 +859,8 @@ mod test {
             "docsrs_version",
             BuildStatus::Failure,
             None,
-            Some("error message"),
+            None,
+            Some(&SimpleBuildError("error message".into())),
         )
         .await?;
 
@@ -825,10 +870,11 @@ mod test {
                 docsrs_version,
                 build_status as "build_status: BuildStatus",
                 documentation_size,
-                errors
-                FROM builds
-                WHERE id = $1"#,
-            build_id.0
+                errors,
+                error_kind
+               FROM builds
+               WHERE id = $1"#,
+            build_id as _
         )
         .fetch_one(&mut *conn)
         .await?;
@@ -836,7 +882,8 @@ mod test {
         assert_eq!(row.rustc_version, Some("rustc_version".into()));
         assert_eq!(row.docsrs_version, Some("docsrs_version".into()));
         assert_eq!(row.build_status, BuildStatus::Failure);
-        assert_eq!(row.errors, Some("error message".into()));
+        assert_eq!(row.errors, Some("build error: error message".into()));
+        assert_eq!(row.error_kind, Some("SimpleBuildError".into()));
         assert!(row.documentation_size.is_none());
 
         Ok(())
@@ -1275,6 +1322,51 @@ mod test {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn test_initialize_build_marks_previous_attempt_as_failure() -> Result<()> {
+        let test_metrics = TestMetrics::new();
+        let db = TestDatabase::new(&Config::test_config()?, test_metrics.provider()).await?;
+
+        let mut conn = db.async_conn().await?;
+        let crate_id = initialize_crate(&mut conn, &KRATE).await?;
+        let release_id = initialize_release(&mut conn, crate_id, &V1).await?;
+
+        let first_build_id = initialize_build(&mut conn, release_id).await?;
+        let second_build_id = initialize_build(&mut conn, release_id).await?;
+
+        assert_ne!(first_build_id, second_build_id);
+
+        let builds = sqlx::query!(
+            r#"SELECT
+                id as "id: BuildId",
+                build_status as "build_status: BuildStatus",
+                errors,
+                build_finished
+               FROM builds
+               WHERE rid = $1
+               ORDER BY id ASC"#,
+            release_id.0,
+        )
+        .fetch_all(&mut *conn)
+        .await?;
+
+        assert_eq!(builds.len(), 2);
+
+        assert_eq!(builds[0].id, first_build_id);
+        assert_eq!(builds[0].build_status, BuildStatus::Failure);
+        assert_eq!(
+            builds[0].errors,
+            Some("build aborted: builder process restarted before completion".into())
+        );
+        assert!(builds[0].build_finished.is_some());
+
+        assert_eq!(builds[1].id, second_build_id);
+        assert_eq!(builds[1].build_status, BuildStatus::InProgress);
+        assert!(builds[1].build_finished.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_long_crate_name() -> Result<()> {
         let test_metrics = TestMetrics::new();
         let db = TestDatabase::new(&Config::test_config()?, test_metrics.provider()).await?;
@@ -1320,6 +1412,70 @@ mod test {
         .await?;
 
         assert_eq!(db_version, version);
+
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_long_license() -> Result<()> {
+        let test_metrics = TestMetrics::new();
+        let db = TestDatabase::new(&Config::test_config()?, test_metrics.provider()).await?;
+
+        let mut conn = db.async_conn().await?;
+
+        let crate_id = initialize_crate(&mut conn, &KRATE).await?;
+        let release_id = initialize_release(&mut conn, crate_id, &V0_1).await?;
+
+        // Create a license string longer than 100 characters to test the migration
+        // from VARCHAR(100) to TEXT
+        let long_license = "MIT OR Apache-2.0 ".repeat(15); // ~270 characters
+        assert!(
+            long_license.len() > 100,
+            "License should be longer than old VARCHAR(100) limit"
+        );
+
+        let tempdir = tempfile::tempdir()?;
+        finish_release(
+            &mut conn,
+            crate_id,
+            release_id,
+            &MetadataPackage {
+                id: "42".to_string(),
+                name: KRATE.to_string(),
+                version: V0_1.clone(),
+                license: Some(long_license.clone()),
+                repository: None,
+                homepage: None,
+                description: None,
+                documentation: None,
+                dependencies: Vec::new(),
+                targets: Vec::new(),
+                readme: None,
+                keywords: Vec::new(),
+                features: BTreeMap::new(),
+            },
+            tempdir.path(),
+            DEFAULT_TARGET,
+            Value::Array(vec![]),
+            vec![DEFAULT_TARGET.to_string()],
+            &ReleaseData::default(),
+            true,
+            false,
+            iter::empty(),
+            None,
+            true,
+            24,
+        )
+        .await?;
+
+        let db_license = sqlx::query_scalar!(
+            "SELECT license FROM releases WHERE id = $1",
+            release_id as _
+        )
+        .fetch_one(&mut *conn)
+        .await?;
+
+        assert_eq!(db_license, Some(long_license));
 
         Ok(())
     }

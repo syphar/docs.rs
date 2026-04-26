@@ -1,3 +1,4 @@
+use crate::Config;
 use anyhow::{Context as _, Result};
 use docs_rs_database::crate_details::update_latest_version_id;
 use docs_rs_storage::{AsyncStorage, rustdoc_archive_path, source_archive_path};
@@ -13,13 +14,14 @@ static OTHER_STORAGE_PATHS_TO_DELETE: &[&str] = &["sources"];
 pub async fn delete_crate(
     conn: &mut sqlx::PgConnection,
     storage: &AsyncStorage,
+    config: &Config,
     name: &KrateName,
 ) -> Result<()> {
     let Some(crate_id) = get_id(conn, name).await? else {
         return Ok(());
     };
 
-    let is_library = delete_crate_from_database(conn, name, crate_id).await?;
+    let is_library = delete_crate_from_database(conn, config, name, crate_id).await?;
     // #899
     let paths = if is_library {
         LIBRARY_STORAGE_PATHS_TO_DELETE
@@ -36,7 +38,8 @@ pub async fn delete_crate(
         // remove existing local archive index files.
         let local_index_folder = storage
             .config()
-            .local_archive_cache_path
+            .archive_index_cache
+            .path
             .join(&remote_folder);
         if local_index_folder.exists() {
             fs::remove_dir_all(&local_index_folder)
@@ -56,6 +59,7 @@ pub async fn delete_crate(
 pub async fn delete_version(
     conn: &mut sqlx::PgConnection,
     storage: &AsyncStorage,
+    config: &Config,
     name: &KrateName,
     version: &Version,
 ) -> Result<()> {
@@ -63,7 +67,7 @@ pub async fn delete_version(
         return Ok(());
     };
 
-    let is_library = delete_version_from_database(conn, crate_id, version).await?;
+    let is_library = delete_version_from_database(conn, config, name, crate_id, version).await?;
     let paths = if is_library {
         LIBRARY_STORAGE_PATHS_TO_DELETE
     } else {
@@ -76,7 +80,7 @@ pub async fn delete_version(
             .await?;
     }
 
-    let local_archive_cache = &storage.config().local_archive_cache_path;
+    let local_archive_cache = &storage.config().archive_index_cache.path;
     let mut paths = vec![source_archive_path(name, version)];
     if is_library {
         paths.push(rustdoc_archive_path(name, version));
@@ -125,10 +129,31 @@ const METADATA: &[(&str, &str)] = &[
 /// Returns whether this release was a library
 async fn delete_version_from_database(
     conn: &mut sqlx::PgConnection,
+    config: &Config,
+    name: &KrateName,
     crate_id: CrateId,
     version: &Version,
 ) -> Result<bool> {
     let mut transaction = conn.begin().await?;
+
+    let delete_lock_timeout = format!("{}ms", config.delete_lock_timeout.as_millis());
+
+    sqlx::query!(
+        "SELECT set_config('lock_timeout', $1, true)",
+        &delete_lock_timeout
+    )
+    .fetch_one(&mut *transaction)
+    .await?;
+
+    // Lock queue rows first so we align lock order with builders and wait for in-progress builds.
+    sqlx::query!(
+        "SELECT id FROM queue WHERE name = $1 AND version = $2 FOR UPDATE",
+        name as _,
+        version as _
+    )
+    .fetch_all(&mut *transaction)
+    .await?;
+
     for &(table, column) in METADATA {
         sqlx::query(
             format!("DELETE FROM {table} WHERE {column} IN (SELECT id FROM releases WHERE crate_id = $1 AND version = $2)").as_str())
@@ -143,6 +168,14 @@ async fn delete_version_from_database(
     .await?
     .unwrap_or(false);
 
+    sqlx::query!(
+        "DELETE FROM queue WHERE name = $1 AND version = $2;",
+        name as _,
+        version as _
+    )
+    .execute(&mut *transaction)
+    .await?;
+
     update_latest_version_id(&mut transaction, crate_id).await?;
 
     transaction.commit().await?;
@@ -152,10 +185,25 @@ async fn delete_version_from_database(
 /// Returns whether any release in this crate was a library
 async fn delete_crate_from_database(
     conn: &mut sqlx::PgConnection,
+    config: &Config,
     name: &KrateName,
     crate_id: CrateId,
 ) -> Result<bool> {
     let mut transaction = conn.begin().await?;
+
+    let delete_lock_timeout = format!("{}ms", config.delete_lock_timeout.as_millis());
+
+    sqlx::query!(
+        "SELECT set_config('lock_timeout', $1, true)",
+        &delete_lock_timeout
+    )
+    .fetch_one(&mut *transaction)
+    .await?;
+
+    // Lock queue rows first so we align lock order with builders and wait for in-progress builds.
+    sqlx::query!("SELECT id FROM queue WHERE name = $1 FOR UPDATE", name as _)
+        .fetch_all(&mut *transaction)
+        .await?;
 
     sqlx::query!(
         "DELETE FROM sandbox_overrides WHERE crate_name = $1",
@@ -171,7 +219,7 @@ async fn delete_crate_from_database(
             )
             .as_str()).bind(crate_id).execute(&mut *transaction).await?;
     }
-    sqlx::query!("DELETE FROM owner_rels WHERE cid = $1;", crate_id.0)
+    sqlx::query!("DELETE FROM owner_rels WHERE cid = $1;", crate_id as _)
         .execute(&mut *transaction)
         .await?;
 
@@ -181,16 +229,19 @@ async fn delete_crate_from_database(
         FROM releases
         WHERE releases.crate_id = $1
         ",
-        crate_id.0
+        crate_id as _
     )
     .fetch_one(&mut *transaction)
     .await?
     .unwrap_or(false);
 
-    sqlx::query!("DELETE FROM releases WHERE crate_id = $1;", crate_id.0)
+    sqlx::query!("DELETE FROM releases WHERE crate_id = $1;", crate_id as _)
         .execute(&mut *transaction)
         .await?;
-    sqlx::query!("DELETE FROM crates WHERE id = $1;", crate_id.0)
+    sqlx::query!("DELETE FROM crates WHERE id = $1;", crate_id as _)
+        .execute(&mut *transaction)
+        .await?;
+    sqlx::query!("DELETE FROM queue WHERE name = $1;", name as _)
         .execute(&mut *transaction)
         .await?;
 
@@ -209,10 +260,11 @@ mod tests {
     use docs_rs_storage::rustdoc_json_path;
     use docs_rs_test_fakes::{CrateOwner, OwnerKind, fake_release_that_failed_before_build};
     use docs_rs_types::{
-        CompressionAlgorithm, ReleaseId,
+        CompressionAlgorithm, ReleaseId, SimpleBuildError,
         testing::{BAR, FOO, KRATE, V1, V2},
     };
     use test_case::test_case;
+    use tokio::time::{Duration, timeout};
 
     async fn crate_exists(conn: &mut sqlx::PgConnection, name: &KrateName) -> Result<bool> {
         Ok(
@@ -228,6 +280,21 @@ mod tests {
             .fetch_optional(conn)
             .await?
             .is_some())
+    }
+
+    async fn queue_entry_exists(
+        conn: &mut sqlx::PgConnection,
+        name: &KrateName,
+        version: &Version,
+    ) -> Result<bool> {
+        Ok(sqlx::query!(
+            "SELECT id FROM queue WHERE name = $1 AND version = $2;",
+            name as _,
+            version as _
+        )
+        .fetch_optional(conn)
+        .await?
+        .is_some())
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -253,7 +320,13 @@ mod tests {
     async fn test_delete_crate(archive_storage: bool) -> Result<()> {
         let env = TestEnvironment::new().await?;
         let storage = env.storage()?;
+        let queue = env.build_queue()?;
         let mut conn = env.async_conn().await?;
+
+        // crate fake entries in the build queue
+        queue.add_crate(&FOO, &V1, 0, None).await?;
+        queue.add_crate(&FOO, &V2, 0, None).await?;
+        queue.add_crate(&BAR, &V1, 0, None).await?;
 
         // Create fake packages in the database
         let pkg1_v1_id = env
@@ -300,7 +373,11 @@ mod tests {
             );
         }
 
-        delete_crate(&mut conn, storage, &FOO).await?;
+        delete_crate(&mut conn, storage, env.config(), &FOO).await?;
+
+        assert!(!queue.has_build_queued(&FOO, &V1).await?);
+        assert!(!queue.has_build_queued(&FOO, &V2).await?);
+        assert!(queue.has_build_queued(&BAR, &V1).await?);
 
         assert!(!crate_exists(&mut conn, &FOO).await?);
         assert!(crate_exists(&mut conn, &BAR).await?);
@@ -359,6 +436,7 @@ mod tests {
     async fn test_delete_version(archive_storage: bool) -> Result<()> {
         let env = TestEnvironment::new().await?;
         let storage = env.storage()?;
+        let queue = env.build_queue()?;
 
         async fn owners(conn: &mut sqlx::PgConnection, crate_id: CrateId) -> Result<Vec<String>> {
             Ok(sqlx::query!(
@@ -387,6 +465,9 @@ mod tests {
         }
 
         let mut conn = env.async_conn().await?;
+        queue.add_crate(&KRATE, &V1, 0, None).await?;
+        queue.add_crate(&KRATE, &V2, 0, None).await?;
+
         let v1 = env
             .fake_release()
             .await
@@ -400,6 +481,7 @@ mod tests {
             })
             .create()
             .await?;
+        assert!(queue.has_build_queued(&KRATE, &V2).await?);
         assert!(release_exists(&mut conn, v1).await?);
         assert!(
             storage
@@ -455,7 +537,9 @@ mod tests {
             vec!["Peter Rabbit".to_string()]
         );
 
-        delete_version(&mut conn, storage, &KRATE, &V1).await?;
+        delete_version(&mut conn, storage, env.config(), &KRATE, &V1).await?;
+        assert!(!queue.has_build_queued(&KRATE, &V1).await?);
+        assert!(queue.has_build_queued(&KRATE, &V2).await?);
         assert!(!release_exists(&mut conn, v1).await?);
         if archive_storage {
             // for archive storage the archive and index files
@@ -469,7 +553,8 @@ mod tests {
             assert!(
                 !storage
                     .config()
-                    .local_archive_cache_path
+                    .archive_index_cache
+                    .path
                     .join(&archive_index)
                     .exists()
             );
@@ -520,10 +605,15 @@ mod tests {
 
         let mut conn = env.async_conn().await?;
 
-        let (release_id, _) =
-            fake_release_that_failed_before_build(&mut conn, &KRATE, V1, "some-error").await?;
+        let (release_id, _) = fake_release_that_failed_before_build(
+            &mut conn,
+            &KRATE,
+            V1,
+            SimpleBuildError("some-error".into()),
+        )
+        .await?;
 
-        delete_version(&mut conn, env.storage()?, &KRATE, &V1).await?;
+        delete_version(&mut conn, env.storage()?, env.config(), &KRATE, &V1).await?;
 
         assert!(!release_exists(&mut conn, release_id).await?);
 
@@ -535,10 +625,15 @@ mod tests {
         let env = TestEnvironment::new().await?;
         let mut conn = env.async_conn().await?;
 
-        let (release_id, _) =
-            fake_release_that_failed_before_build(&mut conn, &KRATE, V1, "some-error").await?;
+        let (release_id, _) = fake_release_that_failed_before_build(
+            &mut conn,
+            &KRATE,
+            V1,
+            SimpleBuildError("some-error".into()),
+        )
+        .await?;
 
-        delete_crate(&mut conn, env.storage()?, &KRATE).await?;
+        delete_crate(&mut conn, env.storage()?, env.config(), &KRATE).await?;
 
         assert!(!crate_exists(&mut conn, &KRATE).await?);
         assert!(!release_exists(&mut conn, release_id).await?);
@@ -553,7 +648,7 @@ mod tests {
         let mut conn = env.async_conn().await?;
 
         assert!(!crate_exists(&mut conn, &KRATE).await?);
-        delete_crate(&mut conn, env.storage()?, &KRATE).await?;
+        delete_crate(&mut conn, env.storage()?, env.config(), &KRATE).await?;
 
         assert!(!crate_exists(&mut conn, &KRATE).await?);
 
@@ -567,9 +662,110 @@ mod tests {
 
         assert!(!crate_exists(&mut conn, &KRATE).await?);
 
-        delete_version(&mut conn, env.storage()?, &KRATE, &V1).await?;
+        delete_version(&mut conn, env.storage()?, env.config(), &KRATE, &V1).await?;
 
         assert!(!crate_exists(&mut conn, &KRATE).await?);
+
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_delete_version_waits_for_locked_queue_rows() -> Result<()> {
+        let env = TestEnvironment::new().await?;
+        let queue = env.build_queue()?;
+        let storage = env.storage()?;
+        let krate = KRATE;
+        let version = V1;
+
+        let mut conn = env.async_conn().await?;
+
+        queue.add_crate(&krate, &version, 0, None).await?;
+        let release_id = env
+            .fake_release()
+            .await
+            .name(&krate)
+            .version(V1)
+            .create()
+            .await?;
+
+        let mut lock_conn = env.async_conn().await?;
+        let mut queue_lock = lock_conn.begin().await?;
+        sqlx::query!(
+            "SELECT id FROM queue WHERE name = $1 AND version = $2 FOR UPDATE",
+            krate as _,
+            version as _
+        )
+        .fetch_one(&mut *queue_lock)
+        .await?;
+
+        timeout(Duration::from_secs(10), async {
+            let (delete_result, unlock_result) = tokio::join!(
+                delete_version(&mut conn, storage, env.config(), &krate, &version),
+                async {
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    queue_lock.rollback().await
+                }
+            );
+            delete_result?;
+            unlock_result?;
+            Ok::<_, anyhow::Error>(())
+        })
+        .await
+        .context("delete_version timed out while waiting for queue row lock")??;
+
+        assert!(!release_exists(&mut conn, release_id).await?);
+        assert!(!queue_entry_exists(&mut conn, &krate, &version).await?);
+
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_delete_crate_waits_for_locked_queue_rows() -> Result<()> {
+        let env = TestEnvironment::new().await?;
+        let queue = env.build_queue()?;
+        let storage = env.storage()?;
+        let krate = KRATE;
+        let version = V1;
+
+        let mut conn = env.async_conn().await?;
+
+        queue.add_crate(&krate, &version, 0, None).await?;
+        let release_id = env
+            .fake_release()
+            .await
+            .name(&krate)
+            .version(V1)
+            .create()
+            .await?;
+
+        let mut lock_conn = env.async_conn().await?;
+        let mut queue_lock = lock_conn.begin().await?;
+        sqlx::query!(
+            "SELECT id FROM queue WHERE name = $1 AND version = $2 FOR UPDATE",
+            krate as _,
+            version as _
+        )
+        .fetch_one(&mut *queue_lock)
+        .await?;
+
+        timeout(Duration::from_secs(10), async {
+            let (delete_result, unlock_result) = tokio::join!(
+                delete_crate(&mut conn, storage, env.config(), &krate),
+                async {
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                    queue_lock.rollback().await
+                }
+            );
+            delete_result?;
+            unlock_result?;
+            Ok::<_, anyhow::Error>(())
+        })
+        .await
+        .context("delete_crate timed out while waiting for queue row lock")??;
+
+        assert!(!crate_exists(&mut conn, &krate).await?);
+        assert!(!release_exists(&mut conn, release_id).await?);
+        assert!(!queue_entry_exists(&mut conn, &krate, &version).await?);
 
         Ok(())
     }

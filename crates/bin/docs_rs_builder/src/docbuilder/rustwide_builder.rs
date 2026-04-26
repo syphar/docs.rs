@@ -1,4 +1,7 @@
-use crate::{Config, metrics::BuilderMetrics, utils::copy::copy_dir_all};
+use crate::{
+    Config, docbuilder::build_error::RustwideBuildError, metrics::BuilderMetrics,
+    utils::copy::copy_dir_all,
+};
 use anyhow::{Context as _, Error, Result, anyhow, bail};
 use docs_rs_build_limits::{Limits, blacklist::is_blacklisted};
 use docs_rs_build_queue::BuildPackageSummary;
@@ -33,7 +36,7 @@ use docsrs_metadata::{BuildTargets, DEFAULT_TARGETS, HOST_TARGET, Metadata};
 use regex::Regex;
 use rustwide::{
     AlternativeRegistry, Build, Crate, Toolchain, Workspace, WorkspaceBuilder,
-    cmd::{Command, CommandError, SandboxBuilder, SandboxImage},
+    cmd::{Command, CommandError, ProcessStatistics, SandboxBuilder, SandboxImage},
     logging::{self, LogStorage},
     toolchain::ToolchainError,
 };
@@ -187,10 +190,17 @@ impl RustwideBuilder {
 
     #[instrument(skip(self))]
     fn prepare_sandbox(&self, limits: &Limits) -> SandboxBuilder {
-        SandboxBuilder::new()
-            .cpu_limit(self.config.build_cpu_limit.map(|limit| limit as f32))
+        let builder = SandboxBuilder::new()
             .memory_limit(Some(limits.memory()))
-            .enable_networking(limits.networking())
+            .enable_networking(limits.networking());
+
+        if let Some(cores) = &self.config.build_cpu_cores {
+            builder.cpuset_cpus(Some(cores.0.clone()))
+        } else if let Some(limit) = &self.config.build_cpu_limit {
+            builder.cpu_limit(Some(*limit as f32))
+        } else {
+            builder
+        }
     }
 
     pub fn purge_caches(&self) -> Result<()> {
@@ -462,7 +472,7 @@ impl RustwideBuilder {
                     true,
                     false,
                 )?;
-                if !res.result.successful {
+                if !res.successful() {
                     bail!("failed to build dummy crate for {}", rustc_version);
                 }
 
@@ -552,7 +562,8 @@ impl RustwideBuilder {
                 // to sentry.
                 let mut conn = self.db.get_async().await?;
 
-                update_build_with_error(&mut conn, build_id, Some(&format!("{err:?}"))).await?;
+                update_build_with_error(&mut conn, build_id, Some(&RustwideBuildError::Other(err)))
+                    .await?;
 
                 Ok(BuildPackageSummary {
                     successful: false,
@@ -695,7 +706,7 @@ impl RustwideBuilder {
 
                 // If the build fails with the lockfile given, try using only the dependencies listed in Cargo.toml.
                 let cargo_lock = build.host_source_dir().join("Cargo.lock");
-                if !res.result.successful && cargo_lock.exists() {
+                if !res.successful() && cargo_lock.exists() {
                     info!("removing lockfile and reattempting build");
                     std::fs::remove_file(cargo_lock)?;
                     {
@@ -716,7 +727,7 @@ impl RustwideBuilder {
                         self.execute_build(build_id, name, version, default_target, true, build, &limits, &metadata, false, collect_metrics)?;
                 }
 
-                if res.result.successful
+                if res.successful()
                     && let Some(name) = res.cargo_metadata.root().library_name() {
                         let host_target = build.host_target_dir();
                         has_docs = host_target
@@ -725,6 +736,8 @@ impl RustwideBuilder {
                             .join(name)
                             .is_dir();
                     }
+
+                let mut aggregated_build_stats = res.stats.clone();
 
                 let mut target_build_logs = HashMap::new();
                 let documentation_size = if has_docs {
@@ -755,7 +768,9 @@ impl RustwideBuilder {
                             collect_metrics,
                         )?;
                         target_build_logs.insert(target, target_res.build_log);
+                        aggregated_build_stats.merge_mut(target_res.stats);
                     }
+
                     let (file_list, new_alg) =
                         self.runtime.block_on(
                         self.storage.store_all_in_archive(
@@ -777,14 +792,17 @@ impl RustwideBuilder {
                     build_id,
                     &res.result.rustc_version,
                     &res.result.docsrs_version,
-                    if res.result.successful {
+                    if res.successful() {
                         BuildStatus::Success
                     } else {
                         BuildStatus::Failure
                     },
                     documentation_size,
-                    None,
+                    aggregated_build_stats.memory_peak,
+                    res.result.build_error.as_ref()
                 ))?;
+
+                let successful = res.successful();
 
                 {
                     let _span = info_span!("store_build_logs").entered();
@@ -796,7 +814,7 @@ impl RustwideBuilder {
                     }
                 }
 
-                if res.result.successful {
+                if successful {
                     self.builder_metrics.successful_builds.add(1, &[]);
                 } else if res.cargo_metadata.root().is_library() {
                     self.builder_metrics.failed_builds.add(1, &[]);
@@ -809,7 +827,7 @@ impl RustwideBuilder {
                         .runtime
                         .block_on(self.registry_api.get_release_data(name, version))
                         {
-                        Ok(data) => Some(data),
+                        Ok(data) => data,
                         Err(err) => {
                             error!(%name, %version, ?err, "could not fetch releases-data");
                             None
@@ -837,7 +855,7 @@ impl RustwideBuilder {
                     release_id.0,
                 ).fetch_optional(&mut *async_conn))?;
 
-                if !res.result.successful && current_release_build_status == Some(BuildStatus::Success) {
+                if !successful && current_release_build_status == Some(BuildStatus::Success) {
                     info!("build was unsuccessful, but the release was already successfully built in the past. Skipping release record update.");
                     return Ok(false);
                 }
@@ -888,7 +906,7 @@ impl RustwideBuilder {
                     }
                 }
 
-                if res.result.successful {
+                if successful {
                     // delete eventually existing files from pre-archive storage.
                     // we're doing this in the end so eventual problems in the build
                     // won't lead to non-existing docs.
@@ -905,7 +923,7 @@ impl RustwideBuilder {
                     drop(async_conn);
                 });
 
-                Ok(res.result.successful)
+                Ok(successful)
             })?;
 
         {
@@ -943,7 +961,7 @@ impl RustwideBuilder {
             false,
             collect_metrics,
         )?;
-        if target_res.result.successful {
+        if target_res.successful() {
             // Cargo is not giving any error and not generating documentation of some crates
             // when we use a target compile options. Check documentation exists before
             // adding target to successfully_targets.
@@ -973,17 +991,16 @@ impl RustwideBuilder {
         build: &Build,
         metadata: &Metadata,
         limits: &Limits,
-    ) -> Result<()> {
+    ) -> Result<ProcessStatistics> {
         let rustdoc_flags = vec!["--output-format".to_string(), "json".to_string()];
 
         let mut storage = LogStorage::new(log::LevelFilter::Info);
         storage.set_max_size(limits.max_log_size());
 
-        let successful = logging::capture(&storage, || {
+        let result = logging::capture(&storage, || {
             let _span = info_span!("cargo_build_json", target = %target).entered();
             self.prepare_command(build, target, metadata, limits, rustdoc_flags, false)
-                .and_then(|command| command.run().map_err(Error::from))
-                .is_ok()
+                .and_then(|command| command.run().map_err(Into::into))
         });
 
         {
@@ -994,11 +1011,11 @@ impl RustwideBuilder {
                 .context("storing build log on S3")?;
         }
 
-        if !successful {
+        let Ok(stats) = result else {
             // this is a normal build error and will be visible in the uploaded build logs.
             // We don't need the Err variant here.
-            return Ok(());
-        }
+            return Ok(ProcessStatistics::default());
+        };
 
         let json_dir = if metadata.proc_macro {
             assert!(
@@ -1060,7 +1077,7 @@ impl RustwideBuilder {
             }
         }
 
-        Ok(())
+        Ok(stats)
     }
 
     #[instrument(skip(self, build))]
@@ -1070,7 +1087,7 @@ impl RustwideBuilder {
         build: &Build,
         metadata: &Metadata,
         limits: &Limits,
-    ) -> Result<Option<DocCoverage>> {
+    ) -> Result<(ProcessStatistics, Option<DocCoverage>)> {
         let rustdoc_flags = vec![
             "--output-format".to_string(),
             "json".to_string(),
@@ -1084,7 +1101,8 @@ impl RustwideBuilder {
             items_with_examples: 0,
         };
 
-        self.prepare_command(build, target, metadata, limits, rustdoc_flags, false)?
+        let stats = self
+            .prepare_command(build, target, metadata, limits, rustdoc_flags, false)?
             .process_lines(&mut |line, _| {
                 if line.starts_with('{') && line.ends_with('}') {
                     match doc_coverage::parse_line(line) {
@@ -1096,13 +1114,14 @@ impl RustwideBuilder {
             .log_output(true)
             .run()?;
 
-        Ok(
+        Ok((
+            stats,
             if coverage.total_items == 0 && coverage.documented_items == 0 {
                 None
             } else {
                 Some(coverage)
             },
-        )
+        ))
     }
 
     #[instrument(skip(self, build))]
@@ -1142,19 +1161,26 @@ impl RustwideBuilder {
         let mut storage = LogStorage::new(log::LevelFilter::Info);
         storage.set_max_size(limits.max_log_size());
 
+        let mut aggregated_build_stats = ProcessStatistics::default();
+
         // we have to run coverage before the doc-build because currently it
         // deletes the doc-target folder.
         // https://github.com/rust-lang/cargo/issues/9447
-        let doc_coverage = match self.get_coverage(target, build, metadata, limits) {
-            Ok(cov) => cov,
-            Err(err) => {
-                info!("error when trying to get coverage: {}", err);
-                info!("continuing anyways.");
-                None
-            }
-        };
+        let (coverage_stats, doc_coverage) =
+            match self.get_coverage(target, build, metadata, limits) {
+                Ok((stats, cov)) => (stats, cov),
+                Err(err) => {
+                    info!(
+                        ?err,
+                        "error when trying to get coverage, continuing anyways.",
+                    );
+                    (ProcessStatistics::default(), None)
+                }
+            };
 
-        if let Err(err) = self.execute_json_build(
+        aggregated_build_stats.merge_mut(coverage_stats);
+
+        let json_stats = match self.execute_json_build(
             build_id,
             name,
             version,
@@ -1164,17 +1190,25 @@ impl RustwideBuilder {
             metadata,
             limits,
         ) {
-            // FIXME: this is temporary. Theoretically all `Err` things coming out
-            // of the method should be retryable, so we could juse use `?` here.
-            // But since this is new, I want to be carful and first see what kind of
-            // errors we are seeing here.
-            error!(
-                ?err,
-                "internal error when trying to generate rustdoc JSON output"
-            );
-        }
+            Ok(stats) => stats,
+            Err(err) => {
+                // FIXME: this is temporary. Theoretically all `Err` things coming out
+                // of the method should be retryable, so we could juse use `?` here.
+                // But since this is new, I want to be carful and first see what kind of
+                // errors we are seeing here.
+                error!(
+                    ?err,
+                    "internal error when trying to generate rustdoc JSON output"
+                );
+                // at some point we also want to have stats for failed commands, but
+                // rustwide doesn't return them yet.
+                ProcessStatistics::default()
+            }
+        };
 
-        let successful = {
+        aggregated_build_stats.merge_mut(json_stats);
+
+        let result = {
             let _span = info_span!("cargo_build", target = %target, is_default_target).entered();
             logging::capture(&storage, || {
                 self.prepare_command(
@@ -1185,8 +1219,7 @@ impl RustwideBuilder {
                     rustdoc_flags,
                     collect_metrics,
                 )
-                .and_then(|command| command.run().map_err(Error::from))
-                .is_ok()
+                .and_then(|command| command.run().map_err(Into::into))
             })
         };
 
@@ -1207,7 +1240,7 @@ impl RustwideBuilder {
         // For proc-macros, cargo will put the output in `target/doc`.
         // Move it to the target-specific directory for consistency with other builds.
         // NOTE: don't rename this if the build failed, because `target/doc` won't exist.
-        if successful && metadata.proc_macro {
+        if result.is_ok() && metadata.proc_macro {
             assert!(
                 is_default_target && target == HOST_TARGET,
                 "can't handle cross-compiling macros"
@@ -1221,16 +1254,21 @@ impl RustwideBuilder {
             std::fs::rename(old_dir, new_dir)?;
         }
 
+        let main_build_stats = result.as_ref().ok().cloned().unwrap_or_default();
+
+        aggregated_build_stats.merge_mut(main_build_stats);
+
         Ok(FullBuildResult {
             result: BuildResult {
                 rustc_version: self.rustc_version()?,
                 docsrs_version: format!("docsrs {}", docs_rs_utils::BUILD_VERSION),
-                successful,
+                build_error: result.err(),
             },
             doc_coverage,
             cargo_metadata,
             build_log: storage.to_string(),
             target: target.to_string(),
+            stats: aggregated_build_stats,
         })
     }
 
@@ -1242,7 +1280,7 @@ impl RustwideBuilder {
         limits: &Limits,
         mut rustdoc_flags_extras: Vec<String>,
         collect_metrics: bool,
-    ) -> Result<Command<'ws, 'pl>> {
+    ) -> Result<Command<'ws, 'pl>, RustwideBuildError> {
         // Add docs.rs specific arguments
         let mut cargo_args = vec![
             "--offline".into(),
@@ -1263,8 +1301,8 @@ impl RustwideBuilder {
             // docs.rs, but once it's stable we can remove this flag.
             "-Zrustdoc-scrape-examples".into(),
         ];
-        if let Some(cpu_limit) = self.config.build_cpu_limit {
-            cargo_args.push(format!("-j{cpu_limit}"));
+        if let Some(cargo_job_limit) = self.config.cargo_job_limit() {
+            cargo_args.push(format!("-j{cargo_job_limit}"));
         }
         // Cargo has a series of frightening bugs around cross-compiling proc-macros:
         // - Passing `--target` causes RUSTDOCFLAGS to fail to be passed 🤦
@@ -1315,7 +1353,7 @@ impl RustwideBuilder {
             let flag = "-Zmetrics-dir=/opt/rustwide/target/metrics";
 
             // this is how we can reach it from outside the container.
-            fs::create_dir_all(build.host_target_dir().join("metrics/"))?;
+            fs::create_dir_all(build.host_target_dir().join("metrics/")).map_err(Error::from)?;
 
             let rustdocflags = toml::Value::try_from(vec![flag])
                 .expect("serializing a string should never fail")
@@ -1363,25 +1401,42 @@ struct FullBuildResult {
     cargo_metadata: CargoMetadata,
     doc_coverage: Option<DocCoverage>,
     build_log: String,
+    stats: ProcessStatistics,
+}
+
+impl FullBuildResult {
+    pub(crate) fn successful(&self) -> bool {
+        self.result.successful()
+    }
 }
 
 #[derive(Debug)]
 pub(crate) struct BuildResult {
     pub(crate) rustc_version: String,
     pub(crate) docsrs_version: String,
-    pub(crate) successful: bool,
+    pub(crate) build_error: Option<RustwideBuildError>,
+}
+
+impl BuildResult {
+    pub(crate) fn successful(&self) -> bool {
+        self.build_error.is_none()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{TestEnvironment, TestEnvironmentExt as _};
+    use crate::{
+        config::BuildCores,
+        testing::{TestEnvironment, TestEnvironmentExt as _},
+    };
     use docs_rs_config::AppConfig as _;
     use docs_rs_utils::block_on_async_with_conn;
     // use crate::test::{AxumRouterTestExt, TestEnvironment};
     use docs_rs_registry_api::ReleaseData;
     use docs_rs_types::{
-        BuildStatus, CompressionAlgorithm, Feature, ReleaseId, Version, testing::V0_1,
+        BuildStatus, CompressionAlgorithm, Feature, ReleaseId, SimpleBuildError, Version,
+        testing::V0_1,
     };
     use pretty_assertions::assert_eq;
     use std::{collections::BTreeMap, io, iter, path::PathBuf};
@@ -1475,7 +1530,8 @@ mod tests {
                         b.build_status::TEXT as build_status,
                         b.docsrs_version,
                         b.rustc_version,
-                        b.documentation_size
+                        b.documentation_size,
+                        b.memory_peak
                     FROM
                         crates as c
                         INNER JOIN releases AS r ON c.id = r.crate_id
@@ -1501,6 +1557,7 @@ mod tests {
         assert_eq!(row.build_status.unwrap(), "success");
         assert!(row.source_size > 0);
         assert!(row.documentation_size.unwrap() > 0);
+        assert!(row.memory_peak.unwrap() > 10 * 1024 * 1024); // 10 MiB, in my test it was > 100 MiB
 
         let mut targets: Vec<String> = row
             .doc_targets
@@ -1592,7 +1649,6 @@ mod tests {
                         .collect();
                     json_files.retain(|f| f.ends_with(&format!(".json.{ext}")));
                     json_files.sort();
-                    dbg!(&json_files);
                     assert!(json_files[0].starts_with(&format!("empty-library_1.0.0_{target}_")));
                     assert!(json_files[0].ends_with(&format!(".json.{ext}")));
                     assert_eq!(
@@ -1742,6 +1798,7 @@ mod tests {
                 BuildStatus::Success,
                 None,
                 None,
+                None::<&SimpleBuildError>,
             )
             .await?;
             finish_release(
@@ -2022,6 +2079,7 @@ mod tests {
                    rustc_version,
                    docsrs_version,
                    build_status as "build_status: BuildStatus",
+                   error_kind,
                    errors
                    FROM
                    crates as c
@@ -2039,6 +2097,7 @@ mod tests {
         assert!(row.rustc_version.is_none());
         assert!(row.docsrs_version.is_none());
         assert_eq!(row.build_status, BuildStatus::Failure);
+        assert_eq!(row.error_kind, Some("Other".into()));
         assert!(row.errors.unwrap().contains("missing Cargo.toml"));
 
         Ok(())
@@ -2253,6 +2312,42 @@ mod tests {
         assert_contains(&targets, "x86_64-apple-darwin");
         // Part of the default targets.
         assert_contains(&targets, "aarch64-apple-darwin");
+
+        Ok(())
+    }
+
+    #[test]
+    #[ignore]
+    fn test_build_with_cpu_limit() -> Result<()> {
+        let mut config = Config::test_config()?;
+        config.build_cpu_limit = Some(2);
+        let env = TestEnvironment::builder().config(config).build()?;
+
+        let mut builder = env.build_builder()?;
+        builder.update_toolchain()?;
+        assert!(
+            builder
+                .build_local_package(Path::new("tests/crates/hello-world"))?
+                .successful
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    #[ignore]
+    fn test_build_with_cpu_cores() -> Result<()> {
+        let mut config = Config::test_config()?;
+        config.build_cpu_cores = Some(BuildCores(1..=2));
+        let env = TestEnvironment::builder().config(config).build()?;
+
+        let mut builder = env.build_builder()?;
+        builder.update_toolchain()?;
+        assert!(
+            builder
+                .build_local_package(Path::new("tests/crates/hello-world"))?
+                .successful
+        );
 
         Ok(())
     }
