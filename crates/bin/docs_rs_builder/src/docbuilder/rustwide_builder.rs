@@ -1537,7 +1537,8 @@ mod tests {
                         b.docsrs_version,
                         b.rustc_version,
                         b.documentation_size,
-                        b.memory_peak
+                        b.memory_peak,
+                        b.build_image
                     FROM
                         crates as c
                         INNER JOIN releases AS r ON c.id = r.crate_id
@@ -1564,6 +1565,11 @@ mod tests {
         assert!(row.source_size > 0);
         assert!(row.documentation_size.unwrap() > 0);
         assert!(row.memory_peak.unwrap() > 10 * 1024 * 1024); // 10 MiB, in my test it was > 100 MiB
+        assert_eq!(
+            row.build_image.as_deref(),
+            builder.current_build_image.as_deref(),
+            "Stored build image should match the builder's current image"
+        );
 
         let mut targets: Vec<String> = row
             .doc_targets
@@ -2423,53 +2429,6 @@ mod tests {
         assert_eq!(
             stored_image_after, new_image,
             "Stored build image should be updated after workspace reinitialization"
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    #[ignore]
-    fn test_build_stores_build_image() -> Result<()> {
-        let env = TestEnvironment::new()?;
-        let mut builder = env.build_builder()?;
-
-        let crate_name = &*DUMMY_CRATE_NAME;
-        let version = DUMMY_CRATE_VERSION;
-
-        builder.update_toolchain()?;
-        let build_result = builder.build_package(crate_name, &version, PackageKind::CratesIo, false)?;
-        assert!(build_result.successful);
-
-        // Verify the build was successful and stored the build_image
-        let row = block_on_async_with_conn!(env, |mut conn| async {
-            sqlx::query!(
-                r#"SELECT 
-                    b.build_image,
-                    b.build_status as "build_status: BuildStatus"
-                FROM builds as b
-                JOIN releases as r ON b.rid = r.id 
-                JOIN crates as c ON r.crate_id = c.id
-                WHERE c.name = $1 AND r.version = $2"#,
-                crate_name as _,
-                version as _
-            )
-            .fetch_one(&mut *conn)
-            .await
-            .map_err(Into::into)
-        })?;
-
-        assert_eq!(row.build_status, BuildStatus::Success);
-        assert!(
-            row.build_image.is_some(),
-            "build_image should be stored for successful builds"
-        );
-
-        // Verify it matches the builder's current image
-        assert_eq!(
-            row.build_image.as_deref(),
-            builder.current_build_image.as_deref(),
-            "Stored build image should match the builder's current image"
         );
 
         Ok(())
