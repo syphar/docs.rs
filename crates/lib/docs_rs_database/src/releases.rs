@@ -794,7 +794,7 @@ mod test {
         );
         assert!(row.errors.is_none());
         assert!(row.error_kind.is_none());
-        assert!(row.build_image.unwrap(), test_build_image);
+        assert_eq!(row.build_image.unwrap(), test_build_image);
 
         Ok(())
     }
