@@ -7,7 +7,7 @@ compose-up *profiles: _touch-docker-env cli-db-migrate
 # running the servers on your host.
 [group('compose')]
 compose-up-local: _touch-docker-env
-  docker compose --profile databases up --build -d --wait --remove-orphans
+  docker compose up --build -d db s3 --wait --remove-orphans
   (cd ./crates/lib/docs_rs_database && sqlx migrate run)
 
 
