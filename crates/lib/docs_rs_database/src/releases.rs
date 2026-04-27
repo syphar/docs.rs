@@ -771,7 +771,8 @@ mod test {
                 build_status as "build_status: BuildStatus",
                 errors,
                 error_kind,
-                rustc_nightly_date
+                rustc_nightly_date,
+                build_image
                 FROM builds
                 WHERE id = $1"#,
             build_id.0
@@ -791,6 +792,7 @@ mod test {
         );
         assert!(row.errors.is_none());
         assert!(row.error_kind.is_none());
+        assert!(row.build_image.is_none());
 
         Ok(())
     }
@@ -827,7 +829,8 @@ mod test {
                 memory_peak,
                 errors,
                 error_kind,
-                rustc_nightly_date
+                rustc_nightly_date,
+                build_image
                 FROM builds
                 WHERE id = $1"#,
             build_id.0
@@ -843,6 +846,7 @@ mod test {
         assert!(row.rustc_nightly_date.is_none());
         assert!(row.errors.is_none());
         assert!(row.error_kind.is_none());
+        assert!(row.build_image.is_none());
 
         Ok(())
     }
@@ -877,7 +881,8 @@ mod test {
                 build_status as "build_status: BuildStatus",
                 documentation_size,
                 errors,
-                error_kind
+                error_kind,
+                build_image
                FROM builds
                WHERE id = $1"#,
             build_id as _
@@ -891,6 +896,57 @@ mod test {
         assert_eq!(row.errors, Some("build error: error message".into()));
         assert_eq!(row.error_kind, Some("SimpleBuildError".into()));
         assert!(row.documentation_size.is_none());
+        assert!(row.build_image.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_finish_build_with_build_image() -> Result<()> {
+        let test_metrics = TestMetrics::new();
+        let db = TestDatabase::new(&Config::test_config()?, test_metrics.provider()).await?;
+
+        let mut conn = db.async_conn().await?;
+        let crate_id = initialize_crate(&mut conn, &KRATE).await?;
+        let release_id = initialize_release(&mut conn, crate_id, &V0_1).await?;
+        let build_id = initialize_build(&mut conn, release_id).await?;
+
+        let test_build_image = "ghcr.io/rust-lang/crates-build-env/linux@sha256:abc123def456";
+
+        finish_build(
+            &mut conn,
+            build_id,
+            "rustc_version",
+            "docsrs_version",
+            BuildStatus::Success,
+            Some(42),
+            Some(23),
+            Some(test_build_image),
+            None::<&SimpleBuildError>,
+        )
+        .await?;
+
+        let row = sqlx::query!(
+            r#"SELECT
+                rustc_version,
+                docsrs_version,
+                build_status as "build_status: BuildStatus",
+                documentation_size,
+                memory_peak,
+                build_image
+               FROM builds
+               WHERE id = $1"#,
+            build_id.0
+        )
+        .fetch_one(&mut *conn)
+        .await?;
+
+        assert_eq!(row.rustc_version, Some("rustc_version".into()));
+        assert_eq!(row.docsrs_version, Some("docsrs_version".into()));
+        assert_eq!(row.build_status, BuildStatus::Success);
+        assert_eq!(row.documentation_size, Some(42));
+        assert_eq!(row.memory_peak, Some(23));
+        assert_eq!(row.build_image, Some(test_build_image.into()));
 
         Ok(())
     }

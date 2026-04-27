@@ -57,6 +57,7 @@ mod tests {
     #[test_case(ConfigName::RustcVersion, "rustc_version")]
     #[test_case(ConfigName::QueueLocked, "queue_locked")]
     #[test_case(ConfigName::LastSeenIndexReference, "last_seen_index_reference")]
+    #[test_case(ConfigName::BuildImage, "build_image")]
     fn test_configname_variants(variant: ConfigName, expected: &'static str) {
         let name: &'static str = variant.into();
         assert_eq!(name, expected);
