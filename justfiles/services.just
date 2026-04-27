@@ -3,6 +3,14 @@
 compose-up *profiles: _touch-docker-env cli-db-migrate
   docker compose {{ prepend("--profile ", profiles) }} up --build -d --wait --remove-orphans
 
+# Launch resources (db, s3) you still need even when 
+# running the servers on your host.
+[group('compose')]
+compose-up-local: _touch-docker-env
+  docker compose --profile databases up --build -d --wait --remove-orphans
+  (cd ./crates/lib/docs_rs_database && sqlx migrate run)
+
+
 # Launch web server in the background
 [group('compose')]
 compose-up-web: 

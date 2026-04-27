@@ -242,6 +242,8 @@ services:
         healthcheck:
             <<: *healthcheck-interval
             test: pg_isready --username cratesfyi
+        profiles:
+            - databases
 
     s3:
         image: minio/minio
@@ -261,6 +263,8 @@ services:
         healthcheck:
             <<: *healthcheck-interval
             test: mc ready local
+        profiles:
+            - databases
 
     opentelemetry:
         build:
