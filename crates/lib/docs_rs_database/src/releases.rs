@@ -759,6 +759,7 @@ mod test {
             BuildStatus::Success,
             None,
             None,
+            None,
             None::<&SimpleBuildError>,
         )
         .await?;
@@ -812,6 +813,7 @@ mod test {
             BuildStatus::Success,
             Some(42),
             Some(23),
+            None,
             None::<&SimpleBuildError>,
         )
         .await?;
@@ -861,6 +863,7 @@ mod test {
             "rustc_version",
             "docsrs_version",
             BuildStatus::Failure,
+            None,
             None,
             None,
             Some(&SimpleBuildError("error message".into())),

@@ -862,6 +862,7 @@ mod tests {
                 BuildStatus::Success,
                 None,
                 None,
+                None,
                 None::<&SimpleBuildError>,
             )
             .await?;

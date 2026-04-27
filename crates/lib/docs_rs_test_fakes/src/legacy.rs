@@ -709,6 +709,7 @@ impl FakeBuild {
             self.build_status,
             Some(42),
             Some(23),
+            Some("build-image@sha123"),
             None::<&SimpleBuildError>,
         )
         .await?;

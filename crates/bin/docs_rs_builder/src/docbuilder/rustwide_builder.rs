@@ -127,6 +127,7 @@ pub struct RustwideBuilder {
     registry_api: Arc<RegistryApi>,
     repository_stats: Arc<RepositoryStatsUpdater>,
     workspace_initialize_time: Instant,
+    current_build_image: Option<String>,
     pub(crate) builder_metrics: Arc<BuilderMetrics>,
 }
 
@@ -138,7 +139,7 @@ impl RustwideBuilder {
             get_configured_toolchain(&mut conn).await
         })?;
 
-        let builder = RustwideBuilder {
+        let mut builder = RustwideBuilder {
             workspace: build_workspace(&config)?,
             toolchain,
             config: config.clone(),
@@ -149,8 +150,11 @@ impl RustwideBuilder {
             registry_api: context.registry_api()?.clone(),
             repository_stats: context.repository_stats()?.clone(),
             workspace_initialize_time: Instant::now(),
+            current_build_image: None,
             builder_metrics: BuilderMetrics::new(context.meter_provider()).into(),
         };
+
+        builder.current_build_image = builder.workspace.sandbox_image().get_name_with_hash();
 
         builder
             .runtime
@@ -164,7 +168,7 @@ impl RustwideBuilder {
         set_config(
             &mut conn,
             ConfigName::BuildImage,
-            self.workspace.sandbox_image().get_name_with_hash(),
+            self.current_build_image.as_deref(),
         )
         .await?;
         Ok(())
@@ -795,6 +799,7 @@ impl RustwideBuilder {
                     },
                     documentation_size,
                     aggregated_build_stats.memory_peak,
+                    self.current_build_image.as_deref(),
                     res.result.build_error.as_ref()
                 ))?;
 
@@ -1797,6 +1802,7 @@ mod tests {
                 "some-version",
                 "other-version",
                 BuildStatus::Success,
+                None,
                 None,
                 None,
                 None::<&SimpleBuildError>,
