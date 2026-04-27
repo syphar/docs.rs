@@ -230,6 +230,7 @@ pub async fn finish_build<E>(
     build_status: BuildStatus,
     documentation_size: Option<u64>,
     memory_peak: Option<u64>,
+    build_image: Option<&str>,
     build_error: Option<&E>,
 ) -> Result<()>
 where
@@ -264,9 +265,10 @@ where
              rustc_nightly_date = $7,
              build_finished = NOW(),
              error_kind = $8,
-             memory_peak = $9
+             memory_peak = $9,
+             build_image = $10
          WHERE
-            id = $10
+            id = $11
          RETURNING rid as "rid: ReleaseId" "#,
         rustc_version,
         docsrs_version,
@@ -277,6 +279,7 @@ where
         rustc_date,
         build_error.map(|err| err.kind()),
         memory_peak.map(|v| v as i64),
+        build_image,
         build_id as _,
     )
     .fetch_one(&mut *conn)
