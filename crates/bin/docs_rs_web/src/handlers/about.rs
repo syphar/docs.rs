@@ -129,4 +129,49 @@ mod tests {
         web.assert_success("/about").await?;
         Ok(())
     }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn about_builds_without_build_image() -> Result<()> {
+        let env = TestEnvironment::new().await?;
+        let web = env.web_app().await;
+        
+        // Build image should not be set initially
+        let response = web.get("/about/builds").await?;
+        assert!(response.status().is_success());
+        
+        let body = response.text().await?;
+        
+        // The page should not display the build image section
+        assert!(!body.contains("Currently used docker image:"));
+        
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn about_builds_with_build_image() -> Result<()> {
+        use docs_rs_database::service_config::set_config;
+        
+        let env = TestEnvironment::new().await?;
+        
+        // Set a build image in the database
+        let test_image = "ghcr.io/rust-lang/crates-build-env/linux@sha256:abc123";
+        let mut conn = env.async_conn().await?;
+        set_config(&mut conn, ConfigName::BuildImage, test_image).await?;
+        drop(conn);
+        
+        let web = env.web_app().await;
+        let response = web.get("/about/builds").await?;
+        assert!(response.status().is_success());
+        
+        let body = response.text().await?;
+        
+        // The page should display the build image
+        assert!(body.contains("Currently used docker image:"));
+        assert!(body.contains(test_image));
+        
+        // The image should be linked
+        assert!(body.contains(&format!(r#"<a href="https://{test_image}""#)));
+        
+        Ok(())
+    }
 }
