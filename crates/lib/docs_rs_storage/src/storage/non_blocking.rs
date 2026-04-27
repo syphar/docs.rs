@@ -2,7 +2,7 @@
 use crate::backends::memory::MemoryBackend;
 use crate::{
     Config,
-    archive_index::{self, ARCHIVE_INDEX_FILE_EXTENSION},
+    archive_index::{self, ARCHIVE_INDEX_FILE_EXTENSION, Index},
     backends::{StorageBackend, StorageBackendMethods, s3::S3Backend},
     blob::{Blob, StreamUpload, StreamUploadSource, StreamingBlob},
     compression::{compress, compress_async},
@@ -62,6 +62,16 @@ impl AsyncStorage {
 
     pub fn config(&self) -> &Config {
         &self.config
+    }
+
+    pub async fn find_archive_index(
+        &self,
+        archive_path: &str,
+        latest_build_id: Option<BuildId>,
+    ) -> Result<Index> {
+        self.archive_index_cache
+            .find_index(archive_path, latest_build_id, self)
+            .await
     }
 
     #[instrument(skip(self))]
@@ -337,8 +347,8 @@ impl AsyncStorage {
                             info_span!("create_zip_archive", %archive_path, root_dir=%root_dir.display()).entered();
 
                         let options = zip::write::SimpleFileOptions::default()
-                            .compression_method(zip::CompressionMethod::Bzip2)
-                            .compression_level(Some(3));
+                            .compression_method(zip::CompressionMethod::Deflated)
+                            .compression_level(Some(6));
 
                         // rustdoc archives can become a couple of GiB big, so we better use a tempfile.
                         let zip_file = fs::File::create(&zip_path)?;
@@ -405,7 +415,7 @@ impl AsyncStorage {
             })
         )?;
 
-        Ok((file_paths, CompressionAlgorithm::Bzip2))
+        Ok((file_paths, CompressionAlgorithm::Deflate))
     }
 
     /// Store all files in `root_dir` into the backend under `prefix`.
@@ -850,7 +860,7 @@ mod backend_tests {
                 .await?
         );
 
-        assert_eq!(compression_alg, CompressionAlgorithm::Bzip2);
+        assert_eq!(compression_alg, CompressionAlgorithm::Deflate);
         assert_eq!(stored_files.len(), files.len());
         for name in &files {
             assert!(get_file_info(&stored_files, name).is_some());
