@@ -1458,6 +1458,11 @@ mod tests {
         })
     }
 
+    async fn get_build_image_from_db(env: &TestEnvironment) -> Result<Option<String>> {
+        let mut conn = env.async_conn().await?;
+        get_config::<String>(&mut conn, ConfigName::BuildImage).await
+    }
+
     fn remove_cache_files(env: &TestEnvironment, crate_: &str, version: &Version) -> Result<()> {
         let paths = [
             format!("cache/index.crates.io-6f17d22bba15001f/{crate_}-{version}.crate"),
@@ -2343,6 +2348,75 @@ mod tests {
             builder
                 .build_local_package(Path::new("tests/crates/hello-world"))?
                 .successful
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    #[ignore]
+    fn test_update_cached_build_image_on_init() -> Result<()> {
+        let env = TestEnvironment::new()?;
+
+        // Create a builder, which should update the cached build image
+        let builder = env.build_builder()?;
+
+        // Check that the build image was stored in the database
+        let stored_image = env.runtime().block_on(get_build_image_from_db(&env))?;
+
+        assert!(
+            stored_image.is_some(),
+            "BuildImage should be stored in database after init"
+        );
+
+        let image_name = builder.workspace.sandbox_image().get_name_with_hash();
+        assert_eq!(
+            stored_image, image_name,
+            "Stored build image should match the workspace sandbox image"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    #[ignore]
+    fn test_update_cached_build_image_on_reinitialize() -> Result<()> {
+        use std::thread::sleep;
+        use std::time::Duration;
+
+        let mut config = Config::test_config()?;
+        config.build_workspace_reinitialization_interval = Duration::from_secs(1);
+        let env = TestEnvironment::builder().config(config).build()?;
+
+        let mut builder = env.build_builder()?;
+        builder.update_toolchain()?;
+
+        // Get the initial image
+        let initial_image = builder.workspace.sandbox_image().get_name_with_hash();
+
+        // Verify it's stored in the database
+        let stored_image_before = env.runtime().block_on(get_build_image_from_db(&env))?;
+        assert_eq!(stored_image_before, initial_image);
+
+        // Wait for the interval to pass
+        sleep(Duration::from_secs(1));
+
+        // Reinitialize the workspace
+        builder.reinitialize_workspace_if_interval_passed()?;
+
+        // Get the new image (should be the same in most cases, but the point is it gets updated)
+        let new_image = builder.workspace.sandbox_image().get_name_with_hash();
+
+        // Verify the database was updated
+        let stored_image_after = env.runtime().block_on(get_build_image_from_db(&env))?;
+
+        assert!(
+            stored_image_after.is_some(),
+            "BuildImage should still be in database after reinitialize"
+        );
+        assert_eq!(
+            stored_image_after, new_image,
+            "Stored build image should be updated after workspace reinitialization"
         );
 
         Ok(())
