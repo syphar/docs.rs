@@ -8,7 +8,10 @@ use docs_rs_opentelemetry::AnyMeterProvider;
 use docs_rs_repository_stats::workspaces;
 use docs_rs_types::{KrateName, Version};
 use futures_util::TryStreamExt as _;
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 #[derive(Debug)]
 pub struct AsyncBuildQueue {
@@ -31,23 +34,20 @@ impl AsyncBuildQueue {
         name: &KrateName,
         version: &Version,
         priority: i32,
-        registry: Option<&str>,
     ) -> Result<()> {
         let mut conn = self.db.get_async().await?;
 
         sqlx::query!(
-            "INSERT INTO queue (name, version, priority, registry)
-             VALUES ($1, $2, $3, $4)
+            "INSERT INTO queue (name, version, priority)
+             VALUES ($1, $2, $3)
              ON CONFLICT (name, version) DO UPDATE
                 SET priority = EXCLUDED.priority,
-                    registry = EXCLUDED.registry,
                     attempt = 0,
                     last_attempt = NULL
             ;",
             name as _,
             version as _,
             priority,
-            registry,
         )
         .execute(&mut *conn)
         .await?;
@@ -102,7 +102,6 @@ impl AsyncBuildQueue {
                 name as "name: KrateName",
                 version as "version: Version",
                 priority,
-                registry,
                 attempt
              FROM queue
              ORDER BY priority ASC, attempt ASC, id ASC"#,
@@ -171,7 +170,7 @@ impl AsyncBuildQueue {
     pub async fn deprioritize_workspaces(&self) -> Result<()> {
         let mut conn = self.db.get_async().await?;
 
-        let high_priority_names: Vec<_> = sqlx::query!(
+        let mut high_priority_names: HashSet<_> = sqlx::query!(
             r#"
              SELECT DISTINCT name AS "name: KrateName"
              FROM queue
@@ -184,13 +183,36 @@ impl AsyncBuildQueue {
         .map(|row| row.name)
         .collect();
 
-        let to_deprioritize: Vec<_> = workspaces::get_crate_counts(&mut conn, high_priority_names)
-            .await?
-            .into_iter()
-            .filter_map(|(name, count)| {
-                (count > self.config.deprioritize_workspace_size.into()).then(|| name.to_string())
-            })
-            .collect();
+        for (name, prio) in
+            workspaces::get_overriden_build_priorities(&mut conn, high_priority_names.iter())
+                .await?
+        {
+            if prio != PRIORITY_DEFAULT {
+                sqlx::query!(
+                    r#"
+                    UPDATE queue
+                    SET priority = $2
+                    WHERE name = $1
+                    "#,
+                    name as _,
+                    prio
+                )
+                .execute(&mut *conn)
+                .await?;
+            }
+
+            high_priority_names.remove(&name);
+        }
+
+        let to_deprioritize: Vec<_> =
+            workspaces::get_crate_counts(&mut conn, high_priority_names.iter())
+                .await?
+                .into_iter()
+                .filter_map(|(name, count)| {
+                    (count > self.config.deprioritize_workspace_size.into())
+                        .then(|| name.to_string())
+                })
+                .collect();
 
         sqlx::query!(
             r#"
@@ -317,8 +339,8 @@ mod tests {
         let env = test_queue().await?;
         let queue = env.queue;
 
-        queue.add_crate(&KRATE, &V1, 0, None).await?;
-        queue.add_crate(&KRATE, &V1, 9, None).await?;
+        queue.add_crate(&KRATE, &V1, 0).await?;
+        queue.add_crate(&KRATE, &V1, 9).await?;
 
         let queued_crates = queue.queued_crates().await?;
         assert_eq!(queued_crates.len(), 1);
@@ -346,7 +368,7 @@ mod tests {
 
         assert_eq!(queue.pending_count().await?, 1);
 
-        queue.add_crate(&FAILED_KRATE, &V1, 9, None).await?;
+        queue.add_crate(&FAILED_KRATE, &V1, 9).await?;
 
         assert_eq!(queue.pending_count().await?, 1);
 
@@ -371,7 +393,7 @@ mod tests {
         let env = test_queue().await?;
         let queue = env.queue;
 
-        queue.add_crate(&KRATE, &V1, 0, None).await?;
+        queue.add_crate(&KRATE, &V1, 0).await?;
 
         let mut conn = env.db.async_conn().await?;
         assert!(queue.has_build_queued(&KRATE, &V1).await.unwrap());
@@ -393,8 +415,8 @@ mod tests {
 
         assert_eq!(queue.pending_count().await?, 0);
 
-        queue.add_crate(&KRATE, &V1, 0, None).await?;
-        queue.add_crate(&KRATE, &V2, 0, None).await?;
+        queue.add_crate(&KRATE, &V1, 0).await?;
+        queue.add_crate(&KRATE, &V2, 0).await?;
 
         assert_eq!(queue.pending_count().await?, 2);
         queue.remove_version_from_queue(&KRATE, &V1).await?;
@@ -419,8 +441,8 @@ mod tests {
 
         assert_eq!(queue.pending_count().await?, 0);
 
-        queue.add_crate(&KRATE, &V1, 0, None).await?;
-        queue.add_crate(&KRATE, &V2, 0, None).await?;
+        queue.add_crate(&KRATE, &V1, 0).await?;
+        queue.add_crate(&KRATE, &V2, 0).await?;
 
         assert_eq!(queue.pending_count().await?, 2);
         queue.remove_crate_from_queue(&KRATE).await?;
@@ -468,7 +490,7 @@ mod tests {
 
         // enqueue FOO and BAR with priority 0
         for krate in &[FOO, BAR, BAZ] {
-            queue.add_crate(krate, &V1, 0, None).await?;
+            queue.add_crate(krate, &V1, 0).await?;
         }
 
         // unchanged priorities
@@ -485,7 +507,7 @@ mod tests {
         workspaces::rewrite_repository_stats(&mut conn).await?;
 
         assert_eq!(
-            workspaces::get_crate_counts(&mut conn, vec![FOO, BAR, BAZ]).await?,
+            workspaces::get_crate_counts(&mut conn, [FOO, BAR, BAZ].iter()).await?,
             HashMap::from_iter([(FOO, 2), (BAR, 2)])
         );
 
@@ -500,6 +522,58 @@ mod tests {
                 .map(|q| (q.name, q.priority))
                 .collect::<Vec<_>>(),
             vec![(BAZ, 0), (FOO, 1), (BAR, 1)]
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_deprio_workspace_respects_repository_override_priority() -> Result<()> {
+        let mut config = Config::from_environment()?;
+        config.deprioritize_workspace_size = 1;
+        let env = test_queue_with_config(config).await?;
+
+        let mut conn = env.db.async_conn().await?;
+
+        let repo_id = FakeGithubStats {
+            repo: "owner1/repo1".into(),
+            stars: 0,
+            forks: 0,
+            issues: 0,
+        }
+        .create(&mut conn)
+        .await?;
+
+        for name in [FOO, BAR] {
+            env.fake_release()
+                .await
+                .name(&name)
+                .version(V1)
+                .create()
+                .await?;
+        }
+
+        sqlx::query!("UPDATE releases SET repository_id = $1", repo_id)
+            .execute(&mut *conn)
+            .await?;
+        workspaces::set_repository_build_priority(&mut conn, "owner1/repo1", -10).await?;
+
+        let queue = env.queue;
+        for krate in &[FOO, BAR, BAZ] {
+            queue.add_crate(krate, &V1, PRIORITY_DEFAULT).await?;
+        }
+
+        workspaces::rewrite_repository_stats(&mut conn).await?;
+        queue.deprioritize_workspaces().await?;
+
+        assert_eq!(
+            queue
+                .queued_crates()
+                .await?
+                .into_iter()
+                .map(|q| (q.name, q.priority))
+                .collect::<Vec<_>>(),
+            vec![(FOO, -10), (BAR, -10), (BAZ, PRIORITY_DEFAULT)]
         );
 
         Ok(())

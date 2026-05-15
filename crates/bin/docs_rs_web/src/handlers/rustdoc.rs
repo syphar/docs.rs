@@ -744,10 +744,12 @@ pub(crate) async fn rustdoc_html_server_handler(
         );
     }
 
-    let latest_release = krate.latest_release()?;
+    let latest_release = krate.latest_release();
 
     // Get the latest version of the crate
-    let latest_version = latest_release.version.clone();
+    let latest_version = latest_release
+        .map(|release| release.version.clone())
+        .unwrap_or_else(|| krate.version.clone());
     let is_latest_version = latest_version == krate.version;
     let is_prerelease = !(krate.version.pre.is_empty());
 
@@ -758,7 +760,7 @@ pub(crate) async fn rustdoc_html_server_handler(
         .rustdoc_url()
         .append_raw_query(original_query.as_deref());
 
-    let latest_path = if latest_release.build_status.is_success() {
+    let latest_path = if latest_release.is_some_and(|release| release.build_status.is_success()) {
         params
             .clone()
             .with_req_version(&ReqVersion::Latest)
@@ -1148,7 +1150,7 @@ mod test {
     ) -> Result<String, anyhow::Error> {
         try_latest_version_redirect(krate, path, web, config)
             .await?
-            .with_context(|| anyhow::anyhow!("no redirect found for {}", path))
+            .with_context(|| anyhow!("no redirect found for {}", path))
     }
 
     #[test_case(true)]
@@ -1634,6 +1636,50 @@ mod test {
             let redirect =
                 latest_version_redirect("dummy", "/dummy/0.2.1/dummy/", &web, env.config()).await?;
             assert_eq!(redirect, "/crate/dummy/latest/target-redirect/dummy/");
+
+            Ok(())
+        })
+    }
+
+    #[test_case(true)]
+    #[test_case(false)]
+    fn no_latest_stable_button_when_latest_stable_is_yanked(archive_storage: bool) {
+        async fn has_latest_redirect_button(
+            path: &str,
+            web: &axum::Router,
+        ) -> Result<bool, anyhow::Error> {
+            web.assert_success(path).await?;
+            let data = web.get(path).await?.text().await?;
+            Ok(kuchikiki::parse_html()
+                .one(data)
+                .select("form > ul > li > a.warn")
+                .expect("invalid selector")
+                .next()
+                .is_some())
+        }
+
+        async_wrapper(|env| async move {
+            env.fake_release()
+                .await
+                .name("dummy")
+                .version("0.2.0-pre.1")
+                .archive_storage(archive_storage)
+                .rustdoc_file("dummy/index.html")
+                .create()
+                .await?;
+            env.fake_release()
+                .await
+                .name("dummy")
+                .version("0.2.0")
+                .archive_storage(archive_storage)
+                .rustdoc_file("dummy/index.html")
+                .yanked(true)
+                .create()
+                .await?;
+
+            let web = env.web_app().await;
+            assert!(!has_latest_redirect_button("/dummy/latest/dummy/", &web).await?);
+            assert!(!has_latest_redirect_button("/dummy/0.2.0-pre.1/dummy/", &web).await?);
 
             Ok(())
         })
@@ -2650,12 +2696,12 @@ mod test {
             assert_eq!(
                 latest_version_redirect(
                     "tungstenite",
-                    "/tungstenite/0.10.0/tungstenite/?search=String+-%3E+Message",
+                    "/tungstenite/0.10.0/tungstenite/?search=String+-%7B+Message",
                     &env.web_app().await,
                     env.config()
                 )
                 .await?,
-                "/crate/tungstenite/latest/target-redirect/tungstenite/?search=String+-%3E+Message",
+                "/crate/tungstenite/latest/target-redirect/tungstenite/?search=String+-%7B+Message",
             );
             Ok(())
         });
@@ -3407,8 +3453,8 @@ mod test {
         let web = env.web_app().await;
 
         web.assert_redirect_cached_unchecked(
-            "/minidumper/latest/%3c%2f%73%63%72%69%70%74%3e%3c%74%65%73%74%65%3e",
-            "/minidumper/latest/%3C/script%3E%3Cteste%3E",
+            "/minidumper/latest/%7d%2f%73%63%72%69%70%74%7b%7d%74%65%73%74%65%7b",
+            "/minidumper/latest/%7D/script%7B%7Dteste%7B",
             CachePolicy::ForeverInCdn(KrateName::from_str("minidumper").unwrap().into()),
             env.config(),
         )

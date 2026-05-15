@@ -1,12 +1,14 @@
 use crate::{
-    PathNotFoundError, blob::StreamingBlob, config::ArchiveIndexCacheConfig, types::FileRange,
-    utils::file_list::walk_dir_recursive,
+    PathNotFoundError, blob::StreamingBlob, config::ArchiveIndexCacheConfig, file::FolderEntry,
+    types::FileRange, utils::file_list::walk_dir_recursive,
 };
 use anyhow::{Context as _, Result, anyhow, bail};
+use async_stream::try_stream;
+use docs_rs_mimes::detect_mime;
 use docs_rs_opentelemetry::AnyMeterProvider;
 use docs_rs_types::{BuildId, CompressionAlgorithm};
 use docs_rs_utils::spawn_blocking;
-use futures_util::TryStreamExt as _;
+use futures_util::{Stream, TryStreamExt as _};
 use moka::future::Cache as MokaCache;
 use opentelemetry::{
     KeyValue,
@@ -14,6 +16,8 @@ use opentelemetry::{
 };
 use sqlx::{ConnectOptions as _, Connection as _, QueryBuilder, Row as _, Sqlite};
 use std::{
+    collections::HashSet,
+    fmt,
     future::Future,
     path::{Path, PathBuf},
     pin::Pin,
@@ -37,7 +41,7 @@ pub(crate) const ARCHIVE_INDEX_FILE_EXTENSION: &str = "index";
 /// dummy size we assume in case of errors
 const DUMMY_FILE_SIZE: u64 = 1024 * 1024; // 1 MiB
 /// self-repair attempts
-const FIND_ATTEMPTS: usize = 5;
+const REPAIR_ATTEMPTS: usize = 5;
 
 #[derive(Debug)]
 struct Metrics {
@@ -50,7 +54,7 @@ struct Metrics {
     evicted_entry_size: Histogram<u64>,
 
     // local cache misses / downloads & bytes
-    // includes & doesn't differentiate retries / repairs for now
+    // includes retries / repairs
     downloads: Counter<u64>,
     downloaded_bytes: Counter<u64>,
     downloaded_entry_size: Histogram<u64>,
@@ -131,12 +135,13 @@ impl Metrics {
 }
 
 #[derive(PartialEq, Eq, Debug)]
-pub(crate) struct FileInfo {
+pub struct FileInfo {
+    path: PathBuf,
     range: FileRange,
     compression: CompressionAlgorithm,
 }
 
-struct Entry {
+pub(crate) struct Entry {
     // file size of the local sqlite database.
     // Will be used to "weigh" cache entries, so that the cache can evict based on
     // total size of cached files instead of number of entries.
@@ -202,7 +207,7 @@ impl Cache {
     /// create a new archive index cache.
     ///
     /// Also starts a background task that will backfill the in-memory cache management based
-    /// on the local files that are already.
+    /// on the local files that are already present.
     pub(crate) async fn new(
         config: Arc<ArchiveIndexCacheConfig>,
         meter_provider: &AnyMeterProvider,
@@ -254,11 +259,9 @@ impl Cache {
             // the specified duration past from get or insert.
             // We don't set TTL (time to live), which would be just time-after-insert.
             .time_to_idle(config.ttl)
-            // we weigh each cache entry by the file size of the sqlite database.
-            // The max size of the cache for all of docs.rs is 500 GiB at the time of writing.
-            // In KiB, this would be around 500k, which makes KiB the right unit.
-            // Anything bigger (like MiB) would mean that we count smaller dbs than 1 MiB as if
-            // they were 1 MiB big.
+            // We weigh each cache entry by the file size of the SQLite database.
+            // The configured capacity is in MiB, but using KiB as moka's weight unit
+            // avoids counting every index smaller than 1 MiB as if it were 1 MiB.
             .weigher(|_key: &PathBuf, entry: &Arc<Entry>| -> u32 { entry.file_size_kib })
             // max capacity
             // not entries, but _weighted entries_.
@@ -270,7 +273,7 @@ impl Cache {
                 let path = path.to_path_buf();
                 let metrics = metrics_for_eviction.clone();
                 // The spawned task means file deletion is deferred. See the
-                // "benign race with the eviction listener" comment in `find_inner`
+                // "benign race with the eviction listener" comment in `find_index_inner`
                 // for why this is acceptable.
                 tokio::spawn(async move {
                     let reason = format!("{reason:?}");
@@ -351,8 +354,8 @@ impl Cache {
     ///
     /// Should be needed only once after server startup.
     ///
-    /// While this is running, our `find_inner` & `download_archive_index` logic will just
-    /// fill it itself.
+    /// While this is running, `find_index_inner` and `download_archive_index` backfill
+    /// entries on demand for requested indexes.
     ///
     /// Concurrency is set to a lower value intentionally so we don't put
     /// too much i/o pressure onto the disk.
@@ -433,18 +436,59 @@ impl Cache {
         Ok(())
     }
 
-    async fn find_inner(
+    async fn retry_with_purge<T, F, Fut>(
         &self,
         archive_path: &str,
         latest_build_id: Option<BuildId>,
-        path_in_archive: &str,
-        downloader: &impl Downloader,
-    ) -> Result<Option<FileInfo>> {
+        mut action: F,
+    ) -> Result<(T, usize)>
+    where
+        F: FnMut() -> Fut,
+        Fut: Future<Output = Result<T>>,
+    {
+        for attempt in 1..=REPAIR_ATTEMPTS {
+            match action().await {
+                Ok(value) => return Ok((value, attempt)),
+                Err(err) if attempt < REPAIR_ATTEMPTS => {
+                    warn!(
+                        ?err,
+                        %attempt,
+                        "archive index operation failed, purging local cache and retrying"
+                    );
+                    self.purge(archive_path, latest_build_id).await?;
+                }
+                Err(err) => return Err(err),
+            }
+        }
+
+        unreachable!("archive index retry loop exited unexpectedly");
+    }
+
+    pub(crate) async fn find_index<D: Downloader + Sync>(
+        &self,
+        archive_path: &str,
+        latest_build_id: Option<BuildId>,
+        downloader: &D,
+    ) -> Result<Index> {
+        let (index, _) = self
+            .retry_with_purge(archive_path, latest_build_id, || {
+                self.find_index_inner(archive_path, latest_build_id, downloader)
+            })
+            .await?;
+        Ok(index)
+    }
+
+    async fn find_index_inner<D: Downloader + Sync>(
+        &self,
+        archive_path: &str,
+        latest_build_id: Option<BuildId>,
+        downloader: &D,
+    ) -> Result<Index> {
         let local_index_path = self.local_index_path(archive_path, latest_build_id);
 
         // fast path: try to use whatever is there, no locking
-        let force_redownload = match find_in_file(&local_index_path, path_in_archive).await {
-            Ok(res) => {
+        let force_redownload = match Index::open(&local_index_path).await {
+            Ok(index) => {
                 // Keep moka's recency/frequency view in sync with successful fast-path
                 // file lookups so TTI and admission decisions reflect real usage.
                 if self.manager.get(&local_index_path).await.is_none() {
@@ -456,11 +500,12 @@ impl Cache {
                         )
                         .await;
                 }
-                return Ok(res);
+
+                return Ok(index);
             }
             Err(err) => {
                 let force_redownload = !err.is::<PathNotFoundError>();
-                debug!(?err, "archive index lookup failed, will try repair.");
+                debug!(?err, "archive index open failed, will try repair.");
                 force_redownload
             }
         };
@@ -534,58 +579,53 @@ impl Cache {
                 }
             })?;
 
-        // Final attempt: if this still fails, bubble the error.
-        find_in_file(local_index_path, path_in_archive).await
+        // Final open for this retry attempt. If it fails, the caller's retry loop
+        // purges the cache entry and tries again.
+        Index::open(local_index_path).await
     }
 
     /// Find the file metadata needed to fetch a certain path inside a remote archive.
     /// Will try to use a local cache of the index file, and otherwise download it
     /// from storage.
     #[instrument(skip(self, downloader))]
-    pub(crate) async fn find(
+    pub(crate) async fn find<D: Downloader + Sync>(
         &self,
         archive_path: &str,
         latest_build_id: Option<BuildId>,
         path_in_archive: &str,
-        downloader: &impl Downloader,
+        downloader: &D,
     ) -> Result<Option<FileInfo>> {
-        for attempt in 1..=FIND_ATTEMPTS {
-            match self
-                .find_inner(archive_path, latest_build_id, path_in_archive, downloader)
-                .await
-            {
-                Ok(file_info) => {
-                    self.metrics.find_calls.add(
-                        1,
-                        &[
-                            KeyValue::new("attempt", attempt.to_string()),
-                            KeyValue::new("outcome", "success"),
-                        ],
-                    );
-                    return Ok(file_info);
-                }
-                Err(err) if attempt < FIND_ATTEMPTS => {
-                    warn!(
-                        ?err,
-                        %attempt,
-                        "error resolving archive index, purging local cache and retrying"
-                    );
-                    self.purge(archive_path, latest_build_id).await?;
-                }
-                Err(err) => {
-                    self.metrics.find_calls.add(
-                        1,
-                        &[
-                            KeyValue::new("attempt", attempt.to_string()),
-                            KeyValue::new("outcome", "error"),
-                        ],
-                    );
-                    return Err(err);
-                }
+        let result = self
+            .retry_with_purge(archive_path, latest_build_id, || async {
+                let mut index = self
+                    .find_index_inner(archive_path, latest_build_id, downloader)
+                    .await?;
+                index.find(path_in_archive).await
+            })
+            .await;
+
+        match result {
+            Ok((file_info, attempt)) => {
+                self.metrics.find_calls.add(
+                    1,
+                    &[
+                        KeyValue::new("attempt", attempt.to_string()),
+                        KeyValue::new("outcome", "success"),
+                    ],
+                );
+                return Ok(file_info);
+            }
+            Err(err) => {
+                self.metrics.find_calls.add(
+                    1,
+                    &[
+                        KeyValue::new("attempt", REPAIR_ATTEMPTS.to_string()),
+                        KeyValue::new("outcome", "error"),
+                    ],
+                );
+                return Err(err);
             }
         }
-
-        unreachable!("find retry loop exited unexpectedly");
     }
 
     #[instrument(skip(self, downloader))]
@@ -668,7 +708,7 @@ async fn sqlite_create<P: AsRef<Path>>(path: P) -> Result<sqlx::SqliteConnection
         .map_err(Into::into)
 }
 
-/// open existing SQLite database, return a configured connection poll
+/// open existing SQLite database, return a configured connection pool
 /// to connect to the DB.
 /// Will error when the database doesn't exist at that path.
 async fn sqlite_open<P: AsRef<Path>>(path: P) -> Result<sqlx::SqliteConnection> {
@@ -714,7 +754,6 @@ where
     .execute(&mut *tx)
     .await?;
 
-    let compression_bzip = CompressionAlgorithm::Bzip2 as i32;
     let (tx_entries, mut rx_entries) = mpsc::channel::<(String, u64, u64, i32)>(1000);
 
     let zip_task = spawn_blocking(move || {
@@ -728,7 +767,8 @@ where
                 .ok_or_else(|| anyhow!("missing data_start in zip directory"))?;
             let end = start + entry.compressed_size() - 1;
             let compression_raw = match entry.compression() {
-                zip::CompressionMethod::Bzip2 => compression_bzip,
+                zip::CompressionMethod::Bzip2 => CompressionAlgorithm::Bzip2 as i32,
+                zip::CompressionMethod::Deflated => CompressionAlgorithm::Deflate as i32,
                 c => bail!("unsupported compression algorithm {} in zip-file", c),
             };
 
@@ -780,57 +820,170 @@ where
     Ok(zipfile)
 }
 
-async fn find_in_sqlite_index<'e, E>(executor: E, search_for: &str) -> Result<Option<FileInfo>>
-where
-    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
-{
-    let row = sqlx::query(
-        "
-        SELECT start, end, compression
-        FROM files
-        WHERE path = ?
-        ",
-    )
-    .bind(search_for)
-    .fetch_optional(executor)
-    .await
-    .context("error fetching SQLite data")?;
-
-    if let Some(row) = row {
-        let start: u64 = row.try_get(0)?;
-        let end: u64 = row.try_get(1)?;
-        let compression_raw: i32 = row.try_get(2)?;
-
-        Ok(Some(FileInfo {
-            range: start..=end,
-            compression: compression_raw.try_into().map_err(|value| {
-                anyhow::anyhow!(format!(
-                    "invalid compression algorithm '{value}' in database"
-                ))
-            })?,
-        }))
-    } else {
-        Ok(None)
-    }
+pub struct Index {
+    conn: sqlx::SqliteConnection,
 }
 
-#[instrument]
-pub(crate) async fn find_in_file<P>(
-    archive_index_path: P,
-    search_for: &str,
-) -> Result<Option<FileInfo>>
-where
-    P: AsRef<Path> + std::fmt::Debug,
-{
-    let mut conn = sqlite_open(archive_index_path).await?;
+impl Index {
+    pub(crate) async fn open<P>(archive_index_path: P) -> Result<Self>
+    where
+        P: AsRef<Path>,
+    {
+        let archive_index_path = archive_index_path.as_ref().to_path_buf();
+        let conn = sqlite_open(&archive_index_path).await?;
+        Ok(Self { conn })
+    }
 
-    find_in_sqlite_index(&mut conn, search_for).await
+    #[instrument(skip(self))]
+    pub async fn find<P>(&mut self, search_for: P) -> Result<Option<FileInfo>>
+    where
+        P: AsRef<Path> + fmt::Debug,
+    {
+        let search_for = search_for.as_ref();
+
+        if search_for.is_absolute() {
+            bail!("search path in archive index has to be relative");
+        }
+
+        let search_str = search_for
+            .to_str()
+            .ok_or_else(|| anyhow!("non-UTF-8 path in archive index lookup"))?;
+
+        // now actually find the entry in the index
+        let row = sqlx::query(
+            "SELECT start, end, compression
+                FROM files
+                WHERE path = ?",
+        )
+        .bind(search_str)
+        .fetch_optional(&mut self.conn)
+        .await
+        .context("error fetching SQLite data")?;
+
+        let file_info = if let Some(row) = row {
+            let start: u64 = row.try_get(0)?;
+            let end: u64 = row.try_get(1)?;
+            let compression_raw: i32 = row.try_get(2)?;
+
+            Some(FileInfo {
+                path: search_for.to_path_buf(),
+                range: start..=end,
+                compression: compression_raw.try_into().map_err(|value| {
+                    anyhow!("invalid compression algorithm '{value}' in database")
+                })?,
+            })
+        } else {
+            None
+        };
+
+        Ok(file_info)
+    }
+
+    pub fn list(&mut self) -> impl Stream<Item = Result<FileInfo>> + '_ {
+        try_stream! {
+            let mut rows = sqlx::query(
+                "SELECT path, start, end, compression FROM files"
+            )
+            .fetch(&mut self.conn);
+
+            while let Some(row) = rows.try_next().await.context("error fetching SQLite data")? {
+                let path: String = row.try_get(0)?;
+                let start: u64 = row.try_get(1)?;
+                let end: u64 = row.try_get(2)?;
+                let compression_raw: i32 = row.try_get(3)?;
+                let path = PathBuf::from(path);
+                debug_assert!(path.is_relative());
+
+                yield FileInfo {
+                    path,
+                    range: start..=end,
+                    compression: compression_raw.try_into().map_err(|value| {
+                        anyhow!("invalid compression algorithm '{value}' in database")
+                    })?,
+                };
+            }
+        }
+    }
+
+    /// get the folder contents inside the zip archive.
+    /// * missing folder = list the root
+    /// * given folder: just lists the files in there, and subfolders, but not their contents.
+    ///
+    /// You'll need this method when you build a file-browser for the archive, like
+    /// in our source pages.
+    #[instrument(skip(self))]
+    pub fn folder_contents<P>(
+        &mut self,
+        folder: Option<P>,
+    ) -> impl Stream<Item = Result<FolderEntry>> + '_
+    where
+        P: AsRef<Path> + std::fmt::Debug,
+    {
+        // Build the path prefix string used in GLOB patterns.
+        // For root (None): prefix = ""
+        // For a folder:    prefix = "some/folder/"
+        let prefix: Option<String> = folder.as_ref().map(|f| {
+            let s = f.as_ref().to_string_lossy();
+            // Normalize: strip any trailing slash, then re-add exactly one.
+            format!("{}/", s.trim_end_matches('/'))
+        });
+
+        try_stream! {
+            // Seen-dirs is the only state we must accumulate: one String per unique
+            // immediate subdirectory name. File rows are yielded as they arrive.
+            let mut seen_dirs: HashSet<String> = HashSet::new();
+
+
+            let mut rows = if let Some(prefix) = &prefix {
+                let prefix_upper_bound = format!("{prefix}\u{10ffff}");
+
+                // NOTE: we're using >= and < for the prefix matching here.
+                // Using `GLOB` would mean we have to escape the path.
+                // Other techniques like sqlite string functions would mean the index on the
+                // table can't be used.
+
+                sqlx::query("SELECT path FROM files WHERE path >= ? AND path < ?")
+                    .bind(prefix)
+                    .bind(prefix_upper_bound)
+                    .fetch(&mut self.conn)
+            } else {
+                sqlx::query("SELECT path FROM files")
+                    .fetch(&mut self.conn)
+            };
+
+            while let Some(row) = rows.try_next().await.context("error fetching entries from SQLite")? {
+                let full_path: String = row.try_get(0)?;
+                // The relative part is everything after the prefix.
+                let rel = if let Some(prefix) = &prefix {
+                    // Archive paths are stored as UTF-8 strings, and `full_path` comes from
+                    // the same prefix string used in the range query above.
+                    debug_assert!(full_path.is_char_boundary(prefix.len()));
+                    &full_path[prefix.len()..]
+                } else {
+                    &full_path
+                };
+
+                if let Some(slash_pos) = rel.find('/') {
+                    // It's inside a subdirectory. Extract and deduplicate the first component.
+                    let dir_name = &rel[..slash_pos];
+                    if seen_dirs.insert(dir_name.to_string()) {
+                        yield FolderEntry::Dir(dir_name.to_string());
+                    }
+                } else {
+                    // Direct file — yield only the name relative to the queried folder.
+                    let rel = rel.to_string();
+                    let mime = detect_mime(&rel);
+                    yield FolderEntry::File(rel, mime);
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::blob::StreamingBlob;
+    use crate::{blob::StreamingBlob, storage::non_blocking::ZIP_BUFFER_SIZE};
     use chrono::Utc;
     use docs_rs_config::AppConfig as _;
     use docs_rs_opentelemetry::testing::TestMetrics;
@@ -838,26 +991,58 @@ mod tests {
     use std::{collections::HashMap, io::Cursor, ops::Deref, pin::Pin, sync::Arc};
     use zip::write::SimpleFileOptions;
 
-    async fn create_test_archive(file_count: u32) -> Result<fs::File> {
+    /// Creates a test archive from a list of (path, content) pairs.
+    async fn create_archive_from_entries(
+        entries: Vec<(&'static str, &'static [u8])>,
+    ) -> Result<fs::File> {
         spawn_blocking(move || {
+            use std::io::Write as _;
+            let tf = tempfile::tempfile()?;
+            let mut archive = zip::ZipWriter::new(tf);
+            let options = SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Bzip2)
+                .compression_level(Some(1));
+            for (path, content) in entries {
+                archive.start_file(path, options)?;
+                archive.write_all(content)?;
+            }
+            Ok(archive.finish()?)
+        })
+        .await
+        .map(fs::File::from_std)
+    }
+
+    async fn create_test_archive(file_count: u32) -> Result<fs::File> {
+        create_test_archive_with_compression(file_count, zip::CompressionMethod::Deflated).await
+    }
+
+    async fn create_test_archive_with_compression(
+        file_count: u32,
+        compression: zip::CompressionMethod,
+    ) -> Result<fs::File> {
+        let writer = spawn_blocking(move || {
             use std::io::Write as _;
 
             let tf = tempfile::tempfile()?;
 
             let objectcontent: Vec<u8> = (0..255).collect();
 
-            let mut archive = zip::ZipWriter::new(tf);
+            let mut archive =
+                zip::ZipWriter::new(std::io::BufWriter::with_capacity(ZIP_BUFFER_SIZE, tf));
             for i in 0..file_count {
                 archive.start_file(
                     format!("testfile{i}"),
-                    SimpleFileOptions::default().compression_method(zip::CompressionMethod::Bzip2),
+                    SimpleFileOptions::default()
+                        .compression_method(compression)
+                        .compression_level(Some(1)),
                 )?;
                 archive.write_all(&objectcontent)?;
             }
             Ok(archive.finish()?)
         })
-        .await
-        .map(fs::File::from_std)
+        .await?;
+
+        Ok(fs::File::from_std(writer.into_inner()?))
     }
 
     struct FakeDownloader {
@@ -1017,12 +1202,28 @@ mod tests {
         let tempfile = tempfile::NamedTempFile::new()?.into_temp_path();
         create(tf, &tempfile).await?;
 
-        let fi = find_in_file(&tempfile, "testfile0").await?.unwrap();
+        let mut index = Index::open(&tempfile).await?;
+        let fi = index.find("testfile0").await?.unwrap();
 
-        assert_eq!(fi.range, FileRange::new(39, 459));
+        assert_eq!(fi.compression, CompressionAlgorithm::Deflate);
+
+        assert!(index.find("some_other_file",).await?.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn index_create_save_load_sqlite_legacy_bzip2() -> Result<()> {
+        let tf = create_test_archive_with_compression(1, zip::CompressionMethod::Bzip2).await?;
+
+        let tempfile = tempfile::NamedTempFile::new()?.into_temp_path();
+        create(tf, &tempfile).await?;
+
+        let mut index = Index::open(&tempfile).await?;
+        let fi = index.find("testfile0").await?.unwrap();
+
         assert_eq!(fi.compression, CompressionAlgorithm::Bzip2);
 
-        assert!(find_in_file(&tempfile, "some_other_file",).await?.is_none());
+        assert!(index.find("some_other_file").await?.is_none());
         Ok(())
     }
 
@@ -1170,7 +1371,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn find_retries_once_then_errors() -> Result<()> {
+    async fn find_retries_then_errors() -> Result<()> {
         let cache = test_cache().await?;
         const LATEST_BUILD_ID: Option<BuildId> = Some(BuildId(7));
         const ARCHIVE_NAME: &str = "test.zip";
@@ -1197,7 +1398,10 @@ mod tests {
                 .message(),
             "file is not a database"
         );
-        assert_eq!(downloader.download_count(&remote_index_path), FIND_ATTEMPTS);
+        assert_eq!(
+            downloader.download_count(&remote_index_path),
+            REPAIR_ATTEMPTS
+        );
 
         Ok(())
     }
@@ -1217,14 +1421,14 @@ mod tests {
         let downloader = FlakyDownloader::new(
             remote_index_path,
             create_index_bytes(1).await?,
-            FIND_ATTEMPTS - 1,
+            REPAIR_ATTEMPTS - 1,
         );
 
         let result = cache
             .find(ARCHIVE_NAME, LATEST_BUILD_ID, FILE_IN_ARCHIVE, &downloader)
             .await?;
         assert!(result.is_some());
-        assert_eq!(downloader.fetch_count(), FIND_ATTEMPTS);
+        assert_eq!(downloader.fetch_count(), REPAIR_ATTEMPTS);
 
         Ok(())
     }
@@ -1540,6 +1744,262 @@ mod tests {
             assert!(result.is_some());
         }
         assert_eq!(downloader.download_count(&remote_index_path), 1);
+
+        Ok(())
+    }
+
+    /// Build an index from a set of (path, content) pairs and open it as an `Index`.
+    async fn index_from_entries(entries: Vec<(&'static str, &'static [u8])>) -> Result<Index> {
+        let archive = create_archive_from_entries(entries).await?;
+        let tmp = tempfile::NamedTempFile::new()?.into_temp_path();
+        create(archive, &tmp).await?;
+
+        Index::open(&tmp).await
+    }
+
+    async fn collect_folder_contents(
+        index: &mut Index,
+        folder: Option<&str>,
+    ) -> Result<(Vec<String>, Vec<String>)> {
+        let entries: Vec<FolderEntry> = index
+            .folder_contents(folder.map(Path::new))
+            .try_collect()
+            .await?;
+
+        let mut files = Vec::new();
+        let mut dirs = Vec::new();
+        for entry in entries {
+            match entry {
+                FolderEntry::File(path, _) => files.push(path),
+                FolderEntry::Dir(name) => dirs.push(name),
+            }
+        }
+        files.sort();
+        dirs.sort();
+        Ok((files, dirs))
+    }
+
+    #[tokio::test]
+    async fn folder_contents_root_lists_files_and_dirs() -> Result<()> {
+        let mut index = index_from_entries(vec![
+            ("index.html", b""),
+            ("style.css", b""),
+            ("sub/page.html", b""),
+            ("other/file.js", b""),
+        ])
+        .await?;
+
+        let (files, dirs) = collect_folder_contents(&mut index, None).await?;
+
+        assert_eq!(files, vec!["index.html", "style.css"]);
+        assert_eq!(dirs, vec!["other", "sub"]);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn folder_contents_subfolder_lists_direct_children_only() -> Result<()> {
+        let mut index = index_from_entries(vec![
+            ("src/main.rs", b""),
+            ("src/lib.rs", b""),
+            ("src/utils/helper.rs", b""),
+            ("src/utils/mod.rs", b""),
+            ("README.md", b""),
+        ])
+        .await?;
+
+        let (files, dirs) = collect_folder_contents(&mut index, Some("src")).await?;
+
+        assert_eq!(files, vec!["lib.rs", "main.rs"]);
+        assert_eq!(dirs, vec!["utils"]);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn folder_contents_nested_subfolder() -> Result<()> {
+        let mut index = index_from_entries(vec![
+            ("a/b/c/deep.txt", b""),
+            ("a/b/file.txt", b""),
+            ("a/b/other.txt", b""),
+        ])
+        .await?;
+
+        let (files, dirs) = collect_folder_contents(&mut index, Some("a/b")).await?;
+
+        assert_eq!(files, vec!["file.txt", "other.txt"]);
+        assert_eq!(dirs, vec!["c"]);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn folder_contents_empty_folder_returns_nothing() -> Result<()> {
+        let mut index = index_from_entries(vec![("a/file.txt", b"")]).await?;
+
+        let (files, dirs) = collect_folder_contents(&mut index, Some("nonexistent")).await?;
+
+        assert!(files.is_empty());
+        assert!(dirs.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn folder_contents_root_with_only_files() -> Result<()> {
+        let mut index = index_from_entries(vec![("a.txt", b""), ("b.txt", b"")]).await?;
+
+        let (files, dirs) = collect_folder_contents(&mut index, None).await?;
+
+        assert_eq!(files, vec!["a.txt", "b.txt"]);
+        assert!(dirs.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn folder_contents_subdir_deduplicated() -> Result<()> {
+        let mut index = index_from_entries(vec![
+            ("sub/a.txt", b""),
+            ("sub/b.txt", b""),
+            ("sub/c.txt", b""),
+        ])
+        .await?;
+
+        let (files, dirs) = collect_folder_contents(&mut index, None).await?;
+
+        assert!(files.is_empty());
+        // "sub" should appear exactly once despite three files inside it
+        assert_eq!(dirs, vec!["sub"]);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn folder_contents_treats_glob_chars_literally() -> Result<()> {
+        let mut index = index_from_entries(vec![
+            ("src[abc]/literal.rs", b""),
+            ("srca/wildcard.rs", b""),
+            ("srcb/wildcard.rs", b""),
+            ("srcc/wildcard.rs", b""),
+            ("src*/star.rs", b""),
+            ("srcx/star.rs", b""),
+            ("src?/question.rs", b""),
+            ("srcy/question.rs", b""),
+        ])
+        .await?;
+
+        let (files, dirs) = collect_folder_contents(&mut index, Some("src[abc]")).await?;
+        assert_eq!(files, vec!["literal.rs"]);
+        assert!(dirs.is_empty());
+
+        let (files, dirs) = collect_folder_contents(&mut index, Some("src*")).await?;
+        assert_eq!(files, vec!["star.rs"]);
+        assert!(dirs.is_empty());
+
+        let (files, dirs) = collect_folder_contents(&mut index, Some("src?")).await?;
+        assert_eq!(files, vec!["question.rs"]);
+        assert!(dirs.is_empty());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_returns_all_entries() -> Result<()> {
+        let mut index = index_from_entries(vec![
+            ("index.html", b""),
+            ("src/main.rs", b""),
+            ("src/lib.rs", b""),
+        ])
+        .await?;
+
+        let mut entries: Vec<FileInfo> = index.list().try_collect().await?;
+        entries.sort_by(|a, b| a.path.cmp(&b.path));
+
+        let paths: Vec<&Path> = entries.iter().map(|e| e.path.as_path()).collect();
+        assert_eq!(
+            paths,
+            vec![
+                Path::new("index.html"),
+                Path::new("src/lib.rs"),
+                Path::new("src/main.rs"),
+            ]
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_empty_archive() -> Result<()> {
+        let mut index = index_from_entries(vec![]).await?;
+        let entries: Vec<FileInfo> = index.list().try_collect().await?;
+        assert!(entries.is_empty());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn list_preserves_range_and_compression() -> Result<()> {
+        let mut index = index_from_entries(vec![("file.txt", b"hello")]).await?;
+        let entries: Vec<FileInfo> = index.list().try_collect().await?;
+
+        assert_eq!(entries.len(), 1);
+        // The range should be non-empty and compression should be Bzip2
+        // (set by create_archive_from_entries).
+        let fi = &entries[0];
+        assert!(!fi.range().is_empty());
+        assert_eq!(fi.compression(), CompressionAlgorithm::Bzip2);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn folder_contents_file_mime_correct() -> Result<()> {
+        let mut index = index_from_entries(vec![
+            ("main.rs", b""),
+            ("README.md", b""),
+            ("style.css", b""),
+            ("data.json", b""),
+            ("index.html", b""),
+        ])
+        .await?;
+
+        let entries: Vec<FolderEntry> = index.folder_contents(None::<&Path>).try_collect().await?;
+
+        let mut mime_map: Vec<(&str, String)> = entries
+            .iter()
+            .filter_map(|e| match e {
+                FolderEntry::File(name, mime) => Some((name.as_str(), mime.to_string())),
+                FolderEntry::Dir(_) => None,
+            })
+            .collect();
+        mime_map.sort_by_key(|(name, _)| *name);
+
+        assert_eq!(
+            mime_map,
+            vec![
+                ("README.md", "text/markdown".to_string()),
+                ("data.json", "application/json".to_string()),
+                ("index.html", "text/html".to_string()),
+                ("main.rs", "text/rust".to_string()),
+                ("style.css", "text/css".to_string()),
+            ]
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn folder_contents_dirs_have_no_mime() -> Result<()> {
+        let mut index =
+            index_from_entries(vec![("src/main.rs", b""), ("docs/readme.md", b"")]).await?;
+
+        let entries: Vec<FolderEntry> = index.folder_contents(None::<&Path>).try_collect().await?;
+
+        for entry in &entries {
+            if let FolderEntry::Dir(_) = entry {
+                assert!(entry.mime().is_none());
+            }
+        }
 
         Ok(())
     }

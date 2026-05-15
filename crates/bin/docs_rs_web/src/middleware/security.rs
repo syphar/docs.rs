@@ -41,13 +41,23 @@ fn validate_path(initial_path: &str) -> Result<()> {
 }
 
 fn validate_decoded_path(path: &str) -> Result<()> {
-    if path.contains("/../") || path.ends_with("/..") {
+    if path.contains("/../")
+        || path.ends_with("/..")
+        || path.contains("//\\../")
+        || path.contains("\\..\\")
+        || path.ends_with("\\..")
+    {
         bail!("path traversal attempt");
     }
 
     // `#` is never allowed in any rustdoc URLs, even encoded.
     if path.contains('#') {
         bail!("detected `#` in request path");
+    }
+
+    // `<` and `>` are never allowed — they indicate HTML injection attempts.
+    if path.contains('<') || path.contains('>') {
+        bail!("detected `<` or `>` in request path");
     }
 
     Ok(())
@@ -61,6 +71,7 @@ mod tests {
         testing::{AxumResponseTestExt as _, AxumRouterTestExt as _},
     };
     use axum::{Router, middleware, routing::get};
+
     use test_case::test_case;
     use tower::ServiceBuilder;
 
@@ -77,6 +88,21 @@ mod tests {
     #[test_case("/minidumper/latest/%252523script"; "triple encoded hash")]
     #[test_case(
         "/crate/mika-cli/latest/source/..%25c1%259c..%25c1%259c..%25c1%259c..%25c1%259c..%25c1%259c..%25c1%259c..%25c1%259c..%25c1%259c/etc/passwd"
+    )]
+    #[test_case(
+        "/crate/aether/latest/source/compiler/node_modules/@richardanaya//%5c../%5c../%5c../%5c../%5c../%5c../%5c../etc/passwd";
+        "with backslash"
+    )]
+    #[test_case(
+        "/casual_logger/0.6.4/%2e%2e%5c%2e%2e%5c%2e%2e%5c%2e%2e%5c%2e%2e%5c%2e%2e%5c%2e%2e%5c%2e%2e%5cwindows/win.ini";
+        "double backslash"
+    )]
+    #[test_case(
+        "/casual_logger/0.6.4/%2e%2e%5c%2e%2e%5c%2e%2e%5c%2e%2e%5c%2e%2e%5c%2e%2e%5c%2e%2e%5c%2e%2e";
+        "ends with backslash dot dot"
+    )]
+    #[test_case(
+        "/mathru/0.10.0/i686-unknown-linux-gnu/mathru/special/hypergeometric/%3E%3Cscript%20defer%20src=%22https:/cdn.jsdelivr.net/npm/katex@0.10.1/dist/katex.min.js%22%20integrity=%22sha384-2BKqo+exmr9su6dir+qCw08N2ZKRucY4PrGQPP..."
     )]
     async fn test_invalid_path(path: &str) -> Result<()> {
         let app = Router::new()
