@@ -1,6 +1,6 @@
 use crate::{Config, backends::StorageBackendMethods};
 use anyhow::Result;
-use object_store::{RetryConfig, aws::AmazonS3Builder};
+use object_store::{ObjectStoreExt as _, RetryConfig, aws::AmazonS3Builder, path::Path};
 
 pub(crate) struct ObjectStoreBackend {
     store: object_store::aws::AmazonS3,
@@ -31,8 +31,15 @@ impl ObjectStoreBackend {
 }
 
 impl StorageBackendMethods for ObjectStoreBackend {
-    async fn exists(&self, path: &str) -> anyhow::Result<bool> {
-        todo!()
+    async fn exists(&self, path: &str) -> Result<bool> {
+        let path = Path::from(path);
+        match self.store.head(&path).await {
+            Ok(_) => Ok(true),
+            Err(err) if matches!(err, object_store::Error::NotFound { path: _, source: _ }) => {
+                Ok(false)
+            }
+            Err(err) => Err(err.into()),
+        }
     }
 
     async fn get_stream(
