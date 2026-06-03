@@ -1,5 +1,6 @@
 #[cfg(any(test, feature = "testing"))]
 pub(crate) mod memory;
+pub(crate) mod objectstore;
 pub(crate) mod s3;
 
 use crate::{StreamingBlob, blob::StreamUpload, types::FileRange};
@@ -18,6 +19,7 @@ pub(crate) enum StorageBackend {
     #[cfg(any(test, feature = "testing"))]
     Memory(memory::MemoryBackend),
     S3(s3::S3Backend),
+    ObjectStore(objectstore::ObjectStoreBackend),
 }
 
 macro_rules! call_inner {
@@ -26,6 +28,7 @@ macro_rules! call_inner {
             #[cfg(any(test, feature = "testing"))]
             StorageBackend::Memory(backend) => backend.$method($($args),*).await,
             StorageBackend::S3(backend) => backend.$method($($args),*).await,
+            StorageBackend::ObjectStore(backend) => backend.$method($($args),*).await,
         }
     }};
 }

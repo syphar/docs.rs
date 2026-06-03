@@ -21,7 +21,6 @@ use docs_rs_opentelemetry::AnyMeterProvider;
 use docs_rs_types::{BuildId, CompressionAlgorithm, KrateName, Version};
 use docs_rs_utils::spawn_blocking;
 use futures_util::{TryStreamExt as _, future, stream::BoxStream};
-use object_store::{ObjectStore, RetryConfig};
 use std::{
     fmt,
     io::{Cursor, Write as _},
@@ -38,7 +37,6 @@ pub(crate) const ZIP_BUFFER_SIZE: usize = 1024 * 1024;
 
 pub struct AsyncStorage {
     backend: StorageBackend,
-    store: Arc<dyn ObjectStore>,
     config: Arc<Config>,
     archive_index_cache: archive_index::Cache,
 }
@@ -53,30 +51,6 @@ impl AsyncStorage {
             StorageKind::S3 => StorageBackend::S3(S3Backend::new(&config, metrics).await?),
         };
 
-        let store: Arc<dyn ObjectStore> = match config.storage_backend {
-            #[cfg(any(test, feature = "testing"))]
-            StorageKind::Memory => Arc::new(object_store::memory::InMemory::new()),
-            StorageKind::S3 => Arc::new({
-                let mut builder = object_store::aws::AmazonS3Builder::from_env()
-                    .with_retry(RetryConfig {
-                        max_retries: config.aws_sdk_max_retries as usize,
-                        ..Default::default()
-                    })
-                    .with_region(config.s3_region.clone())
-                    .with_bucket_name(config.s3_bucket.clone());
-
-                if let Some(ref endpoint) = config.s3_endpoint {
-                    builder = builder
-                        .with_virtual_hosted_style_request(false)
-                        .with_url(endpoint);
-                }
-
-                Arc::new(builder.build()?)
-            }),
-        };
-
-        // FIXME: object_store can't create buckets?
-
         Ok(Self {
             archive_index_cache: archive_index::Cache::new(
                 config.archive_index_cache.clone(),
@@ -84,7 +58,6 @@ impl AsyncStorage {
             )
             .await
             .context("initialize archive index cache")?,
-            store,
             backend,
             config: config.clone(),
         })
@@ -601,6 +574,7 @@ impl fmt::Debug for AsyncStorage {
             #[cfg(any(test, feature = "testing"))]
             StorageBackend::Memory(_) => write!(f, "memory-backed storage"),
             StorageBackend::S3(_) => write!(f, "S3-backed storage"),
+            StorageBackend::ObjectStore(_) => write!(f, "ObjectStore-backed storage"),
         }
     }
 }
