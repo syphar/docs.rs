@@ -43,6 +43,7 @@ http = { workspace = true }
 itertools = { workspace = true }
 mime = { workspace = true }
 moka = { version = "0.12.14", features = ["future"] }
+object_store = { version = "0.13.2", default-features = false, features = ["aws"]}
 opentelemetry = { workspace = true }
 rand = { workspace = true, optional = true }
 serde_json = { workspace = true }
