@@ -2354,6 +2354,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64",
+ "bon",
  "chrono",
  "docs_rs_cargo_metadata",
  "docs_rs_database",

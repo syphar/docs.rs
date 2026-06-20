@@ -302,20 +302,24 @@ mod tests {
                 .name("foo")
                 .version("0.1.0")
                 .builds(vec![
-                    FakeBuild::default()
+                    FakeBuild::builder()
                         .rustc_version("rustc (blabla 2019-01-01)")
-                        .docsrs_version("docs.rs 1.0.0"),
-                    FakeBuild::default()
+                        .docsrs_version("docs.rs 1.0.0")
+                        .build(),
+                    FakeBuild::builder()
                         .successful(false)
                         .rustc_version("rustc (blabla 2020-01-01)")
-                        .docsrs_version("docs.rs 2.0.0"),
-                    FakeBuild::default()
+                        .docsrs_version("docs.rs 2.0.0")
+                        .build(),
+                    FakeBuild::builder()
                         .rustc_version("rustc (blabla 2021-01-01)")
-                        .docsrs_version("docs.rs 3.0.0"),
-                    FakeBuild::default()
+                        .docsrs_version("docs.rs 3.0.0")
+                        .build(),
+                    FakeBuild::builder()
                         .build_status(BuildStatus::InProgress)
                         .rustc_version("rustc (blabla 2022-01-01)")
-                        .docsrs_version("docs.rs 4.0.0"),
+                        .docsrs_version("docs.rs 4.0.0")
+                        .build(),
                 ])
                 .create()
                 .await?;
@@ -353,10 +357,11 @@ mod tests {
                 .name("foo")
                 .version("0.1.0")
                 .builds(vec![
-                    FakeBuild::default()
+                    FakeBuild::builder()
                         .rustc_version("rustc (blabla 2019-01-01)")
                         .docsrs_version("docs.rs 1.0.0")
-                        .memory_peak(test_memory_bytes),
+                        .memory_peak(test_memory_bytes)
+                        .build(),
                 ])
                 .create()
                 .await?;
@@ -643,9 +648,10 @@ mod tests {
                 .name("aquarelle")
                 .version(V1)
                 .builds(vec![
-                    FakeBuild::default()
+                    FakeBuild::builder()
                         .rustc_version("rustc (blabla 2019-01-01)")
-                        .docsrs_version("docs.rs 1.0.0"),
+                        .docsrs_version("docs.rs 1.0.0")
+                        .build(),
                 ])
                 .create()
                 .await?;
@@ -655,9 +661,10 @@ mod tests {
                 .name("aquarelle")
                 .version(V2)
                 .builds(vec![
-                    FakeBuild::default()
+                    FakeBuild::builder()
                         .rustc_version("rustc (blabla 2019-01-01)")
-                        .docsrs_version("docs.rs 1.0.0"),
+                        .docsrs_version("docs.rs 1.0.0")
+                        .build(),
                 ])
                 .create()
                 .await?;
@@ -690,9 +697,10 @@ mod tests {
                 .name("foo")
                 .version(V1)
                 .builds(vec![
-                    FakeBuild::default()
+                    FakeBuild::builder()
                         .rustc_version("rustc (blabla 2019-01-01)")
-                        .docsrs_version("docs.rs 1.0.0"),
+                        .docsrs_version("docs.rs 1.0.0")
+                        .build(),
                 ])
                 .create()
                 .await?;
@@ -715,9 +723,10 @@ mod tests {
                 .name("foo")
                 .version("0.1.0")
                 .builds(vec![
-                    FakeBuild::default()
+                    FakeBuild::builder()
                         .rustc_version("rustc (blabla 2019-01-01)")
-                        .docsrs_version("docs.rs 1.0.0"),
+                        .docsrs_version("docs.rs 1.0.0")
+                        .build(),
                 ])
                 .create()
                 .await?;
@@ -741,9 +750,10 @@ mod tests {
             .name(FOO)
             .version(V0_1)
             .builds(vec![
-                FakeBuild::default()
+                FakeBuild::builder()
                     .build_status(build_status)
-                    .legacy_build_logs(true),
+                    .legacy_build_logs(true)
+                    .build(),
             ])
             .create()
             .await?;
@@ -778,9 +788,10 @@ mod tests {
             .name(FOO)
             .version(V0_1)
             .builds(vec![
-                FakeBuild::default()
+                FakeBuild::builder()
                     .build_status(build_status)
-                    .s3_build_log("some log", build_log_success),
+                    .s3_build_log("some log", build_log_success)
+                    .build(),
             ])
             .create()
             .await?;
@@ -808,10 +819,11 @@ mod tests {
             .name(FOO)
             .version(V0_1)
             .builds(vec![
-                FakeBuild::default()
+                FakeBuild::builder()
                     .build_status(BuildStatus::Success)
                     .s3_build_log("some log", true)
-                    .build_log_for_other_target("other-target", "other log", true),
+                    .build_log_for_other_target("other-target", "other log", true)
+                    .build(),
             ])
             .create()
             .await?;
@@ -839,10 +851,11 @@ mod tests {
             .name(FOO)
             .version(V0_1)
             .builds(vec![
-                FakeBuild::default()
+                FakeBuild::builder()
                     .build_status(BuildStatus::Success)
                     .s3_build_log("some log", true)
-                    .build_log_for_other_target("other-target", "other log", false),
+                    .build_log_for_other_target("other-target", "other log", false)
+                    .build(),
             ])
             .create()
             .await?;

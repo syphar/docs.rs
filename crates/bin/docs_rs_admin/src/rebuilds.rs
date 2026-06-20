@@ -96,7 +96,7 @@ mod tests {
                 .name(&crate_name)
                 .version(version)
                 .builds(vec![
-                    FakeBuild::default()
+                    FakeBuild::builder()
                         .rustc_version(
                             format!(
                                 "rustc 1.84.0-nightly (e7c0d2750 {})",
@@ -104,7 +104,8 @@ mod tests {
                             )
                             .as_str(),
                         )
-                        .build_status(BuildStatus::Failure),
+                        .build_status(BuildStatus::Failure)
+                        .build(),
                 ])
                 .create()
                 .await?;
@@ -158,7 +159,7 @@ mod tests {
                 .name(&crate_name)
                 .version(version)
                 .builds(vec![
-                    FakeBuild::default()
+                    FakeBuild::builder()
                         .rustc_version(
                             format!(
                                 "rustc 1.84.0-nightly (e7c0d2750 {})",
@@ -166,7 +167,8 @@ mod tests {
                             )
                             .as_str(),
                         )
-                        .build_status(BuildStatus::Failure),
+                        .build_status(BuildStatus::Failure)
+                        .build(),
                 ])
                 .create()
                 .await?;
@@ -213,7 +215,7 @@ mod tests {
                 .name(&crate_name)
                 .version(version)
                 .builds(vec![
-                    FakeBuild::default()
+                    FakeBuild::builder()
                         .rustc_version(
                             format!(
                                 "rustc 1.84.0-nightly (e7c0d2750 {})",
@@ -221,7 +223,8 @@ mod tests {
                             )
                             .as_str(),
                         )
-                        .build_status(BuildStatus::Failure),
+                        .build_status(BuildStatus::Failure)
+                        .build(),
                 ])
                 .create()
                 .await?;
