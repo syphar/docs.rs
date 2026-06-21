@@ -925,7 +925,7 @@ mod tests {
                 .name("in_progress")
                 .version(V0_1)
                 .builds(vec![
-                    FakeBuild::builder()
+                    FakeBuild::default()
                         .build_status(BuildStatus::InProgress)
                         .rustc_version("rustc (blabla 2022-01-01)")
                         .docsrs_version("docs.rs 4.0.0")
@@ -1448,7 +1448,7 @@ mod tests {
             .name("in_progress")
             .version("0.1.0")
             .builds(vec![
-                FakeBuild::builder()
+                FakeBuild::default()
                     .build_status(BuildStatus::InProgress)
                     .rustc_version("rustc (blabla 2022-01-01)")
                     .docsrs_version("docs.rs 4.0.0")
@@ -1903,7 +1903,7 @@ mod tests {
                 .name("foo")
                 .version(V1)
                 .builds(vec![
-                    FakeBuild::builder()
+                    FakeBuild::default()
                         .build_status(BuildStatus::InProgress)
                         .rustc_version("rustc (blabla 2022-01-01)")
                         .docsrs_version("docs.rs 4.0.0")

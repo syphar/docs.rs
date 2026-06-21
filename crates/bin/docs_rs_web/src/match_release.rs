@@ -377,7 +377,7 @@ mod tests {
                 .name("foo")
                 .version("1.1.0")
                 .builds(vec![
-                    FakeBuild::builder()
+                    FakeBuild::default()
                         .build_status(BuildStatus::InProgress)
                         .build(),
                 ])

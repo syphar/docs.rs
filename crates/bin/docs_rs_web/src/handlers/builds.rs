@@ -302,20 +302,20 @@ mod tests {
                 .name("foo")
                 .version("0.1.0")
                 .builds(vec![
-                    FakeBuild::builder()
+                    FakeBuild::default()
                         .rustc_version("rustc (blabla 2019-01-01)")
                         .docsrs_version("docs.rs 1.0.0")
                         .build(),
-                    FakeBuild::builder()
+                    FakeBuild::default()
                         .successful(false)
                         .rustc_version("rustc (blabla 2020-01-01)")
                         .docsrs_version("docs.rs 2.0.0")
                         .build(),
-                    FakeBuild::builder()
+                    FakeBuild::default()
                         .rustc_version("rustc (blabla 2021-01-01)")
                         .docsrs_version("docs.rs 3.0.0")
                         .build(),
-                    FakeBuild::builder()
+                    FakeBuild::default()
                         .build_status(BuildStatus::InProgress)
                         .rustc_version("rustc (blabla 2022-01-01)")
                         .docsrs_version("docs.rs 4.0.0")
@@ -357,7 +357,7 @@ mod tests {
                 .name("foo")
                 .version("0.1.0")
                 .builds(vec![
-                    FakeBuild::builder()
+                    FakeBuild::default()
                         .rustc_version("rustc (blabla 2019-01-01)")
                         .docsrs_version("docs.rs 1.0.0")
                         .memory_peak(test_memory_bytes)
@@ -648,7 +648,7 @@ mod tests {
                 .name("aquarelle")
                 .version(V1)
                 .builds(vec![
-                    FakeBuild::builder()
+                    FakeBuild::default()
                         .rustc_version("rustc (blabla 2019-01-01)")
                         .docsrs_version("docs.rs 1.0.0")
                         .build(),
@@ -661,7 +661,7 @@ mod tests {
                 .name("aquarelle")
                 .version(V2)
                 .builds(vec![
-                    FakeBuild::builder()
+                    FakeBuild::default()
                         .rustc_version("rustc (blabla 2019-01-01)")
                         .docsrs_version("docs.rs 1.0.0")
                         .build(),
@@ -697,7 +697,7 @@ mod tests {
                 .name("foo")
                 .version(V1)
                 .builds(vec![
-                    FakeBuild::builder()
+                    FakeBuild::default()
                         .rustc_version("rustc (blabla 2019-01-01)")
                         .docsrs_version("docs.rs 1.0.0")
                         .build(),
@@ -723,7 +723,7 @@ mod tests {
                 .name("foo")
                 .version("0.1.0")
                 .builds(vec![
-                    FakeBuild::builder()
+                    FakeBuild::default()
                         .rustc_version("rustc (blabla 2019-01-01)")
                         .docsrs_version("docs.rs 1.0.0")
                         .build(),
@@ -750,7 +750,7 @@ mod tests {
             .name(FOO)
             .version(V0_1)
             .builds(vec![
-                FakeBuild::builder()
+                FakeBuild::default()
                     .build_status(build_status)
                     .legacy_build_logs(true)
                     .build(),
@@ -788,7 +788,7 @@ mod tests {
             .name(FOO)
             .version(V0_1)
             .builds(vec![
-                FakeBuild::builder()
+                FakeBuild::default()
                     .build_status(build_status)
                     .s3_build_log("some log", build_log_success)
                     .build(),
@@ -819,7 +819,7 @@ mod tests {
             .name(FOO)
             .version(V0_1)
             .builds(vec![
-                FakeBuild::builder()
+                FakeBuild::default()
                     .build_status(BuildStatus::Success)
                     .s3_build_log("some log", true)
                     .build_log_for_other_target("other-target", "other log", true)
@@ -851,7 +851,7 @@ mod tests {
             .name(FOO)
             .version(V0_1)
             .builds(vec![
-                FakeBuild::builder()
+                FakeBuild::default()
                     .build_status(BuildStatus::Success)
                     .s3_build_log("some log", true)
                     .build_log_for_other_target("other-target", "other log", false)

@@ -335,7 +335,7 @@ mod tests {
                 .name("foo")
                 .version("0.1.0")
                 .builds(vec![
-                    FakeBuild::builder()
+                    FakeBuild::default()
                         .no_s3_build_log()
                         .db_build_log("A build log")
                         .build(),
@@ -378,7 +378,7 @@ mod tests {
                 .name("foo")
                 .version("0.1.0")
                 .builds(vec![
-                    FakeBuild::builder()
+                    FakeBuild::default()
                         .s3_build_log("A build log", true)
                         .build(),
                 ])
@@ -434,7 +434,7 @@ mod tests {
                 .name("foo")
                 .version("0.1.0")
                 .builds(vec![
-                    FakeBuild::builder()
+                    FakeBuild::default()
                         .s3_build_log("A build log", true)
                         .build_log_for_other_target("other_target", "other target build log", true)
                         .build(),
@@ -502,7 +502,7 @@ mod tests {
                 .name("foo")
                 .version("0.1.0")
                 .builds(vec![
-                    FakeBuild::builder()
+                    FakeBuild::default()
                         .s3_build_log("A build log", true)
                         .db_build_log("Another build log")
                         .build(),

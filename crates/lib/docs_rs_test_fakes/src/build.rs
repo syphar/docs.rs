@@ -5,29 +5,28 @@ use docs_rs_types::{BuildStatus, ReleaseId, SimpleBuildError};
 use std::collections::HashMap;
 
 #[derive(bon::Builder)]
-#[builder(
-    start_fn(name = build_internal, vis = ""),
-    on(_, into)
-)]
+#[builder(on(_, into))]
 pub struct FakeBuild {
     #[builder(field)]
     other_build_logs: HashMap<String, (String, bool)>,
 
-    #[builder(field)]
+    #[builder(
+        setters(
+            name = s3_build_log_internal,
+            vis = ""
+        )
+    )]
     s3_build_log: Option<(String, bool)>,
 
     db_build_log: Option<String>,
 
-    #[builder(default = "rustc 2.0.0-nightly (000000000 1970-01-01)")]
-    rustc_version: String,
+    rustc_version: Option<String>,
 
-    #[builder(default = "docs.rs 1.0.0 (000000000 1970-01-01)")]
-    docsrs_version: String,
+    docsrs_version: Option<String>,
 
-    #[builder(default = BuildStatus::Success)]
+    #[builder(default = BuildStatus::InProgress)]
     pub build_status: BuildStatus,
 
-    #[builder(overwritable)]
     memory_peak: Option<u64>,
 
     /// new build logs: we have a record in the `builds_logs` table for each log, including a status
@@ -36,21 +35,27 @@ pub struct FakeBuild {
     legacy_build_logs: bool,
 }
 
-use fake_build_builder::{IsComplete, IsUnset, SetBuildStatus, State};
+use fake_build_builder::{IsComplete, IsUnset, SetBuildStatus, SetS3BuildLog, State};
+
+use crate::build::fake_build_builder::{SetDocsrsVersion, SetMemoryPeak, SetRustcVersion};
 
 impl<S: State> FakeBuildBuilder<S> {
     pub fn s3_build_log(
-        mut self,
+        self,
         build_log: impl Into<String>,
         successful: bool,
-    ) -> FakeBuildBuilder<S> {
-        self.s3_build_log = Some((build_log.into(), successful));
-        self
+    ) -> FakeBuildBuilder<SetS3BuildLog<S>>
+    where
+        S::S3BuildLog: IsUnset,
+    {
+        self.s3_build_log_internal((build_log.into(), successful))
     }
 
-    pub fn no_s3_build_log(mut self) -> FakeBuildBuilder<S> {
-        self.s3_build_log = None;
-        self
+    pub fn no_s3_build_log(self) -> FakeBuildBuilder<SetS3BuildLog<S>>
+    where
+        S::S3BuildLog: IsUnset,
+    {
+        self.maybe_s3_build_log_internal(None::<(String, bool)>)
     }
 
     pub fn build_log_for_other_target(
@@ -92,9 +97,14 @@ impl<S: State> FakeBuildBuilder<S> {
 }
 
 impl FakeBuild {
-    pub fn builder() -> FakeBuildBuilder {
-        FakeBuild::build_internal()
+    pub fn default<S>() -> FakeBuildBuilder<
+        SetMemoryPeak<SetBuildStatus<SetDocsrsVersion<SetRustcVersion<SetS3BuildLog>>>>,
+    > {
+        FakeBuild::builder()
             .s3_build_log("It works!", true)
+            .rustc_version("rustc 2.0.0-nightly (000000000 1970-01-01)")
+            .docsrs_version("docs.rs 1.0.0 (000000000 1970-01-01)")
+            .build_status(BuildStatus::Success)
             .memory_peak(23u64)
     }
 
