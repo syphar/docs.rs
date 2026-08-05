@@ -35,9 +35,10 @@ pub struct FakeBuild {
     legacy_build_logs: bool,
 }
 
-use fake_build_builder::{IsComplete, IsUnset, SetBuildStatus, SetS3BuildLog, State};
-
-use crate::build::fake_build_builder::{SetDocsrsVersion, SetMemoryPeak, SetRustcVersion};
+use fake_build_builder::{
+    IsComplete, IsUnset, SetBuildStatus, SetDocsrsVersion, SetMemoryPeak, SetRustcVersion,
+    SetS3BuildLog, State,
+};
 
 impl<S: State> FakeBuildBuilder<S> {
     pub fn s3_build_log(
@@ -120,8 +121,8 @@ impl FakeBuild {
         docs_rs_database::releases::finish_build(
             &mut *conn,
             build_id,
-            &self.rustc_version,
-            &self.docsrs_version,
+            self.rustc_version.as_deref(),
+            self.docsrs_version.as_deref(),
             self.build_status,
             Some(42),
             self.memory_peak,
