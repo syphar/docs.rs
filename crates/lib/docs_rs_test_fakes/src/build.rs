@@ -1,14 +1,28 @@
 use anyhow::{Result, bail};
 use docs_rs_database::releases::add_build_logs;
 use docs_rs_storage::AsyncStorage;
-use docs_rs_types::{BuildStatus, ReleaseId, SimpleBuildError};
+use docs_rs_types::{BuildId, BuildStatus, ReleaseId, SimpleBuildError};
 use std::collections::HashMap;
+
+#[derive(bon::Builder)]
+#[builder(on(_, into))]
+pub struct FakeInitialBuild {
+    release_id: ReleaseId,
+}
+
+impl FakeInitialBuild {
+    pub async fn create(&self, conn: &mut sqlx::PgConnection) -> Result<BuildId> {
+        docs_rs_database::releases::initialize_build(&mut *conn, self.release_id).await
+    }
+}
 
 #[derive(bon::Builder)]
 #[builder(on(_, into))]
 pub struct FakeBuild {
     #[builder(field)]
     other_build_logs: HashMap<String, (String, bool)>,
+
+    release_id: ReleaseId,
 
     #[builder(
         setters(
@@ -24,7 +38,7 @@ pub struct FakeBuild {
 
     docsrs_version: Option<String>,
 
-    #[builder(default = BuildStatus::InProgress)]
+    #[builder(default = BuildStatus::Success)]
     pub build_status: BuildStatus,
 
     memory_peak: Option<u64>,
@@ -116,7 +130,11 @@ impl FakeBuild {
         release_id: ReleaseId,
         default_target: &str,
     ) -> Result<()> {
-        let build_id = docs_rs_database::releases::initialize_build(&mut *conn, release_id).await?;
+        let build_id = FakeInitialBuild::builder()
+            .release_id(self.release_id)
+            .build()
+            .create(&mut *conn)
+            .await?;
 
         docs_rs_database::releases::finish_build(
             &mut *conn,
