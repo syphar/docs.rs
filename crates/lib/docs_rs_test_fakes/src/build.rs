@@ -5,7 +5,10 @@ use docs_rs_types::{BuildId, BuildStatus, ReleaseId, SimpleBuildError};
 use std::collections::HashMap;
 
 #[derive(bon::Builder)]
-#[builder(on(_, into, overwritable))]
+#[builder(
+    on(_, into, overwritable),
+    finish_fn(name = build_internal, vis = ""),
+)]
 pub struct FakeBuild {
     #[builder(field)]
     other_build_logs: HashMap<String, (String, bool)>,
@@ -77,6 +80,17 @@ impl<S: State> FakeBuildBuilder<S> {
         })
     }
 
+    pub fn build(self) -> FakeBuild
+    where
+        S: IsComplete,
+    {
+        if self.s3_build_log_manually_set {
+            self.build_internal()
+        } else {
+            self.s3_build_log("It works!", true).build_internal()
+        }
+    }
+
     pub async fn create(
         self,
         conn: &mut sqlx::PgConnection,
@@ -94,12 +108,6 @@ impl<S: State> FakeBuildBuilder<S> {
 }
 
 impl FakeBuild {
-    pub fn default() -> FakeBuildBuilder {
-        FakeBuild::builder()
-            .s3_build_log("It works!", true)
-            .memory_peak(23u64)
-    }
-
     pub async fn create(
         &self,
         conn: &mut sqlx::PgConnection,
