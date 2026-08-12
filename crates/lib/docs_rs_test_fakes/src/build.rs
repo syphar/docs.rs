@@ -5,10 +5,7 @@ use docs_rs_types::{BuildId, BuildStatus, ReleaseId, SimpleBuildError};
 use std::collections::HashMap;
 
 #[derive(bon::Builder)]
-#[builder(
-    on(_, into, overwritable),
-    finish_fn(name = build_internal, vis = ""),
-)]
+#[builder(on(_, into))]
 pub struct FakeBuild {
     #[builder(field)]
     other_build_logs: HashMap<String, (String, bool)>,
@@ -44,19 +41,25 @@ pub struct FakeBuild {
     legacy_build_logs: bool,
 }
 
-use fake_build_builder::{IsComplete, State};
+use fake_build_builder::{IsComplete, IsUnset, SetBuildStatus, SetS3BuildLog, State};
 
 impl<S: State> FakeBuildBuilder<S> {
     pub fn s3_build_log(
         mut self,
         build_log: impl Into<String>,
         successful: bool,
-    ) -> FakeBuildBuilder<S> {
+    ) -> FakeBuildBuilder<SetS3BuildLog<S>>
+    where
+        S::S3BuildLog: IsUnset,
+    {
         self.s3_build_log_manually_set = true;
         self.s3_build_log_internal((build_log.into(), successful))
     }
 
-    pub fn no_s3_build_log(mut self) -> FakeBuildBuilder<S> {
+    pub fn no_s3_build_log(mut self) -> FakeBuildBuilder<SetS3BuildLog<S>>
+    where
+        S::S3BuildLog: IsUnset,
+    {
         self.s3_build_log_manually_set = true;
         self.maybe_s3_build_log_internal(None::<(String, bool)>)
     }
@@ -72,23 +75,15 @@ impl<S: State> FakeBuildBuilder<S> {
         self
     }
 
-    pub fn successful(self, successful: bool) -> FakeBuildBuilder<S> {
+    pub fn successful(self, successful: bool) -> FakeBuildBuilder<SetBuildStatus<S>>
+    where
+        S::BuildStatus: IsUnset,
+    {
         self.build_status(if successful {
             BuildStatus::Success
         } else {
             BuildStatus::Failure
         })
-    }
-
-    pub fn build(self) -> FakeBuild
-    where
-        S: IsComplete,
-    {
-        if self.s3_build_log_manually_set {
-            self.build_internal()
-        } else {
-            self.s3_build_log("It works!", true).build_internal()
-        }
     }
 
     pub async fn create(
