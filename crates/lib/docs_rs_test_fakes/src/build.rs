@@ -107,6 +107,12 @@ impl<S: State> FakeBuildBuilder<S> {
     }
 }
 
+impl Default for FakeBuild {
+    fn default() -> Self {
+        Self::builder().build()
+    }
+}
+
 impl FakeBuild {
     pub async fn create(
         &self,

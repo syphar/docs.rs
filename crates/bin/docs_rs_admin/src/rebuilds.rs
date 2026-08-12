@@ -96,7 +96,7 @@ mod tests {
                 .name(&crate_name)
                 .version(version)
                 .builds(vec![
-                    FakeBuild::default()
+                    FakeBuild::builder()
                         .rustc_version(format!(
                             "rustc 1.84.0-nightly (e7c0d2750 {})",
                             nightly.format("%Y-%m-%d")
@@ -156,7 +156,7 @@ mod tests {
                 .name(&crate_name)
                 .version(version)
                 .builds(vec![
-                    FakeBuild::default()
+                    FakeBuild::builder()
                         .rustc_version(format!(
                             "rustc 1.84.0-nightly (e7c0d2750 {})",
                             nightly.format("%Y-%m-%d")
@@ -209,7 +209,7 @@ mod tests {
                 .name(&crate_name)
                 .version(version)
                 .builds(vec![
-                    FakeBuild::default()
+                    FakeBuild::builder()
                         .rustc_version(format!(
                             "rustc 1.84.0-nightly (e7c0d2750 {})",
                             nightly.format("%Y-%m-%d")

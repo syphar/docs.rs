@@ -1224,7 +1224,7 @@ mod tests {
                 .name("foo")
                 .version("0.1.0")
                 .builds(vec![
-                    FakeBuild::default()
+                    FakeBuild::builder()
                         .build_status(BuildStatus::InProgress)
                         .build(),
                 ])
@@ -2107,13 +2107,13 @@ path = "src/lib.rs"
                 .name("dummy")
                 .version("0.1.0")
                 .builds(vec![
-                    FakeBuild::default()
+                    FakeBuild::builder()
                         .build_status(BuildStatus::Success)
                         .build(),
-                    FakeBuild::default()
+                    FakeBuild::builder()
                         .build_status(BuildStatus::Failure)
                         .build(),
-                    FakeBuild::default()
+                    FakeBuild::builder()
                         .build_status(BuildStatus::InProgress)
                         .build(),
                 ])
@@ -2139,10 +2139,10 @@ path = "src/lib.rs"
                 .name("dummy")
                 .version("0.1.0")
                 .builds(vec![
-                    FakeBuild::default()
+                    FakeBuild::builder()
                         .build_status(BuildStatus::Failure)
                         .build(),
-                    FakeBuild::default()
+                    FakeBuild::builder()
                         .build_status(BuildStatus::InProgress)
                         .build(),
                 ])
@@ -2168,7 +2168,7 @@ path = "src/lib.rs"
                 .name("dummy")
                 .version("0.1.0")
                 .builds(vec![
-                    FakeBuild::default()
+                    FakeBuild::builder()
                         .build_status(BuildStatus::InProgress)
                         .build(),
                 ])

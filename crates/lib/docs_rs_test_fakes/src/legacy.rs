@@ -194,7 +194,7 @@ impl<'a> FakeRelease<'a> {
         );
         Self {
             has_docs: false,
-            builds: Some(vec![FakeBuild::default().successful(false).build()]),
+            builds: Some(vec![FakeBuild::builder().successful(false).build()]),
             ..self
         }
     }
@@ -443,9 +443,7 @@ impl<'a> FakeRelease<'a> {
         debug!(?source_meta, "added source files");
 
         // If the test didn't add custom builds, inject a default one
-        let builds = self
-            .builds
-            .unwrap_or_else(|| vec![FakeBuild::default().build()]);
+        let builds = self.builds.unwrap_or_else(|| vec![FakeBuild::default()]);
 
         if builds.last().map(|b| b.build_status) == Some(BuildStatus::Success) {
             let index = [&package.name, "index.html"].join("/");
