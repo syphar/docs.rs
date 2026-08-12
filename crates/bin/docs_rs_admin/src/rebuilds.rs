@@ -97,13 +97,10 @@ mod tests {
                 .version(version)
                 .builds(vec![
                     FakeBuild::default()
-                        .rustc_version(
-                            format!(
-                                "rustc 1.84.0-nightly (e7c0d2750 {})",
-                                nightly.format("%Y-%m-%d")
-                            )
-                            .as_str(),
-                        )
+                        .rustc_version(format!(
+                            "rustc 1.84.0-nightly (e7c0d2750 {})",
+                            nightly.format("%Y-%m-%d")
+                        ))
                         .build_status(BuildStatus::Failure)
                         .build(),
                 ])
@@ -160,13 +157,10 @@ mod tests {
                 .version(version)
                 .builds(vec![
                     FakeBuild::default()
-                        .rustc_version(
-                            format!(
-                                "rustc 1.84.0-nightly (e7c0d2750 {})",
-                                nightly.format("%Y-%m-%d")
-                            )
-                            .as_str(),
-                        )
+                        .rustc_version(format!(
+                            "rustc 1.84.0-nightly (e7c0d2750 {})",
+                            nightly.format("%Y-%m-%d")
+                        ))
                         .build_status(BuildStatus::Failure)
                         .build(),
                 ])
@@ -216,13 +210,10 @@ mod tests {
                 .version(version)
                 .builds(vec![
                     FakeBuild::default()
-                        .rustc_version(
-                            format!(
-                                "rustc 1.84.0-nightly (e7c0d2750 {})",
-                                nightly.format("%Y-%m-%d")
-                            )
-                            .as_str(),
-                        )
+                        .rustc_version(format!(
+                            "rustc 1.84.0-nightly (e7c0d2750 {})",
+                            nightly.format("%Y-%m-%d")
+                        ))
                         .build_status(BuildStatus::Failure)
                         .build(),
                 ])
