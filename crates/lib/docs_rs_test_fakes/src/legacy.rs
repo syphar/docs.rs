@@ -1,5 +1,4 @@
-use crate::FakeBuild;
-use crate::FakeGithubStats;
+use crate::{FakeBuild, FakeEarlyErrorBuild, FakeGithubStats};
 use anyhow::{Context as _, Result, bail};
 use chrono::{DateTime, Utc};
 use docs_rs_cargo_metadata::{Dependency, MetadataPackage, Target};
@@ -40,23 +39,10 @@ where
     let version = version.try_into()?;
     let crate_id = initialize_crate(&mut *conn, &name).await?;
     let release_id = initialize_release(&mut *conn, crate_id, &version).await?;
-    let build_id = initialize_build(&mut *conn, release_id).await?;
-
-    sqlx::query_scalar!(
-        "UPDATE builds
-         SET
-             build_status = 'failure',
-             errors = $2,
-             error_kind = $3
-         WHERE id = $1",
-        build_id.0,
-        build_error.to_string(),
-        build_error.kind(),
-    )
-    .execute(&mut *conn)
-    .await?;
-
-    update_build_status(conn, release_id).await?;
+    let build_id = FakeEarlyErrorBuild::builder()
+        .error(build_error)
+        .create(&mut *conn, release_id)
+        .await?;
 
     Ok((release_id, build_id))
 }
