@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use docs_rs_cargo_metadata::{Dependency, MetadataPackage, Target};
 use docs_rs_database::{
     Pool,
-    releases::{initialize_build, initialize_crate, initialize_release, update_build_status},
+    releases::{initialize_crate, initialize_release},
 };
 use docs_rs_registry_api::{CrateData, CrateOwner, ReleaseData};
 use docs_rs_rustdoc_json::{RUSTDOC_JSON_COMPRESSION_ALGORITHMS, RustdocJsonFormatVersion};
@@ -40,7 +40,7 @@ where
     let crate_id = initialize_crate(&mut *conn, &name).await?;
     let release_id = initialize_release(&mut *conn, crate_id, &version).await?;
     let build_id = FakeEarlyErrorBuild::builder()
-        .error(build_error)
+        .error(&build_error)
         .create(&mut *conn, release_id)
         .await?;
 

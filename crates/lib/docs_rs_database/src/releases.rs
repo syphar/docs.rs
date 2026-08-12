@@ -293,6 +293,28 @@ pub async fn update_build_with_error<E>(
 where
     E: BuildError,
 {
+    update_build_with_error_text(
+        conn,
+        build_id,
+        build_error.map(|e| (e.to_string(), e.kind())),
+    )
+    .await
+}
+
+#[instrument(skip(conn))]
+pub async fn update_build_with_error_text<S1, S2>(
+    conn: &mut sqlx::PgConnection,
+    build_id: BuildId,
+    build_error: Option<(S1, S2)>,
+) -> Result<BuildId>
+where
+    S1: Into<String> + fmt::Debug,
+    S2: Into<String> + fmt::Debug,
+{
+    let (errors, kind) = build_error
+        .map(|(errors, kind)| (Some(errors.into()), Some(kind.into())))
+        .unwrap_or_else(|| (None, None));
+
     debug!("updating build with error");
     let release_id = sqlx::query_scalar!(
         r#"UPDATE builds
@@ -303,8 +325,8 @@ where
          WHERE id = $4
          RETURNING rid as "rid: ReleaseId" "#,
         BuildStatus::Failure as BuildStatus,
-        build_error.map(|err| err.to_string()),
-        build_error.map(|err| err.kind()),
+        errors,
+        kind,
         build_id.0,
     )
     .fetch_one(&mut *conn)
