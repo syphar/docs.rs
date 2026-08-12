@@ -6,41 +6,31 @@ use std::collections::HashMap;
 
 #[derive(bon::Builder)]
 #[builder(on(_, into))]
-pub struct FakeInitialBuild {
-    release_id: ReleaseId,
-}
-
-impl FakeInitialBuild {
-    pub async fn create(&self, conn: &mut sqlx::PgConnection) -> Result<BuildId> {
-        docs_rs_database::releases::initialize_build(&mut *conn, self.release_id).await
-    }
-}
-
-#[derive(bon::Builder)]
-#[builder(on(_, into))]
 pub struct FakeBuild {
     #[builder(field)]
     other_build_logs: HashMap<String, (String, bool)>,
-
-    release_id: ReleaseId,
 
     #[builder(
         setters(
             name = s3_build_log_internal,
             vis = ""
-        )
+        ),
+        // default = Some(("It works!".into(), true))
     )]
     s3_build_log: Option<(String, bool)>,
 
     db_build_log: Option<String>,
 
-    rustc_version: Option<String>,
+    #[builder(default = "rustc 2.0.0-nightly (000000000 1970-01-01)")]
+    rustc_version: String,
 
-    docsrs_version: Option<String>,
+    #[builder(default = "docs.rs 1.0.0 (000000000 1970-01-01)")]
+    docsrs_version: String,
 
     #[builder(default = BuildStatus::Success)]
     pub build_status: BuildStatus,
 
+    // #[builder(default = Some(23u64))]
     memory_peak: Option<u64>,
 
     /// new build logs: we have a record in the `builds_logs` table for each log, including a status
@@ -50,8 +40,7 @@ pub struct FakeBuild {
 }
 
 use fake_build_builder::{
-    IsComplete, IsUnset, SetBuildStatus, SetDocsrsVersion, SetMemoryPeak, SetRustcVersion,
-    SetS3BuildLog, State,
+    IsComplete, IsUnset, SetBuildStatus, SetMemoryPeak, SetS3BuildLog, State,
 };
 
 impl<S: State> FakeBuildBuilder<S> {
@@ -101,7 +90,7 @@ impl<S: State> FakeBuildBuilder<S> {
         storage: &AsyncStorage,
         release_id: ReleaseId,
         default_target: &str,
-    ) -> Result<()>
+    ) -> Result<BuildId>
     where
         S: IsComplete,
     {
@@ -112,14 +101,9 @@ impl<S: State> FakeBuildBuilder<S> {
 }
 
 impl FakeBuild {
-    pub fn default<S>() -> FakeBuildBuilder<
-        SetMemoryPeak<SetBuildStatus<SetDocsrsVersion<SetRustcVersion<SetS3BuildLog>>>>,
-    > {
+    pub fn default() -> FakeBuildBuilder<SetMemoryPeak<SetS3BuildLog>> {
         FakeBuild::builder()
             .s3_build_log("It works!", true)
-            .rustc_version("rustc 2.0.0-nightly (000000000 1970-01-01)")
-            .docsrs_version("docs.rs 1.0.0 (000000000 1970-01-01)")
-            .build_status(BuildStatus::Success)
             .memory_peak(23u64)
     }
 
@@ -129,18 +113,14 @@ impl FakeBuild {
         storage: &AsyncStorage,
         release_id: ReleaseId,
         default_target: &str,
-    ) -> Result<()> {
-        let build_id = FakeInitialBuild::builder()
-            .release_id(self.release_id)
-            .build()
-            .create(&mut *conn)
-            .await?;
+    ) -> Result<BuildId> {
+        let build_id = docs_rs_database::releases::initialize_build(&mut *conn, release_id).await?;
 
         docs_rs_database::releases::finish_build(
             &mut *conn,
             build_id,
-            self.rustc_version.as_deref(),
-            self.docsrs_version.as_deref(),
+            &self.rustc_version,
+            &self.docsrs_version,
             self.build_status,
             Some(42),
             self.memory_peak,
@@ -186,6 +166,6 @@ impl FakeBuild {
             add_build_logs(&mut *conn, build_id, log_filenames).await?;
         }
 
-        Ok(())
+        Ok(build_id)
     }
 }
