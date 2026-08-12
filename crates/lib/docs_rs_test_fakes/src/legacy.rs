@@ -1,6 +1,11 @@
+<<<<<<< HEAD
 use crate::FakeBuild;
 use anyhow::{Context as _, Result};
 use base64::{Engine, engine::general_purpose::STANDARD as b64};
+=======
+use crate::FakeGithubStats;
+use anyhow::{Context as _, Result, bail};
+>>>>>>> main
 use chrono::{DateTime, Utc};
 use docs_rs_cargo_metadata::{Dependency, MetadataPackage, Target};
 use docs_rs_database::{
@@ -77,10 +82,10 @@ pub struct FakeRelease<'a> {
     registry_release_data: ReleaseData,
     has_docs: bool,
     has_examples: bool,
-    archive_storage: bool,
     /// This stores the content, while `package.readme` stores the filename
     readme: Option<&'a str>,
     github_stats: Option<FakeGithubStats>,
+    github_stats_id: Option<i32>,
     doc_coverage: Option<DocCoverage>,
     no_cargo_toml: bool,
 }
@@ -137,8 +142,8 @@ impl<'a> FakeRelease<'a> {
             has_examples: false,
             readme: None,
             github_stats: None,
+            github_stats_id: None,
             doc_coverage: None,
-            archive_storage: false,
             no_cargo_toml: false,
         }
     }
@@ -218,11 +223,6 @@ impl<'a> FakeRelease<'a> {
 
     pub fn yanked(mut self, new: bool) -> Self {
         self.registry_release_data.yanked = new;
-        self
-    }
-
-    pub fn archive_storage(mut self, new: bool) -> Self {
-        self.archive_storage = new;
         self
     }
 
@@ -321,12 +321,19 @@ impl<'a> FakeRelease<'a> {
         forks: i32,
         issues: i32,
     ) -> Self {
-        self.github_stats = Some(FakeGithubStats {
-            repo: repo.into(),
-            stars,
-            forks,
-            issues,
-        });
+        self.github_stats = Some(
+            FakeGithubStats::builder()
+                .repo(repo)
+                .stars(stars)
+                .forks(forks)
+                .issues(issues)
+                .build(),
+        );
+        self
+    }
+
+    pub fn github_stats_id(mut self, id: i32) -> Self {
+        self.github_stats_id = Some(id);
         self
     }
 
@@ -344,7 +351,6 @@ impl<'a> FakeRelease<'a> {
         let pool = self.pool;
         let mut rustdoc_files = self.rustdoc_files;
         let storage = self.storage;
-        let archive_storage = self.archive_storage;
 
         // Upload all source files as rustdoc files
         // In real life, these would be highlighted HTML, but for testing we just use the files themselves.
@@ -397,7 +403,6 @@ impl<'a> FakeRelease<'a> {
         async fn upload_files(
             kind: FileKind,
             source_directory: &Path,
-            archive_storage: bool,
             package: &MetadataPackage,
             storage: &AsyncStorage,
         ) -> Result<(Vec<FileEntry>, CompressionAlgorithm)> {
@@ -406,30 +411,15 @@ impl<'a> FakeRelease<'a> {
                 kind,
                 source_directory.display()
             );
-            if archive_storage {
-                // NOTE: should we migrate MetadataPackage?
-                let krate_name: KrateName = package.name.parse()?;
-
-                let archive = match kind {
-                    FileKind::Rustdoc => rustdoc_archive_path(&krate_name, &package.version),
-                    FileKind::Sources => source_archive_path(&krate_name, &package.version),
-                };
-                debug!("store in archive: {:?}", archive);
-                Ok(storage
-                    .store_all_in_archive(&archive, source_directory)
-                    .await?)
-            } else {
-                let prefix = match kind {
-                    FileKind::Rustdoc => "rustdoc",
-                    FileKind::Sources => "sources",
-                };
-                storage
-                    .store_all(
-                        format!("{}/{}/{}/", prefix, package.name, package.version),
-                        source_directory,
-                    )
-                    .await
-            }
+            let krate_name: KrateName = package.name.parse()?;
+            let archive = match kind {
+                FileKind::Rustdoc => rustdoc_archive_path(&krate_name, &package.version),
+                FileKind::Sources => source_archive_path(&krate_name, &package.version),
+            };
+            debug!("store in archive: {:?}", archive);
+            storage
+                .store_all_in_archive(&archive, source_directory)
+                .await
         }
 
         debug!("before upload source");
@@ -453,14 +443,8 @@ impl<'a> FakeRelease<'a> {
             store_files_into(&[("Cargo.toml", content.as_bytes())], source_tmp.path())?;
         }
 
-        let (source_meta, algs) = upload_files(
-            FileKind::Sources,
-            source_tmp.path(),
-            archive_storage,
-            &package,
-            &storage,
-        )
-        .await?;
+        let (source_meta, algs) =
+            upload_files(FileKind::Sources, source_tmp.path(), &package, &storage).await?;
         debug!(?source_meta, "added source files");
 
         // If the test didn't add custom builds, inject a default one
@@ -490,22 +474,20 @@ impl<'a> FakeRelease<'a> {
                 debug!("added platform files for {}", platform);
             }
 
-            let (files, _) = upload_files(
-                FileKind::Rustdoc,
-                rustdoc_path,
-                archive_storage,
-                &package,
-                &storage,
-            )
-            .await?;
+            let (files, _) =
+                upload_files(FileKind::Rustdoc, rustdoc_path, &package, &storage).await?;
             debug!(?files, "uploaded rustdoc files");
         }
 
         let mut async_conn = pool.get_async().await?;
 
-        let repository = match self.github_stats {
-            Some(stats) => Some(stats.create(&mut async_conn).await?),
-            None => None,
+        let repository = match (self.github_stats, self.github_stats_id) {
+            (Some(_), Some(_)) => {
+                bail!("can't have both given github stats and an external github stats id")
+            }
+            (Some(stats), None) => Some(stats.create(&mut async_conn).await?),
+            (None, Some(id)) => Some(id),
+            (None, None) => None,
         };
 
         let crate_tmp = create_temp_dir();
@@ -571,7 +553,6 @@ impl<'a> FakeRelease<'a> {
             self.has_examples,
             iter::once(algs),
             repository,
-            archive_storage,
             24,
         )
         .await?;
@@ -595,6 +576,7 @@ impl<'a> FakeRelease<'a> {
     }
 }
 
+<<<<<<< HEAD
 pub struct FakeGithubStats {
     pub repo: String,
     pub stars: i32,
@@ -618,5 +600,159 @@ impl FakeGithubStats {
         ).fetch_one(&mut *conn).await?;
 
         Ok(id)
+=======
+impl FakeBuild {
+    pub fn rustc_version(self, rustc_version: impl Into<String>) -> Self {
+        Self {
+            rustc_version: rustc_version.into(),
+            ..self
+        }
+    }
+
+    pub fn docsrs_version(self, docsrs_version: impl Into<String>) -> Self {
+        Self {
+            docsrs_version: docsrs_version.into(),
+            ..self
+        }
+    }
+
+    pub fn s3_build_log(self, build_log: impl Into<String>, successful: bool) -> Self {
+        Self {
+            s3_build_log: Some((build_log.into(), successful)),
+            ..self
+        }
+    }
+
+    pub fn build_log_for_other_target(
+        mut self,
+        target: impl Into<String>,
+        build_log: impl Into<String>,
+        successful: bool,
+    ) -> Self {
+        self.other_build_logs
+            .insert(target.into(), (build_log.into(), successful));
+        self
+    }
+
+    pub fn db_build_log(self, build_log: impl Into<String>) -> Self {
+        Self {
+            db_build_log: Some(build_log.into()),
+            ..self
+        }
+    }
+
+    pub fn no_s3_build_log(self) -> Self {
+        Self {
+            s3_build_log: None,
+            ..self
+        }
+    }
+
+    pub fn successful(self, successful: bool) -> Self {
+        self.build_status(if successful {
+            BuildStatus::Success
+        } else {
+            BuildStatus::Failure
+        })
+    }
+
+    pub fn build_status(self, build_status: BuildStatus) -> Self {
+        Self {
+            build_status,
+            ..self
+        }
+    }
+
+    pub fn memory_peak(self, memory_peak: u64) -> Self {
+        Self {
+            memory_peak: Some(memory_peak),
+            ..self
+        }
+    }
+
+    pub fn legacy_build_logs(self, legacy_build_logs: bool) -> Self {
+        Self {
+            legacy_build_logs,
+            ..self
+        }
+    }
+
+    async fn create(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        storage: &AsyncStorage,
+        release_id: ReleaseId,
+        default_target: &str,
+    ) -> Result<()> {
+        let build_id = docs_rs_database::releases::initialize_build(&mut *conn, release_id).await?;
+
+        docs_rs_database::releases::finish_build(
+            &mut *conn,
+            build_id,
+            &self.rustc_version,
+            &self.docsrs_version,
+            self.build_status,
+            Some(42),
+            self.memory_peak,
+            None::<&SimpleBuildError>,
+        )
+        .await?;
+
+        if let Some(db_build_log) = self.db_build_log.as_deref() {
+            sqlx::query!(
+                "UPDATE builds SET output = $2 WHERE id = $1",
+                build_id.0,
+                db_build_log
+            )
+            .execute(&mut *conn)
+            .await?;
+        }
+
+        let prefix = format!("build-logs/{build_id}/");
+
+        let mut log_filenames = Vec::new();
+
+        if let Some((s3_build_log, successful)) = &self.s3_build_log {
+            log_filenames.push((format!("{default_target}.txt"), *successful));
+            storage
+                .store_one(
+                    format!("{prefix}{default_target}.txt"),
+                    s3_build_log.clone(),
+                )
+                .await?;
+        }
+
+        for (target, (log, successful)) in &self.other_build_logs {
+            if target == default_target {
+                bail!("build log for default target has to be set via `s3_build_log`");
+            }
+            log_filenames.push((format!("{target}.txt"), *successful));
+            storage
+                .store_one(format!("{prefix}{target}.txt"), log.clone())
+                .await?;
+        }
+
+        if !self.legacy_build_logs && !log_filenames.is_empty() {
+            add_build_logs(&mut *conn, build_id, log_filenames).await?;
+        }
+
+        Ok(())
+    }
+}
+
+impl Default for FakeBuild {
+    /// create a default fake _finished_ build
+    fn default() -> Self {
+        Self {
+            s3_build_log: Some(("It works!".into(), true)),
+            db_build_log: None,
+            other_build_logs: HashMap::new(),
+            rustc_version: "rustc 2.0.0-nightly (000000000 1970-01-01)".into(),
+            docsrs_version: "docs.rs 1.0.0 (000000000 1970-01-01)".into(),
+            build_status: BuildStatus::Success,
+            memory_peak: Some(23),
+            legacy_build_logs: false,
+        }
+>>>>>>> main
     }
 }
