@@ -10,14 +10,14 @@ pub struct FakeBuild {
     #[builder(field)]
     other_build_logs: HashMap<String, (String, bool)>,
 
-    #[builder(field)]
-    s3_build_log_manually_set: bool,
-
     #[builder(
         setters(
             name = s3_build_log_internal,
             vis = ""
         ),
+        required,
+        with = Some,
+        default = Some(("It works!".into(), true))
     )]
     s3_build_log: Option<(String, bool)>,
 
@@ -45,22 +45,20 @@ use fake_build_builder::{IsComplete, IsUnset, SetBuildStatus, SetS3BuildLog, Sta
 
 impl<S: State> FakeBuildBuilder<S> {
     pub fn s3_build_log(
-        mut self,
+        self,
         build_log: impl Into<String>,
         successful: bool,
     ) -> FakeBuildBuilder<SetS3BuildLog<S>>
     where
         S::S3BuildLog: IsUnset,
     {
-        self.s3_build_log_manually_set = true;
         self.s3_build_log_internal((build_log.into(), successful))
     }
 
-    pub fn no_s3_build_log(mut self) -> FakeBuildBuilder<SetS3BuildLog<S>>
+    pub fn no_s3_build_log(self) -> FakeBuildBuilder<SetS3BuildLog<S>>
     where
         S::S3BuildLog: IsUnset,
     {
-        self.s3_build_log_manually_set = true;
         self.maybe_s3_build_log_internal(None::<(String, bool)>)
     }
 
@@ -143,13 +141,8 @@ impl FakeBuild {
         let prefix = format!("build-logs/{build_id}/");
 
         let mut log_filenames = Vec::new();
-        let default_s3_build_log: Option<(String, bool)> = Some(("It works!".into(), true));
 
-        if let Some((s3_build_log, successful)) = if self.s3_build_log_manually_set {
-            &self.s3_build_log
-        } else {
-            &default_s3_build_log
-        } {
+        if let Some((s3_build_log, successful)) = &self.s3_build_log {
             log_filenames.push((format!("{default_target}.txt"), *successful));
             storage
                 .store_one(
