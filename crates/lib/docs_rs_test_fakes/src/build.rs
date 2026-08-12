@@ -5,17 +5,19 @@ use docs_rs_types::{BuildId, BuildStatus, ReleaseId, SimpleBuildError};
 use std::collections::HashMap;
 
 #[derive(bon::Builder)]
-#[builder(on(_, into))]
+#[builder(on(_, into, overwritable))]
 pub struct FakeBuild {
     #[builder(field)]
     other_build_logs: HashMap<String, (String, bool)>,
+
+    #[builder(field)]
+    s3_build_log_manually_set: bool,
 
     #[builder(
         setters(
             name = s3_build_log_internal,
             vis = ""
         ),
-        // default = Some(("It works!".into(), true))
     )]
     s3_build_log: Option<(String, bool)>,
 
@@ -30,8 +32,8 @@ pub struct FakeBuild {
     #[builder(default = BuildStatus::Success)]
     pub build_status: BuildStatus,
 
-    // #[builder(default = Some(23u64))]
-    memory_peak: Option<u64>,
+    #[builder(default = 23u64)]
+    memory_peak: u64,
 
     /// new build logs: we have a record in the `builds_logs` table for each log, including a status
     /// old build logs: people have to run `s3 ls` with prefix to know which build logs exist
@@ -39,26 +41,20 @@ pub struct FakeBuild {
     legacy_build_logs: bool,
 }
 
-use fake_build_builder::{
-    IsComplete, IsUnset, SetBuildStatus, SetMemoryPeak, SetS3BuildLog, State,
-};
+use fake_build_builder::{IsComplete, State};
 
 impl<S: State> FakeBuildBuilder<S> {
     pub fn s3_build_log(
-        self,
+        mut self,
         build_log: impl Into<String>,
         successful: bool,
-    ) -> FakeBuildBuilder<SetS3BuildLog<S>>
-    where
-        S::S3BuildLog: IsUnset,
-    {
+    ) -> FakeBuildBuilder<S> {
+        self.s3_build_log_manually_set = true;
         self.s3_build_log_internal((build_log.into(), successful))
     }
 
-    pub fn no_s3_build_log(self) -> FakeBuildBuilder<SetS3BuildLog<S>>
-    where
-        S::S3BuildLog: IsUnset,
-    {
+    pub fn no_s3_build_log(mut self) -> FakeBuildBuilder<S> {
+        self.s3_build_log_manually_set = true;
         self.maybe_s3_build_log_internal(None::<(String, bool)>)
     }
 
@@ -73,10 +69,7 @@ impl<S: State> FakeBuildBuilder<S> {
         self
     }
 
-    pub fn successful(self, successful: bool) -> FakeBuildBuilder<SetBuildStatus<S>>
-    where
-        S::BuildStatus: IsUnset,
-    {
+    pub fn successful(self, successful: bool) -> FakeBuildBuilder<S> {
         self.build_status(if successful {
             BuildStatus::Success
         } else {
@@ -101,7 +94,7 @@ impl<S: State> FakeBuildBuilder<S> {
 }
 
 impl FakeBuild {
-    pub fn default() -> FakeBuildBuilder<SetMemoryPeak<SetS3BuildLog>> {
+    pub fn default() -> FakeBuildBuilder {
         FakeBuild::builder()
             .s3_build_log("It works!", true)
             .memory_peak(23u64)
@@ -123,7 +116,7 @@ impl FakeBuild {
             &self.docsrs_version,
             self.build_status,
             Some(42),
-            self.memory_peak,
+            Some(self.memory_peak),
             None::<&SimpleBuildError>,
         )
         .await?;
@@ -141,8 +134,13 @@ impl FakeBuild {
         let prefix = format!("build-logs/{build_id}/");
 
         let mut log_filenames = Vec::new();
+        let default_s3_build_log: Option<(String, bool)> = Some(("It works!".into(), true));
 
-        if let Some((s3_build_log, successful)) = &self.s3_build_log {
+        if let Some((s3_build_log, successful)) = if self.s3_build_log_manually_set {
+            &self.s3_build_log
+        } else {
+            &default_s3_build_log
+        } {
             log_filenames.push((format!("{default_target}.txt"), *successful));
             storage
                 .store_one(
