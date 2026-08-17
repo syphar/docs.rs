@@ -102,19 +102,19 @@ To run GUI tests:
 just run-gui-tests
 ```
 
-They use the [browser-ui-test](https://github.com/GuillaumeGomez/browser-UI-test/) framework. You
-can take a look at its [documentation](https://github.com/GuillaumeGomez/browser-UI-test/blob/main/goml-script.md).
+They use the [Playwright](https://playwright.dev/) test framework.
 
 Alternatively, you can start the web server and run the test manually:
 
 ```
-node gui-tests/tester.js
+npm test
 ```
 
-For this to work, you need to install the `browser-ui-test` package:
+For this to work, install the dependencies and the Chromium browser once:
 
 ```
-npm install browser-ui-test
+npm install
+npx playwright install chromium
 ```
 
 ### Additional internal docs

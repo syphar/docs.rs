@@ -1,9 +1,10 @@
 {
-  "name": "deps",
-  "dependencies": {
-    "browser-ui-test": "^0.25.0"
+  "name": "docs-rs-gui-tests",
+  "private": true,
+  "scripts": {
+    "test": "playwright test"
   },
-  "overrides": {
-    "puppeteer": "25.7.0"
+  "devDependencies": {
+    "@playwright/test": "^1.55.0"
   }
 }

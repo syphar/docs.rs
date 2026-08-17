@@ -3,6 +3,7 @@
 /.docker.env
 /src/web/badge/Cargo.lock
 target
+/node_modules
 *.css
 *.css.map
 !vendor/**/*.css
