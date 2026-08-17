@@ -8,13 +8,6 @@ use docs_rs_types::{BuildError, BuildId, ReleaseId, SimpleBuildError};
     start_fn(vis = "", name = builder_internal),
 )]
 pub struct FakeEarlyErrorBuild<E> {
-    // #[builder(
-    //     setters(
-    //         name = error_internal,
-    //         vis = ""
-    //     ),
-    // )]
-    // error: Option<(String, String)>,
     #[builder(setters(name = error_internal, vis = ""))]
     error: Option<E>,
 }
