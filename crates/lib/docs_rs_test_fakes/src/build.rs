@@ -116,6 +116,8 @@ impl FakeBuild {
     ) -> Result<BuildId> {
         let build_id = docs_rs_database::releases::initialize_build(&mut *conn, release_id).await?;
 
+        // TODO: fetch default target from already created release?
+
         docs_rs_database::releases::finish_build(
             &mut *conn,
             build_id,
