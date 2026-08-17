@@ -4,7 +4,10 @@ use docs_rs_types::{BuildError, BuildId, ReleaseId, SimpleBuildError};
 #[derive(bon::Builder)]
 #[builder(
     on(_, into),
-    generics(setters = "with_{}"),
+    generics(setters(
+        name = "with_{}",
+        vis = "",
+    )),
     start_fn(vis = "", name = builder_internal),
 )]
 pub struct FakeEarlyErrorBuild<E> {
