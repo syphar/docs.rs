@@ -39,7 +39,7 @@ where
     let crate_id = initialize_crate(&mut *conn, &name).await?;
     let release_id = initialize_release(&mut *conn, crate_id, &version).await?;
     let build_id = FakeEarlyErrorBuild::builder()
-        .error(&build_error)
+        .error(build_error)
         .create(&mut *conn, release_id)
         .await?;
 
