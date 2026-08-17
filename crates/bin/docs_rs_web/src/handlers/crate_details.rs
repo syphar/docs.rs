@@ -5,6 +5,7 @@ use crate::{
         DbConnection,
         rustdoc::{PageKind, RustdocParams},
     },
+    handlers::builds::{self, Build},
     impl_axum_webpage,
     match_release::{MatchedRelease, match_version},
     metadata::MetaData,
@@ -45,8 +46,8 @@ pub(crate) struct CrateDetails {
     build_status: BuildStatus,
     pub latest_build_id: Option<BuildId>,
     last_successful_build: Option<Version>,
+    pub latest_build: Option<Build>,
     pub rustdoc_status: Option<bool>,
-    pub archive_storage: bool,
     pub repository_url: Option<String>,
     pub homepage_url: Option<String>,
     keywords: Option<Value>,
@@ -119,7 +120,6 @@ impl CrateDetails {
                 -- it's used to invalidate some blob storage related caches.
                 builds.id as "latest_build_id?: BuildId",
                 releases.rustdoc_status,
-                releases.archive_storage,
                 releases.repository_url,
                 releases.homepage_url,
                 releases.keywords,
@@ -218,6 +218,14 @@ impl CrateDetails {
             .map(Into::into)
             .collect();
 
+        let builds = builds::get_builds(conn, &krate.name, version).await?;
+        let latest_build = builds
+            .into_iter()
+            .filter(|build| {
+                build.build_status == BuildStatus::Success && build.build_time.is_some()
+            })
+            .max_by_key(|build| build.build_time);
+
         let mut crate_details = CrateDetails {
             name: krate.name,
             version: version.clone(),
@@ -230,8 +238,8 @@ impl CrateDetails {
             build_status: krate.build_status,
             latest_build_id: krate.latest_build_id,
             last_successful_build: None,
+            latest_build,
             rustdoc_status: krate.rustdoc_status,
-            archive_storage: krate.archive_storage,
             repository_url: krate.repository_url,
             homepage_url: krate.homepage_url,
             keywords: krate.keywords,
@@ -288,7 +296,6 @@ impl CrateDetails {
                 &self.version,
                 self.latest_build_id,
                 "Cargo.toml",
-                self.archive_storage,
             )
             .await
         {
@@ -312,13 +319,7 @@ impl CrateDetails {
         };
         for path in &paths {
             match storage
-                .fetch_source_file(
-                    &self.name,
-                    &self.version,
-                    self.latest_build_id,
-                    path,
-                    self.archive_storage,
-                )
+                .fetch_source_file(&self.name, &self.version, self.latest_build_id, path)
                 .await
             {
                 Ok(readme) => {

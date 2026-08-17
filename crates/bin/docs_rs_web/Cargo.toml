@@ -24,7 +24,7 @@ base64 = { workspace = true }
 bon = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
-comrak = { version = "0.52.0", default-features = false }
+comrak = { version = "0.54.0", default-features = false }
 constant_time_eq = "0.5.0"
 docs_rs_build_limits = { path = "../../lib/docs_rs_build_limits" }
 docs_rs_build_queue = { path = "../../lib/docs_rs_build_queue" }
@@ -47,14 +47,13 @@ font-awesome-as-a-crate = { path = "../../lib/font-awesome-as-a-crate" }
 futures-util = { workspace = true }
 getrandom = "0.4.0"
 http = { workspace = true }
-lol_html = "2.0.0"
+lol_html = "3.0.0"
 mime = { workspace = true }
 num_cpus = { workspace = true }
 opentelemetry = { workspace = true }
 postcard = { workspace = true }
 rayon-core = "1.13.0"
 regex = { workspace = true }
-reqwest = { workspace = true }
 sentry = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -66,7 +65,7 @@ tokio = { workspace = true }
 tokio-util = { version = "0.7.15", default-features = false, features = ["io"] }
 toml = { workspace = true }
 tower = "0.5.1"
-tower-http = { version = "0.6.0", features = ["catch-panic", "fs", "timeout", "trace"] }
+tower-http = { version = "0.7.0", features = ["catch-panic", "fs", "timeout", "trace"] }
 tracing = { workspace = true }
 tracing-futures = { version = "0.2.5", features = ["futures-03", "std-future"] }
 url = { workspace = true }
@@ -92,6 +91,7 @@ kuchikiki = "0.8"
 mockito = { workspace = true }
 opentelemetry_sdk = { workspace = true }
 pretty_assertions = { workspace = true }
+reqwest = { workspace = true }
 tempfile = { workspace = true }
 test-case = { workspace = true }
 walkdir = { workspace = true }
