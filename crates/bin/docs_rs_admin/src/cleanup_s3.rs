@@ -1,21 +1,25 @@
-use anyhow::{Result, bail};
+use anyhow::Result;
 use docs_rs_storage::{AsyncStorage, rustdoc_archive_path, source_archive_path};
 use docs_rs_types::{KrateName, Version};
 use futures_util::TryStreamExt as _;
-use tracing::{info, instrument};
+use tracing::{info, instrument, warn};
 
-async fn check_archive(storage: &AsyncStorage, path: impl AsRef<str>) -> Result<()> {
+async fn check_archive(storage: &AsyncStorage, path: impl AsRef<str>) -> Result<bool> {
     let path = path.as_ref();
-    if !storage.exists(path).await? {
-        bail!("archive {} missing", path);
-    }
-
     let index_path = format!("{path}.index");
-    if !storage.exists(&index_path).await? {
-        bail!("archive index {} missing", index_path);
-    }
 
-    Ok(())
+    let has_archive = storage.exists(path).await?;
+    let has_index = storage.exists(&index_path).await?;
+
+    if has_archive && has_index {
+        Ok(true)
+    } else {
+        warn!(
+            has_archive,
+            has_index, path, index_path, "missing archive or index"
+        );
+        Ok(false)
+    }
 }
 
 async fn clean_prefix(
@@ -47,7 +51,8 @@ pub(crate) async fn cleanup_s3_bucket(
     let mut result = sqlx::query!(
         r#"SELECT
              c.name as "name: KrateName",
-             r.version as "version: Version"
+             r.version as "version: Version",
+             r.rustdoc_status
           FROM
              crates as c
              INNER JOIN releases AS r ON c.id = r.crate_id
@@ -60,21 +65,25 @@ pub(crate) async fn cleanup_s3_bucket(
     while let Some(row) = result.try_next().await? {
         info!("checking {} {}", row.name, row.version);
 
-        check_archive(storage, rustdoc_archive_path(&row.name, &row.version)).await?;
-        check_archive(storage, source_archive_path(&row.name, &row.version)).await?;
+        if row.rustdoc_status.is_some_and(|st| st)
+            && check_archive(storage, rustdoc_archive_path(&row.name, &row.version)).await?
+        {
+            clean_prefix(
+                storage,
+                format!("rustdoc/{}/{}/", row.name, row.version),
+                dry_run,
+            )
+            .await?;
+        }
 
-        clean_prefix(
-            storage,
-            format!("rustdoc/{}/{}/", row.name, row.version),
-            dry_run,
-        )
-        .await?;
-        clean_prefix(
-            storage,
-            format!("sources/{}/{}/", row.name, row.version),
-            dry_run,
-        )
-        .await?;
+        if check_archive(storage, source_archive_path(&row.name, &row.version)).await? {
+            clean_prefix(
+                storage,
+                format!("sources/{}/{}/", row.name, row.version),
+                dry_run,
+            )
+            .await?;
+        }
     }
 
     Ok(())
@@ -185,6 +194,100 @@ mod tests {
                 "rustdoc/krate/1.0.0.zip",
                 "rustdoc/krate/1.0.0.zip.index",
                 "rustdoc/krate/left_alone.html",
+                "something.html",
+                "sources/krate/1.0.0.zip",
+                "sources/krate/1.0.0.zip.index",
+                "sources/krate/left_alone.html",
+            ]
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_failed_build() -> Result<()> {
+        let env = TestEnvironment::new().await?;
+        env.fake_release()
+            .await
+            .name(&KRATE)
+            .build_result_failed() // sets `rustdoc_status = false`
+            .create()
+            .await?;
+
+        let storage = env.storage()?;
+        storage.store_one("something.html", "content").await?;
+        storage
+            .store_one("sources/krate/left_alone.html", "content")
+            .await?;
+        storage
+            .store_one("sources/krate/1.0.0/legacy/1.rs", "content")
+            .await?;
+        storage
+            .store_one("sources/krate/1.0.0/2.rs", "content")
+            .await?;
+
+        let old_count = list(storage).await?.len();
+
+        // dry-run does nothing
+        cleanup_s3_bucket(&mut *env.async_conn().await?, storage, true).await?;
+        assert_eq!(list(storage).await?.len(), old_count);
+
+        // real clean does clean
+        cleanup_s3_bucket(&mut *env.async_conn().await?, storage, false).await?;
+
+        assert_eq!(
+            list(storage).await?,
+            vec![
+                "build-logs/10000/x86_64-unknown-linux-gnu.txt",
+                "something.html",
+                "sources/krate/1.0.0.zip",
+                "sources/krate/1.0.0.zip.index",
+                "sources/krate/left_alone.html",
+            ]
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_binary_crate() -> Result<()> {
+        let env = TestEnvironment::new().await?;
+        env.fake_release()
+            .await
+            .name(&KRATE)
+            .binary(true) // sets `rustdoc_status = false`
+            .create()
+            .await?;
+
+        let storage = env.storage()?;
+        storage.store_one("something.html", "content").await?;
+        storage
+            .store_one("sources/krate/left_alone.html", "content")
+            .await?;
+        storage
+            .store_one("sources/krate/1.0.0/legacy/1.rs", "content")
+            .await?;
+        storage
+            .store_one("sources/krate/1.0.0/2.rs", "content")
+            .await?;
+
+        let old_count = list(storage).await?.len();
+
+        // dry-run does nothing
+        cleanup_s3_bucket(&mut *env.async_conn().await?, storage, true).await?;
+        assert_eq!(list(storage).await?.len(), old_count);
+
+        // real clean does clean
+        cleanup_s3_bucket(&mut *env.async_conn().await?, storage, false).await?;
+
+        let mut contents = list(storage).await?;
+
+        let build_log = contents.remove(0);
+        build_log.starts_with("builds-logs/");
+
+        assert_eq!(
+            contents,
+            vec![
                 "something.html",
                 "sources/krate/1.0.0.zip",
                 "sources/krate/1.0.0.zip.index",
