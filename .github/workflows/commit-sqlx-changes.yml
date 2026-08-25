@@ -35,8 +35,10 @@ jobs:
           git fetch origin
           git rebase origin/main
 
-      - name: install `just`
-        run: sudo snap install --edge --classic just
+      - name: Install mdbook
+        uses: taiki-e/install-action@v2
+        with:
+          tool: just,cargo-binstall,sqlx-cli
 
       - name: restore build & cargo cache
         uses: Swatinem/rust-cache@v2
@@ -52,9 +54,6 @@ jobs:
           sleep 5
           # Make sure the database is actually working
           psql "${DOCSRS_DATABASE_URL}"
-
-      - name: install SQLX CLI
-        run: cargo install sqlx-cli --no-default-features --features postgres
 
       - name: run database migrations
         run: cargo sqlx migrate run --database-url $DOCSRS_DATABASE_URL
