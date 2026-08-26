@@ -3,6 +3,7 @@ use opentelemetry::{
     KeyValue,
     metrics::{Counter, Histogram},
 };
+use std::time::Duration;
 
 #[derive(Debug)]
 pub(crate) struct WatcherMetrics {
@@ -57,6 +58,23 @@ impl WatcherMetrics {
         self.changes_applied_total.add(
             1,
             &[KeyValue::new("source", source), KeyValue::new("type", kind)],
+        );
+    }
+
+    pub(crate) fn record_event_processing_time(
+        &self,
+        source: &'static str,
+        kind: &'static str,
+        result: &'static str,
+        duration: Duration,
+    ) {
+        self.event_processing_time.record(
+            duration.as_secs_f64(),
+            &[
+                KeyValue::new("source", source),
+                KeyValue::new("type", kind),
+                KeyValue::new("result", result),
+            ],
         );
     }
 }

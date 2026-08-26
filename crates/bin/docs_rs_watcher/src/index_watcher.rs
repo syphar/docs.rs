@@ -206,14 +206,7 @@ async fn process_changes(
                 "err"
             }
         };
-        metrics.event_processing_time.record(
-            start.elapsed().as_secs_f64(),
-            &[
-                KeyValue::new("source", "git"),
-                KeyValue::new("type", change_type),
-                KeyValue::new("result", result),
-            ],
-        );
+        metrics.record_event_processing_time("git", change_type, result, start.elapsed());
     }
     crates_added
 }
