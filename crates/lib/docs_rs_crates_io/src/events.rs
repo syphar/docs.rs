@@ -120,7 +120,7 @@ impl IndexChangeV1 {
 
 impl fmt::Display for IndexChangeV1 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.kind().as_str())
+        self.kind().fmt(f)
     }
 }
 

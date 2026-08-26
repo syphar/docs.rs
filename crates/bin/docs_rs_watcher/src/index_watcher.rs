@@ -183,8 +183,8 @@ async fn process_changes(
         };
         debug!(
             target: "docs_rs_watcher::index_event",
-            source = EventSource::Git.as_str(),
-            change_type = change_type.as_str(),
+            source = %EventSource::Git,
+            change_type = %change_type,
             crate_name,
             crate_version,
             "crates.io index event"

@@ -250,10 +250,10 @@ async fn process_sqs_event(
 
     debug!(
         target: "docs_rs_watcher::index_event",
-        source = EventSource::Sqs.as_str(),
+        source = %EventSource::Sqs,
         event_id = %event.id,
         occurred_at = %event.occurred_at,
-        change_type = event.change.kind().as_str(),
+        change_type = %event.change.kind(),
         crate_name = event.change.name(),
         crate_version = event.change.version().unwrap_or_default(),
         "crates.io index event"
