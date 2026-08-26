@@ -5,14 +5,29 @@ use opentelemetry::{
 };
 use std::time::Duration;
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum EventSource {
+    Git,
+    Sqs,
+}
+
+impl EventSource {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Git => "git",
+            Self::Sqs => "sqs",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct WatcherMetrics {
-    pub(crate) events_received_total: Counter<u64>,
-    pub(crate) poll_errors_total: Counter<u64>,
-    pub(crate) processing_errors_total: Counter<u64>,
-    pub(crate) changes_applied_total: Counter<u64>,
-    pub(crate) event_processing_time: Histogram<f64>,
-    pub(crate) event_lag: Histogram<f64>,
+    events_received_total: Counter<u64>,
+    poll_errors_total: Counter<u64>,
+    processing_errors_total: Counter<u64>,
+    changes_applied_total: Counter<u64>,
+    event_processing_time: Histogram<f64>,
+    event_lag: Histogram<f64>,
 }
 
 impl WatcherMetrics {
@@ -54,16 +69,19 @@ impl WatcherMetrics {
         }
     }
 
-    pub(crate) fn record_change_applied(&self, source: &'static str, kind: &'static str) {
+    pub(crate) fn record_change_applied(&self, source: EventSource, kind: &'static str) {
         self.changes_applied_total.add(
             1,
-            &[KeyValue::new("source", source), KeyValue::new("type", kind)],
+            &[
+                KeyValue::new("source", source.as_str()),
+                KeyValue::new("type", kind),
+            ],
         );
     }
 
     pub(crate) fn record_event_processing_time(
         &self,
-        source: &'static str,
+        source: EventSource,
         kind: &'static str,
         success: bool,
         duration: Duration,
@@ -72,10 +90,26 @@ impl WatcherMetrics {
         self.event_processing_time.record(
             duration.as_secs_f64(),
             &[
-                KeyValue::new("source", source),
+                KeyValue::new("source", source.as_str()),
                 KeyValue::new("type", kind),
                 KeyValue::new("result", result),
             ],
         );
+    }
+
+    pub(crate) fn record_processing_error(&self, source: EventSource, kind: &'static str) {
+        self.processing_errors_total.add(
+            1,
+            &[
+                KeyValue::new("source", source.as_str()),
+                KeyValue::new("type", kind),
+            ],
+        );
+    }
+
+    pub(crate) fn record_events_received(&self, source: EventSource, count: usize) {
+        metrics
+            .events_received_total
+            .add(count as u64, &[KeyValue::new("source", source.as_str())]);
     }
 }

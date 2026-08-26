@@ -4,7 +4,7 @@ use crate::{
         process_crate_deleted, process_version_added, process_version_deleted,
         process_version_yank_status,
     },
-    metrics::WatcherMetrics,
+    metrics::{EventSource, WatcherMetrics},
 };
 use anyhow::{Context as _, Result};
 use aws_config::{BehaviorVersion, Region, retry::RetryConfig};
@@ -144,7 +144,7 @@ pub(crate) async fn run_sqs_subscriber(
             Err(err) => {
                 metrics
                     .poll_errors_total
-                    .add(1, &[KeyValue::new("source", "sqs")]);
+                    .add(1, &[KeyValue::new("source", EventSource::Sqs.as_str())]);
                 error!(
                     ?err,
                     queue_url, "error receiving messages from sqs, retrying"
@@ -225,7 +225,7 @@ async fn handle_message_body(
         Err(err) => {
             metrics
                 .processing_errors_total
-                .add(1, &[KeyValue::new("source", "sqs")]);
+                .add(1, &[KeyValue::new("source", EventSource::Sqs.as_str())]);
             error!(
                 ?err,
                 ?RETRY_DELAY,
@@ -248,17 +248,22 @@ async fn process_sqs_event(
     let event: IndexChangeEventV1 = match serde_json::from_str(body) {
         Ok(event) => event,
         Err(err) => {
-            metrics.record_event_processing_time("sqs", "unknown", false, start.elapsed());
+            metrics.record_event_processing_time(
+                EventSource::Sqs,
+                "unknown",
+                false,
+                start.elapsed(),
+            );
             return Err(err).context("error parsing event from json");
         }
     };
     metrics
         .events_received_total
-        .add(1, &[KeyValue::new("source", "sqs")]);
+        .add(1, &[KeyValue::new("source", EventSource::Sqs.as_str())]);
 
     debug!(
         target: "docs_rs_watcher::index_event",
-        source = "sqs",
+        source = EventSource::Sqs.as_str(),
         event_id = %event.id,
         occurred_at = %event.occurred_at,
         change_type = event.change.kind(),
@@ -268,7 +273,7 @@ async fn process_sqs_event(
     );
     metrics.event_lag.record(
         (Utc::now() - event.occurred_at).as_seconds_f64(),
-        &[KeyValue::new("source", "sqs")],
+        &[KeyValue::new("source", EventSource::Sqs.as_str())],
     );
 
     let processing_result = if config.crates_io_events_active() {
@@ -286,7 +291,7 @@ async fn process_sqs_event(
     };
 
     metrics.record_event_processing_time(
-        "sqs",
+        EventSource::Sqs,
         event.change.kind(),
         processing_result.is_ok(),
         start.elapsed(),
@@ -294,7 +299,7 @@ async fn process_sqs_event(
     processing_result?;
 
     if config.crates_io_events_active() {
-        metrics.record_change_applied("sqs", event.change.kind());
+        metrics.record_change_applied(EventSource::Sqs, event.change.kind());
     }
 
     Ok(())

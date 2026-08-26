@@ -2,7 +2,7 @@ use crate::{
     Config,
     db::{delete_crate, delete_version},
     index::Index,
-    metrics::WatcherMetrics,
+    metrics::{EventSource, WatcherMetrics},
 };
 use anyhow::{Context as _, Result};
 use crates_index_diff::Change;
@@ -126,9 +126,7 @@ pub(crate) async fn get_new_crates(
 
     debug!(last_seen_reference=%last_seen_reference, new_reference=%new_reference, "queueing changes");
 
-    metrics
-        .events_received_total
-        .add(changes.len() as u64, &[KeyValue::new("source", "git")]);
+    metrics.record_events_received(EventSource::Git, changes.len());
     let crates_added = process_changes(context, &changes, config, metrics).await;
 
     if let Err(err) = context.build_queue()?.reevaluate_priorities().await {
@@ -175,7 +173,7 @@ async fn process_changes(
         };
         debug!(
             target: "docs_rs_watcher::index_event",
-            source = "git",
+            source = EventSource::Git.as_str(),
             change_type,
             crate_name,
             crate_version,
@@ -192,21 +190,24 @@ async fn process_changes(
 
         let success = match process_change(context, change, config).await {
             Ok(added) => {
-                metrics.record_change_applied("git", change_type);
+                metrics.record_change_applied(EventSource::Git, change_type);
                 if added {
                     crates_added += 1;
                 }
                 true
             }
             Err(err) => {
-                metrics
-                    .processing_errors_total
-                    .add(1, &[KeyValue::new("source", "git")]);
+                metrics.record_processing_error(EventSource::Git, change_type);
                 error!(?change, ?err, "failed to process change");
                 false
             }
         };
-        metrics.record_event_processing_time("git", change_type, success, start.elapsed());
+        metrics.record_event_processing_time(
+            EventSource::Git,
+            change_type,
+            success,
+            start.elapsed(),
+        );
     }
     crates_added
 }
