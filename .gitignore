@@ -16,3 +16,4 @@ archive_cache
 node_modules/
 package-lock.json
 docs/book/
+docs/src/generated/
