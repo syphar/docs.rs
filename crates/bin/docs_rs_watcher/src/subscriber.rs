@@ -253,6 +253,7 @@ async fn process_sqs_event(
                 &[
                     KeyValue::new("source", "sqs"),
                     KeyValue::new("type", "unknown"),
+                    KeyValue::new("result", "err"),
                 ],
             );
             return Err(err).context("error parsing event from json");
@@ -291,11 +292,17 @@ async fn process_sqs_event(
         Ok(())
     };
 
+    let result = if processing_result.is_ok() {
+        "ok"
+    } else {
+        "err"
+    };
     metrics.event_processing_time.record(
         start.elapsed().as_secs_f64(),
         &[
             KeyValue::new("source", "sqs"),
             KeyValue::new("type", event.change.kind()),
+            KeyValue::new("result", result),
         ],
     );
     processing_result?;
