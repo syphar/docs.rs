@@ -51,7 +51,6 @@ const VISIBILITY_TIMEOUT: Duration = Duration::from_secs(600);
 enum MessageOutcome {
     Ack,
     RetryLater(Duration),
-    Ignore,
 }
 
 trait SqsActions {
@@ -197,7 +196,6 @@ async fn process_messages(
                     );
                 }
             }
-            MessageOutcome::Ignore => {}
         }
     }
 }
@@ -209,7 +207,7 @@ async fn handle_message_body(
     body: Option<&str>,
 ) -> MessageOutcome {
     let Some(body) = body else {
-        return MessageOutcome::Ignore;
+        return MessageOutcome::Ack;
     };
     let start = Instant::now();
 
@@ -683,13 +681,13 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_handle_message_body_ignores_missing_body() -> Result<()> {
+    async fn test_handle_message_body_acknowledges_missing_body() -> Result<()> {
         let env = TestEnvironment::new().await?;
         let metrics = WatcherMetrics::new(&env.context().meter_provider);
 
         assert_eq!(
             handle_message_body(&env, env.config(), &metrics, None).await,
-            MessageOutcome::Ignore
+            MessageOutcome::Ack
         );
         assert!(env.build_queue()?.queued_crates().await?.is_empty());
 
@@ -732,7 +730,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_process_messages_without_body_is_not_acknowledged() -> Result<()> {
+    async fn test_process_messages_without_body_is_acknowledged() -> Result<()> {
         let config = Config::test_config()?;
         let env = TestEnvironment::builder().config(config).build().await?;
         let metrics = WatcherMetrics::new(&env.context().meter_provider);
@@ -748,7 +746,10 @@ mod tests {
         )
         .await;
 
-        assert!(client.deleted.lock().unwrap().is_empty());
+        assert_eq!(
+            *client.deleted.lock().unwrap(),
+            vec!["missing-body".to_string()]
+        );
         assert!(client.visibility_changes.lock().unwrap().is_empty());
 
         Ok(())
