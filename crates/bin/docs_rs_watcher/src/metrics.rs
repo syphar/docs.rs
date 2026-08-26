@@ -79,6 +79,13 @@ impl WatcherMetrics {
         );
     }
 
+    pub(crate) fn record_event_lag(&self, source: EventSource, duration: Duration) {
+        self.event_lag.record(
+            duration.as_secs_f64(),
+            &[KeyValue::new("source", source.as_str())],
+        );
+    }
+
     pub(crate) fn record_event_processing_time(
         &self,
         source: EventSource,
@@ -108,8 +115,12 @@ impl WatcherMetrics {
     }
 
     pub(crate) fn record_events_received(&self, source: EventSource, count: usize) {
-        metrics
-            .events_received_total
+        self.events_received_total
             .add(count as u64, &[KeyValue::new("source", source.as_str())]);
+    }
+
+    pub(crate) fn record_poll_error(&self, source: EventSource) {
+        self.poll_errors_total
+            .add(1, &[KeyValue::new("source", source.as_str())]);
     }
 }

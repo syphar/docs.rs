@@ -94,13 +94,7 @@ async fn watch_registry(
             match get_new_crates(context, &index, config, metrics).await {
                 Ok(n) => debug!("{} crates added to queue", n),
                 Err(e) => {
-                    metrics.poll_errors_total.add(
-                        1,
-                        &[opentelemetry::KeyValue::new(
-                            "source",
-                            crate::metrics::EventSource::Git.as_str(),
-                        )],
-                    );
+                    metrics.record_poll_error(crate::metrics::EventSource::Git);
                     error!(?e, "Failed to get new crates");
                 }
             }

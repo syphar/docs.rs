@@ -14,7 +14,6 @@ use docs_rs_database::{
 };
 use docs_rs_fastly::{Cdn, CdnBehaviour as _};
 use docs_rs_types::{CrateId, KrateName, Version};
-use opentelemetry::KeyValue;
 use std::time::Instant;
 use tracing::{debug, error, info, warn};
 

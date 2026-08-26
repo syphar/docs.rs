@@ -14,7 +14,6 @@ use docs_rs_context::Context;
 use docs_rs_crates_io::events::{IndexChangeEventV1, IndexChangeV1};
 use docs_rs_types::KrateName;
 use docs_rs_utils::retry_async;
-use opentelemetry::KeyValue;
 use std::time::{Duration, Instant};
 use tokio::time;
 use tracing::{debug, error, instrument, warn};
@@ -142,9 +141,7 @@ pub(crate) async fn run_sqs_subscriber(
         {
             Ok(response) => response.messages().to_vec(),
             Err(err) => {
-                metrics
-                    .poll_errors_total
-                    .add(1, &[KeyValue::new("source", EventSource::Sqs.as_str())]);
+                metrics.record_poll_error(EventSource::Sqs);
                 error!(
                     ?err,
                     queue_url, "error receiving messages from sqs, retrying"
@@ -223,9 +220,7 @@ async fn handle_message_body(
     match process_sqs_event(context, config, metrics, body).await {
         Ok(_) => MessageOutcome::Ack,
         Err(err) => {
-            metrics
-                .processing_errors_total
-                .add(1, &[KeyValue::new("source", EventSource::Sqs.as_str())]);
+            metrics.record_processing_error(EventSource::Sqs, "");
             error!(
                 ?err,
                 ?RETRY_DELAY,
@@ -257,9 +252,7 @@ async fn process_sqs_event(
             return Err(err).context("error parsing event from json");
         }
     };
-    metrics
-        .events_received_total
-        .add(1, &[KeyValue::new("source", EventSource::Sqs.as_str())]);
+    metrics.record_events_received(EventSource::Sqs, 1);
 
     debug!(
         target: "docs_rs_watcher::index_event",
@@ -271,10 +264,10 @@ async fn process_sqs_event(
         crate_version = event.change.version().unwrap_or_default(),
         "crates.io index event"
     );
-    metrics.event_lag.record(
-        (Utc::now() - event.occurred_at).as_seconds_f64(),
-        &[KeyValue::new("source", EventSource::Sqs.as_str())],
-    );
+
+    if let Ok(lag) = (Utc::now() - event.occurred_at).to_std() {
+        metrics.record_event_lag(EventSource::Sqs, lag);
+    }
 
     let processing_result = if config.crates_io_events_active() {
         retry_async(
