@@ -14,3 +14,5 @@ target
 .rustwide-docker
 archive_cache
 .workspace
+docs/book/
+docs/src/generated/
