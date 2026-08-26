@@ -140,6 +140,8 @@ async fn process_changes(context: &Context, changes: &Vec<Change>, config: &Conf
     let mut crates_added = 0;
 
     for change in changes {
+        // temporarily log all changes, so we can compare them with the SQS changes we see.
+        // They share the same log-target, and most tracing fields.
         let (change_type, crate_name, crate_version) = match change {
             Change::Added(version) => ("added", version.name.as_str(), version.version.as_str()),
             Change::AddedAndYanked(version) => (
