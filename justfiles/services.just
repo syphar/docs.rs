@@ -1,6 +1,7 @@
-# run migrations, then launch one or more docker compose profiles in the background
+# Run migrations in the CLI container, then launch one or more Compose profiles.
 [group('compose')]
-compose-up *profiles: _touch-docker-env cli-db-migrate
+compose-up *profiles: _touch-docker-env
+    just docker-cli admin database migrate
     docker compose {{ prepend("--profile ", profiles) }} up --build -d --wait --remove-orphans
 
 # Launch web server in the background

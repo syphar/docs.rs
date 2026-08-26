@@ -132,7 +132,7 @@ npm install browser-ui-test
 - [Build workspaces](./docs/build-workspaces.md)
 - [Archive storage and indexes](./docs/archive-storage-and-indexes.md)
 
-### Pure docker-compose
+### Docker Compose application containers
 
 If you have trouble with the above commands, consider using
 `just compose-up-web`, which uses docker-compose for the web server as well.
@@ -140,11 +140,12 @@ This will not cache dependencies - in particular, you'll have to rebuild all 400
 whenever the lockfile changes - but makes sure that you're in a known
 environment so you should have fewer problems getting started.
 
-You can put environment overrides for the docker containers into `.docker.env`,
-first. The migrations will be run by our just recipes when needed.
+You can put environment overrides for the docker containers into `.docker.env`
+first. The migrations will be run by the Compose recipes when needed. Normal
+`cli-*` recipes run docs.rs binaries on the host; use `docker-cli` to run an
+explicit one-off command in a container.
 
 ```sh
-just cli-db-migrate
 just compose-up-web
 ```
 
@@ -157,18 +158,18 @@ just compose-up-builder
 # and if needed
 
 # update the toolchain
-just cli-build-update-toolchain
+just docker-cli builder build update-toolchain
 
 # run a build for a single crate
-just cli-build-crate regex 1.3.1
+just docker-cli builder build crate regex 1.3.1
 ```
 
 You can also run other non-build commands like the setup steps above, or
 queueing crates for the background builders from within the `cli` container:
 
 ```sh
-just cli-db-migrate
-just cli-queue-add regex 1.3.1
+just docker-cli admin database migrate
+just docker-cli admin queue add regex 1.3.1
 ```
 
 If you want to run the registry watcher, you can use the `watcher` profile:
@@ -183,7 +184,7 @@ HEAD of the index.
 If you want to start from another point:
 
 ```sh
-just cli-queue-reset-last-seen-ref GIT_REF
+just docker-cli watcher queue set-last-seen-reference GIT_REF
 ```
 
 Note that running tests is currently not supported when using pure

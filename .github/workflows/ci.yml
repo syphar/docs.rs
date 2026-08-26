@@ -12,14 +12,11 @@ env:
   RUST_CACHE_KEY: rust-cache-20241114
   # disable incremental builds in CI, it's not needed
   CARGO_INCREMENTAL: 0
-  DOCSRS_CLI_MODE: docker
 
 
 jobs:
   sqlx:
     runs-on: ubuntu-latest
-    env:
-      DOCSRS_CLI_MODE: local
     steps:
       - uses: actions/checkout@v7
 

@@ -1,68 +1,61 @@
-# a collection of just commands to wrap various docs.rs CLI commands,
-# and run them in a one-off docker container.
-# _Which_ container depends on the command itself and its dependencies.
-# Most service containers have their corresponding CLI container:
-# * web -> cli
-# * builder-x -> builder-cli
-# * registry-watcher -> registry-watcher-cli
-
-# low-level helper to run any CLI command in its own one-off docker container,
-# ensuring that `db` and `s3` are running.
-_cli package service_name *args: _touch-docker-env _ensure_db_and_s3_are_running
+# Run a docs.rs CLI in a one-off Docker Compose container. Normal CLI recipes
+# run on the host; this is the explicit fallback for containerized development.
+[group('cli')]
+[group('compose')]
+docker-cli command *args: _touch-docker-env _ensure_db_and_s3_are_running
     #!/usr/bin/env bash
     set -euo pipefail
 
-    # dependencies in the docker-compose file are ignored
-    # when running a one-off service with `docker compose run`.
-    # Instead we explicitly start any dependent services first via
-    # `_ensure_db_and_s3_are_running`.
-
-    case "${DOCSRS_CLI_MODE}" in
-      docker)
-        docker compose run --build --rm {{ service_name }} {{ args }}
+    case "{{ command }}" in
+      admin)
+        service="cli"
         ;;
-      local)
-        cargo run -p {{ package }} -- {{ args }}
+      builder)
+        service="builder-cli"
+        ;;
+      watcher)
+        service="registry-watcher-cli"
         ;;
       *)
-        echo "Invalid DOCSRS_CLI_MODE: ${DOCSRS_CLI_MODE}" >&2
-        echo "Expected one of: docker, local" >&2
+        echo "Unknown Docker CLI: {{ command }}" >&2
+        echo "Expected one of: admin, builder, watcher" >&2
         exit 2
         ;;
     esac
 
-# run any CLI command in its own one-off `cli` docker container. Args are passed to the container.
-# Only for commands that just need `db` and `s3` and minimal system dependencies.
+    # `docker compose run` ignores service dependencies, so the recipe starts
+    # the database and object storage explicitly before reaching this point.
+    docker compose run --build --rm "$service" {{ args }}
+
+# Run any admin CLI command on the host. Args are passed to the binary.
 [group('cli')]
-cli +args: _touch-docker-env cli-db-migrate
-    just _cli docs_rs_admin cli {{ args }}
+cli +args: cli-db-migrate
+    cargo run -p docs_rs_admin -- {{ args }}
 
 # Initialize the `docs.rs` database
 [group('cli')]
 [group('database')]
-cli-db-migrate version="":
+cli-db-migrate version="": _ensure_db_and_s3_are_running
     #!/usr/bin/env bash
     set -euo pipefail
 
-    # intentially not using `cli` recipe, because it has a dependency on `cli-db-migrate`.
+    # Intentionally not using `cli`, because it depends on `cli-db-migrate`.
     # Otherwise we would have a stack overflow / infinite recursion.
     export SQLX_OFFLINE=1
-    just _cli docs_rs_admin cli database migrate {{ version }}
+    cargo run -p docs_rs_admin -- database migrate {{ version }}
 
 # add a release to the build queue
 [group('cli')]
 [group('queue')]
 cli-queue-add crate_name crate_version:
-    # only does things with the database, so can use the lightweight `cli` container.
+    # This only needs the database, so it can use the admin CLI.
     just cli queue add {{ crate_name }} {{ crate_version }}
 
-# run builder CLI command in its own one-off `build-server` docker container.
-# Uses a separate builder-cli container & workspace that doesn't conflict
-# with the continiously running build-servers.
+# Run any builder CLI command on the host.
 [group('builder')]
 [group('cli')]
-cli-build +args: _touch-docker-env cli-db-migrate
-    just _cli docs_rs_builder builder-cli {{ args }}
+cli-build +args: cli-db-migrate
+    cargo run -p docs_rs_builder -- {{ args }}
 
 # set the nightly rust version to be used for builds. Format: `nightly-YYYY-MM-DD`
 # or just `nightly` for always using the latest nightly.
@@ -94,11 +87,11 @@ cli-build-add-essential-files:
 cli-build-crate name version:
     just cli-build build crate {{ name }} {{ version }}
 
-# run registry-watcher CLI command in its own one-off `registry-watcher` docker container.
+# Run any registry-watcher CLI command on the host.
 [group('cli')]
 [group('watcher')]
-cli-watcher +args: _touch-docker-env cli-db-migrate
-    just _cli registry-watcher-cli {{ args }}
+cli-watcher +args: cli-db-migrate
+    cargo run -p docs_rs_watcher -- {{ args }}
 
 # Update last seen reference to the given hash, or the current `HEAD`.
 [group('cli')]

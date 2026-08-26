@@ -194,31 +194,6 @@ run-gui-tests: _gui-tests_env
     #!/usr/bin/env bash
     set -euo pipefail
 
-    case "${DOCSRS_CLI_MODE}" in
-      docker)
-        just _run-gui-tests-docker
-        ;;
-      local)
-        just _run-gui-tests-local
-        ;;
-      *)
-        echo "Invalid DOCSRS_CLI_MODE: ${DOCSRS_CLI_MODE}" >&2
-        echo "Expected one of: docker, local" >&2
-        exit 2
-        ;;
-    esac
-
-_run-gui-tests-docker:
-    #!/usr/bin/env bash
-    set -euo pipefail
-
-    just compose-up-web
-    just _cli UNUSED gui_tests
-
-_run-gui-tests-local:
-    #!/usr/bin/env bash
-    set -euo pipefail
-
     cargo build -p docs_rs_web
 
     web_pid=""

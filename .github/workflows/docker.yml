@@ -12,13 +12,13 @@ jobs:
   docker:
     strategy:
       matrix:
-        target: [
-          "web-server",
-          "build-server",
-          "registry-watcher",
-          "cli"
+        include: [
+          { target: "web-server", binary: "docs_rs_web" },
+          { target: "build-server", binary: "docs_rs_builder" },
+          { target: "registry-watcher", binary: "docs_rs_watcher" },
+          { target: "cli", binary: "docs_rs_admin" }
         ]
-    name: Test docker image builds
+    name: Test Docker images
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -33,6 +33,7 @@ jobs:
           file: "./dockerfiles/Dockerfile"
           platforms: linux/amd64
           target: ${{ matrix.target }}
+          tags: docs-rs-${{ matrix.target }}:ci
           build-args: |
             GIT_SHA=${{ github.sha }}
             PROFILE=release
@@ -45,3 +46,10 @@ jobs:
           # TODO: later we would set `push: true` and also provide nice tags
           # for the images.
           # Unclear is how the deploy would work then.
+
+      - name: smoke test packaged binary
+        run: >-
+          docker run --rm
+          --entrypoint /usr/local/bin/${{ matrix.binary }}
+          docs-rs-${{ matrix.target }}:ci
+          --help
