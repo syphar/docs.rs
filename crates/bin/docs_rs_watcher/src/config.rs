@@ -13,7 +13,9 @@ pub struct SqsConfig {
     pub region: String,
     pub endpoint_url: Option<Url>,
     pub max_retries: u32,
-    /// temporary, to switch between the sources for the index (git index vs SQS)
+    /// temporary, to switch between the sources for the index (git index vs SQS).
+    /// true = only use SQS, don't even fetch git
+    /// false = fetch both sqs & git, use git, just log sqs.
     pub active: bool,
 }
 

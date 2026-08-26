@@ -349,6 +349,96 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
+    async fn test_process_change_unyanked_updates_release() -> Result<()> {
+        let env = TestEnvironment::new().await?;
+        let mut conn = env.async_conn().await?;
+
+        let id = env
+            .fake_release()
+            .await
+            .name(KRATE)
+            .version(V1)
+            .yanked(true)
+            .create()
+            .await?;
+
+        process_change(
+            &env,
+            &IndexChangeV1::Unyanked(CrateVersion {
+                name: KRATE.to_string(),
+                version: V1.to_string(),
+            }),
+            env.config(),
+        )
+        .await?;
+
+        let row = sqlx::query!(
+            "SELECT yanked
+             FROM releases
+             WHERE id = $1",
+            id.0
+        )
+        .fetch_one(&mut *conn)
+        .await?;
+        assert_eq!(row.yanked, Some(false));
+
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_process_change_crate_deleted_removes_crate() -> Result<()> {
+        let env = TestEnvironment::new().await?;
+        let mut conn = env.async_conn().await?;
+
+        env.fake_release()
+            .await
+            .name(KRATE)
+            .version(V1)
+            .create()
+            .await?;
+
+        process_change(
+            &env,
+            &IndexChangeV1::CrateDeleted {
+                name: KRATE.to_string(),
+            },
+            env.config(),
+        )
+        .await?;
+
+        let row = sqlx::query!(
+            "SELECT id
+             FROM crates
+             WHERE name = $1",
+            KRATE as _
+        )
+        .fetch_optional(&mut *conn)
+        .await?;
+        assert!(row.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_process_change_added_is_idempotent() -> Result<()> {
+        let env = TestEnvironment::new().await?;
+        let change = IndexChangeV1::Added(CrateVersion {
+            name: KRATE.to_string(),
+            version: V1.to_string(),
+        });
+
+        process_change(&env, &change, env.config()).await?;
+        process_change(&env, &change, env.config()).await?;
+
+        let queue = env.build_queue()?.queued_crates().await?;
+        assert_eq!(queue.len(), 1);
+        assert_eq!(queue[0].name, KRATE);
+        assert_eq!(queue[0].version, V1);
+
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
     async fn test_process_change_version_deleted_removes_release() -> Result<()> {
         let env = TestEnvironment::new().await?;
         let mut conn = env.async_conn().await?;
@@ -382,6 +472,33 @@ mod tests {
                 .fetch_all(&mut *conn)
                 .await?,
             vec![rid_1.0]
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_process_change_version_deleted_is_idempotent() -> Result<()> {
+        let env = TestEnvironment::new().await?;
+        env.fake_release()
+            .await
+            .name(KRATE)
+            .version(V1)
+            .create()
+            .await?;
+        let change = IndexChangeV1::VersionDeleted(CrateVersion {
+            name: KRATE.to_string(),
+            version: V1.to_string(),
+        });
+
+        process_change(&env, &change, env.config()).await?;
+        process_change(&env, &change, env.config()).await?;
+
+        assert!(
+            sqlx::query_scalar!("SELECT id FROM releases")
+                .fetch_all(&mut *env.async_conn().await?)
+                .await?
+                .is_empty()
         );
 
         Ok(())
