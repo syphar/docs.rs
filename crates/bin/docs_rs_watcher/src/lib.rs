@@ -34,6 +34,12 @@ use tracing::{debug, error, info, trace};
 pub async fn watch(config: &Config, context: &Context) {
     let metrics = WatcherMetrics::new(context.meter_provider());
 
+    // NOTE: for now we don't have a graceful shutdown.
+    // Since we currently always lock the queue & builds before deploys, that's
+    // not a problem.
+    // But I assume with the new AWS infra we need to solve this at some point so we don't loose
+    // events.
+
     loop {
         if config.crates_io_events_active() {
             if let Err(err) = crate::subscriber::run_sqs_subscriber(config, context, &metrics).await
