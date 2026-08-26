@@ -65,9 +65,10 @@ impl WatcherMetrics {
         &self,
         source: &'static str,
         kind: &'static str,
-        result: &'static str,
+        success: bool,
         duration: Duration,
     ) {
+        let result = if success { "ok" } else { "err" };
         self.event_processing_time.record(
             duration.as_secs_f64(),
             &[

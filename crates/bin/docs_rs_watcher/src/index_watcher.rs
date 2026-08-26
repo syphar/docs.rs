@@ -190,23 +190,23 @@ async fn process_changes(
             continue;
         }
 
-        let result = match process_change(context, change, config).await {
+        let success = match process_change(context, change, config).await {
             Ok(added) => {
                 metrics.record_change_applied("git", change_type);
                 if added {
                     crates_added += 1;
                 }
-                "ok"
+                true
             }
             Err(err) => {
                 metrics
                     .processing_errors_total
                     .add(1, &[KeyValue::new("source", "git")]);
                 error!(?change, ?err, "failed to process change");
-                "err"
+                false
             }
         };
-        metrics.record_event_processing_time("git", change_type, result, start.elapsed());
+        metrics.record_event_processing_time("git", change_type, success, start.elapsed());
     }
     crates_added
 }
