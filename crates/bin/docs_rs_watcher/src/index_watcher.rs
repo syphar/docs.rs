@@ -187,13 +187,6 @@ async fn process_changes(
             // Generally we don't even start the git-index-watcher when
             // SQS is active.
             // Will be removed with the git index watcher code when SQS is stable.
-            metrics.event_processing_time.record(
-                start.elapsed().as_secs_f64(),
-                &[
-                    KeyValue::new("source", "git"),
-                    KeyValue::new("type", change_type),
-                ],
-            );
             continue;
         }
 
