@@ -182,10 +182,9 @@ services:
         volumes:
             - "./dockerfiles/elasticmq.conf:/opt/elasticmq.conf:ro"
         command: ["-Dconfig.file=/opt/elasticmq.conf"]
-        profiles:
-            - watcher
-            - full
-            - manual
+        healthcheck:
+            <<: *healthcheck-interval
+            test: curl --silent --fail http://localhost:9324/health
 
     builder-a:
         <<: *builder
