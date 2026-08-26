@@ -4,6 +4,7 @@ use std::fmt;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ChangeKind {
     Added,
+    AddedAndYanked,
     Unyanked,
     Yanked,
     CrateDeleted,
@@ -14,6 +15,7 @@ impl ChangeKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Added => "added",
+            Self::AddedAndYanked => "added_and_yanked",
             Self::Unyanked => "unyanked",
             Self::Yanked => "yanked",
             Self::CrateDeleted => "crate_deleted",

@@ -1,3 +1,4 @@
+use docs_rs_crates_io::events::ChangeKind;
 use docs_rs_opentelemetry::AnyMeterProvider;
 use opentelemetry::{
     KeyValue,
@@ -64,12 +65,12 @@ impl WatcherMetrics {
         }
     }
 
-    pub(crate) fn record_change_applied(&self, source: EventSource, kind: &'static str) {
+    pub(crate) fn record_change_applied(&self, source: EventSource, kind: ChangeKind) {
         self.changes_applied_total.add(
             1,
             &[
                 KeyValue::new("source", source.as_str()),
-                KeyValue::new("type", kind),
+                KeyValue::new("type", kind.as_str()),
             ],
         );
     }
@@ -84,7 +85,7 @@ impl WatcherMetrics {
     pub(crate) fn record_event_processing_time(
         &self,
         source: EventSource,
-        kind: &'static str,
+        kind: Option<ChangeKind>,
         success: bool,
         duration: Duration,
     ) {
@@ -93,7 +94,7 @@ impl WatcherMetrics {
             duration.as_secs_f64(),
             &[
                 KeyValue::new("source", source.as_str()),
-                KeyValue::new("type", kind),
+                KeyValue::new("type", kind.map(ChangeKind::as_str).unwrap_or("unknown")),
                 KeyValue::new("result", result),
             ],
         );

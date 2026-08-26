@@ -242,12 +242,7 @@ async fn process_sqs_event(
     let event: IndexChangeEventV1 = match serde_json::from_str(body) {
         Ok(event) => event,
         Err(err) => {
-            metrics.record_event_processing_time(
-                EventSource::Sqs,
-                "unknown",
-                false,
-                start.elapsed(),
-            );
+            metrics.record_event_processing_time(EventSource::Sqs, None, false, start.elapsed());
             return Err(err).context("error parsing event from json");
         }
     };
@@ -284,14 +279,14 @@ async fn process_sqs_event(
 
     metrics.record_event_processing_time(
         EventSource::Sqs,
-        event.change.kind().as_str(),
+        Some(event.change.kind()),
         processing_result.is_ok(),
         start.elapsed(),
     );
     processing_result?;
 
     if config.crates_io_events_active() {
-        metrics.record_change_applied(EventSource::Sqs, event.change.kind().as_str());
+        metrics.record_change_applied(EventSource::Sqs, event.change.kind());
     }
 
     Ok(())

@@ -8,6 +8,7 @@ use anyhow::{Context as _, Result};
 use crates_index_diff::Change;
 use docs_rs_build_queue::PRIORITY_MANUAL_FROM_CRATES_IO;
 use docs_rs_context::Context;
+use docs_rs_crates_io::events::ChangeKind;
 use docs_rs_database::{
     crate_details::update_latest_version_id,
     service_config::{ConfigName, get_config, set_config},
@@ -153,19 +154,29 @@ async fn process_changes(
         // temporarily log all changes, so we can compare them with the SQS changes we see.
         // They share the same log-target, and most tracing fields.
         let (change_type, crate_name, crate_version) = match change {
-            Change::Added(version) => ("added", version.name.as_str(), version.version.as_str()),
-            Change::AddedAndYanked(version) => (
-                "added_and_yanked",
+            Change::Added(version) => (
+                ChangeKind::Added,
                 version.name.as_str(),
                 version.version.as_str(),
             ),
-            Change::Unyanked(version) => {
-                ("unyanked", version.name.as_str(), version.version.as_str())
-            }
-            Change::Yanked(version) => ("yanked", version.name.as_str(), version.version.as_str()),
-            Change::CrateDeleted { name, .. } => ("crate_deleted", name.as_str(), ""),
+            Change::AddedAndYanked(version) => (
+                ChangeKind::AddedAndYanked,
+                version.name.as_str(),
+                version.version.as_str(),
+            ),
+            Change::Unyanked(version) => (
+                ChangeKind::Unyanked,
+                version.name.as_str(),
+                version.version.as_str(),
+            ),
+            Change::Yanked(version) => (
+                ChangeKind::Yanked,
+                version.name.as_str(),
+                version.version.as_str(),
+            ),
+            Change::CrateDeleted { name, .. } => (ChangeKind::CrateDeleted, name.as_str(), ""),
             Change::VersionDeleted(version) => (
-                "version_deleted",
+                ChangeKind::VersionDeleted,
                 version.name.as_str(),
                 version.version.as_str(),
             ),
@@ -173,7 +184,7 @@ async fn process_changes(
         debug!(
             target: "docs_rs_watcher::index_event",
             source = EventSource::Git.as_str(),
-            change_type,
+            change_type = change_type.as_str(),
             crate_name,
             crate_version,
             "crates.io index event"
@@ -202,7 +213,7 @@ async fn process_changes(
         };
         metrics.record_event_processing_time(
             EventSource::Git,
-            change_type,
+            Some(change_type),
             success,
             start.elapsed(),
         );
