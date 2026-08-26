@@ -220,7 +220,6 @@ async fn handle_message_body(
     match process_sqs_event(context, config, metrics, body).await {
         Ok(_) => MessageOutcome::Ack,
         Err(err) => {
-            metrics.record_processing_error(EventSource::Sqs, "");
             error!(
                 ?err,
                 ?RETRY_DELAY,
@@ -692,13 +691,13 @@ mod tests {
             MessageOutcome::RetryLater(RETRY_DELAY)
         );
         let collected = env.collected_metrics();
-        assert_eq!(
-            collected
-                .get_metric("watcher", "docsrs.watcher.processing_errors_total")?
-                .get_u64_counter()
-                .value(),
-            1
-        );
+        let processing_metric =
+            collected.get_metric("watcher", "docsrs.watcher.event_processing_time")?;
+        let processing = processing_metric.get_f64_histogram();
+        assert_eq!(processing.count(), 1);
+        assert!(processing.attributes().any(|attribute| {
+            attribute.key.as_str() == "result" && attribute.value.to_string() == "err"
+        }));
 
         Ok(())
     }

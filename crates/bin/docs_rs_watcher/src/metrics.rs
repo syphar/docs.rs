@@ -24,7 +24,6 @@ impl EventSource {
 pub(crate) struct WatcherMetrics {
     events_received_total: Counter<u64>,
     poll_errors_total: Counter<u64>,
-    processing_errors_total: Counter<u64>,
     changes_applied_total: Counter<u64>,
     event_processing_time: Histogram<f64>,
     event_lag: Histogram<f64>,
@@ -41,10 +40,6 @@ impl WatcherMetrics {
                 .build(),
             poll_errors_total: meter
                 .u64_counter(format!("{PREFIX}.poll_errors_total"))
-                .with_unit("1")
-                .build(),
-            processing_errors_total: meter
-                .u64_counter(format!("{PREFIX}.processing_errors_total"))
                 .with_unit("1")
                 .build(),
             changes_applied_total: meter
@@ -100,16 +95,6 @@ impl WatcherMetrics {
                 KeyValue::new("source", source.as_str()),
                 KeyValue::new("type", kind),
                 KeyValue::new("result", result),
-            ],
-        );
-    }
-
-    pub(crate) fn record_processing_error(&self, source: EventSource, kind: &'static str) {
-        self.processing_errors_total.add(
-            1,
-            &[
-                KeyValue::new("source", source.as_str()),
-                KeyValue::new("type", kind),
             ],
         );
     }

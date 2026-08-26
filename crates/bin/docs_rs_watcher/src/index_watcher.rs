@@ -196,7 +196,6 @@ async fn process_changes(
                 true
             }
             Err(err) => {
-                metrics.record_processing_error(EventSource::Git, change_type);
                 error!(?change, ?err, "failed to process change");
                 false
             }
