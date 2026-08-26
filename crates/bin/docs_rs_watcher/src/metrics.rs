@@ -4,7 +4,7 @@ use opentelemetry::{
     KeyValue,
     metrics::{Counter, Histogram},
 };
-use std::time::Duration;
+use std::{fmt, time::Duration};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum EventSource {
@@ -18,6 +18,12 @@ impl EventSource {
             Self::Git => "git",
             Self::Sqs => "sqs",
         }
+    }
+}
+
+impl fmt::Display for EventSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 

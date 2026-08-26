@@ -24,6 +24,12 @@ impl ChangeKind {
     }
 }
 
+impl fmt::Display for ChangeKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// A change that can happen to a crate on our index.
 #[derive(Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq, Debug)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
