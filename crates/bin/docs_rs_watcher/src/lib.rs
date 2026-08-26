@@ -48,7 +48,7 @@ pub async fn watch(config: &Config, context: &Context) {
             //
             // We don't retry on unespected SQS errors yet.
 
-            let registry_watcher = crate::watch_registry(config, context);
+            let registry_watcher = crate::watch_registry(config, context, &metrics);
             tokio::pin!(registry_watcher);
 
             let registry_result = tokio::select! {
@@ -75,7 +75,11 @@ pub async fn watch(config: &Config, context: &Context) {
 /// Run the registry watcher
 /// NOTE: this should only be run once, otherwise crates would be added
 /// to the queue multiple times.
-pub async fn watch_registry(config: &Config, context: &Context) -> Result<()> {
+async fn watch_registry(
+    config: &Config,
+    context: &Context,
+    metrics: &WatcherMetrics,
+) -> Result<()> {
     let mut last_gc = Instant::now();
 
     let queue = context.build_queue()?;
@@ -87,9 +91,12 @@ pub async fn watch_registry(config: &Config, context: &Context) -> Result<()> {
             debug!("Checking new crates");
             let index = Index::from_config(config).await?;
 
-            match get_new_crates(context, &index, config).await {
+            match get_new_crates(context, &index, config, metrics).await {
                 Ok(n) => debug!("{} crates added to queue", n),
                 Err(e) => {
+                    metrics
+                        .poll_errors_total
+                        .add(1, &[opentelemetry::KeyValue::new("source", "git")]);
                     error!(?e, "Failed to get new crates");
                 }
             }

@@ -2,6 +2,7 @@ use crate::{
     Config,
     db::{delete_crate, delete_version},
     index::Index,
+    metrics::WatcherMetrics,
 };
 use anyhow::{Context as _, Result};
 use crates_index_diff::Change;
@@ -13,6 +14,8 @@ use docs_rs_database::{
 };
 use docs_rs_fastly::{Cdn, CdnBehaviour as _};
 use docs_rs_types::{CrateId, KrateName, Version};
+use opentelemetry::KeyValue;
+use std::time::Instant;
 use tracing::{debug, error, info, warn};
 
 #[derive(Debug)]
@@ -101,6 +104,7 @@ pub(crate) async fn get_new_crates(
     context: &Context,
     index: &Index,
     config: &Config,
+    metrics: &WatcherMetrics,
 ) -> Result<usize> {
     let mut conn = context.pool()?.get_async().await?;
 
@@ -122,7 +126,10 @@ pub(crate) async fn get_new_crates(
 
     debug!(last_seen_reference=%last_seen_reference, new_reference=%new_reference, "queueing changes");
 
-    let crates_added = process_changes(context, &changes, config).await;
+    metrics
+        .events_received_total
+        .add(changes.len() as u64, &[KeyValue::new("source", "git")]);
+    let crates_added = process_changes(context, &changes, config, metrics).await;
 
     if let Err(err) = context.build_queue()?.reevaluate_priorities().await {
         error!(?err, "error reevaluating queued release priorities");
@@ -136,10 +143,16 @@ pub(crate) async fn get_new_crates(
     Ok(crates_added)
 }
 
-async fn process_changes(context: &Context, changes: &Vec<Change>, config: &Config) -> usize {
+async fn process_changes(
+    context: &Context,
+    changes: &Vec<Change>,
+    config: &Config,
+    metrics: &WatcherMetrics,
+) -> usize {
     let mut crates_added = 0;
 
     for change in changes {
+        let start = Instant::now();
         // temporarily log all changes, so we can compare them with the SQS changes we see.
         // They share the same log-target, and most tracing fields.
         let (change_type, crate_name, crate_version) = match change {
@@ -174,19 +187,31 @@ async fn process_changes(context: &Context, changes: &Vec<Change>, config: &Conf
             // Generally we don't even start the git-index-watcher when
             // SQS is active.
             // Will be removed with the git index watcher code when SQS is stable.
+            metrics.event_processing_time.record(
+                start.elapsed().as_secs_f64(),
+                &[KeyValue::new("source", "git")],
+            );
             continue;
         }
 
         match process_change(context, change, config).await {
             Ok(added) => {
+                metrics.record_change_applied("git", change_type);
                 if added {
                     crates_added += 1;
                 }
             }
             Err(err) => {
+                metrics
+                    .processing_errors_total
+                    .add(1, &[KeyValue::new("source", "git")]);
                 error!(?change, ?err, "failed to process change");
             }
         }
+        metrics.event_processing_time.record(
+            start.elapsed().as_secs_f64(),
+            &[KeyValue::new("source", "git")],
+        );
     }
     crates_added
 }
@@ -563,6 +588,7 @@ mod tests {
             name: "krate_already_present".parse()?,
             version: V2,
         };
+        let metrics = WatcherMetrics::new(&env.context().meter_provider);
         let added = process_changes(
             &env,
             &vec![
@@ -576,6 +602,7 @@ mod tests {
                 Change::VersionDeleted(non_existing_version.into()),
             ],
             env.config(),
+            &metrics,
         )
         .await;
 

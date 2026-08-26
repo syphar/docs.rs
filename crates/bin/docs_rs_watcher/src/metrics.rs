@@ -1,4 +1,3 @@
-use docs_rs_crates_io::events::IndexChangeV1;
 use docs_rs_opentelemetry::AnyMeterProvider;
 use opentelemetry::{
     KeyValue,
@@ -7,12 +6,12 @@ use opentelemetry::{
 
 #[derive(Debug)]
 pub(crate) struct WatcherMetrics {
-    pub(crate) sqs_messages_received_total: Counter<u64>,
-    pub(crate) sqs_poll_errors_total: Counter<u64>,
-    pub(crate) sqs_retries_total: Counter<u64>,
+    pub(crate) events_received_total: Counter<u64>,
+    pub(crate) poll_errors_total: Counter<u64>,
+    pub(crate) processing_errors_total: Counter<u64>,
     pub(crate) changes_applied_total: Counter<u64>,
-    pub(crate) sqs_message_processing_time: Histogram<f64>,
-    pub(crate) sqs_event_lag: Histogram<f64>,
+    pub(crate) event_processing_time: Histogram<f64>,
+    pub(crate) event_lag: Histogram<f64>,
 }
 
 impl WatcherMetrics {
@@ -20,32 +19,32 @@ impl WatcherMetrics {
         let meter = meter_provider.meter("watcher");
         const PREFIX: &str = "docsrs.watcher";
         Self {
-            sqs_messages_received_total: meter
-                .u64_counter(format!("{PREFIX}.sqs_messages_received_total"))
+            events_received_total: meter
+                .u64_counter(format!("{PREFIX}.events_received_total"))
                 .with_unit("1")
                 .build(),
-            sqs_poll_errors_total: meter
-                .u64_counter(format!("{PREFIX}.sqs_poll_errors_total"))
+            poll_errors_total: meter
+                .u64_counter(format!("{PREFIX}.poll_errors_total"))
                 .with_unit("1")
                 .build(),
-            sqs_retries_total: meter
-                .u64_counter(format!("{PREFIX}.sqs_retries_total"))
+            processing_errors_total: meter
+                .u64_counter(format!("{PREFIX}.processing_errors_total"))
                 .with_unit("1")
                 .build(),
             changes_applied_total: meter
                 .u64_counter(format!("{PREFIX}.changes_applied_total"))
                 .with_unit("1")
                 .build(),
-            sqs_message_processing_time: meter
-                .f64_histogram(format!("{PREFIX}.sqs_message_processing_time"))
+            event_processing_time: meter
+                .f64_histogram(format!("{PREFIX}.event_processing_time"))
                 .with_boundaries(vec![
                     0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0,
                     45.0, 55.0, 60.0, 65.0, 90.0, 120.0,
                 ])
                 .with_unit("s")
                 .build(),
-            sqs_event_lag: meter
-                .f64_histogram(format!("{PREFIX}.sqs_event_lag"))
+            event_lag: meter
+                .f64_histogram(format!("{PREFIX}.event_lag"))
                 .with_boundaries(vec![
                     0.1, 0.5, 1.0, 5.0, 10.0, 30.0, 60.0, 300.0, 900.0, 3600.0,
                 ])
@@ -54,8 +53,10 @@ impl WatcherMetrics {
         }
     }
 
-    pub(crate) fn record_change_applied(&self, change: &IndexChangeV1) {
-        self.changes_applied_total
-            .add(1, &[KeyValue::new("type", change.kind())]);
+    pub(crate) fn record_change_applied(&self, source: &'static str, kind: &'static str) {
+        self.changes_applied_total.add(
+            1,
+            &[KeyValue::new("source", source), KeyValue::new("type", kind)],
+        );
     }
 }

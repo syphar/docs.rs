@@ -14,6 +14,7 @@ use docs_rs_context::Context;
 use docs_rs_crates_io::events::{IndexChangeEventV1, IndexChangeV1};
 use docs_rs_types::KrateName;
 use docs_rs_utils::retry_async;
+use opentelemetry::KeyValue;
 use std::time::{Duration, Instant};
 use tokio::time;
 use tracing::{debug, error, instrument, warn};
@@ -122,6 +123,13 @@ pub(crate) async fn run_sqs_subscriber(
             continue;
         }
 
+        // TODO: unclear: can we fetch batches?
+        // issues:
+        // * the visibility timeout is for the whole batch. So handling 10 messages takes too long,
+        //   we have an issue.
+        // * error handling / retry: the first retryable error has to lead to us stopping to handle
+        //   the batch
+
         debug!("receiving messages...");
         let messages = match client
             .receive_message()
@@ -134,7 +142,9 @@ pub(crate) async fn run_sqs_subscriber(
         {
             Ok(response) => response.messages().to_vec(),
             Err(err) => {
-                metrics.sqs_poll_errors_total.add(1, &[]);
+                metrics
+                    .poll_errors_total
+                    .add(1, &[KeyValue::new("source", "sqs")]);
                 error!(
                     ?err,
                     queue_url, "error receiving messages from sqs, retrying"
@@ -143,10 +153,6 @@ pub(crate) async fn run_sqs_subscriber(
                 continue;
             }
         };
-        metrics
-            .sqs_messages_received_total
-            .add(messages.len() as u64, &[]);
-
         process_messages(&client, &queue_url, context, config, metrics, messages).await;
 
         if last_priority_recheck.elapsed() >= DELAY_BETWEEN_PRIORITY_RECHECK {
@@ -218,16 +224,20 @@ async fn handle_message_body(
 
     match process_sqs_event(context, config, metrics, body).await {
         Ok(_) => {
-            metrics
-                .sqs_message_processing_time
-                .record(start.elapsed().as_secs_f64(), &[]);
+            metrics.event_processing_time.record(
+                start.elapsed().as_secs_f64(),
+                &[KeyValue::new("source", "sqs")],
+            );
             MessageOutcome::Ack
         }
         Err(err) => {
+            metrics.event_processing_time.record(
+                start.elapsed().as_secs_f64(),
+                &[KeyValue::new("source", "sqs")],
+            );
             metrics
-                .sqs_message_processing_time
-                .record(start.elapsed().as_secs_f64(), &[]);
-            metrics.sqs_retries_total.add(1, &[]);
+                .processing_errors_total
+                .add(1, &[KeyValue::new("source", "sqs")]);
             error!(
                 ?err,
                 ?RETRY_DELAY,
@@ -248,6 +258,9 @@ async fn process_sqs_event(
 ) -> Result<()> {
     let event: IndexChangeEventV1 =
         serde_json::from_str(body).context("error parsing event from json")?;
+    metrics
+        .events_received_total
+        .add(1, &[KeyValue::new("source", "sqs")]);
 
     debug!(
         target: "docs_rs_watcher::index_event",
@@ -259,9 +272,10 @@ async fn process_sqs_event(
         crate_version = event.change.version().unwrap_or_default(),
         "crates.io index event"
     );
-    metrics
-        .sqs_event_lag
-        .record((Utc::now() - event.occurred_at).as_seconds_f64(), &[]);
+    metrics.event_lag.record(
+        (Utc::now() - event.occurred_at).as_seconds_f64(),
+        &[KeyValue::new("source", "sqs")],
+    );
 
     if config.crates_io_events_active() {
         retry_async(
@@ -273,9 +287,9 @@ async fn process_sqs_event(
         )
         .await
         .context("error processing change")?;
-    }
 
-    metrics.record_change_applied(&event.change);
+        metrics.record_change_applied("sqs", event.change.kind());
+    }
 
     Ok(())
 }
@@ -601,7 +615,7 @@ mod tests {
             .to_string();
         assert_eq!(change_type, "added");
         assert_eq!(applied.value(), 1);
-        let lag_metric = collected.get_metric("watcher", "docsrs.watcher.sqs_event_lag")?;
+        let lag_metric = collected.get_metric("watcher", "docsrs.watcher.event_lag")?;
         assert_eq!(lag_metric.get_f64_histogram().count(), 1);
 
         Ok(())
@@ -658,7 +672,7 @@ mod tests {
         );
         let collected = env.collected_metrics();
         let processing_metric =
-            collected.get_metric("watcher", "docsrs.watcher.sqs_message_processing_time")?;
+            collected.get_metric("watcher", "docsrs.watcher.event_processing_time")?;
         assert_eq!(processing_metric.get_f64_histogram().count(), 1);
 
         Ok(())
@@ -676,7 +690,7 @@ mod tests {
         let collected = env.collected_metrics();
         assert_eq!(
             collected
-                .get_metric("watcher", "docsrs.watcher.sqs_retries_total")?
+                .get_metric("watcher", "docsrs.watcher.processing_errors_total")?
                 .get_u64_counter()
                 .value(),
             1
