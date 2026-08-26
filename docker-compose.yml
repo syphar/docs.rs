@@ -148,7 +148,6 @@ services:
         environment:
             <<: *environment
             DOCSRS_RENDER_THREADS: 2
-            DOCSRS_S3_STATIC_ROOT_PATH: http://localhost:9000/rust-docs-rs
         env_file:
             - .docker.env
         healthcheck:
@@ -226,10 +225,7 @@ services:
             - manual
 
     db:
-        build:
-            context: ./dockerfiles
-            dockerfile: ./Dockerfile-postgres
-            <<: *docker-cache
+        image: postgres:18-alpine
         volumes:
             - postgres-data:/var/lib/postgresql
         environment:
