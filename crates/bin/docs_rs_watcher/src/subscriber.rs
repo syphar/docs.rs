@@ -206,7 +206,16 @@ async fn process_sqs_event(
     let event: IndexChangeEventV1 =
         serde_json::from_str(body).context("error parsing event from json")?;
 
-    debug!(?event, "received event from sqs");
+    debug!(
+        target: "docs_rs_watcher::index_event",
+        source = "sqs",
+        event_id = %event.id,
+        occurred_at = %event.occurred_at,
+        change_type = event.change.kind(),
+        crate_name = event.change.name(),
+        crate_version = event.change.version().unwrap_or_default(),
+        "crates.io index event"
+    );
     metrics
         .sqs_event_lag
         .record((Utc::now() - event.occurred_at).as_seconds_f64(), &[]);

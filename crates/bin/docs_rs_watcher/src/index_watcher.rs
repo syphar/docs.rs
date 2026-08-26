@@ -140,7 +140,32 @@ async fn process_changes(context: &Context, changes: &Vec<Change>, config: &Conf
     let mut crates_added = 0;
 
     for change in changes {
-        debug!(?change, "received change from git index");
+        let (change_type, crate_name, crate_version) = match change {
+            Change::Added(version) => ("added", version.name.as_str(), version.version.as_str()),
+            Change::AddedAndYanked(version) => (
+                "added_and_yanked",
+                version.name.as_str(),
+                version.version.as_str(),
+            ),
+            Change::Unyanked(version) => {
+                ("unyanked", version.name.as_str(), version.version.as_str())
+            }
+            Change::Yanked(version) => ("yanked", version.name.as_str(), version.version.as_str()),
+            Change::CrateDeleted { name, .. } => ("crate_deleted", name.as_str(), ""),
+            Change::VersionDeleted(version) => (
+                "version_deleted",
+                version.name.as_str(),
+                version.version.as_str(),
+            ),
+        };
+        debug!(
+            target: "docs_rs_watcher::index_event",
+            source = "git",
+            change_type,
+            crate_name,
+            crate_version,
+            "crates.io index event"
+        );
 
         if config.crates_io_events_active() {
             // just to be safe.

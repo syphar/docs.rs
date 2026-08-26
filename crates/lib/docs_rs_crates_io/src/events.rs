@@ -68,6 +68,16 @@ impl IndexChangeV1 {
         }
     }
 
+    pub fn version(&self) -> Option<&str> {
+        match self {
+            IndexChangeV1::Added(crate_version) => Some(&crate_version.version),
+            IndexChangeV1::Unyanked(crate_version) => Some(&crate_version.version),
+            IndexChangeV1::Yanked(crate_version) => Some(&crate_version.version),
+            IndexChangeV1::CrateDeleted { .. } => None,
+            IndexChangeV1::VersionDeleted(crate_version) => Some(&crate_version.version),
+        }
+    }
+
     pub fn kind(&self) -> &'static str {
         match *self {
             IndexChangeV1::Added(_) => "added",
