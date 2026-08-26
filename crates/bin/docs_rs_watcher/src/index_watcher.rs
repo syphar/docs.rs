@@ -189,7 +189,10 @@ async fn process_changes(
             // Will be removed with the git index watcher code when SQS is stable.
             metrics.event_processing_time.record(
                 start.elapsed().as_secs_f64(),
-                &[KeyValue::new("source", "git")],
+                &[
+                    KeyValue::new("source", "git"),
+                    KeyValue::new("type", change_type),
+                ],
             );
             continue;
         }
@@ -210,7 +213,10 @@ async fn process_changes(
         }
         metrics.event_processing_time.record(
             start.elapsed().as_secs_f64(),
-            &[KeyValue::new("source", "git")],
+            &[
+                KeyValue::new("source", "git"),
+                KeyValue::new("type", change_type),
+            ],
         );
     }
     crates_added

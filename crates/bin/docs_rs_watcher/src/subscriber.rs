@@ -220,21 +220,9 @@ async fn handle_message_body(
     let Some(body) = body else {
         return MessageOutcome::Ack;
     };
-    let start = Instant::now();
-
     match process_sqs_event(context, config, metrics, body).await {
-        Ok(_) => {
-            metrics.event_processing_time.record(
-                start.elapsed().as_secs_f64(),
-                &[KeyValue::new("source", "sqs")],
-            );
-            MessageOutcome::Ack
-        }
+        Ok(_) => MessageOutcome::Ack,
         Err(err) => {
-            metrics.event_processing_time.record(
-                start.elapsed().as_secs_f64(),
-                &[KeyValue::new("source", "sqs")],
-            );
             metrics
                 .processing_errors_total
                 .add(1, &[KeyValue::new("source", "sqs")]);
@@ -256,8 +244,20 @@ async fn process_sqs_event(
     metrics: &WatcherMetrics,
     body: &str,
 ) -> Result<()> {
-    let event: IndexChangeEventV1 =
-        serde_json::from_str(body).context("error parsing event from json")?;
+    let start = Instant::now();
+    let event: IndexChangeEventV1 = match serde_json::from_str(body) {
+        Ok(event) => event,
+        Err(err) => {
+            metrics.event_processing_time.record(
+                start.elapsed().as_secs_f64(),
+                &[
+                    KeyValue::new("source", "sqs"),
+                    KeyValue::new("type", "unknown"),
+                ],
+            );
+            return Err(err).context("error parsing event from json");
+        }
+    };
     metrics
         .events_received_total
         .add(1, &[KeyValue::new("source", "sqs")]);
@@ -277,7 +277,7 @@ async fn process_sqs_event(
         &[KeyValue::new("source", "sqs")],
     );
 
-    if config.crates_io_events_active() {
+    let processing_result = if config.crates_io_events_active() {
         retry_async(
             || {
                 let change = event.change.clone();
@@ -286,8 +286,21 @@ async fn process_sqs_event(
             3,
         )
         .await
-        .context("error processing change")?;
+        .context("error processing change")
+    } else {
+        Ok(())
+    };
 
+    metrics.event_processing_time.record(
+        start.elapsed().as_secs_f64(),
+        &[
+            KeyValue::new("source", "sqs"),
+            KeyValue::new("type", event.change.kind()),
+        ],
+    );
+    processing_result?;
+
+    if config.crates_io_events_active() {
         metrics.record_change_applied("sqs", event.change.kind());
     }
 
