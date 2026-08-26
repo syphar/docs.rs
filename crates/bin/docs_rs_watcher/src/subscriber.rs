@@ -195,6 +195,11 @@ async fn process_messages(
                         receipt_handle, "error setting visibility_timeout for retry"
                     );
                 }
+
+                // A FIFO receive can return multiple messages from the same message group.
+                // Processing later messages after one failed would apply their changes out of
+                // order, so leave the rest of the batch untouched for a later receive.
+                break;
             }
         }
     }
@@ -695,7 +700,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_process_messages_acknowledges_success_and_retries_failures() -> Result<()> {
+    async fn test_process_messages_stops_batch_after_first_retry() -> Result<()> {
         let config = Config::test_config()?;
         let env = TestEnvironment::builder().config(config).build().await?;
         let metrics = WatcherMetrics::new(&env.context().meter_provider);
@@ -717,10 +722,7 @@ mod tests {
 
         process_messages(&client, "queue-url", &env, env.config(), &metrics, messages).await;
 
-        assert_eq!(
-            *client.deleted.lock().unwrap(),
-            vec!["success-1", "success-2"]
-        );
+        assert_eq!(*client.deleted.lock().unwrap(), vec!["success-1"]);
         assert_eq!(
             *client.visibility_changes.lock().unwrap(),
             vec![("failure".into(), RETRY_DELAY)]
