@@ -1,6 +1,27 @@
 use chrono::{DateTime, Utc};
 use std::fmt;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChangeKind {
+    Added,
+    Unyanked,
+    Yanked,
+    CrateDeleted,
+    VersionDeleted,
+}
+
+impl ChangeKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Added => "added",
+            Self::Unyanked => "unyanked",
+            Self::Yanked => "yanked",
+            Self::CrateDeleted => "crate_deleted",
+            Self::VersionDeleted => "version_deleted",
+        }
+    }
+}
+
 /// A change that can happen to a crate on our index.
 #[derive(Clone, serde::Serialize, serde::Deserialize, Eq, PartialEq, Debug)]
 #[serde(tag = "type", content = "payload", rename_all = "snake_case")]
@@ -78,20 +99,20 @@ impl IndexChangeV1 {
         }
     }
 
-    pub fn kind(&self) -> &'static str {
+    pub fn kind(&self) -> ChangeKind {
         match *self {
-            IndexChangeV1::Added(_) => "added",
-            IndexChangeV1::Yanked(_) => "yanked",
-            IndexChangeV1::CrateDeleted { .. } => "crate_deleted",
-            IndexChangeV1::VersionDeleted(_) => "version_deleted",
-            IndexChangeV1::Unyanked(_) => "unyanked",
+            IndexChangeV1::Added(_) => ChangeKind::Added,
+            IndexChangeV1::Yanked(_) => ChangeKind::Yanked,
+            IndexChangeV1::CrateDeleted { .. } => ChangeKind::CrateDeleted,
+            IndexChangeV1::VersionDeleted(_) => ChangeKind::VersionDeleted,
+            IndexChangeV1::Unyanked(_) => ChangeKind::Unyanked,
         }
     }
 }
 
 impl fmt::Display for IndexChangeV1 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.kind())
+        f.write_str(self.kind().as_str())
     }
 }
 

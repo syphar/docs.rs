@@ -258,7 +258,7 @@ async fn process_sqs_event(
         source = EventSource::Sqs.as_str(),
         event_id = %event.id,
         occurred_at = %event.occurred_at,
-        change_type = event.change.kind(),
+        change_type = event.change.kind().as_str(),
         crate_name = event.change.name(),
         crate_version = event.change.version().unwrap_or_default(),
         "crates.io index event"
@@ -284,14 +284,14 @@ async fn process_sqs_event(
 
     metrics.record_event_processing_time(
         EventSource::Sqs,
-        event.change.kind(),
+        event.change.kind().as_str(),
         processing_result.is_ok(),
         start.elapsed(),
     );
     processing_result?;
 
     if config.crates_io_events_active() {
-        metrics.record_change_applied(EventSource::Sqs, event.change.kind());
+        metrics.record_change_applied(EventSource::Sqs, event.change.kind().as_str());
     }
 
     Ok(())
