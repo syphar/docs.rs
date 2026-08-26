@@ -135,7 +135,7 @@ x-registry-watcher: &registry-watcher
         # configure the rebuild-queuer,
         DOCSRS_MAX_QUEUED_REBUILDS: ${DOCSRS_MAX_QUEUED_REBUILDS:-10}
         DOCSRS_SQS_QUEUE_URL: ${DOCSRS_SQS_QUEUE_URL:-http://elasticmq:9324/queue/docsrs-events}
-        DOCSRS_SQS_REGION: ${DOCSRS_SQS_REGION:-elasticmq}
+        DOCSRS_SQS_QUEUE_REGION: ${DOCSRS_SQS_QUEUE_REGION:-elasticmq}
         DOCSRS_SQS_ENDPOINT_URL: ${DOCSRS_SQS_ENDPOINT_URL:-http://elasticmq:9324}
         DOCSRS_SQS_ACTIVE: ${DOCSRS_SQS_ACTIVE:-false}
     env_file:

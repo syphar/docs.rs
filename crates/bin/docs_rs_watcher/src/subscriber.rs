@@ -382,7 +382,7 @@ mod tests {
     async fn test_process_sqs_event_dispatches_added_event() -> Result<()> {
         let mut config = Config::test_config()?;
         if let Some(sqs_config) = &mut config.crates_io_events {
-            sqs_config.active = false;
+            sqs_config.active = true;
         }
         let env = TestEnvironment::builder().config(config).build().await?;
         let metrics = WatcherMetrics::new(&env.context().meter_provider);
