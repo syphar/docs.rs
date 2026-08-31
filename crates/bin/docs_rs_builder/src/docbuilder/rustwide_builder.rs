@@ -810,8 +810,7 @@ impl RustwideBuilder {
                     }
                 } else {
                     None
-                }
-                .unwrap_or_default();
+                };
 
                 let cargo_metadata = res.cargo_metadata.root();
                 let repository = self.get_repo(cargo_metadata)?;
@@ -844,7 +843,7 @@ impl RustwideBuilder {
                     &build.host_source_dir(),
                     &res.target,
                     successful_targets,
-                    &release_data,
+                    release_data.as_ref(),
                     has_docs,
                     has_examples,
                     algs,
@@ -1840,7 +1839,7 @@ mod tests {
                     "x86_64-pc-windows-msvc".into(),
                     "x86_64-unknown-linux-gnu".into(),
                 ],
-                &ReleaseData::default(),
+                Some(&ReleaseData::default()),
                 true,
                 false,
                 iter::once(CompressionAlgorithm::Deflate),

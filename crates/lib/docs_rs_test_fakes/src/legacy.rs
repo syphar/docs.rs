@@ -560,7 +560,7 @@ impl<'a> FakeRelease<'a> {
             crate_dir,
             default_target,
             self.doc_targets,
-            &self.registry_release_data,
+            Some(&self.registry_release_data),
             self.has_docs,
             self.has_examples,
             iter::once(stats.alg),
