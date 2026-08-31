@@ -79,7 +79,7 @@ pub struct FakeRelease<'a> {
     doc_targets: Vec<String>,
     default_target: Option<&'a str>,
     registry_crate_data: CrateData,
-    registry_release_data: ReleaseData,
+    registry_release_data: Option<ReleaseData>,
     has_docs: bool,
     has_examples: bool,
     /// This stores the content, while `package.readme` stores the filename
@@ -146,11 +146,7 @@ impl<'a> FakeRelease<'a> {
             doc_targets: Vec::new(),
             default_target: None,
             registry_crate_data: CrateData { owners: Vec::new() },
-            registry_release_data: ReleaseData {
-                release_time: Utc::now(),
-                yanked: false,
-                downloads: 0,
-            },
+            registry_release_data: Some(ReleaseData::default()),
             has_docs: true,
             has_examples: false,
             readme: None,
@@ -171,8 +167,16 @@ impl<'a> FakeRelease<'a> {
         self
     }
 
+    pub fn no_registry_release_data(self) -> Self {
+        Self {
+            registry_release_data: None,
+            ..self
+        }
+    }
+
     pub fn release_time(mut self, new: DateTime<Utc>) -> Self {
-        self.registry_release_data.release_time = new;
+        let release_data = self.registry_release_data.get_or_insert_default();
+        release_data.release_time = new;
         self
     }
 
@@ -235,7 +239,8 @@ impl<'a> FakeRelease<'a> {
     }
 
     pub fn yanked(mut self, new: bool) -> Self {
-        self.registry_release_data.yanked = new;
+        let release_data = self.registry_release_data.get_or_insert_default();
+        release_data.yanked = new;
         self
     }
 
@@ -560,7 +565,7 @@ impl<'a> FakeRelease<'a> {
             crate_dir,
             default_target,
             self.doc_targets,
-            Some(&self.registry_release_data),
+            self.registry_release_data.as_ref(),
             self.has_docs,
             self.has_examples,
             iter::once(stats.alg),
