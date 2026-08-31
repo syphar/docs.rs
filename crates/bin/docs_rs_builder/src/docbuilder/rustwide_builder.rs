@@ -2420,8 +2420,8 @@ mod tests {
         let row = block_on_async_with_conn!(env, |mut conn| async {
             sqlx::query!(
                 r#"SELECT
-                        c.name,
-                        r.version,
+                        c.name as "name!",
+                        r.version as "version!",
                         r.rustdoc_status,
                         cov.total_items
                     FROM
@@ -2480,8 +2480,8 @@ mod tests {
         let row = block_on_async_with_conn!(env, |mut conn| async {
             sqlx::query!(
                 r#"SELECT
-                        c.name,
-                        r.version,
+                        c.name as "name!",
+                        r.version as "version!",
                         r.rustdoc_status,
                         cov.total_items
                     FROM
