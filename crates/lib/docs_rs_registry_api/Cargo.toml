@@ -9,6 +9,7 @@ edition = "2024"
 anyhow = { workspace = true }
 bon = { workspace = true }
 chrono = { workspace = true }
+crates-index = { workspace = true, default-features = false, features = ["sparse"] }
 docs_rs_config = { path = "../docs_rs_config" }
 docs_rs_env_vars = { path = "../docs_rs_env_vars" }
 docs_rs_types = { path = "../docs_rs_types" }
