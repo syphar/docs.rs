@@ -284,10 +284,18 @@ impl RustwideBuilder {
         algs.insert(source_stats.alg);
 
         // run the actual doc-build (coverage, json, html, for all configured targets)
-        let full_build_result = fetched.run(|build| build.build_docs())?;
+        let full_build_result = fetched.run(|build| Ok(build.build_docs()))?;
+        // FIXME: when cargo metadata fetch fails, we probably return here?
 
         let build_statistics = full_build_result.statistics().clone();
         let mut release_build_result = full_build_result.into_inner();
+        if release_build_result
+            .targets()
+            .any(|t| t.regenerate_lockfile.is_some())
+        {
+            self.builder_metrics.lockfile_regenerated.add(1, &[]);
+        }
+
         let build_succeeded = release_build_result.build_succeeded();
         let has_docs = release_build_result.has_docs();
         let default_target = release_build_result.default_target().target.clone();

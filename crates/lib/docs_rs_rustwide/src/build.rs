@@ -238,6 +238,12 @@ impl<'build, 'ws> ReleaseBuild<'build, 'ws> {
             .library_name()
             .is_some_and(|name| default_target_result.has_docs(&name));
 
+        // FIXME: where to put this check? do we still need it?
+        // let is_default = target == self.metadata_targets().default_target;
+        // if documentation_result.successful() && self.metadata.proc_macro {
+        //     debug_assert!(is_default, "proc macros only support their host target");
+        // }
+
         let mut target_results = vec![];
 
         if default_has_docs {
@@ -272,12 +278,12 @@ impl<'build, 'ws> ReleaseBuild<'build, 'ws> {
         #[builder(default = false)] retry_without_lockfile: bool,
     ) -> TargetBuildResult {
         let started = Instant::now();
-        let is_default = target == self.metadata_targets().default_target;
-        let mut target_result = self.build_target_once(target, is_default);
+        let mut target_result = self.build_target_once(target);
 
         if retry_without_lockfile
             // coverage is the first step in `build_target_once`,
-            // if that fails with any error from cargo, we try again without the lockfile.
+            // if that fails with any error from cargo, we try to regenerate
+            // the lockfile & try again.
             && matches!(
                 target_result.coverage.outcome,
                 Err(BuildStepError::Command(_))
@@ -290,7 +296,7 @@ impl<'build, 'ws> ReleaseBuild<'build, 'ws> {
             );
             let regenerate_lockfile_result = self.regenerate_lockfile();
             if regenerate_lockfile_result.successful() {
-                target_result = self.build_target_once(target, is_default);
+                target_result = self.build_target_once(target);
                 target_result.regenerate_lockfile = Some(regenerate_lockfile_result);
             } else {
                 target_result.regenerate_lockfile = Some(regenerate_lockfile_result);
@@ -302,7 +308,7 @@ impl<'build, 'ws> ReleaseBuild<'build, 'ws> {
     }
 
     #[instrument(skip_all)]
-    fn build_target_once(&self, target: &str, is_default: bool) -> TargetBuildResult {
+    fn build_target_once(&self, target: &str) -> TargetBuildResult {
         // Coverage must precede the HTML build because Cargo currently clears
         // rustdoc's target output directory between these invocations.
         let coverage_result = self.build_coverage(target);
@@ -310,7 +316,6 @@ impl<'build, 'ws> ReleaseBuild<'build, 'ws> {
         let mut result = TargetBuildResult {
             duration: std::time::Duration::ZERO,
             target: target.into(),
-            is_default,
             documentation: None,
             rustdoc_json: None,
             coverage: coverage_result,
@@ -329,9 +334,6 @@ impl<'build, 'ws> ReleaseBuild<'build, 'ws> {
         result.rustdoc_json = Some(self.build_rustdoc_json(target));
 
         let documentation_result = self.build_documentation(target);
-        if documentation_result.successful() && self.metadata.proc_macro {
-            debug_assert!(is_default, "proc macros only support their host target");
-        }
         result.documentation = Some(documentation_result);
 
         // we always try to collect metrics

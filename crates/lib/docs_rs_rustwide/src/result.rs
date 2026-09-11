@@ -162,8 +162,6 @@ pub struct TargetBuildResult {
     pub(crate) duration: Duration,
     /// Rust target triple.
     pub target: String,
-    /// Whether this is the release's default target.
-    pub is_default: bool,
     /// HTML documentation output directory.
     pub documentation: Option<StepResult<PathBuf>>,
     /// Rustdoc JSON build result.
@@ -250,6 +248,10 @@ impl ReleaseBuildResult {
                     .is_some_and(|dt| dt.has_docs(&name))
             })
         })
+    }
+
+    pub fn targets(&self) -> impl Iterator<Item = &TargetBuildResult> {
+        self.default_target.iter().chain(self.other_targets.iter())
     }
 }
 
