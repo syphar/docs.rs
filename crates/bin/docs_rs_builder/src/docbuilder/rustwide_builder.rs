@@ -286,7 +286,7 @@ impl RustwideBuilder {
         // run the actual doc-build (coverage, json, html, for all configured targets)
         let build = fetched.run(|build| build.build_docs())?;
 
-        let memory_peak = build.statistics().memory_peak_bytes();
+        let build_statistics = build.statistics().clone();
         let mut release = build.into_inner();
         let build_succeeded = release.build_succeeded();
         let has_docs = release.has_docs();
@@ -336,7 +336,7 @@ impl RustwideBuilder {
                 BuildStatus::Failure
             },
             documentation_size,
-            memory_peak,
+            build_statistics.memory_peak_bytes(),
             build_error,
         ))?;
 
