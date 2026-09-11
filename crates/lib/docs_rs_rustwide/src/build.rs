@@ -49,6 +49,21 @@ impl fmt::Display for Emit {
     }
 }
 
+fn capture_step<T>(
+    max_log_size: usize,
+    run: impl FnOnce() -> Result<T, BuildStepError>,
+) -> StepResult<T> {
+    let mut storage = LogStorage::new(log::LevelFilter::Info);
+    storage.set_max_size(max_log_size);
+    let started = Instant::now();
+    let outcome = logging::capture(&storage, run);
+    StepResult {
+        outcome,
+        duration: started.elapsed(),
+        log: storage.to_string(),
+    }
+}
+
 /// A prepared release inside an active rustwide sandbox.
 pub struct ReleaseBuild<'build, 'ws> {
     pub(crate) environment: &'build BuildEnvironment,
@@ -169,9 +184,9 @@ impl<'build, 'ws> ReleaseBuild<'build, 'ws> {
     /// Build coverage, rustdoc JSON, and HTML for the full docs.rs target set.
     ///
     /// All commands execute through the same rustwide build and reusable
-    /// sandbox. Default-target preparation failures abort the release. Coverage
-    /// and JSON command/output failures, additional-target failures, and metrics
-    /// collection failures remain in their step results. Additional targets are
+    /// sandbox. Any coverage failure aborts the release, as does default-target
+    /// HTML preparation failure. JSON and metrics failures remain in their step
+    /// results, as do additional-target HTML failures. Additional targets are
     /// built only when the default target produces library documentation.
     #[instrument(skip_all, fields(crate_name, crate_version))]
     pub fn build_docs(&self) -> Result<ReleaseBuildResult> {
@@ -228,8 +243,9 @@ impl<'build, 'ws> ReleaseBuild<'build, 'ws> {
 
     /// Build coverage, rustdoc JSON, and HTML for one target.
     ///
-    /// Preparation failures abort for the metadata-selected default target;
-    /// additional targets retain them as step results. When requested, an HTML
+    /// Any coverage failure aborts before JSON or HTML runs. JSON failures are
+    /// retained and HTML is still attempted. HTML preparation failures abort for
+    /// the metadata-selected default target. When requested, an HTML
     /// command failure retries all steps once with a regenerated lockfile if one
     /// exists. Lockfile regeneration failures abort with captured diagnostics.
     /// Metrics collection is a separate, nonfatal step after each HTML attempt.
@@ -266,18 +282,22 @@ impl<'build, 'ws> ReleaseBuild<'build, 'ws> {
     fn build_target_once(&self, target: &str, is_default: bool) -> Result<TargetBuildResult> {
         // Coverage must precede the HTML build because Cargo currently clears
         // rustdoc's target output directory between these invocations.
-        let coverage_result = self.build_coverage(target);
-        let coverage_result = if is_default {
-            abort_on_prepare(coverage_result)?
-        } else {
-            coverage_result
+        let coverage_result = match self.build_coverage(target) {
+            StepResult {
+                outcome: Err(error),
+                duration,
+                log,
+            } => {
+                return Err(crate::FailedStep {
+                    error,
+                    duration,
+                    log,
+                }
+                .into());
+            }
+            result => result,
         };
         let rustdoc_json_result = self.build_rustdoc_json(target);
-        let rustdoc_json_result = if is_default {
-            abort_on_prepare(rustdoc_json_result)?
-        } else {
-            rustdoc_json_result
-        };
         let documentation_result = self.build_documentation(target);
         let documentation_result = if is_default {
             abort_on_prepare(documentation_result)?
@@ -315,8 +335,7 @@ impl<'build, 'ws> ReleaseBuild<'build, 'ws> {
     /// All failures retain their duration and log; the caller decides whether to abort.
     #[instrument(skip_all, fields(target))]
     pub fn build_coverage(&self, target: &str) -> StepResult<Option<DocCoverage>> {
-        Self::capture_step(self.limits.max_log_size(), || {
-            let mut coverage = DocCoverage::default();
+        self.capture_step(|| {
             self.command(target)
                 .rustdoc_args(["--output-format", "json", "--show-coverage"])
                 .prepare()
@@ -325,16 +344,21 @@ impl<'build, 'ws> ReleaseBuild<'build, 'ws> {
                 .run()
                 .map_err(BuildStepError::Command)?;
 
-            let output_dir = self.output_dir(target);
-            let path = find_single_output_file(&output_dir, "json")?;
-            let reader = BufReader::new(File::open(path).map_err(anyhow::Error::from)?);
-            for line in reader.lines() {
-                let line = line.map_err(anyhow::Error::from)?;
-                coverage
-                    .extend(doc_coverage::parse_line(&line).context("parsing coverage output")?);
-            }
+            BuildStepError::as_output(|| {
+                let output_dir = self.output_dir(target);
+                let path = find_single_output_file(&output_dir, "json")?;
+                let reader = BufReader::new(File::open(path)?);
 
-            Ok((coverage.total_items != 0 || coverage.documented_items != 0).then_some(coverage))
+                let mut coverage = DocCoverage::default();
+                for line in reader.lines() {
+                    let line = line?;
+                    coverage.extend(
+                        doc_coverage::parse_line(&line).context("parsing coverage output")?,
+                    );
+                }
+
+                Ok((!coverage.is_empty()).then_some(coverage))
+            })
         })
     }
 
@@ -343,7 +367,7 @@ impl<'build, 'ws> ReleaseBuild<'build, 'ws> {
     /// All failures retain their duration and log; the caller decides whether to abort.
     #[instrument(skip_all, fields(target))]
     pub fn build_rustdoc_json(&self, target: &str) -> StepResult<RustdocJsonOutput> {
-        Self::capture_step(self.limits.max_log_size(), || {
+        self.capture_step(|| {
             self.command(target)
                 .rustdoc_args(["--output-format", "json"])
                 .prepare()
@@ -351,16 +375,15 @@ impl<'build, 'ws> ReleaseBuild<'build, 'ws> {
                 .run()
                 .map_err(BuildStepError::Command)?;
 
-            find_single_output_file(self.output_dir(target), "json")
-                .map(RustdocJsonOutput::new)
-                .map_err(Into::into)
+            BuildStepError::as_output(|| {
+                find_single_output_file(self.output_dir(target), "json").map(RustdocJsonOutput::new)
+            })
         })
     }
 
     /// Build HTML documentation without emitting shared static files.
     ///
     /// All failures retain their duration and log; the caller decides whether to abort.
-    #[instrument(skip_all)]
     pub fn build_documentation(&self, target: &str) -> StepResult<PathBuf> {
         self.build_html(target, Emit::HtmlNonStaticFiles)
     }
@@ -383,12 +406,13 @@ impl<'build, 'ws> ReleaseBuild<'build, 'ws> {
 
     #[instrument(skip_all, fields(target, emit))]
     fn build_html(&self, target: &str, emit: Emit) -> StepResult<PathBuf> {
-        Self::capture_step(self.limits.max_log_size(), || {
+        self.capture_step(|| {
             let mut command = self
                 .command(target)
                 .rustdoc_arg(format!("--emit={emit}"))
                 .rustdoc_args(["--resource-suffix", &self.resource_suffix])
                 .cargo_arg("-Zrustdoc-scrape-examples");
+
             if let Some(directory) = self.compiler_metrics_dir() {
                 // Metrics setup must not prevent HTML from being generated. Collection
                 // reports an unavailable metrics directory as its own output failure.
@@ -396,24 +420,26 @@ impl<'build, 'ws> ReleaseBuild<'build, 'ws> {
                     Ok(()) => {
                         command = command.rustdoc_arg("-Zmetrics-dir=/opt/rustwide/target/metrics");
                     }
-                    Err(error) => warn!(
-                        ?error,
+                    Err(err) => warn!(
+                        ?err,
                         "cannot create metrics directory; building without metrics"
                     ),
                 }
             }
+
             command
                 .prepare()
                 .map_err(BuildStepError::Prepare)?
                 .run()
                 .map_err(BuildStepError::Command)?;
+
             Ok(self.output_dir(target))
         })
     }
 
     /// Copy compiler metrics after HTML execution. Failure does not invalidate HTML.
     pub fn collect_compiler_metrics(&self) -> StepResult<Vec<PathBuf>> {
-        Self::capture_step(self.limits.max_log_size(), || {
+        self.capture_step(|| {
             let (Some(source), Some(destination)) = (
                 self.compiler_metrics_dir(),
                 self.environment.compiler_metrics_collection_path(),
@@ -431,24 +457,13 @@ impl<'build, 'ws> ReleaseBuild<'build, 'ws> {
             .then(|| self.build.host_target_dir().join("metrics"))
     }
 
-    fn capture_step<T>(
-        max_log_size: usize,
-        run: impl FnOnce() -> Result<T, BuildStepError>,
-    ) -> StepResult<T> {
-        let mut storage = LogStorage::new(log::LevelFilter::Info);
-        storage.set_max_size(max_log_size);
-        let started = Instant::now();
-        let outcome = logging::capture(&storage, run);
-        StepResult {
-            outcome,
-            duration: started.elapsed(),
-            log: storage.to_string(),
-        }
+    fn capture_step<T>(&self, run: impl FnOnce() -> Result<T, BuildStepError>) -> StepResult<T> {
+        capture_step(self.limits.max_log_size(), run)
     }
 
     #[instrument(skip_all, fields(source_dir = %self.build.host_source_dir().display()))]
     fn regenerate_lockfile(&self) -> Result<()> {
-        Self::capture_step(self.limits.max_log_size(), || {
+        self.capture_step(|| {
             let source_dir = self.build.host_source_dir();
             debug!("removing invalid lockfile");
             fs::remove_file(source_dir.join("Cargo.lock"))
@@ -555,12 +570,11 @@ mod tests {
             BuildStepError::Command(rustwide::cmd::CommandError::Timeout(1)),
             BuildStepError::Output(anyhow::anyhow!("invalid JSON")),
         ] {
-            let step =
-                abort_on_prepare(ReleaseBuild::capture_step::<()>(1024, || Err(error))).unwrap();
+            let step = abort_on_prepare(capture_step::<()>(1024, || Err(error))).unwrap();
             assert!(!step.successful());
         }
         let started = Instant::now();
-        let step = ReleaseBuild::capture_step::<()>(1024, || {
+        let step = capture_step::<()>(1024, || {
             log::info!("fetching build-std dependencies");
             Err(BuildStepError::Prepare(anyhow::anyhow!(
                 "dependency download failed"
@@ -583,7 +597,7 @@ mod tests {
         fs::write(source.join("metrics.json"), "{}")?;
         let destination = temporary.path().join("not-a-directory");
         fs::write(&destination, "")?;
-        let metrics = ReleaseBuild::capture_step(1024, || {
+        let metrics = capture_step(1024, || {
             copy_compiler_metrics(&source, &destination).map_err(BuildStepError::Output)
         });
         let metrics = abort_on_prepare(metrics)?;
@@ -594,7 +608,7 @@ mod tests {
     #[test]
     fn capture_retains_preparation_failures_without_applying_policy() {
         crate::logging::init(false);
-        let step = ReleaseBuild::capture_step::<()>(1024, || {
+        let step = capture_step::<()>(1024, || {
             log::info!("installing additional target");
             Err(BuildStepError::Prepare(anyhow::anyhow!(
                 "target unavailable"

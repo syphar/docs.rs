@@ -213,12 +213,12 @@ See [`examples/custom_build.rs`](examples/custom_build.rs).
 
 Individual step methods return `StepResult<T>` with a `duration`, captured `log`,
 and `outcome: Result<T, BuildStepError>`. Errors identify the failing phase:
-`Prepare`, `Command`, or `Output`. The full release build aborts on default-target
-preparation failures and applies the default-target lockfile retry to HTML command
-failures. Additional-target preparation failures remain in their step results,
-allowing successful default-target documentation to be published.
-Coverage, JSON, and metrics output failures are nonfatal. Metrics collection has
-its own step result and cannot invalidate successful HTML documentation.
+`Prepare`, `Command`, or `Output`. Any coverage failure aborts the release before
+that target's JSON or HTML builds run. JSON failures are retained and HTML is
+still attempted. Default-target HTML preparation failures abort the release;
+HTML command failures are eligible for the default-target lockfile retry.
+Additional-target HTML failures remain in their step results. Metrics collection
+has its own nonfatal step result and cannot invalidate successful HTML documentation.
 
 Call `step.into_result()?` when a custom build requires a step to succeed. This
 propagates a `FailedStep` containing the error, duration, and log. Higher-level

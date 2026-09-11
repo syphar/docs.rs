@@ -89,12 +89,14 @@ pub enum BuildStepError {
     /// Dependencies or toolchain targets could not be prepared.
     #[error(transparent)]
     Prepare(anyhow::Error),
+
     /// Cargo or rustdoc failed inside the sandbox.
     #[error(transparent)]
-    Command(#[from] CommandError),
+    Command(CommandError),
+
     /// A step's output could not be found, parsed, or collected.
     #[error(transparent)]
-    Output(#[from] anyhow::Error),
+    Output(anyhow::Error),
 }
 
 impl BuildError for BuildStepError {
@@ -117,6 +119,13 @@ impl BuildError for BuildStepError {
             Self::Prepare(_) => "InternalPrepare",
             Self::Output(_) => "InternalOutput",
         }
+    }
+}
+impl BuildStepError {
+    pub(crate) fn as_output<R>(
+        mut f: impl FnMut() -> anyhow::Result<R>,
+    ) -> Result<R, BuildStepError> {
+        f().map_err(BuildStepError::Output)
     }
 }
 
