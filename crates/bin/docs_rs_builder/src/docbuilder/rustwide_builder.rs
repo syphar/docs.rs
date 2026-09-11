@@ -284,17 +284,17 @@ impl RustwideBuilder {
         algs.insert(source_stats.alg);
 
         // run the actual doc-build (coverage, json, html, for all configured targets)
-        let build = fetched.run(|build| build.build_docs())?;
+        let full_build_result = fetched.run(|build| build.build_docs())?;
 
-        let build_statistics = build.statistics().clone();
-        let mut release = build.into_inner();
-        let build_succeeded = release.build_succeeded();
-        let has_docs = release.has_docs();
-        let default_target = release.default_target().target.clone();
+        let build_statistics = full_build_result.statistics().clone();
+        let mut release_build_result = full_build_result.into_inner();
+        let build_succeeded = release_build_result.build_succeeded();
+        let has_docs = release_build_result.has_docs();
+        let default_target = release_build_result.default_target().target.clone();
 
         let mut successful_targets = Vec::new();
         let documentation_size = if has_docs {
-            for target in &release.targets {
+            for target in &release_build_result.targets {
                 if target.documentation_succeeded() {
                     copy_target_docs(target, local_storage.path())?;
                     successful_targets.push(target.target.clone());
@@ -314,9 +314,9 @@ impl RustwideBuilder {
             None
         };
 
-        self.publish_json_and_build_logs(build_id, name, version, &mut release)?;
+        self.publish_json_and_build_logs(build_id, name, version, &mut release_build_result)?;
 
-        let build_error = release
+        let build_error = release_build_result
             .default_target()
             .documentation
             .outcome
@@ -342,7 +342,7 @@ impl RustwideBuilder {
 
         if build_succeeded {
             self.builder_metrics.successful_builds.add(1, &[]);
-        } else if release.cargo_metadata.root().is_library() {
+        } else if release_build_result.cargo_metadata.root().is_library() {
             self.builder_metrics.failed_builds.add(1, &[]);
         } else {
             self.builder_metrics.non_library_builds.add(1, &[]);
@@ -360,7 +360,7 @@ impl RustwideBuilder {
         }
         .unwrap_or_else(ReleaseData::dummy);
 
-        let cargo_metadata = release.cargo_metadata.root();
+        let cargo_metadata = release_build_result.cargo_metadata.root();
         let repository = self.get_repo(cargo_metadata)?;
         let current_release_build_status = self.runtime.block_on(
             sqlx::query_scalar!(
@@ -405,7 +405,7 @@ impl RustwideBuilder {
             ))?;
         }
 
-        if let Some(doc_coverage) = release
+        if let Some(doc_coverage) = release_build_result
             .targets
             .first_mut()
             .and_then(|target| target.coverage.outcome.as_mut().ok())
