@@ -266,9 +266,24 @@ impl<'build, 'ws> ReleaseBuild<'build, 'ws> {
     fn build_target_once(&self, target: &str, is_default: bool) -> Result<TargetBuildResult> {
         // Coverage must precede the HTML build because Cargo currently clears
         // rustdoc's target output directory between these invocations.
-        let coverage_result = abort_on_prepare(self.build_coverage(target), is_default)?;
-        let rustdoc_json_result = abort_on_prepare(self.build_rustdoc_json(target), is_default)?;
-        let documentation_result = abort_on_prepare(self.build_documentation(target), is_default)?;
+        let coverage_result = self.build_coverage(target);
+        let coverage_result = if is_default {
+            abort_on_prepare(coverage_result)?
+        } else {
+            coverage_result
+        };
+        let rustdoc_json_result = self.build_rustdoc_json(target);
+        let rustdoc_json_result = if is_default {
+            abort_on_prepare(rustdoc_json_result)?
+        } else {
+            rustdoc_json_result
+        };
+        let documentation_result = self.build_documentation(target);
+        let documentation_result = if is_default {
+            abort_on_prepare(documentation_result)?
+        } else {
+            documentation_result
+        };
         let compiler_metrics = self.collect_compiler_metrics();
 
         if documentation_result.successful() && self.metadata.proc_macro {
@@ -476,10 +491,9 @@ impl<'build, 'ws> ReleaseBuild<'build, 'ws> {
     }
 }
 
-/// Apply the docs.rs aggregate-build policy: preparation failures abort the
-/// default target, while additional targets retain failures for reporting.
-fn abort_on_prepare<T>(step: StepResult<T>, is_default: bool) -> Result<StepResult<T>> {
-    if is_default && matches!(&step.outcome, Err(BuildStepError::Prepare(_))) {
+/// Propagate preparation failures with diagnostics, retaining other step outcomes.
+fn abort_on_prepare<T>(step: StepResult<T>) -> Result<StepResult<T>> {
+    if matches!(&step.outcome, Err(BuildStepError::Prepare(_))) {
         let Err(error) = step.into_result() else {
             unreachable!()
         };
@@ -542,8 +556,7 @@ mod tests {
             BuildStepError::Output(anyhow::anyhow!("invalid JSON")),
         ] {
             let step =
-                abort_on_prepare(ReleaseBuild::capture_step::<()>(1024, || Err(error)), true)
-                    .unwrap();
+                abort_on_prepare(ReleaseBuild::capture_step::<()>(1024, || Err(error))).unwrap();
             assert!(!step.successful());
         }
         let started = Instant::now();
@@ -555,7 +568,7 @@ mod tests {
         });
         assert!(step.duration > std::time::Duration::ZERO);
         assert!(step.duration <= started.elapsed());
-        let error = abort_on_prepare(step, true).unwrap_err();
+        let error = abort_on_prepare(step).unwrap_err();
         let failure = error.downcast_ref::<crate::FailedStep>().unwrap();
         assert!(failure.log.contains("fetching build-std dependencies"));
         assert!(matches!(failure.error, BuildStepError::Prepare(_)));
@@ -573,13 +586,13 @@ mod tests {
         let metrics = ReleaseBuild::capture_step(1024, || {
             copy_compiler_metrics(&source, &destination).map_err(BuildStepError::Output)
         });
-        let metrics = abort_on_prepare(metrics, true)?;
+        let metrics = abort_on_prepare(metrics)?;
         assert!(matches!(metrics.outcome, Err(BuildStepError::Output(_))));
         Ok(())
     }
 
     #[test]
-    fn additional_target_preparation_failures_remain_step_results() {
+    fn capture_retains_preparation_failures_without_applying_policy() {
         crate::logging::init(false);
         let step = ReleaseBuild::capture_step::<()>(1024, || {
             log::info!("installing additional target");
@@ -587,7 +600,6 @@ mod tests {
                 "target unavailable"
             )))
         });
-        let step = abort_on_prepare(step, false).unwrap();
         assert!(matches!(step.outcome, Err(BuildStepError::Prepare(_))));
         assert!(!step.successful());
         assert!(step.log.contains("installing additional target"));
