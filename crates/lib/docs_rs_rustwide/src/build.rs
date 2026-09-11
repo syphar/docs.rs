@@ -266,13 +266,9 @@ impl<'build, 'ws> ReleaseBuild<'build, 'ws> {
     fn build_target_once(&self, target: &str, is_default: bool) -> Result<TargetBuildResult> {
         // Coverage must precede the HTML build because Cargo currently clears
         // rustdoc's target output directory between these invocations.
-        let coverage_result = self.build_coverage(target).abort_on_prepare(is_default)?;
-        let rustdoc_json_result = self
-            .build_rustdoc_json(target)
-            .abort_on_prepare(is_default)?;
-        let documentation_result = self
-            .build_documentation(target)
-            .abort_on_prepare(is_default)?;
+        let coverage_result = abort_on_prepare(self.build_coverage(target), is_default)?;
+        let rustdoc_json_result = abort_on_prepare(self.build_rustdoc_json(target), is_default)?;
+        let documentation_result = abort_on_prepare(self.build_documentation(target), is_default)?;
         let compiler_metrics = self.collect_compiler_metrics();
 
         if documentation_result.successful() && self.metadata.proc_macro {
@@ -480,6 +476,18 @@ impl<'build, 'ws> ReleaseBuild<'build, 'ws> {
     }
 }
 
+/// Apply the docs.rs aggregate-build policy: preparation failures abort the
+/// default target, while additional targets retain failures for reporting.
+fn abort_on_prepare<T>(step: StepResult<T>, is_default: bool) -> Result<StepResult<T>> {
+    if is_default && matches!(&step.outcome, Err(BuildStepError::Prepare(_))) {
+        let Err(error) = step.into_result() else {
+            unreachable!()
+        };
+        return Err(error.into());
+    }
+    Ok(step)
+}
+
 fn copy_compiler_metrics(source: &Path, destination: &Path) -> Result<Vec<PathBuf>> {
     let mut copied = Vec::new();
     copy_dir_all(source, destination, |path| copied.push(path.to_owned()))
@@ -533,9 +541,9 @@ mod tests {
             BuildStepError::Command(rustwide::cmd::CommandError::Timeout(1)),
             BuildStepError::Output(anyhow::anyhow!("invalid JSON")),
         ] {
-            let step = ReleaseBuild::capture_step::<()>(1024, || Err(error))
-                .abort_on_prepare(true)
-                .unwrap();
+            let step =
+                abort_on_prepare(ReleaseBuild::capture_step::<()>(1024, || Err(error)), true)
+                    .unwrap();
             assert!(!step.successful());
         }
         let started = Instant::now();
@@ -547,7 +555,7 @@ mod tests {
         });
         assert!(step.duration > std::time::Duration::ZERO);
         assert!(step.duration <= started.elapsed());
-        let error = step.abort_on_prepare(true).unwrap_err();
+        let error = abort_on_prepare(step, true).unwrap_err();
         let failure = error.downcast_ref::<crate::FailedStep>().unwrap();
         assert!(failure.log.contains("fetching build-std dependencies"));
         assert!(matches!(failure.error, BuildStepError::Prepare(_)));
@@ -564,8 +572,8 @@ mod tests {
         fs::write(&destination, "")?;
         let metrics = ReleaseBuild::capture_step(1024, || {
             copy_compiler_metrics(&source, &destination).map_err(BuildStepError::Output)
-        })
-        .abort_on_prepare(true)?;
+        });
+        let metrics = abort_on_prepare(metrics, true)?;
         assert!(matches!(metrics.outcome, Err(BuildStepError::Output(_))));
         Ok(())
     }
@@ -578,9 +586,8 @@ mod tests {
             Err(BuildStepError::Prepare(anyhow::anyhow!(
                 "target unavailable"
             )))
-        })
-        .abort_on_prepare(false)
-        .unwrap();
+        });
+        let step = abort_on_prepare(step, false).unwrap();
         assert!(matches!(step.outcome, Err(BuildStepError::Prepare(_))));
         assert!(!step.successful());
         assert!(step.log.contains("installing additional target"));

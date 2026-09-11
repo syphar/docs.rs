@@ -144,17 +144,6 @@ impl<T> StepResult<T> {
             log: self.log,
         })
     }
-
-    /// Preparation failures abort required targets; optional targets retain all failures.
-    pub(crate) fn abort_on_prepare(self, required: bool) -> Result<Self> {
-        if required && matches!(&self.outcome, Err(BuildStepError::Prepare(_))) {
-            let Err(error) = self.into_result() else {
-                unreachable!()
-            };
-            return Err(error.into());
-        }
-        Ok(self)
-    }
 }
 
 /// Results for all build modes of one compilation target.
