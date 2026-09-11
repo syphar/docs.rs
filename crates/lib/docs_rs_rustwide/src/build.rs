@@ -189,7 +189,7 @@ impl<'build, 'ws> ReleaseBuild<'build, 'ws> {
     /// results, as do additional-target HTML failures. Additional targets are
     /// built only when the default target produces library documentation.
     #[instrument(skip_all, fields(crate_name, crate_version))]
-    pub fn build_docs(&self) -> Result<ReleaseBuildResult> {
+    pub fn build_docs(&self) -> ReleaseBuildResult {
         let metadata_targets = self.metadata_targets();
         let default_target = metadata_targets.default_target;
         let other_targets: Vec<_> = metadata_targets
@@ -204,7 +204,22 @@ impl<'build, 'ws> ReleaseBuild<'build, 'ws> {
             "selected documentation targets"
         );
 
-        let cargo_metadata = self.load_cargo_metadata()?;
+        let cargo_metadata_result = self.load_cargo_metadata();
+
+        if !cargo_metadata_result.successful() {
+            return ReleaseBuildResult {
+                statistics: self.build.statistics(),
+                metadata: self.metadata.clone(),
+                cargo_metadata: cargo_metadata_result,
+                default_target: None,
+                other_targets: vec![],
+            };
+        }
+
+        let Ok(cargo_metadata) = &cargo_metadata_result.outcome else {
+            panic!();
+        };
+
         let root_package = cargo_metadata.root();
         Span::current()
             .record("crate_name", root_package.name.as_str())
@@ -216,29 +231,30 @@ impl<'build, 'ws> ReleaseBuild<'build, 'ws> {
         let default_target_result = self
             .build_target(default_target)
             .retry_without_lockfile(true)
-            .run()?;
+            .run();
 
         let default_has_docs = cargo_metadata
             .root()
             .library_name()
             .is_some_and(|name| default_target_result.has_docs(&name));
 
-        let mut target_results = vec![default_target_result];
+        let mut target_results = vec![];
 
         if default_has_docs {
             for target in other_targets {
-                target_results.push(self.build_target(target).run()?);
+                target_results.push(self.build_target(target).run());
             }
         } else {
             debug!("default target produced no library documentation; skipping other targets");
         }
 
-        Ok(ReleaseBuildResult {
+        ReleaseBuildResult {
             statistics: self.build.statistics(),
             metadata: self.metadata.clone(),
-            cargo_metadata,
-            targets: target_results,
-        })
+            cargo_metadata: cargo_metadata_result,
+            default_target: Some(default_target_result),
+            other_targets: target_results,
+        }
     }
 
     /// Build coverage, rustdoc JSON, and HTML for one target.
@@ -254,14 +270,16 @@ impl<'build, 'ws> ReleaseBuild<'build, 'ws> {
         &self,
         #[builder(start_fn)] target: &str,
         #[builder(default = false)] retry_without_lockfile: bool,
-    ) -> Result<TargetBuildResult> {
+    ) -> TargetBuildResult {
         let started = Instant::now();
         let is_default = target == self.metadata_targets().default_target;
-        let mut target_result = self.build_target_once(target, is_default)?;
+        let mut target_result = self.build_target_once(target, is_default);
 
         if retry_without_lockfile
+            // coverage is the first step in `build_target_once`,
+            // if that fails with any error from cargo, we try again without the lockfile.
             && matches!(
-                target_result.documentation.outcome,
+                target_result.coverage.outcome,
                 Err(BuildStepError::Command(_))
             )
             && self.build.host_source_dir().join("Cargo.lock").exists()
@@ -270,64 +288,55 @@ impl<'build, 'ws> ReleaseBuild<'build, 'ws> {
                 target,
                 "target build failed; retrying with a regenerated lockfile"
             );
-            self.regenerate_lockfile()?;
-            target_result = self.build_target_once(target, is_default)?;
+            let regenerate_lockfile_result = self.regenerate_lockfile();
+            if regenerate_lockfile_result.successful() {
+                target_result = self.build_target_once(target, is_default);
+                target_result.regenerate_lockfile = Some(regenerate_lockfile_result);
+            } else {
+                target_result.regenerate_lockfile = Some(regenerate_lockfile_result);
+            }
         }
 
         target_result.duration = started.elapsed();
-        Ok(target_result)
+        target_result
     }
 
     #[instrument(skip_all)]
-    fn build_target_once(&self, target: &str, is_default: bool) -> Result<TargetBuildResult> {
+    fn build_target_once(&self, target: &str, is_default: bool) -> TargetBuildResult {
         // Coverage must precede the HTML build because Cargo currently clears
         // rustdoc's target output directory between these invocations.
-        let coverage_result = match self.build_coverage(target) {
-            StepResult {
-                outcome: Err(error),
-                duration,
-                log,
-            } => {
-                return Err(crate::FailedStep {
-                    error,
-                    duration,
-                    log,
-                }
-                .into());
-            }
-            result => result,
-        };
-        let rustdoc_json_result = self.build_rustdoc_json(target);
-        let documentation_result = self.build_documentation(target);
-        let documentation_result = if is_default {
-            abort_on_prepare(documentation_result)?
-        } else {
-            documentation_result
-        };
-        let compiler_metrics = self.collect_compiler_metrics();
+        let coverage_result = self.build_coverage(target);
 
-        if documentation_result.successful() && self.metadata.proc_macro {
-            debug_assert!(is_default, "proc macros only support their host target");
-        }
-
-        debug!(
-            target,
-            coverage_successful = coverage_result.successful(),
-            rustdoc_json_successful = rustdoc_json_result.successful(),
-            documentation_successful = documentation_result.successful(),
-            compiler_metrics_successful = compiler_metrics.successful(),
-            "target build completed"
-        );
-
-        Ok(TargetBuildResult {
+        let mut result = TargetBuildResult {
             duration: std::time::Duration::ZERO,
             target: target.into(),
             is_default,
-            documentation: documentation_result,
-            rustdoc_json: rustdoc_json_result,
+            documentation: None,
+            rustdoc_json: None,
             coverage: coverage_result,
-            compiler_metrics,
-        })
+            compiler_metrics: None,
+            regenerate_lockfile: None,
+        };
+
+        // after failed coverage we assume any other doc-build will also fail,
+        // so we return early.
+        if !result.coverage.successful() {
+            return result;
+        }
+
+        // We just execute & store the rustdoc json build,
+        // and continue in success or failure.
+        result.rustdoc_json = Some(self.build_rustdoc_json(target));
+
+        let documentation_result = self.build_documentation(target);
+        if documentation_result.successful() && self.metadata.proc_macro {
+            debug_assert!(is_default, "proc macros only support their host target");
+        }
+        result.documentation = Some(documentation_result);
+
+        // we always try to collect metrics
+        result.compiler_metrics = Some(self.collect_compiler_metrics());
+        result
     }
 
     /// Collect documentation coverage for one target.
@@ -462,7 +471,7 @@ impl<'build, 'ws> ReleaseBuild<'build, 'ws> {
     }
 
     #[instrument(skip_all, fields(source_dir = %self.build.host_source_dir().display()))]
-    fn regenerate_lockfile(&self) -> Result<()> {
+    fn regenerate_lockfile(&self) -> StepResult<()> {
         self.capture_step(|| {
             let source_dir = self.build.host_source_dir();
             debug!("removing invalid lockfile");
@@ -478,8 +487,7 @@ impl<'build, 'ws> ReleaseBuild<'build, 'ws> {
             .current_directory(&source_dir)
             .arg("generate-lockfile")
             .run_capture()
-            .context("generating a replacement lockfile")
-            .map_err(BuildStepError::Prepare)?;
+            .map_err(BuildStepError::Command)?;
 
             debug!("fetching dependencies for replacement lockfile");
             Command::new(
@@ -489,32 +497,44 @@ impl<'build, 'ws> ReleaseBuild<'build, 'ws> {
             .current_directory(source_dir)
             .args(["fetch", "--locked"])
             .run_capture()
-            .context("fetching dependencies for the replacement lockfile")
-            .map_err(BuildStepError::Prepare)?;
+            .map_err(BuildStepError::Command)?;
 
             debug!("replacement lockfile is ready");
             Ok(())
         })
-        .into_result()?;
-        Ok(())
     }
 
+    /// Load Cargo metadata for a source tree with the configured toolchain.
+    ///
+    /// This is primarily useful for local crates, where callers need the package
+    /// name and version before creating a [`Crate::local`] release context.
     #[instrument(skip_all)]
-    fn load_cargo_metadata(&self) -> Result<CargoMetadata> {
-        self.environment
-            .load_cargo_metadata(self.build.host_source_dir())
-    }
-}
+    pub fn load_cargo_metadata(&self) -> StepResult<CargoMetadata> {
+        self.capture_step(|| {
+            let source_dir = &self.build.host_source_dir();
 
-/// Propagate preparation failures with diagnostics, retaining other step outcomes.
-fn abort_on_prepare<T>(step: StepResult<T>) -> Result<StepResult<T>> {
-    if matches!(&step.outcome, Err(BuildStepError::Prepare(_))) {
-        let Err(error) = step.into_result() else {
-            unreachable!()
-        };
-        return Err(error.into());
+            debug!(source_dir=%source_dir.display(), "loading Cargo metadata");
+            let output = Command::new(
+                self.environment.workspace(),
+                self.environment.configured_toolchain().cargo(),
+            )
+            .args(["metadata", "--format-version", "1"])
+            .current_directory(source_dir)
+            .log_output(false)
+            .run_capture()
+            .map_err(BuildStepError::Command)?;
+
+            BuildStepError::as_output(|| {
+                let [metadata] = output.stdout_lines() else {
+                    bail!("invalid output returned by `cargo metadata`");
+                };
+
+                let metadata = CargoMetadata::load_from_metadata(metadata)?;
+                debug!("Cargo metadata loaded");
+                Ok(metadata)
+            })
+        })
     }
-    Ok(step)
 }
 
 fn copy_compiler_metrics(source: &Path, destination: &Path) -> Result<Vec<PathBuf>> {

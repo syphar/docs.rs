@@ -165,13 +165,15 @@ pub struct TargetBuildResult {
     /// Whether this is the release's default target.
     pub is_default: bool,
     /// HTML documentation output directory.
-    pub documentation: StepResult<PathBuf>,
+    pub documentation: Option<StepResult<PathBuf>>,
     /// Rustdoc JSON build result.
-    pub rustdoc_json: StepResult<RustdocJsonOutput>,
+    pub rustdoc_json: Option<StepResult<RustdocJsonOutput>>,
     /// Documentation coverage build result.
     pub coverage: StepResult<Option<DocCoverage>>,
     /// Compiler metrics files copied out of this target's HTML build.
-    pub compiler_metrics: StepResult<Vec<PathBuf>>,
+    pub compiler_metrics: Option<StepResult<Vec<PathBuf>>>,
+    /// optionally regenerate lockfile
+    pub regenerate_lockfile: Option<StepResult<()>>,
 }
 
 impl TargetBuildResult {
@@ -186,14 +188,13 @@ impl TargetBuildResult {
     /// target, so command success alone is not sufficient.
     pub fn documentation_exists(&self) -> bool {
         self.documentation
-            .outcome
             .as_ref()
-            .is_ok_and(|path| path.is_dir())
+            .is_some_and(|d| d.outcome.as_ref().is_ok_and(|path| path.is_dir()))
     }
 
     /// Whether Cargo completed the primary HTML documentation command successfully.
     pub fn build_succeeded(&self) -> bool {
-        self.documentation.successful()
+        self.documentation.as_ref().is_some_and(|d| d.successful())
     }
 
     /// Whether the primary HTML documentation build completed and produced output.
@@ -204,11 +205,11 @@ impl TargetBuildResult {
     /// Whether this target produced documentation for the crate's library target.
     pub fn has_docs(&self, library_name: &str) -> bool {
         self.documentation_succeeded()
-            && self
-                .documentation
-                .outcome
-                .as_ref()
-                .is_ok_and(|path| path.join(library_name).is_dir())
+            && self.documentation.as_ref().is_some_and(|d| {
+                d.outcome
+                    .as_ref()
+                    .is_ok_and(|path| path.join(library_name).is_dir())
+            })
     }
 }
 
@@ -220,35 +221,35 @@ pub struct ReleaseBuildResult {
     /// Metadata read from rustwide's prepared source directory.
     pub metadata: Metadata,
     /// Cargo's resolved package metadata for the prepared source.
-    pub cargo_metadata: CargoMetadata,
-    /// Default target followed by any requested additional targets.
-    pub targets: Vec<TargetBuildResult>,
+    pub cargo_metadata: StepResult<CargoMetadata>,
+    pub default_target: Option<TargetBuildResult>,
+    pub other_targets: Vec<TargetBuildResult>,
 }
 
 impl ReleaseBuildResult {
-    /// The default target result.
-    pub fn default_target(&self) -> &TargetBuildResult {
-        self.targets
-            .first()
-            .expect("a release always has a default target")
-    }
-
     /// Whether Cargo completed the default HTML documentation command successfully.
     pub fn build_succeeded(&self) -> bool {
-        self.default_target().build_succeeded()
+        self.default_target
+            .as_ref()
+            .is_some_and(|dt| dt.build_succeeded())
     }
 
     /// Whether the default HTML documentation build completed and produced output.
     pub fn documentation_succeeded(&self) -> bool {
-        self.default_target().documentation_succeeded()
+        self.default_target
+            .as_ref()
+            .is_some_and(|dt| dt.documentation_succeeded())
     }
 
     /// Whether the default target produced documentation for this crate's library target.
     pub fn has_docs(&self) -> bool {
-        self.cargo_metadata
-            .root()
-            .library_name()
-            .is_some_and(|name| self.default_target().has_docs(&name))
+        self.cargo_metadata.outcome.as_ref().is_ok_and(|m| {
+            m.root().library_name().is_some_and(|name| {
+                self.default_target
+                    .as_ref()
+                    .is_some_and(|dt| dt.has_docs(&name))
+            })
+        })
     }
 }
 
@@ -269,26 +270,27 @@ mod tests {
             target: "x86_64-unknown-linux-gnu".into(),
             is_default: true,
             duration: Duration::ZERO,
-            documentation: StepResult {
+            documentation: Some(StepResult {
                 outcome: Ok(documentation_path),
                 log: String::new(),
                 duration: Duration::ZERO,
-            },
-            rustdoc_json: StepResult {
+            }),
+            rustdoc_json: Some(StepResult {
                 outcome: Ok(RustdocJsonOutput::new(PathBuf::from("unused.json"))),
                 log: String::new(),
                 duration: Duration::ZERO,
-            },
+            }),
             coverage: StepResult {
                 outcome: Ok(None),
                 log: String::new(),
                 duration: Duration::ZERO,
             },
-            compiler_metrics: StepResult {
+            compiler_metrics: Some(StepResult {
                 outcome: Ok(Vec::new()),
                 log: String::new(),
                 duration: Duration::ZERO,
-            },
+            }),
+            regenerate_lockfile: None,
         }
     }
 

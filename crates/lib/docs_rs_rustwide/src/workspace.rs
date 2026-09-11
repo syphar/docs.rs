@@ -2,7 +2,6 @@ use crate::{BuildResult, CpuLimit, ReleaseContext, workspace_lock::WorkspaceLock
 use anyhow::{Context as _, Result, anyhow, bail};
 use bon::bon;
 use docs_rs_build_limits::Limits;
-use docs_rs_cargo_metadata::CargoMetadata;
 use docs_rs_utils::{APP_USER_AGENT, retry};
 use docsrs_metadata::{DEFAULT_TARGETS, HOST_TARGET};
 use rustwide::{
@@ -540,31 +539,6 @@ impl BuildEnvironment {
         };
         debug!(version, "detected rustc version");
         Ok(version.clone())
-    }
-
-    /// Load Cargo metadata for a source tree with the configured toolchain.
-    ///
-    /// This is primarily useful for local crates, where callers need the package
-    /// name and version before creating a [`Crate::local`] release context.
-    #[instrument(skip_all)]
-    pub(crate) fn load_cargo_metadata(
-        &self,
-        source_dir: impl AsRef<Path>,
-    ) -> Result<CargoMetadata> {
-        let source_dir = source_dir.as_ref();
-        debug!(source_dir=%source_dir.display(), "loading Cargo metadata");
-        let output = Command::new(self.workspace(), self.toolchain.cargo())
-            .args(["metadata", "--format-version", "1"])
-            .current_directory(source_dir)
-            .log_output(false)
-            .run_capture()?;
-        let [metadata] = output.stdout_lines() else {
-            bail!("invalid output returned by `cargo metadata`");
-        };
-
-        let metadata = CargoMetadata::load_from_metadata(metadata)?;
-        debug!("Cargo metadata loaded");
-        Ok(metadata)
     }
 
     #[instrument(skip_all)]
