@@ -114,7 +114,8 @@ impl BuildError for BuildStepError {
                 CommandError::IO(_) => "IO",
                 _ => "UnknownCommandError",
             },
-            Self::Prepare(_) | Self::Output(_) => "Other",
+            Self::Prepare(_) => "InternalPrepare",
+            Self::Output(_) => "InternalOutput",
         }
     }
 }
