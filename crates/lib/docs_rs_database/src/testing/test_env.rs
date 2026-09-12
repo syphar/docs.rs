@@ -1,11 +1,14 @@
 use crate::{AsyncPoolClient, Config, Pool, migrations};
 use anyhow::{Context as _, Result};
 use docs_rs_opentelemetry::AnyMeterProvider;
+use docs_rs_utils::spawn_blocking;
 use rand::{RngExt as _, distr::Alphanumeric};
 use sqlx::{AssertSqlSafe, Connection as _};
-use std::{env, fs, io::Write as _, iter, path::PathBuf, process::Command};
+use std::{env, iter, path::PathBuf};
 use tempfile::NamedTempFile;
-use tokio::{runtime, sync::OnceCell, task::block_in_place};
+use tokio::{
+    fs, io::AsyncWriteExt as _, process::Command, runtime, sync::OnceCell, task::block_in_place,
+};
 use tracing::{error, instrument, warn};
 
 const TEST_SCHEMA_PREFIX: &str = "docs_rs_test_schema_";
@@ -105,11 +108,20 @@ impl Drop for TestDatabase {
 pub async fn prepare_template_schema(config: &Config) -> Result<PathBuf> {
     let template_ddl = create_template_schema_and_ddl(config).await?;
 
-    let mut file = NamedTempFile::new().context("error creating template DDL file")?;
+    let (mut file, path) = spawn_blocking(|| {
+        let file = NamedTempFile::new().context("error creating template DDL file")?;
+        let (file, path) = file.keep().context("error preserving template DDL file")?;
+
+        Ok((fs::File::from_std(file), path))
+    })
+    .await?;
+
     file.write_all(template_ddl.as_bytes())
+        .await
         .context("error writing template DDL file")?;
 
-    let (_, path) = file.keep().context("error preserving template DDL file")?;
+    file.flush().await?;
+
     Ok(path)
 }
 
@@ -118,7 +130,7 @@ async fn get_template_schema_ddl(config: &Config) -> Result<&'static String> {
     TEMPLATE_DDL
         .get_or_try_init(|| async {
             if let Some(path) = env::var_os(TEMPLATE_DDL_ENV) {
-                return fs::read_to_string(path).context("error reading template DDL file");
+                return fs::read_to_string(path).await.context("error reading template DDL file");
             }
 
             warn!("fall back to generating template DDL ourselves, cargo nexttest setup script wan't run");
@@ -153,7 +165,7 @@ async fn create_template_schema_and_ddl(config: &Config) -> Result<String> {
 
         migrations::migrate(&mut conn, None).await?;
 
-        dump_schema(config)
+        dump_schema(config).await
     }
     .await;
 
@@ -167,7 +179,7 @@ async fn create_template_schema_and_ddl(config: &Config) -> Result<String> {
 
 /// Captures DDL suitable for sending directly to PostgreSQL through SQLx.
 #[instrument(skip_all)]
-fn dump_schema(config: &Config) -> Result<String> {
+async fn dump_schema(config: &Config) -> Result<String> {
     // we're using plain `pg_dump` as CLI here.
     //
     // Sometimes the `pg_dump` (`postgresql-client`) version on the developer or CI
@@ -203,6 +215,7 @@ fn dump_schema(config: &Config) -> Result<String> {
 
     let output = command
         .output()
+        .await
         .context("error running pg_dump for test template")?;
 
     if !output.status.success() {
