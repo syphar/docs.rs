@@ -269,7 +269,7 @@ services:
     # RustFS starts with no buckets. Provision the application bucket before
     # starting services that write to object storage.
     s3-init:
-        image: amazon/aws-cli:2
+        image: amazon/aws-cli:latest
         depends_on:
             s3:
                 condition: service_healthy
