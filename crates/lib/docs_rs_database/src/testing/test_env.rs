@@ -28,7 +28,7 @@ pub struct TestDatabase {
 impl TestDatabase {
     #[instrument(skip(config, otel_meter_provider))]
     pub async fn new(config: &Config, otel_meter_provider: &AnyMeterProvider) -> Result<Self> {
-        let template_ddl = get_template_schema_ddl(&config).await?;
+        let template_ddl = get_template_schema_ddl(config).await?;
         let schema = format!("{TEST_SCHEMA_PREFIX}{}", generate_name());
 
         let mut conn = sqlx::PgConnection::connect(&config.database_url).await?;
@@ -104,7 +104,7 @@ impl Drop for TestDatabase {
 /// this path to every test process, avoiding one migration run per process.
 #[instrument(skip_all)]
 pub async fn prepare_template_schema(config: &Config) -> Result<PathBuf> {
-    let template_ddl = prepare_template_schema_ddl(&config).await?;
+    let template_ddl = prepare_template_schema_ddl(config).await?;
 
     let mut file = NamedTempFile::new().context("error creating template DDL file")?;
     file.write_all(template_ddl.as_bytes())
@@ -123,7 +123,7 @@ async fn get_template_schema_ddl(config: &Config) -> Result<&'static String> {
             }
 
             warn!("fall back to generating template DDL ourselves, cargo nexttest setup script wan't run");
-            prepare_template_schema_ddl(&config).await
+            prepare_template_schema_ddl(config).await
         })
         .await
 }
@@ -154,7 +154,7 @@ async fn prepare_template_schema_ddl(config: &Config) -> Result<String> {
 
         migrations::migrate(&mut conn, None).await?;
 
-        dump_schema(&config)
+        dump_schema(config)
     }
     .await;
 
