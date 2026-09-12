@@ -17,13 +17,11 @@ pub const TEMPLATE_DDL_ENV: &str = "DOCSRS_TEST_DATABASE_DDL_PATH";
 
 static TEMPLATE_DDL: OnceCell<String> = OnceCell::const_new();
 
-/// An isolated test schema cloned from a shared, fully migrated template.
+/// An isolated test schema cloned from a fresh, fully migrated template.
 ///
 /// The template is prepared once, then each test replays its schema-only DDL
 /// into a fresh schema that is dropped when this value is dropped.
 ///
-/// After a test-run we also keep the template schema, keeping it up-to-date
-/// with new migrations.
 #[derive(Debug)]
 pub struct TestDatabase {
     pool: Pool,
@@ -104,9 +102,9 @@ impl Drop for TestDatabase {
     }
 }
 
-/// Creates or updates the migrated template schema, dumps its DDL, and keeps
-/// that dump in a persistent temporary file. The nextest setup script exposes
-/// this path to every test process, avoiding one migration run per process.
+/// Rebuilds the migrated template schema, dumps its DDL, and keeps that dump
+/// in a persistent temporary file. The nextest setup script exposes this path
+/// to every test process, avoiding one migration run per process.
 #[instrument(skip_all)]
 pub async fn prepare_template_schema(config: &Config) -> Result<PathBuf> {
     let template_ddl = create_template_schema_and_ddl(config).await?;
@@ -147,7 +145,7 @@ async fn create_template_schema_and_ddl(config: &Config) -> Result<String> {
     let mut conn = sqlx::PgConnection::connect(&config.database_url.as_str()).await?;
 
     // Cargo test can start several test binaries at once. Serializing this work keeps them from
-    // racing while applying migrations to the one shared template schema.
+    // racing while rebuilding the shared template schema.
     sqlx::query("SELECT pg_advisory_lock(hashtext($1))")
         .bind(TEMPLATE_SCHEMA)
         .execute(&mut conn)
@@ -155,10 +153,14 @@ async fn create_template_schema_and_ddl(config: &Config) -> Result<String> {
 
     let result = async {
         sqlx::query(AssertSqlSafe(format!(
-            "CREATE SCHEMA IF NOT EXISTS {TEMPLATE_SCHEMA}"
+            "DROP SCHEMA IF EXISTS {TEMPLATE_SCHEMA} CASCADE"
         )))
         .execute(&mut conn)
         .await?;
+
+        sqlx::query(AssertSqlSafe(format!("CREATE SCHEMA {TEMPLATE_SCHEMA}")))
+            .execute(&mut conn)
+            .await?;
 
         sqlx::query(AssertSqlSafe(format!(
             "SET search_path TO {TEMPLATE_SCHEMA}, public"
@@ -166,7 +168,7 @@ async fn create_template_schema_and_ddl(config: &Config) -> Result<String> {
         .execute(&mut conn)
         .await?;
 
-        // run forward migrations that weren't run yet.
+        // The newly-created schema has no migration history, so exercise every forward migration.
         migrations::migrate(&mut conn, None).await?;
 
         dump_schema(config).await

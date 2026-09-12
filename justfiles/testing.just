@@ -106,18 +106,17 @@ run-builder-tests: compose-up-resources
 # Remove the migrated template and any schemas left behind by interrupted test runs.
 [group('testing')]
 clean-test-db-schema: compose-up-resources
-    psql "$DOCSRS_DATABASE_URL" --set=ON_ERROR_STOP=1 --command "\
-        DROP SCHEMA IF EXISTS docs_rs_test_template CASCADE; \
-        DO \$cleanup\$ \
-        DECLARE schema_to_drop text; \
-        BEGIN \
-            FOR schema_to_drop IN \
-                SELECT schemata.schema_name FROM information_schema.schemata AS schemata \
-                WHERE schemata.schema_name ~ '^docs_rs_test_schema_[a-z0-9]{16}$' \
-            LOOP \
-                EXECUTE format('DROP SCHEMA %I CASCADE', schema_to_drop); \
-            END LOOP; \
-        END \$cleanup\$;"
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    psql "$DOCSRS_DATABASE_URL" --set=ON_ERROR_STOP=1 <<'SQL'
+        DROP SCHEMA IF EXISTS docs_rs_test_template CASCADE;
+
+        SELECT format('DROP SCHEMA IF EXISTS %I CASCADE;', schema_name)
+        FROM information_schema.schemata
+        WHERE schema_name ~ '^docs_rs_test_schema_[a-z0-9]{16}$'
+        \gexec
+    SQL
 
 # Test migrations with both SQLx CLI and docs_rs_admin.
 [group('testing')]
