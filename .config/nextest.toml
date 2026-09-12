@@ -2,7 +2,7 @@ experimental = ["setup-scripts"]
 
 [scripts.setup.docs-rs-template-db]
 # setup command to create the "template" database schema.
-command = 'cargo run --quiet --package docs_rs_database --features testing --bin nextest_setup'
+command = 'cargo run --quiet --package docs_rs_database --features testing --bin nextest-setup'
 
 [[profile.default.scripts]]
 # filter all tests / binaries that depend / use docs_rs_database anywhere

@@ -6,8 +6,8 @@ edition.workspace = true
 build = "build.rs"
 
 [[bin]]
-name = "nextest_setup"
-path = "src/bin/nextest_setup.rs"
+name = "nextest-setup"
+path = "src/bin/nextest-setup.rs"
 required-features = ["testing"]
 
 [features]
