@@ -11,7 +11,7 @@ use std::{env, fs::OpenOptions, io::Write as _};
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let config = Config::from_environment().context("missing database config in env")?;
-    let path = prepare_template_schema(&config.database_url).await?;
+    let path = prepare_template_schema(&config).await?;
 
     let env_file = env::var("NEXTEST_ENV")
         .context("NEXTEST_ENV is not set (this binary must be run by nextest)")?;

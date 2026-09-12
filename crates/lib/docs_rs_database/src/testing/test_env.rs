@@ -28,7 +28,7 @@ pub struct TestDatabase {
 impl TestDatabase {
     #[instrument(skip(config, otel_meter_provider))]
     pub async fn new(config: &Config, otel_meter_provider: &AnyMeterProvider) -> Result<Self> {
-        let template_ddl = get_template_schema_ddl(&config.database_url).await?;
+        let template_ddl = get_template_schema_ddl(&config).await?;
         let schema = format!("{TEST_SCHEMA_PREFIX}{}", generate_name());
 
         let mut conn = sqlx::PgConnection::connect(&config.database_url).await?;
@@ -102,9 +102,9 @@ impl Drop for TestDatabase {
 /// Creates or updates the migrated template schema, dumps its DDL, and keeps
 /// that dump in a persistent temporary file. The nextest setup script exposes
 /// this path to every test process, avoiding one migration run per process.
-#[instrument(skip(database_url))]
-pub async fn prepare_template_schema(database_url: &str) -> Result<PathBuf> {
-    let template_ddl = prepare_template_schema_ddl(database_url).await?;
+#[instrument(skip_all)]
+pub async fn prepare_template_schema(config: &Config) -> Result<PathBuf> {
+    let template_ddl = prepare_template_schema_ddl(&config).await?;
 
     let mut file = NamedTempFile::new().context("error creating template DDL file")?;
     file.write_all(template_ddl.as_bytes())
@@ -114,8 +114,8 @@ pub async fn prepare_template_schema(database_url: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
-#[instrument(skip(database_url))]
-async fn get_template_schema_ddl(database_url: &str) -> Result<&'static String> {
+#[instrument(skip_all)]
+async fn get_template_schema_ddl(config: &Config) -> Result<&'static String> {
     TEMPLATE_DDL
         .get_or_try_init(|| async {
             if let Some(path) = env::var_os(TEMPLATE_DDL_ENV) {
@@ -123,14 +123,14 @@ async fn get_template_schema_ddl(database_url: &str) -> Result<&'static String> 
             }
 
             warn!("fall back to generating template DDL ourselves, cargo nexttest setup script wan't run");
-            prepare_template_schema_ddl(database_url).await
+            prepare_template_schema_ddl(&config).await
         })
         .await
 }
 
-#[instrument(skip(database_url))]
-async fn prepare_template_schema_ddl(database_url: &str) -> Result<String> {
-    let mut conn = sqlx::PgConnection::connect(database_url).await?;
+#[instrument(skip_all)]
+async fn prepare_template_schema_ddl(config: &Config) -> Result<String> {
+    let mut conn = sqlx::PgConnection::connect(&config.database_url).await?;
 
     // Cargo test can start several test binaries at once. Serializing this work keeps them from
     // racing while applying migrations to the one shared template schema.
@@ -154,7 +154,7 @@ async fn prepare_template_schema_ddl(database_url: &str) -> Result<String> {
 
         migrations::migrate(&mut conn, None).await?;
 
-        dump_schema(database_url)
+        dump_schema(&config)
     }
     .await;
 
@@ -167,17 +167,41 @@ async fn prepare_template_schema_ddl(database_url: &str) -> Result<String> {
 }
 
 /// Captures DDL suitable for sending directly to PostgreSQL through SQLx.
-#[instrument(skip(database_url))]
-fn dump_schema(database_url: &str) -> Result<String> {
-    let output = Command::new("pg_dump")
-        .args([
+#[instrument(skip_all)]
+fn dump_schema(config: &Config) -> Result<String> {
+    let mut command = Command::new("pg_dump");
+
+    // we're using plain `pg_dump` as CLI here.
+    //
+    // Sometimes the `pg_dump` (`postgresql-client`) version on the developer or CI
+    // host is too old. In this case, we can fall back to using `docker compose exec` to
+    // generate the template DDL. This is not the default, because that would bind
+    // the test execution to `docker compose` by default.
+    if config.use_pg_dump_from_docker_compose {
+        command = Command::new("docker");
+        command.args(["compose", "exec", "-T", "db", "pg_dump"]);
+        command.args([
             "--schema-only",
             "--no-owner",
             "--no-acl",
             "--schema",
             TEMPLATE_SCHEMA,
-        ])
-        .arg(database_url)
+            "--username",
+            "cratesfyi",
+            "cratesfyi",
+        ]);
+    } else {
+        command.args([
+            "--schema-only",
+            "--no-owner",
+            "--no-acl",
+            "--schema",
+            TEMPLATE_SCHEMA,
+        ]);
+        command.arg(&config.database_url);
+    }
+
+    let output = command
         .output()
         .context("error running pg_dump for test template")?;
 
