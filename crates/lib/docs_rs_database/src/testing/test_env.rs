@@ -142,7 +142,7 @@ async fn get_template_schema_ddl(config: &Config) -> Result<&'static String> {
 
 #[instrument(skip_all)]
 async fn create_template_schema_and_ddl(config: &Config) -> Result<String> {
-    let mut conn = sqlx::PgConnection::connect(&config.database_url.as_str()).await?;
+    let mut conn = sqlx::PgConnection::connect(config.database_url.as_str()).await?;
 
     // Cargo test can start several test binaries at once. Serializing this work keeps them from
     // racing while rebuilding the shared template schema.

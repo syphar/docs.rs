@@ -14,7 +14,6 @@ required-features = ["testing"]
 testing = [
     "dep:rand",
     "dep:tempfile",
-    "dep:url",
     "docs_rs_config/testing",
     "docs_rs_opentelemetry/testing",
 ]
@@ -43,7 +42,7 @@ tempfile = { workspace = true, optional = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
-url = { workspace = true, optional = true }
+url = { workspace = true }
 
 [dev-dependencies]
 docs_rs_cargo_metadata = { path = "../docs_rs_cargo_metadata", features = ["testing"] }
