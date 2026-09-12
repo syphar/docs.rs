@@ -359,7 +359,7 @@ mod tests {
     use crate::testing::{
         AxumResponseTestExt, AxumRouterTestExt, TestEnvironmentExt as _, async_wrapper,
     };
-    use docs_rs_types::testing::{KRATE, V0_1};
+    use docs_rs_types::testing::{FOO, V0_1};
     use kuchikiki::traits::TendrilSink;
 
     #[test]
@@ -606,11 +606,11 @@ mod tests {
     fn json_error_body_includes_recovery_links() {
         async_wrapper(|_env| async move {
             let response = JsonAxumNope(AxumNope::ResourceNotFoundInVersion {
-                name: KRATE,
+                name: FOO,
                 version: V0_1,
                 is_latest_url: true,
-                version_root_url: EscapedURI::from_path("/krate/latest/krate/"),
-                crate_details_url: EscapedURI::from_path("/crate/krate/latest"),
+                version_root_url: EscapedURI::from_path("/foo/latest/foo/"),
+                crate_details_url: EscapedURI::from_path("/crate/foo/latest"),
             })
             .into_response();
 
@@ -619,8 +619,8 @@ mod tests {
             let body: serde_json::Value = response.json().await?;
             let links = body["links"].as_array().unwrap();
             assert_eq!(links.len(), 2);
-            assert_eq!(links[0]["href"], "/krate/latest/krate/");
-            assert_eq!(links[1]["href"], "/crate/krate/latest");
+            assert_eq!(links[0]["href"], "/foo/latest/foo/");
+            assert_eq!(links[1]["href"], "/crate/foo/latest");
 
             Ok(())
         });
