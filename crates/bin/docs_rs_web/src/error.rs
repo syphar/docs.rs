@@ -38,12 +38,13 @@ pub(crate) struct AxumErrorPage {
     pub status: StatusCode,
     /// Optional navigation links to help the user recover. Empty for most errors.
     pub recovery: Vec<RecoveryLink>,
+    pub cache_policy: Option<CachePolicy>,
 }
 
 impl_axum_webpage! {
     AxumErrorPage,
     status = |err| err.status,
-
+    cache_policy = |page| page.cache_policy.clone().unwrap_or(CachePolicy::NoCaching)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -248,7 +249,7 @@ fn redirect_with_policy(target: EscapedURI, cache_policy: CachePolicy) -> AxumRe
 
 impl IntoResponse for AxumNope {
     fn into_response(self) -> AxumResponse {
-        let mut response = match self {
+        match self {
             AxumNope::NoResults => {
                 // user did a search with no search terms
                 Search {
@@ -261,6 +262,7 @@ impl IntoResponse for AxumNope {
             AxumNope::Redirect(target, cache_policy) => redirect_with_policy(target, cache_policy),
             _ => {
                 let recovery = self.recovery_links();
+                let cache_policy = self.cache_policy();
                 let ErrorInfo {
                     title,
                     message,
@@ -271,16 +273,11 @@ impl IntoResponse for AxumNope {
                     message,
                     status,
                     recovery,
+                    cache_policy,
                 }
                 .into_response()
             }
-        };
-
-        if let Some(policy) = self.cache_policy() {
-            response.extensions_mut().insert(policy);
         }
-
-        response
     }
 }
 
@@ -362,6 +359,7 @@ mod tests {
     use crate::testing::{
         AxumResponseTestExt, AxumRouterTestExt, TestEnvironmentExt as _, async_wrapper,
     };
+    use docs_rs_types::testing::{KRATE, V0_1};
     use kuchikiki::traits::TendrilSink;
 
     #[test]
@@ -608,11 +606,11 @@ mod tests {
     fn json_error_body_includes_recovery_links() {
         async_wrapper(|_env| async move {
             let response = JsonAxumNope(AxumNope::ResourceNotFoundInVersion {
-                name: "dummy".into(),
-                version: "0.1.0".into(),
+                name: KRATE,
+                version: V0_1,
                 is_latest_url: true,
-                version_root_url: EscapedURI::from_path("/dummy/latest/dummy/"),
-                crate_details_url: EscapedURI::from_path("/crate/dummy/latest"),
+                version_root_url: EscapedURI::from_path("/krate/latest/krate/"),
+                crate_details_url: EscapedURI::from_path("/crate/krate/latest"),
             })
             .into_response();
 
@@ -621,8 +619,8 @@ mod tests {
             let body: serde_json::Value = response.json().await?;
             let links = body["links"].as_array().unwrap();
             assert_eq!(links.len(), 2);
-            assert_eq!(links[0]["href"], "/dummy/latest/dummy/");
-            assert_eq!(links[1]["href"], "/crate/dummy/latest");
+            assert_eq!(links[0]["href"], "/krate/latest/krate/");
+            assert_eq!(links[1]["href"], "/crate/krate/latest");
 
             Ok(())
         });

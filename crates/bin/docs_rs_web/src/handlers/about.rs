@@ -83,6 +83,9 @@ pub(crate) async fn about_handler(subpage: Option<Path<String>>) -> AxumResult<i
                 message: msg.into(),
                 status: StatusCode::NOT_FOUND,
                 recovery: Vec::new(),
+                cache_policy: Some(CachePolicy::ForeverInCdn(
+                    SURROGATE_KEY_DOCSRS_STATIC.into(),
+                )),
             };
             page.into_response()
         }
