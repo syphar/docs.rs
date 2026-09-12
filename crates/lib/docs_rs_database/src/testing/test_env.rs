@@ -205,11 +205,10 @@ async fn dump_schema(config: &Config) -> Result<String> {
         }
 
         let database = config.database_url.path().trim_start_matches('/');
-        let database = if database.is_empty() {
-            &username
-        } else {
-            database
-        };
+        let database = database
+            .is_empty()
+            .then_some(&username)
+            .unwrap_or(&database);
 
         let mut command = Command::new("docker");
         command
