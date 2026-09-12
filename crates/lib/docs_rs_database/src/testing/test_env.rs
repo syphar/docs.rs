@@ -13,6 +13,10 @@ pub const TEMPLATE_DDL_ENV: &str = "DOCSRS_TEST_DATABASE_DDL_PATH";
 
 static TEMPLATE_DDL: OnceCell<String> = OnceCell::const_new();
 
+/// An isolated test schema cloned from a shared, fully migrated template.
+///
+/// The template is prepared once, then each test replays its schema-only DDL
+/// into a fresh schema that is dropped when this value is dropped.
 #[derive(Debug)]
 pub struct TestDatabase {
     pool: Pool,
