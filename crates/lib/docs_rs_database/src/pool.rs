@@ -102,6 +102,11 @@ impl Pool {
             }
         }
     }
+
+    #[cfg(any(test, feature = "testing"))]
+    pub async fn close(&self) {
+        self.async_pool.close().await;
+    }
 }
 
 /// This impl allows us to use our own pool as an executor for SQLx queries.

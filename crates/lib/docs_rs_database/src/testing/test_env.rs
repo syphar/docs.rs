@@ -3,45 +3,51 @@ use anyhow::{Context as _, Result};
 use docs_rs_opentelemetry::AnyMeterProvider;
 use futures_util::TryStreamExt as _;
 use sqlx::{AssertSqlSafe, Connection as _};
-use tokio::{runtime, task::block_in_place};
+use tokio::{runtime, sync::OnceCell, task::block_in_place};
 use tracing::error;
+use url::Url;
+
+const TEMPLATE_DATABASE: &str = "docs_rs_test_template";
+const TEMPLATE_LOCK: i64 = 0x646f6373_72735f74; // "docs_rs_t"
+
+/// Initialization is also protected by a PostgreSQL advisory lock, because every test binary has
+/// its own copy of this static.
+static TEMPLATE_READY: OnceCell<()> = OnceCell::const_new();
 
 #[derive(Debug)]
 pub struct TestDatabase {
     pool: Pool,
-    schema: String,
+    database: String,
+    maintenance_url: String,
     runtime: runtime::Handle,
 }
 
 impl TestDatabase {
     pub async fn new(config: &Config, otel_meter_provider: &AnyMeterProvider) -> Result<Self> {
-        // A random schema name is generated and used for the current connection. This allows each
-        // test to create a fresh instance of the database to run within.
-        //
-        // TODO: potential performance improvements
-        // * optionall use "DROP SCHEMA CASCADE" instead of rolling back migrations. But CI should
-        //   still do it?
-        // * use postgres template database? migrate once, just copy the template for each test?
-        let schema = format!("docs_rs_test_schema_{}", rand::random::<u64>());
+        let maintenance_url = database_url(&config.database_url, "postgres")?;
+        TEMPLATE_READY
+            .get_or_try_init(|| initialize_template(&maintenance_url, config))
+            .await?;
 
-        let pool = Pool::new_with_schema(config, &schema, otel_meter_provider).await?;
-
-        let mut conn = sqlx::PgConnection::connect(&config.database_url).await?;
-        sqlx::query(AssertSqlSafe(format!("CREATE SCHEMA {schema}")))
-            .execute(&mut conn)
-            .await
-            .context("error creating schema")?;
+        let database = format!("docs_rs_test_{}", rand::random::<u64>());
+        let mut maintenance = sqlx::PgConnection::connect(&maintenance_url).await?;
         sqlx::query(AssertSqlSafe(format!(
-            "SET search_path TO {schema}, public"
+            "CREATE DATABASE {database} TEMPLATE {TEMPLATE_DATABASE}"
         )))
-        .execute(&mut conn)
+        .execute(&mut maintenance)
         .await
-        .context("error setting search path")?;
-        migrations::migrate(&mut conn, None)
-            .await
-            .context("error running migrations")?;
+        .context("error creating test database from template")?;
 
-        // Move all sequence start positions 10000 apart to avoid overlapping primary keys
+        let database_url = database_url(&config.database_url, &database)?;
+        let test_config = Config {
+            database_url: database_url.clone(),
+            max_pool_size: config.max_pool_size,
+            min_pool_idle: config.min_pool_idle,
+        };
+        let pool = Pool::new(&test_config, otel_meter_provider).await?;
+        let mut conn = sqlx::PgConnection::connect(&database_url).await?;
+
+        // Move all sequence start positions 10000 apart to avoid overlapping primary keys.
         let sequence_names: Vec<_> = sqlx::query!(
             "SELECT relname
              FROM pg_class
@@ -50,7 +56,7 @@ impl TestDatabase {
              WHERE pg_class.relkind = 'S'
                  AND pg_namespace.nspname = $1
             ",
-            schema,
+            "public",
         )
         .fetch(&mut conn)
         .map_ok(|row| row.relname)
@@ -63,12 +69,14 @@ impl TestDatabase {
                 r#"ALTER SEQUENCE "{sequence}" RESTART WITH {offset};"#
             )))
             .execute(&mut conn)
-            .await?;
+            .await
+            .context("error resetting test database sequences")?;
         }
 
         Ok(TestDatabase {
             pool,
-            schema,
+            database,
+            maintenance_url,
             runtime: runtime::Handle::current(),
         })
     }
@@ -85,23 +93,41 @@ impl TestDatabase {
 impl Drop for TestDatabase {
     fn drop(&mut self) {
         let pool = self.pool.clone();
-        let schema = self.schema.clone();
+        let database = self.database.clone();
+        let maintenance_url = self.maintenance_url.clone();
         let runtime = self.runtime.clone();
 
         block_in_place(move || {
             runtime.block_on(async move {
-                let Ok(mut conn) = pool.get_async().await else {
-                    error!("error in drop impl");
-                    return;
+                let migration_result = match pool.get_async().await {
+                    Ok(mut conn) => migrations::migrate(&mut conn, Some(0)).await,
+                    Err(err) => {
+                        error!(
+                            ?err,
+                            "error acquiring test database connection in drop impl"
+                        );
+                        return;
+                    }
                 };
+                pool.close().await;
 
-                let migration_result = migrations::migrate(&mut conn, Some(0)).await;
-
-                if let Err(e) = sqlx::query(AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE;")))
-                    .execute(&mut *conn)
-                    .await
+                let mut conn = match sqlx::PgConnection::connect(&maintenance_url).await {
+                    Ok(conn) => conn,
+                    Err(err) => {
+                        error!(
+                            ?err,
+                            "error connecting to maintenance database in drop impl"
+                        );
+                        return;
+                    }
+                };
+                if let Err(e) = sqlx::query(AssertSqlSafe(format!(
+                    "DROP DATABASE {database} WITH (FORCE)"
+                )))
+                .execute(&mut conn)
+                .await
                 {
-                    error!("failed to drop test schema {}: {}", schema, e);
+                    error!("failed to drop test database {}: {}", database, e);
                     return;
                 }
 
@@ -111,4 +137,49 @@ impl Drop for TestDatabase {
             })
         });
     }
+}
+
+async fn initialize_template(maintenance_url: &str, config: &Config) -> Result<()> {
+    let mut conn = sqlx::PgConnection::connect(maintenance_url).await?;
+    sqlx::query("SELECT pg_advisory_lock($1)")
+        .bind(TEMPLATE_LOCK)
+        .execute(&mut conn)
+        .await?;
+
+    let result = async {
+        let exists = sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)",
+        )
+        .bind(TEMPLATE_DATABASE)
+        .fetch_one(&mut conn)
+        .await?;
+        if !exists {
+            sqlx::query(AssertSqlSafe(format!(
+                "CREATE DATABASE {TEMPLATE_DATABASE}"
+            )))
+            .execute(&mut conn)
+            .await
+            .context("error creating test template database")?;
+        }
+
+        let template_url = database_url(&config.database_url, TEMPLATE_DATABASE)?;
+        let mut template = sqlx::PgConnection::connect(&template_url).await?;
+        migrations::migrate(&mut template, None)
+            .await
+            .context("error running migrations for test template database")?;
+        Ok(())
+    }
+    .await;
+
+    let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+        .bind(TEMPLATE_LOCK)
+        .execute(&mut conn)
+        .await;
+    result
+}
+
+fn database_url(base_url: &str, database: &str) -> Result<String> {
+    let mut url = Url::parse(base_url).context("invalid database URL")?;
+    url.set_path(&format!("/{database}"));
+    Ok(url.into())
 }
