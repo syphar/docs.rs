@@ -5,7 +5,7 @@ use sqlx::{AssertSqlSafe, Connection as _};
 use std::{env, fs, io::Write as _, path::PathBuf, process::Command};
 use tempfile::NamedTempFile;
 use tokio::{runtime, sync::OnceCell, task::block_in_place};
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 const TEST_SCHEMA_PREFIX: &str = "docs_rs_test_schema_";
 const TEMPLATE_SCHEMA: &str = "docs_rs_test_template";
@@ -111,6 +111,7 @@ async fn template_ddl(database_url: &str) -> Result<&'static String> {
                 return fs::read_to_string(path).context("error reading template DDL file");
             }
 
+            warn!("fall back to generating template DDL ourselves, prepare went wrong?");
             prepare_template_ddl(database_url).await
         })
         .await
