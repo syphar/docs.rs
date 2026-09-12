@@ -58,7 +58,8 @@ jobs:
           # installs the postgres package repositories
           sudo YES=yes /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh
           sudo apt-get install postgresql-client-18
-          pg_dump --version
+          echo "/usr/lib/postgresql/18/bin" >> "$GITHUB_PATH"
+          /usr/lib/postgresql/18/bin/pg_dump --version
 
       - name: restore build & cargo cache
         uses: Swatinem/rust-cache@v2
