@@ -179,7 +179,7 @@ $ just run-tests
 ```
 
 This starts PostgreSQL and S3, builds tests for every workspace member, and runs
-`cargo test --workspace --locked --no-fail-fast` with the required test
+`cargo nextest run --workspace --locked --no-fail-fast` with the required test
 environment. Plain `cargo test` only tests the workspace's default members.
 
 Run the ignored builder tests separately with:

@@ -3,7 +3,7 @@ use anyhow::{Context as _, Result};
 use docs_rs_opentelemetry::AnyMeterProvider;
 use futures_util::TryStreamExt as _;
 use sqlx::{AssertSqlSafe, Connection as _};
-use std::{env, fs, path::PathBuf, process::Command};
+use std::{env, fs, io::Write as _, path::PathBuf, process::Command};
 use tempfile::NamedTempFile;
 use tokio::{runtime, sync::OnceCell, task::block_in_place};
 use tracing::{debug, error};
@@ -109,9 +109,11 @@ impl Drop for TestDatabase {
 /// this path to every test process, avoiding one migration run per process.
 pub async fn prepare_template_db(database_url: &str) -> Result<PathBuf> {
     let template_ddl = prepare_template_ddl(database_url).await?;
+
     let mut file = NamedTempFile::new().context("error creating template DDL file")?;
-    std::io::Write::write_all(&mut file, template_ddl.as_bytes())
+    file.write_all(template_ddl.as_bytes())
         .context("error writing template DDL file")?;
+
     let (_, path) = file.keep().context("error preserving template DDL file")?;
     Ok(path)
 }
