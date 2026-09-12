@@ -132,8 +132,8 @@ async fn get_template_schema_ddl(config: &Config) -> Result<&'static String> {
             if let Some(path) = env::var_os(TEMPLATE_DDL_ENV) {
                 fs::read_to_string(path).await.context("error reading template DDL file")
             } else {
-            warn!("fall back to generating template DDL ourselves, cargo nexttest setup script wan't run");
-            create_template_schema_and_ddl(config).await
+                warn!("fall back to generating template DDL ourselves, cargo nexttest setup script wan't run");
+                create_template_schema_and_ddl(config).await.context("error generating new template schema DDL")
             }
         })
         .await
