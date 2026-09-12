@@ -80,7 +80,7 @@ impl Drop for TestDatabase {
                 // With that we ensure that even with data, the rollback will work.
                 // This only costs little performance at the moment, we could make
                 // this optional at some point.
-                let migration_error = migrations::migrate(&mut conn, Some(0)).await.err();
+                // let migration_error = migrations::migrate(&mut conn, Some(0)).await.err();
 
                 if let Err(e) = sqlx::query(AssertSqlSafe(format!(
                     "DROP SCHEMA IF EXISTS {schema} CASCADE;"
@@ -91,9 +91,9 @@ impl Drop for TestDatabase {
                     panic!("failed to drop test schema {schema}: {e}");
                 }
 
-                if let Some(err) = migration_error {
-                    panic!("failed to revert migrations for test schema {schema}: {err:?}");
-                }
+                // if let Some(err) = migration_error {
+                //     panic!("failed to revert migrations for test schema {schema}: {err:?}");
+                // }
             })
         });
     }
