@@ -103,7 +103,7 @@ impl Drop for TestDatabase {
 /// that dump in a persistent temporary file. The nextest setup script exposes
 /// this path to every test process, avoiding one migration run per process.
 #[instrument(skip(database_url))]
-pub async fn prepare_template_db(database_url: &str) -> Result<PathBuf> {
+pub async fn prepare_template_schema(database_url: &str) -> Result<PathBuf> {
     let template_ddl = prepare_template_ddl(database_url).await?;
 
     let mut file = NamedTempFile::new().context("error creating template DDL file")?;
@@ -140,8 +140,6 @@ async fn prepare_template_ddl(database_url: &str) -> Result<String> {
         .await?;
 
     let result = async {
-        cleanup_leftover_schemas(&mut conn).await?;
-
         sqlx::query(AssertSqlSafe(format!(
             "CREATE SCHEMA IF NOT EXISTS {TEMPLATE_SCHEMA}"
         )))
@@ -166,24 +164,6 @@ async fn prepare_template_ddl(database_url: &str) -> Result<String> {
         .await?;
 
     result
-}
-
-#[instrument(skip(conn))]
-async fn cleanup_leftover_schemas(conn: &mut sqlx::PgConnection) -> Result<()> {
-    let schemas: Vec<String> = sqlx::query_scalar(
-        "SELECT schema_name FROM information_schema.schemata \
-         WHERE schema_name ~ '^docs_rs_test_schema_[a-z0-9]{16}$'",
-    )
-    .fetch_all(&mut *conn)
-    .await?;
-
-    for schema in schemas {
-        debug!(%schema, "dropping leftover test schema");
-        sqlx::query(AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
-            .execute(&mut *conn)
-            .await?;
-    }
-    Ok(())
 }
 
 /// Captures DDL suitable for sending directly to PostgreSQL through SQLx.
