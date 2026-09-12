@@ -59,7 +59,7 @@ jobs:
         uses: docker/setup-buildx-action@v4
 
       - name: run tests
-        run: just run-tests migration_teardown=true run-builder-tests
+        run: just run-tests run-builder-tests
 
       - name: shut down test environment
         if: ${{ always() }}

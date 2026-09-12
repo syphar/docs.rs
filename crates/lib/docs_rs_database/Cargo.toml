@@ -12,9 +12,6 @@ testing = [
     "docs_rs_config/testing",
     "docs_rs_opentelemetry/testing",
 ]
-# Revert every migration before dropping a test schema. Enabled in CI to
-# exercise migration down scripts without slowing down ordinary test runs.
-migration-teardown = ["testing"]
 
 [dependencies]
 anyhow = { workspace = true }
