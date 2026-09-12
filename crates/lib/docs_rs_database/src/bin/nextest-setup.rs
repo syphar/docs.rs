@@ -4,7 +4,8 @@ use docs_rs_database::{
     Config,
     testing::{TEMPLATE_DDL_ENV, prepare_template_schema},
 };
-use std::{env, fs::OpenOptions, io::Write as _};
+use std::env;
+use tokio::{fs, io::AsyncWriteExt as _};
 
 /// Prepares the shared test schema once for a nextest run, then publishes the
 /// captured DDL location to every test process.
@@ -16,9 +17,10 @@ async fn main() -> anyhow::Result<()> {
     let env_file = env::var("NEXTEST_ENV")
         .context("NEXTEST_ENV is not set (this binary must be run by nextest)")?;
 
-    let mut file = OpenOptions::new().append(true).open(env_file)?;
-    writeln!(file, "{TEMPLATE_DDL_ENV}={}", path.display())?;
-    file.flush()?;
+    let mut file = fs::OpenOptions::new().append(true).open(env_file).await?;
+    file.write_all(format!("{TEMPLATE_DDL_ENV}={}", path.display()).as_bytes())
+        .await?;
+    file.flush().await?;
 
     Ok(())
 }

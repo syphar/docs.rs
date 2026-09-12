@@ -110,8 +110,7 @@ pub async fn prepare_template_schema(config: &Config) -> Result<PathBuf> {
     let template_ddl = create_template_schema_and_ddl(config).await?;
 
     let (mut file, path) = spawn_blocking(|| {
-        let file = NamedTempFile::new()?;
-        let (file, path) = file.keep()?;
+        let (file, path) = NamedTempFile::new()?.keep()?;
 
         Ok((fs::File::from_std(file), path))
     })
