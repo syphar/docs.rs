@@ -1,0 +1,8 @@
+experimental = ["setup-scripts"]
+
+[scripts.setup.docs-rs-template-db]
+command = 'cargo run --quiet --package docs_rs_database --features testing --bin nextest_setup'
+
+[[profile.default.scripts]]
+filter = 'rdeps(docs_rs_database)'
+setup = 'docs-rs-template-db'

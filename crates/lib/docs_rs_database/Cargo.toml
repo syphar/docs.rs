@@ -6,7 +6,12 @@ edition.workspace = true
 build = "build.rs"
 
 [features]
-testing = ["dep:rand", "docs_rs_config/testing", "docs_rs_opentelemetry/testing"]
+testing = [
+    "dep:rand",
+    "dep:tempfile",
+    "docs_rs_config/testing",
+    "docs_rs_opentelemetry/testing",
+]
 
 [dependencies]
 anyhow = { workspace = true }
@@ -31,6 +36,7 @@ strum = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+tempfile = { workspace = true, optional = true }
 
 [dev-dependencies]
 docs_rs_cargo_metadata = { path = "../docs_rs_cargo_metadata", features = ["testing"] }
