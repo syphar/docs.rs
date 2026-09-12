@@ -11,7 +11,6 @@ use tracing::{debug, error, instrument, warn};
 const TEST_SCHEMA_PREFIX: &str = "docs_rs_test_schema_";
 const TEMPLATE_SCHEMA: &str = "docs_rs_test_template";
 pub const TEMPLATE_DDL_ENV: &str = "DOCSRS_TEST_DATABASE_DDL_PATH";
-const POSTGRES_BIN_DIR_ENV: &str = "POSTGRES_BIN_DIR";
 
 static TEMPLATE_DDL: OnceCell<String> = OnceCell::const_new();
 
@@ -188,17 +187,9 @@ async fn cleanup_leftover_schemas(conn: &mut sqlx::PgConnection) -> Result<()> {
 }
 
 /// Captures DDL suitable for sending directly to PostgreSQL through SQLx.
-///
-/// `POSTGRES_BIN_DIR` can select a `pg_dump` client compatible with the
-/// database server when the one on `PATH` is too old.
 #[instrument(skip(database_url))]
 fn dump_schema(database_url: &str) -> Result<String> {
-    let pg_dump = env::var_os(POSTGRES_BIN_DIR_ENV)
-        .map(PathBuf::from)
-        .map(|dir| dir.join("pg_dump"))
-        .unwrap_or_else(|| PathBuf::from("pg_dump"));
-
-    let output = Command::new(&pg_dump)
+    let output = Command::new("pg_dump")
         .args([
             "--schema-only",
             "--no-owner",
