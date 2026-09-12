@@ -52,10 +52,11 @@ jobs:
 
       - name: Install PostgreSQL 18 client
         run: |
+          # https://wiki.postgresql.org/wiki/Apt
           sudo apt-get update
           sudo apt-get install -y postgresql-common ca-certificates
           # installs the postgres package repositories
-          YES=yes /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh
+          sudo YES=yes /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh
           sudo apt-get install postgresql-client-18
           pg_dump --version
 
