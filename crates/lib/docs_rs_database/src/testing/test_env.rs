@@ -1,5 +1,5 @@
 use crate::{AsyncPoolClient, Config, Pool, migrations};
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, bail};
 use docs_rs_opentelemetry::AnyMeterProvider;
 use docs_rs_utils::spawn_blocking;
 use rand::{RngExt as _, distr::Alphanumeric};
@@ -130,11 +130,11 @@ async fn get_template_schema_ddl(config: &Config) -> Result<&'static String> {
     TEMPLATE_DDL
         .get_or_try_init(|| async {
             if let Some(path) = env::var_os(TEMPLATE_DDL_ENV) {
-                return fs::read_to_string(path).await.context("error reading template DDL file");
-            }
-
+                fs::read_to_string(path).await.context("error reading template DDL file")
+            } else {
             warn!("fall back to generating template DDL ourselves, cargo nexttest setup script wan't run");
             create_template_schema_and_ddl(config).await
+            }
         })
         .await
 }
@@ -219,7 +219,7 @@ async fn dump_schema(config: &Config) -> Result<String> {
         .context("error running pg_dump for test template")?;
 
     if !output.status.success() {
-        anyhow::bail!(
+        bail!(
             "pg_dump for test template failed: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         );
