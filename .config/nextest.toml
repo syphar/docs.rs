@@ -1,7 +1,7 @@
 experimental = ["setup-scripts"]
 
 [scripts.setup.docs-rs-template-db]
-# setup command to create the "template" database schema.
+# Rebuild the template database schema and capture its DDL for this test run.
 command = 'cargo run --quiet --package docs_rs_database --features testing --bin nextest-setup'
 
 [[profile.default.scripts]]
