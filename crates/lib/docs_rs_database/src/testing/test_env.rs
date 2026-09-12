@@ -3,10 +3,10 @@ use anyhow::{Context as _, Result};
 use docs_rs_opentelemetry::AnyMeterProvider;
 use rand::{RngExt as _, distr::Alphanumeric};
 use sqlx::{AssertSqlSafe, Connection as _};
-use std::{env, fs, io::Write as _, path::PathBuf, process::Command};
+use std::{env, fs, io::Write as _, iter, path::PathBuf, process::Command};
 use tempfile::NamedTempFile;
 use tokio::{runtime, sync::OnceCell, task::block_in_place};
-use tracing::{debug, error, instrument, warn};
+use tracing::{error, instrument, warn};
 
 const TEST_SCHEMA_PREFIX: &str = "docs_rs_test_schema_";
 const TEMPLATE_SCHEMA: &str = "docs_rs_test_template";
@@ -28,7 +28,7 @@ pub struct TestDatabase {
 impl TestDatabase {
     #[instrument(skip(config, otel_meter_provider))]
     pub async fn new(config: &Config, otel_meter_provider: &AnyMeterProvider) -> Result<Self> {
-        let template_ddl = template_ddl(&config.database_url).await?;
+        let template_ddl = get_template_schema_ddl(&config.database_url).await?;
         let schema = format!("{TEST_SCHEMA_PREFIX}{}", generate_name());
 
         let mut conn = sqlx::PgConnection::connect(&config.database_url).await?;
@@ -104,7 +104,7 @@ impl Drop for TestDatabase {
 /// this path to every test process, avoiding one migration run per process.
 #[instrument(skip(database_url))]
 pub async fn prepare_template_schema(database_url: &str) -> Result<PathBuf> {
-    let template_ddl = prepare_template_ddl(database_url).await?;
+    let template_ddl = prepare_template_schema_ddl(database_url).await?;
 
     let mut file = NamedTempFile::new().context("error creating template DDL file")?;
     file.write_all(template_ddl.as_bytes())
@@ -115,21 +115,21 @@ pub async fn prepare_template_schema(database_url: &str) -> Result<PathBuf> {
 }
 
 #[instrument(skip(database_url))]
-async fn template_ddl(database_url: &str) -> Result<&'static String> {
+async fn get_template_schema_ddl(database_url: &str) -> Result<&'static String> {
     TEMPLATE_DDL
         .get_or_try_init(|| async {
             if let Some(path) = env::var_os(TEMPLATE_DDL_ENV) {
                 return fs::read_to_string(path).context("error reading template DDL file");
             }
 
-            warn!("fall back to generating template DDL ourselves, prepare went wrong?");
-            prepare_template_ddl(database_url).await
+            warn!("fall back to generating template DDL ourselves, cargo nexttest setup script wan't run");
+            prepare_template_schema_ddl(database_url).await
         })
         .await
 }
 
 #[instrument(skip(database_url))]
-async fn prepare_template_ddl(database_url: &str) -> Result<String> {
+async fn prepare_template_schema_ddl(database_url: &str) -> Result<String> {
     let mut conn = sqlx::PgConnection::connect(database_url).await?;
 
     // Cargo test can start several test binaries at once. Serializing this work keeps them from
@@ -201,7 +201,7 @@ fn dump_schema(database_url: &str) -> Result<String> {
 
 fn generate_name() -> String {
     let mut rng = rand::rng();
-    std::iter::repeat(())
+    iter::repeat(())
         .map(|_| rng.sample(Alphanumeric) as char)
         .take(16)
         .collect::<String>()
