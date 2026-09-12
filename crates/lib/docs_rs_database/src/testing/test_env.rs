@@ -1,7 +1,6 @@
 use crate::{AsyncPoolClient, Config, Pool, migrations};
 use anyhow::{Context as _, Result};
 use docs_rs_opentelemetry::AnyMeterProvider;
-use futures_util::TryStreamExt as _;
 use sqlx::{AssertSqlSafe, Connection as _};
 use std::{env, fs, io::Write as _, path::PathBuf, process::Command};
 use tempfile::NamedTempFile;
@@ -40,31 +39,6 @@ impl TestDatabase {
         .context("error cloning test database schema")?;
 
         let pool = Pool::new_with_schema(config, &schema, otel_meter_provider).await?;
-
-        // Move all sequence start positions 10000 apart to avoid overlapping primary keys
-        let sequence_names: Vec<_> = sqlx::query!(
-            "SELECT relname
-             FROM pg_class
-             INNER JOIN pg_namespace ON
-                 pg_class.relnamespace = pg_namespace.oid
-             WHERE pg_class.relkind = 'S'
-                 AND pg_namespace.nspname = $1
-            ",
-            schema,
-        )
-        .fetch(&mut conn)
-        .map_ok(|row| row.relname)
-        .try_collect()
-        .await?;
-
-        for (i, sequence) in sequence_names.into_iter().enumerate() {
-            let offset = (i + 1) * 10000;
-            sqlx::query(AssertSqlSafe(format!(
-                r#"ALTER SEQUENCE "{schema}"."{sequence}" RESTART WITH {offset};"#
-            )))
-            .execute(&mut conn)
-            .await?;
-        }
 
         Ok(TestDatabase {
             pool,
@@ -154,17 +128,21 @@ async fn prepare_template_ddl(database_url: &str) -> Result<String> {
 
     let result = async {
         cleanup_leftover_schemas(&mut conn).await?;
+
         sqlx::query(AssertSqlSafe(format!(
             "CREATE SCHEMA IF NOT EXISTS {TEMPLATE_SCHEMA}"
         )))
         .execute(&mut conn)
         .await?;
+
         sqlx::query(AssertSqlSafe(format!(
             "SET search_path TO {TEMPLATE_SCHEMA}, public"
         )))
         .execute(&mut conn)
         .await?;
+
         migrations::migrate(&mut conn, None).await?;
+
         dump_schema(database_url)
     }
     .await;
