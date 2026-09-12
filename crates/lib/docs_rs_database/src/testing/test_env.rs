@@ -169,16 +169,14 @@ async fn prepare_template_schema_ddl(config: &Config) -> Result<String> {
 /// Captures DDL suitable for sending directly to PostgreSQL through SQLx.
 #[instrument(skip_all)]
 fn dump_schema(config: &Config) -> Result<String> {
-    let mut command = Command::new("pg_dump");
-
     // we're using plain `pg_dump` as CLI here.
     //
     // Sometimes the `pg_dump` (`postgresql-client`) version on the developer or CI
     // host is too old. In this case, we can fall back to using `docker compose exec` to
     // generate the template DDL. This is not the default, because that would bind
     // the test execution to `docker compose` by default.
-    if config.use_pg_dump_from_docker_compose {
-        command = Command::new("docker");
+    let mut command = if config.use_pg_dump_from_docker_compose {
+        let mut command = Command::new("docker");
         command.args(["compose", "exec", "-T", "db", "pg_dump"]);
         command.args([
             "--schema-only",
@@ -190,7 +188,9 @@ fn dump_schema(config: &Config) -> Result<String> {
             "cratesfyi",
             "cratesfyi",
         ]);
+        command
     } else {
+        let mut command = Command::new("pg_dump");
         command.args([
             "--schema-only",
             "--no-owner",
@@ -199,7 +199,8 @@ fn dump_schema(config: &Config) -> Result<String> {
             TEMPLATE_SCHEMA,
         ]);
         command.arg(&config.database_url);
-    }
+        command
+    };
 
     let output = command
         .output()
