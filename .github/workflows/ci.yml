@@ -61,7 +61,7 @@ jobs:
       - name: run tests
         env:
           # `pg_dump` in the gh action runner is too old for our postgres
-          # version, so we run it through `docker compose run`.
+          # version, so we run it through `docker compose exec`.
           DOCSRS_TEST_PG_DUMP_FROM_COMPOSE: "true"
         run: just run-tests run-builder-tests
 
