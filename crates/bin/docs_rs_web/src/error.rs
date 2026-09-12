@@ -191,7 +191,7 @@ impl AxumNope {
         }
     }
 
-    /// return cache policy to use for certain errors.
+    /// Returns the cache policy for errors whose response is tied to a crate.
     fn cache_policy(&self) -> Option<CachePolicy> {
         match self {
             AxumNope::ResourceNotFoundInVersion {
@@ -359,7 +359,10 @@ mod tests {
     use crate::testing::{
         AxumResponseTestExt, AxumRouterTestExt, TestEnvironmentExt as _, async_wrapper,
     };
-    use docs_rs_types::testing::{FOO, V0_1};
+    use docs_rs_types::{
+        KrateName,
+        testing::{FOO, V0_1},
+    };
     use kuchikiki::traits::TendrilSink;
 
     #[test]
@@ -531,6 +534,10 @@ mod tests {
                 .get("/dummy/latest/dummy/removed_module/index.html")
                 .await?;
             assert_eq!(response.status(), 404);
+            response.assert_cache_control(
+                CachePolicy::ForeverInCdn("dummy".parse::<KrateName>().unwrap().into()),
+                env.config(),
+            );
 
             let body = response.text().await?;
             let page = kuchikiki::parse_html().one(body.as_str());
@@ -570,6 +577,12 @@ mod tests {
                 .get("/dummy/0.1.0/dummy/removed_module/index.html")
                 .await?;
             assert_eq!(response.status(), 404);
+            response.assert_cache_control(
+                CachePolicy::ForeverInCdnAndStaleInBrowser(
+                    "dummy".parse::<KrateName>().unwrap().into(),
+                ),
+                env.config(),
+            );
 
             let body = response.text().await?;
             let hrefs = recovery_hrefs(&body);
