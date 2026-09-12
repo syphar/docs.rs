@@ -193,9 +193,15 @@ impl AxumNope {
     /// return cache policy to use for certain errors.
     fn cache_policy(&self) -> Option<CachePolicy> {
         match self {
-            AxumNope::ResourceNotFoundInVersion { name, .. } => {
-                Some(CachePolicy::ForeverInCdn(name.into()))
-            }
+            AxumNope::ResourceNotFoundInVersion {
+                name,
+                is_latest_url,
+                ..
+            } => Some(if *is_latest_url {
+                CachePolicy::ForeverInCdn(name.into())
+            } else {
+                CachePolicy::ForeverInCdnAndStaleInBrowser(name.into())
+            }),
             _ => None,
         }
     }
