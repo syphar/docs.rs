@@ -21,6 +21,9 @@ static TEMPLATE_DDL: OnceCell<String> = OnceCell::const_new();
 ///
 /// The template is prepared once, then each test replays its schema-only DDL
 /// into a fresh schema that is dropped when this value is dropped.
+///
+/// After a test-run we also keep the template schema, keeping it up-to-date
+/// with new migrations.
 #[derive(Debug)]
 pub struct TestDatabase {
     pool: Pool,
@@ -34,7 +37,7 @@ impl TestDatabase {
         let template_ddl = get_template_schema_ddl(config).await?;
         let schema = format!("{TEST_SCHEMA_PREFIX}{}", generate_name());
 
-        let mut conn = sqlx::PgConnection::connect(&config.database_url).await?;
+        let mut conn = sqlx::PgConnection::connect(config.database_url.as_str()).await?;
 
         // run the prepared DDL to fill the database schema into the new schema.
         //
@@ -109,17 +112,17 @@ pub async fn prepare_template_schema(config: &Config) -> Result<PathBuf> {
     let template_ddl = create_template_schema_and_ddl(config).await?;
 
     let (mut file, path) = spawn_blocking(|| {
-        let file = NamedTempFile::new().context("error creating template DDL file")?;
-        let (file, path) = file.keep().context("error preserving template DDL file")?;
+        let file = NamedTempFile::new()?;
+        let (file, path) = file.keep()?;
 
         Ok((fs::File::from_std(file), path))
     })
-    .await?;
+    .await
+    .context("error creating temporary file")?;
 
     file.write_all(template_ddl.as_bytes())
         .await
         .context("error writing template DDL file")?;
-
     file.flush().await?;
 
     Ok(path)
@@ -141,7 +144,7 @@ async fn get_template_schema_ddl(config: &Config) -> Result<&'static String> {
 
 #[instrument(skip_all)]
 async fn create_template_schema_and_ddl(config: &Config) -> Result<String> {
-    let mut conn = sqlx::PgConnection::connect(&config.database_url).await?;
+    let mut conn = sqlx::PgConnection::connect(&config.database_url.as_str()).await?;
 
     // Cargo test can start several test binaries at once. Serializing this work keeps them from
     // racing while applying migrations to the one shared template schema.
@@ -163,6 +166,7 @@ async fn create_template_schema_and_ddl(config: &Config) -> Result<String> {
         .execute(&mut conn)
         .await?;
 
+        // run forward migrations that weren't run yet.
         migrations::migrate(&mut conn, None).await?;
 
         dump_schema(config).await
@@ -177,39 +181,44 @@ async fn create_template_schema_and_ddl(config: &Config) -> Result<String> {
     result
 }
 
-/// Captures DDL suitable for sending directly to PostgreSQL through SQLx.
+/// Captures schema DDL suitable for sending directly to PostgreSQL through SQLx.
 #[instrument(skip_all)]
 async fn dump_schema(config: &Config) -> Result<String> {
-    // we're using plain `pg_dump` as CLI here.
-    //
+    let args = [
+        "--schema-only",
+        "--no-owner",
+        "--no-acl",
+        "--schema",
+        TEMPLATE_SCHEMA,
+    ];
+
     // Sometimes the `pg_dump` (`postgresql-client`) version on the developer or CI
-    // host is too old. In this case, we can fall back to using `docker compose exec` to
-    // generate the template DDL. This is not the default, because that would bind
-    // the test execution to `docker compose` by default.
+    // host is too old. In this case, you can fall back to using
+    // `docker compose exec` to generate the template DDL. This is not the default,
+    // because that would bind the test execution to `docker compose` by default and
+    // is slower than using `pg_dump` directly.
     let mut command = if config.use_pg_dump_from_docker_compose {
+        let username = config.database_url.username();
+
+        if username.is_empty() {
+            bail!("database URL must include a username when dumping through Docker Compose");
+        }
+
+        let database = config.database_url.path().trim_start_matches('/');
+        if database.is_empty() {
+            bail!("database URL must include a database name when dumping through Docker Compose");
+        }
+
         let mut command = Command::new("docker");
-        command.args(["compose", "exec", "-T", "db", "pg_dump"]);
-        command.args([
-            "--schema-only",
-            "--no-owner",
-            "--no-acl",
-            "--schema",
-            TEMPLATE_SCHEMA,
-            "--username",
-            "cratesfyi",
-            "cratesfyi",
-        ]);
+        command
+            .args(["compose", "exec", "-T", "db", "pg_dump"])
+            .args(args)
+            .args(["--username", username])
+            .args(["--dbname", database]);
         command
     } else {
         let mut command = Command::new("pg_dump");
-        command.args([
-            "--schema-only",
-            "--no-owner",
-            "--no-acl",
-            "--schema",
-            TEMPLATE_SCHEMA,
-        ]);
-        command.arg(&config.database_url);
+        command.args(args).arg(config.database_url.as_str());
         command
     };
 
@@ -220,7 +229,7 @@ async fn dump_schema(config: &Config) -> Result<String> {
 
     if !output.status.success() {
         bail!(
-            "pg_dump for test template failed: {}",
+            "pg_dump for test template failed: \n{}",
             String::from_utf8_lossy(&output.stderr).trim()
         );
     }

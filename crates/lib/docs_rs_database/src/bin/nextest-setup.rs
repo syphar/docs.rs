@@ -18,6 +18,7 @@ async fn main() -> anyhow::Result<()> {
 
     let mut file = OpenOptions::new().append(true).open(env_file)?;
     writeln!(file, "{TEMPLATE_DDL_ENV}={}", path.display())?;
+    file.flush()?;
 
     Ok(())
 }
