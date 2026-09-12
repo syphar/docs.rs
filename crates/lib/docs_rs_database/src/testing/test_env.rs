@@ -27,6 +27,9 @@ impl TestDatabase {
         let schema = format!("{TEST_SCHEMA_PREFIX}{}", rand::random::<u64>());
 
         let mut conn = sqlx::PgConnection::connect(&config.database_url).await?;
+
+        // run the prepared DDL to fill the database schema into the new schema.
+        //
         // The DDL is produced by pg_dump from a schema we own. The only substitution is a
         // generated schema name, so it is safe to send as raw SQL.
         sqlx::raw_sql(AssertSqlSafe(
