@@ -74,7 +74,7 @@ _build-test-binaries:
 
 # Build and run the complete Rust workspace test suite.
 [group('testing')]
-run-tests: compose-up-resources _build-test-binaries
+run-tests migration_teardown='false': compose-up-resources _build-test-binaries
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -87,7 +87,12 @@ run-tests: compose-up-resources _build-test-binaries
     export AWS_SECRET_ACCESS_KEY=secret_key
     export S3_ENDPOINT=http://localhost:9000
 
-    cargo nextest run --workspace --locked --no-fail-fast
+    extra_args=()
+    if [[ "{{ migration_teardown }}" == "true" ]]; then
+        extra_args+=(--features docs_rs_database/migration-teardown)
+    fi
+
+    cargo nextest run --workspace --locked --no-fail-fast "${extra_args[@]}"
 
 # Run ignored builder integration tests serially.
 [group('testing')]

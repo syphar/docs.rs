@@ -92,12 +92,19 @@ impl Drop for TestDatabase {
                     return;
                 };
 
+                #[cfg(feature = "migration-teardown")]
+                let migration_error = migrations::migrate(&mut conn, Some(0)).await.err();
+
                 if let Err(e) = sqlx::query(AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE;")))
                     .execute(&mut *conn)
                     .await
                 {
-                    error!("failed to drop test schema {}: {}", schema, e);
-                    return;
+                    panic!("failed to drop test schema {schema}: {e}");
+                }
+
+                #[cfg(feature = "migration-teardown")]
+                if let Some(err) = migration_error {
+                    panic!("failed to revert migrations for test schema {schema}: {err:?}");
                 }
             })
         });
