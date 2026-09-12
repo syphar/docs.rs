@@ -191,9 +191,10 @@ impl AxumNope {
         }
     }
 
-    /// Returns the cache policy for errors whose response is tied to a crate.
+    /// Returns the cache policy for errors that can be cached in the browser or the CDN.
     fn cache_policy(&self) -> Option<CachePolicy> {
         match self {
+            AxumNope::Redirect(_target, _cache_policy) => unreachable!(),
             AxumNope::ResourceNotFoundInVersion {
                 name,
                 is_latest_url,
