@@ -205,9 +205,11 @@ async fn dump_schema(config: &Config) -> Result<String> {
         }
 
         let database = config.database_url.path().trim_start_matches('/');
-        if database.is_empty() {
-            bail!("database URL must include a database name when dumping through Docker Compose");
-        }
+        let database = if database.is_empty() {
+            &username
+        } else {
+            database
+        };
 
         let mut command = Command::new("docker");
         command
