@@ -2981,8 +2981,14 @@ mod test {
             )
             .await?;
 
-            web.assert_not_found("/winapi/0.3.9/winapi/struct.not_here.html")
-                .await?;
+            web.assert_cached_not_found(
+                "/winapi/0.3.9/winapi/struct.not_here.html",
+                CachePolicy::ForeverInCdnAndStaleInBrowser(
+                    KrateName::from_str("winapi").unwrap().into(),
+                ),
+                env.config(),
+            )
+            .await?;
 
             Ok(())
         })
