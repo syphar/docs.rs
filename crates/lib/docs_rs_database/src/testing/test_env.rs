@@ -1,15 +1,17 @@
 use crate::{AsyncPoolClient, Config, Pool, migrations};
 use anyhow::{Context as _, Result};
 use docs_rs_opentelemetry::AnyMeterProvider;
+use rand::{RngExt as _, distr::Alphanumeric};
 use sqlx::{AssertSqlSafe, Connection as _};
 use std::{env, fs, io::Write as _, path::PathBuf, process::Command};
 use tempfile::NamedTempFile;
 use tokio::{runtime, sync::OnceCell, task::block_in_place};
-use tracing::{debug, error, warn};
+use tracing::{debug, error, instrument, warn};
 
 const TEST_SCHEMA_PREFIX: &str = "docs_rs_test_schema_";
 const TEMPLATE_SCHEMA: &str = "docs_rs_test_template";
 pub const TEMPLATE_DDL_ENV: &str = "DOCSRS_TEST_DATABASE_DDL_PATH";
+const POSTGRES_BIN_DIR_ENV: &str = "POSTGRES_BIN_DIR";
 
 static TEMPLATE_DDL: OnceCell<String> = OnceCell::const_new();
 
@@ -25,9 +27,10 @@ pub struct TestDatabase {
 }
 
 impl TestDatabase {
+    #[instrument(skip(config, otel_meter_provider))]
     pub async fn new(config: &Config, otel_meter_provider: &AnyMeterProvider) -> Result<Self> {
         let template_ddl = template_ddl(&config.database_url).await?;
-        let schema = format!("{TEST_SCHEMA_PREFIX}{}", rand::random::<u64>());
+        let schema = format!("{TEST_SCHEMA_PREFIX}{}", generate_name());
 
         let mut conn = sqlx::PgConnection::connect(&config.database_url).await?;
 
@@ -55,6 +58,7 @@ impl TestDatabase {
         &self.pool
     }
 
+    #[instrument(skip(self))]
     pub async fn async_conn(&self) -> Result<AsyncPoolClient> {
         self.pool.get_async().await.map_err(Into::into)
     }
@@ -79,9 +83,11 @@ impl Drop for TestDatabase {
                 // this optional at some point.
                 let migration_error = migrations::migrate(&mut conn, Some(0)).await.err();
 
-                if let Err(e) = sqlx::query(AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE;")))
-                    .execute(&mut *conn)
-                    .await
+                if let Err(e) = sqlx::query(AssertSqlSafe(format!(
+                    "DROP SCHEMA IF EXISTS {schema} CASCADE;"
+                )))
+                .execute(&mut *conn)
+                .await
                 {
                     panic!("failed to drop test schema {schema}: {e}");
                 }
@@ -97,6 +103,7 @@ impl Drop for TestDatabase {
 /// Creates or updates the migrated template schema, dumps its DDL, and keeps
 /// that dump in a persistent temporary file. The nextest setup script exposes
 /// this path to every test process, avoiding one migration run per process.
+#[instrument(skip(database_url))]
 pub async fn prepare_template_db(database_url: &str) -> Result<PathBuf> {
     let template_ddl = prepare_template_ddl(database_url).await?;
 
@@ -108,6 +115,7 @@ pub async fn prepare_template_db(database_url: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
+#[instrument(skip(database_url))]
 async fn template_ddl(database_url: &str) -> Result<&'static String> {
     TEMPLATE_DDL
         .get_or_try_init(|| async {
@@ -121,6 +129,7 @@ async fn template_ddl(database_url: &str) -> Result<&'static String> {
         .await
 }
 
+#[instrument(skip(database_url))]
 async fn prepare_template_ddl(database_url: &str) -> Result<String> {
     let mut conn = sqlx::PgConnection::connect(database_url).await?;
 
@@ -160,10 +169,11 @@ async fn prepare_template_ddl(database_url: &str) -> Result<String> {
     result
 }
 
+#[instrument(skip(conn))]
 async fn cleanup_leftover_schemas(conn: &mut sqlx::PgConnection) -> Result<()> {
     let schemas: Vec<String> = sqlx::query_scalar(
         "SELECT schema_name FROM information_schema.schemata \
-         WHERE schema_name ~ '^docs_rs_test_schema_[0-9]+$'",
+         WHERE schema_name ~ '^docs_rs_test_schema_[a-z0-9]{16}$'",
     )
     .fetch_all(&mut *conn)
     .await?;
@@ -177,9 +187,25 @@ async fn cleanup_leftover_schemas(conn: &mut sqlx::PgConnection) -> Result<()> {
     Ok(())
 }
 
+/// Captures DDL suitable for sending directly to PostgreSQL through SQLx.
+///
+/// `POSTGRES_BIN_DIR` can select a `pg_dump` client compatible with the
+/// database server when the one on `PATH` is too old.
+#[instrument(skip(database_url))]
 fn dump_schema(database_url: &str) -> Result<String> {
-    let output = Command::new("pg_dump")
-        .args(["--schema-only", "--no-owner", "--schema", TEMPLATE_SCHEMA])
+    let pg_dump = env::var_os(POSTGRES_BIN_DIR_ENV)
+        .map(PathBuf::from)
+        .map(|dir| dir.join("pg_dump"))
+        .unwrap_or_else(|| PathBuf::from("pg_dump"));
+
+    let output = Command::new(&pg_dump)
+        .args([
+            "--schema-only",
+            "--no-owner",
+            "--no-acl",
+            "--schema",
+            TEMPLATE_SCHEMA,
+        ])
         .arg(database_url)
         .output()
         .context("error running pg_dump for test template")?;
@@ -192,11 +218,21 @@ fn dump_schema(database_url: &str) -> Result<String> {
     }
 
     let ddl = String::from_utf8(output.stdout).context("pg_dump output was not UTF-8")?;
-    // PostgreSQL 17+ emits psql-only \restrict directives. SQLx sends DDL directly to
-    // PostgreSQL, where those directives are invalid SQL.
+    // pg_dump's plain output targets psql. SQLx sends it straight to PostgreSQL,
+    // so remove psql meta-commands and settings unsupported by older servers.
     Ok(ddl
         .lines()
-        .filter(|line| !line.starts_with("\\restrict ") && !line.starts_with("\\unrestrict "))
+        .filter(|line| !line.starts_with('\\'))
+        .filter(|line| !line.trim_start().starts_with("SET transaction_timeout"))
         .collect::<Vec<_>>()
         .join("\n"))
+}
+
+fn generate_name() -> String {
+    let mut rng = rand::rng();
+    std::iter::repeat(())
+        .map(|_| rng.sample(Alphanumeric) as char)
+        .take(16)
+        .collect::<String>()
+        .to_lowercase()
 }
