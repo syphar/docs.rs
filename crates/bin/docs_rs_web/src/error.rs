@@ -13,6 +13,7 @@ use axum::{
 };
 use docs_rs_database::PoolError;
 use docs_rs_storage::PathNotFoundError;
+use docs_rs_types::{KrateName, Version};
 use docs_rs_uri::EscapedURI;
 use std::borrow::Cow;
 use tracing::error;
@@ -54,8 +55,8 @@ pub enum AxumNope {
     /// and offers recovery links (issue #2568).
     #[error("Requested resource not found in an existing crate version")]
     ResourceNotFoundInVersion {
-        name: String,
-        version: String,
+        name: KrateName,
+        version: Version,
         /// Whether the request used the `/latest/` alias (vs. a pinned version).
         is_latest_url: bool,
         /// Root of the docs for the requested version.
@@ -189,6 +190,16 @@ impl AxumNope {
         }
     }
 
+    /// return cache policy to use for certain errors.
+    fn cache_policy(&self) -> Option<CachePolicy> {
+        match self {
+            AxumNope::ResourceNotFoundInVersion { name, .. } => {
+                Some(CachePolicy::ForeverInCdn(name.into()))
+            }
+            _ => None,
+        }
+    }
+
     /// Navigation links offered on the error page to help the user recover.
     /// Empty for every error except the contextual missing-page 404 (#2568).
     fn recovery_links(&self) -> Vec<RecoveryLink> {
@@ -231,7 +242,7 @@ fn redirect_with_policy(target: EscapedURI, cache_policy: CachePolicy) -> AxumRe
 
 impl IntoResponse for AxumNope {
     fn into_response(self) -> AxumResponse {
-        match self {
+        let mut response = match self {
             AxumNope::NoResults => {
                 // user did a search with no search terms
                 Search {
@@ -257,7 +268,13 @@ impl IntoResponse for AxumNope {
                 }
                 .into_response()
             }
+        };
+
+        if let Some(policy) = self.cache_policy() {
+            response.extensions_mut().insert(policy);
         }
+
+        response
     }
 }
 

@@ -728,8 +728,8 @@ pub(crate) async fn rustdoc_html_server_handler(
             // acknowledges the version and offers recovery links instead of a
             // bare "resource not found" (issue #2568).
             return Err(AxumNope::ResourceNotFoundInVersion {
-                name: params.name().to_string(),
-                version: krate.version.to_string(),
+                name: params.name().clone(),
+                version: krate.version,
                 is_latest_url: params.req_version().is_latest(),
                 version_root_url: params.clone().with_inner_path("").rustdoc_url(),
                 crate_details_url: params.crate_details_url(),
