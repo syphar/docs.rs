@@ -10,7 +10,7 @@ use tracing::{debug, error};
 
 const TEST_SCHEMA_PREFIX: &str = "docs_rs_test_schema_";
 const TEMPLATE_SCHEMA: &str = "docs_rs_test_template";
-const TEMPLATE_DDL_ENV: &str = "DOCSRS_TEST_DATABASE_DDL_PATH";
+pub const TEMPLATE_DDL_ENV: &str = "DOCSRS_TEST_DATABASE_DDL_PATH";
 
 static TEMPLATE_DDL: OnceCell<String> = OnceCell::const_new();
 
