@@ -205,17 +205,17 @@ async fn dump_schema(config: &Config) -> Result<String> {
         }
 
         let database = config.database_url.path().trim_start_matches('/');
-        let database = database
-            .is_empty()
-            .then_some(&username)
-            .unwrap_or(&database);
 
         let mut command = Command::new("docker");
         command
             .args(["compose", "exec", "-T", "db", "pg_dump"])
             .args(args)
-            .args(["--username", username])
-            .args(["--dbname", database]);
+            .args(["--username", username]);
+
+        if !database.is_empty() {
+            command.args(["--dbname", database]);
+        }
+
         command
     } else {
         let mut command = Command::new("pg_dump");
