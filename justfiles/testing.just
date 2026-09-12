@@ -101,7 +101,7 @@ run-builder-tests: compose-up-resources
     export RUST_BACKTRACE=1
     export DOCSRS_PREFIX=ignored/cratesfyi-prefix
 
-    cargo nextest run --locked --run-ignored only -- --test-threads=1
+    cargo nextest run --locked --run-ignored only --test-threads=1
 
 # Test migrations with both SQLx CLI and docs_rs_admin.
 [group('testing')]
