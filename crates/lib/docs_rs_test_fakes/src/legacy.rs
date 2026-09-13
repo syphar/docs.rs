@@ -113,11 +113,7 @@ impl<'a> FakeRelease<'a> {
             doc_targets: Vec::new(),
             default_target: None,
             registry_crate_data: CrateData { owners: Vec::new() },
-            registry_release_data: ReleaseData {
-                release_time: Utc::now(),
-                yanked: false,
-                downloads: 0,
-            },
+            registry_release_data: ReleaseData::dummy(),
             has_docs: true,
             has_examples: false,
             readme: None,
@@ -139,7 +135,7 @@ impl<'a> FakeRelease<'a> {
     }
 
     pub fn release_time(mut self, new: DateTime<Utc>) -> Self {
-        self.registry_release_data.release_time = new;
+        self.registry_release_data.release_time = Some(new);
         self
     }
 
