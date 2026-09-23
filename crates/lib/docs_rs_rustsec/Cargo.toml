@@ -1,0 +1,29 @@
+[package]
+name = "docs_rs_rustsec"
+version.workspace = true
+license.workspace = true
+repository.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+bon = { workspace = true }
+docs_rs_config = { path = "../docs_rs_config" }
+docs_rs_env_vars = { path = "../docs_rs_env_vars" }
+docs_rs_reqwest = { path = "../docs_rs_reqwest" }
+docs_rs_types = { path = "../docs_rs_types" }
+serde = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+
+[dev-dependencies]
+docs_rs_types = { path = "../docs_rs_types", features = ["testing"] }
+docs_rs_utils = { path = "../docs_rs_utils" }
+mockito = { workspace = true }
+reqwest = { workspace = true }
+serde_json = { workspace = true }
+test-case = { workspace = true }
+tokio = { workspace = true }
+
+[lints]
+workspace = true
