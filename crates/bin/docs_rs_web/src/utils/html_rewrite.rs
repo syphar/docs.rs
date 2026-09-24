@@ -11,6 +11,7 @@ use anyhow::{Context as _, anyhow};
 use askama::Template;
 use async_stream::stream;
 use axum::body::Bytes;
+use docs_rs_types::ByteSize;
 use futures_util::{Stream, StreamExt as _};
 use lol_html::{element, errors::RewritingError};
 use std::sync::Arc;
@@ -35,12 +36,12 @@ pub(crate) enum RustdocRewritingError {
 /// render the `rustdoc/` templates with the `html`.
 /// The output is an HTML page which has not yet been UTF-8 validated.
 /// In practice, the output should always be valid UTF-8.
-#[instrument(skip_all, fields(memory_limit = max_allowed_memory_usage))]
+#[instrument(skip_all, fields(memory_limit = max_allowed_memory_usage.as_u64()))]
 pub(crate) fn rewrite_rustdoc_html_stream<R>(
     requested_host: RequestedHost,
     template_data: Arc<TemplateData>,
     mut reader: R,
-    max_allowed_memory_usage: usize,
+    max_allowed_memory_usage: ByteSize,
     data: Arc<RustdocPage>,
     otel_metrics: Arc<WebMetrics>,
 ) -> impl Stream<Item = Result<Bytes, RustdocRewritingError>> + Send + 'static
@@ -110,14 +111,16 @@ where
                             Ok(())
                         };
 
-                        let settings = Settings {
-                            element_content_handlers: vec![
+                        let settings = Settings::new()
+                            .append_element_content_handler(
                                 // Append `style.css` stylesheet after all head elements.
                                 element!("head", |head: &mut Element| {
                                     head.append(&head_html, ContentType::Html);
                                     Ok(())
                                 }),
-                                element!("body", body_handler),
+                            )
+                            .append_element_content_handler(element!("body", body_handler))
+                            .append_element_content_handler(
                                 // Append `vendored.css` before `rustdoc.css`, so that the duplicate copy of
                                 // `normalize.css` will be overridden by the later version.
                                 //
@@ -137,13 +140,12 @@ where
                                         Ok(())
                                     }
                                 ),
-                            ],
-                            memory_settings: MemorySettings {
-                                max_allowed_memory_usage,
-                                ..MemorySettings::default()
-                            },
-                            ..Settings::default()
-                        };
+                            )
+                            .with_memory_settings(
+                                MemorySettings::new().with_max_allowed_memory_usage(
+                                    max_allowed_memory_usage.as_u64() as usize,
+                                ),
+                            );
 
                         let mut rewriter = HtmlRewriter::new(settings, move |chunk: &[u8]| {
                             // send the result back to the main rewriter when its coming in.

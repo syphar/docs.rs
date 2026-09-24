@@ -5,12 +5,14 @@ use docs_rs_storage::{AsyncStorage, rustdoc_archive_path, source_archive_path};
 use docs_rs_types::{CrateId, KrateName, Version};
 use sqlx::Connection;
 use tokio::fs;
+use tracing::instrument;
 
 /// List of directories in docs.rs's underlying storage (either the database or S3) containing a
 /// subdirectory named after the crate. Those subdirectories will be deleted.
 static LIBRARY_STORAGE_PATHS_TO_DELETE: &[&str] = &["rustdoc", "rustdoc-json", "sources"];
 static OTHER_STORAGE_PATHS_TO_DELETE: &[&str] = &["sources"];
 
+#[instrument(skip_all, fields(name=%name))]
 pub async fn delete_crate(
     conn: &mut sqlx::PgConnection,
     storage: &AsyncStorage,
@@ -47,7 +49,7 @@ pub async fn delete_crate(
                 .with_context(|| {
                     format!(
                         "error when trying to remove local index: {:?}",
-                        &local_index_folder
+                        local_index_folder
                     )
                 })?;
         }
@@ -56,6 +58,7 @@ pub async fn delete_crate(
     Ok(())
 }
 
+#[instrument(skip_all, fields(name=%name, version=%version))]
 pub async fn delete_version(
     conn: &mut sqlx::PgConnection,
     storage: &AsyncStorage,
@@ -154,9 +157,20 @@ async fn delete_version_from_database(
     .fetch_all(&mut *transaction)
     .await?;
 
+    sqlx::query!(
+        "DELETE FROM builds_logs bl
+         USING builds b
+         JOIN releases r ON b.rid = r.id
+         WHERE bl.build_id = b.id AND r.crate_id = $1 AND r.version = $2;",
+        crate_id as _,
+        version as _
+    )
+    .execute(&mut *transaction)
+    .await?;
+
     for &(table, column) in METADATA {
-        sqlx::query(
-            format!("DELETE FROM {table} WHERE {column} IN (SELECT id FROM releases WHERE crate_id = $1 AND version = $2)").as_str())
+        sqlx::query(sqlx::AssertSqlSafe(
+            format!("DELETE FROM {table} WHERE {column} IN (SELECT id FROM releases WHERE crate_id = $1 AND version = $2)")))
         .bind(crate_id).bind(version).execute(&mut *transaction).await?;
     }
     let is_library: bool = sqlx::query_scalar!(
@@ -212,12 +226,23 @@ async fn delete_crate_from_database(
     .execute(&mut *transaction)
     .await?;
 
+    sqlx::query!(
+        "DELETE FROM builds_logs AS bl
+         USING builds AS b
+         JOIN releases AS r ON b.rid = r.id
+         WHERE bl.build_id = b.id AND r.crate_id = $1;",
+        crate_id as _
+    )
+    .execute(&mut *transaction)
+    .await?;
+
     for &(table, column) in METADATA {
-        sqlx::query(
-            format!(
-                "DELETE FROM {table} WHERE {column} IN (SELECT id FROM releases WHERE crate_id = $1)"
-            )
-            .as_str()).bind(crate_id).execute(&mut *transaction).await?;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DELETE FROM {table} WHERE {column} IN (SELECT id FROM releases WHERE crate_id = $1)"
+        )))
+        .bind(crate_id)
+        .execute(&mut *transaction)
+        .await?;
     }
     sqlx::query!("DELETE FROM owner_rels WHERE cid = $1;", crate_id as _)
         .execute(&mut *transaction)
@@ -263,7 +288,6 @@ mod tests {
         CompressionAlgorithm, ReleaseId, SimpleBuildError,
         testing::{BAR, FOO, KRATE, V1, V2},
     };
-    use test_case::test_case;
     use tokio::time::{Duration, timeout};
 
     async fn crate_exists(conn: &mut sqlx::PgConnection, name: &KrateName) -> Result<bool> {
@@ -314,10 +338,8 @@ mod tests {
         Ok(())
     }
 
-    #[test_case(true)]
-    #[test_case(false)]
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_delete_crate(archive_storage: bool) -> Result<()> {
+    async fn test_delete_crate() -> Result<()> {
         let env = TestEnvironment::new().await?;
         let storage = env.storage()?;
         let queue = env.build_queue()?;
@@ -334,7 +356,6 @@ mod tests {
             .await
             .name(&FOO)
             .version(V1)
-            .archive_storage(archive_storage)
             .create()
             .await?;
         let pkg1_v2_id = env
@@ -342,7 +363,6 @@ mod tests {
             .await
             .name(&FOO)
             .version(V2)
-            .archive_storage(archive_storage)
             .create()
             .await?;
         let pkg2_id = env
@@ -350,7 +370,6 @@ mod tests {
             .await
             .name(&BAR)
             .version(V1)
-            .archive_storage(archive_storage)
             .create()
             .await?;
 
@@ -362,13 +381,7 @@ mod tests {
         for (pkg, version) in &[(FOO, V1), (FOO, V2), (BAR, V1)] {
             assert!(
                 storage
-                    .rustdoc_file_exists(
-                        pkg,
-                        version,
-                        None,
-                        &format!("{pkg}/index.html"),
-                        archive_storage
-                    )
+                    .rustdoc_file_exists(pkg, version, None, &format!("{pkg}/index.html"),)
                     .await?
             );
         }
@@ -388,52 +401,19 @@ mod tests {
         // files for package 2 still exists
         assert!(
             storage
-                .rustdoc_file_exists(
-                    &BAR,
-                    &V1,
-                    None,
-                    &format!("{BAR}/index.html"),
-                    archive_storage
-                )
+                .rustdoc_file_exists(&BAR, &V1, None, &format!("{BAR}/index.html"),)
                 .await?
         );
 
         // files for package 1 are gone
-        if archive_storage {
-            assert!(!storage.exists(&rustdoc_archive_path(&FOO, &V1)).await?);
-            assert!(!storage.exists(&rustdoc_archive_path(&FOO, &V2)).await?);
-        } else {
-            assert!(
-                !storage
-                    .rustdoc_file_exists(
-                        &FOO,
-                        &V1,
-                        None,
-                        &format!("{FOO}/index.html"),
-                        archive_storage
-                    )
-                    .await?
-            );
-            assert!(
-                !storage
-                    .rustdoc_file_exists(
-                        &FOO,
-                        &V2,
-                        None,
-                        &format!("{FOO}/index.html"),
-                        archive_storage
-                    )
-                    .await?
-            );
-        }
+        assert!(!storage.exists(&rustdoc_archive_path(&FOO, &V1)).await?);
+        assert!(!storage.exists(&rustdoc_archive_path(&FOO, &V2)).await?);
 
         Ok(())
     }
 
-    #[test_case(true)]
-    #[test_case(false)]
     #[tokio::test(flavor = "multi_thread")]
-    async fn test_delete_version(archive_storage: bool) -> Result<()> {
+    async fn test_delete_version() -> Result<()> {
         let env = TestEnvironment::new().await?;
         let storage = env.storage()?;
         let queue = env.build_queue()?;
@@ -473,7 +453,6 @@ mod tests {
             .await
             .name(&KRATE)
             .version(V1)
-            .archive_storage(archive_storage)
             .add_owner(CrateOwner {
                 login: "malicious actor".into(),
                 avatar: "https://example.org/malicious".into(),
@@ -485,13 +464,7 @@ mod tests {
         assert!(release_exists(&mut conn, v1).await?);
         assert!(
             storage
-                .rustdoc_file_exists(
-                    &KRATE,
-                    &V1,
-                    None,
-                    &format!("{KRATE}/index.html"),
-                    archive_storage
-                )
+                .rustdoc_file_exists(&KRATE, &V1, None, &format!("{KRATE}/index.html"),)
                 .await?
         );
         assert!(json_exists(storage, &V1).await?);
@@ -511,7 +484,6 @@ mod tests {
             .await
             .name(&KRATE)
             .version(V2)
-            .archive_storage(archive_storage)
             .add_owner(CrateOwner {
                 login: "Peter Rabbit".into(),
                 avatar: "https://example.org/peter".into(),
@@ -522,13 +494,7 @@ mod tests {
         assert!(release_exists(&mut conn, v2).await?);
         assert!(
             storage
-                .rustdoc_file_exists(
-                    &KRATE,
-                    &V2,
-                    None,
-                    &format!("{KRATE}/index.html"),
-                    archive_storage
-                )
+                .rustdoc_file_exists(&KRATE, &V2, None, &format!("{KRATE}/index.html"),)
                 .await?
         );
         assert!(json_exists(storage, &V2).await?);
@@ -541,48 +507,28 @@ mod tests {
         assert!(!queue.has_build_queued(&KRATE, &V1).await?);
         assert!(queue.has_build_queued(&KRATE, &V2).await?);
         assert!(!release_exists(&mut conn, v1).await?);
-        if archive_storage {
-            // for archive storage the archive and index files
-            // need to be cleaned up.
-            let rustdoc_archive = rustdoc_archive_path(&KRATE, &V1);
-            assert!(!storage.exists(&rustdoc_archive).await?);
+        // for archive storage the archive and index files
+        // need to be cleaned up.
+        let rustdoc_archive = rustdoc_archive_path(&KRATE, &V1);
+        assert!(!storage.exists(&rustdoc_archive).await?);
 
-            // local and remote index are gone too
-            let archive_index = format!("{rustdoc_archive}.index");
-            assert!(!storage.exists(&archive_index).await?);
-            assert!(
-                !storage
-                    .config()
-                    .archive_index_cache
-                    .path
-                    .join(&archive_index)
-                    .exists()
-            );
-        } else {
-            assert!(
-                !storage
-                    .rustdoc_file_exists(
-                        &KRATE,
-                        &V1,
-                        None,
-                        &format!("{KRATE}/index.html"),
-                        archive_storage
-                    )
-                    .await?
-            );
-        }
+        // local and remote index are gone too
+        let archive_index = format!("{rustdoc_archive}.index");
+        assert!(!storage.exists(&archive_index).await?);
+        assert!(
+            !storage
+                .config()
+                .archive_index_cache
+                .path
+                .join(&archive_index)
+                .exists()
+        );
         assert!(!json_exists(storage, &V1,).await?);
 
         assert!(release_exists(&mut conn, v2).await?);
         assert!(
             storage
-                .rustdoc_file_exists(
-                    &KRATE,
-                    &V2,
-                    None,
-                    &format!("{KRATE}/index.html"),
-                    archive_storage
-                )
+                .rustdoc_file_exists(&KRATE, &V2, None, &format!("{KRATE}/index.html"),)
                 .await?
         );
         assert!(json_exists(storage, &V2).await?);

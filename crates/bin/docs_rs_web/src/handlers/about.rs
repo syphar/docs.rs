@@ -37,7 +37,7 @@ pub(crate) async fn about_builds_handler(
 ) -> AxumResult<impl IntoResponse> {
     Ok(AboutBuilds {
         rustc_version: get_config::<String>(&mut conn, ConfigName::RustcVersion).await?,
-        limits: Limits::new(context.config().build_limits()?),
+        limits: Limits::from_config(context.config().build_limits()?),
         active_tab: "builds",
     })
 }
@@ -82,6 +82,10 @@ pub(crate) async fn about_handler(subpage: Option<Path<String>>) -> AxumResult<i
                 title: "The requested page does not exist",
                 message: msg.into(),
                 status: StatusCode::NOT_FOUND,
+                recovery: Vec::new(),
+                cache_policy: Some(CachePolicy::ForeverInCdn(
+                    SURROGATE_KEY_DOCSRS_STATIC.into(),
+                )),
             };
             page.into_response()
         }
@@ -107,6 +111,7 @@ mod tests {
             let file_path = file?.path();
             if file_path.extension() != Some(OsStr::new("html"))
                 || file_path.file_stem() == Some(OsStr::new("index"))
+                || file_path.file_stem() == Some(OsStr::new("status"))
             {
                 continue;
             }
@@ -124,6 +129,20 @@ mod tests {
             }
         }
         web.assert_success("/about").await?;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn nonexistent_about_page_is_cached() -> Result<()> {
+        let env = TestEnvironment::new().await?;
+        let response = env.web_app().await.get("/about/does-not-exist").await?;
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        response.assert_cache_control(
+            CachePolicy::ForeverInCdn(SURROGATE_KEY_DOCSRS_STATIC.into()),
+            env.config(),
+        );
+
         Ok(())
     }
 }

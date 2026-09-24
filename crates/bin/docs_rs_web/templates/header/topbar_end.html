@@ -2,8 +2,8 @@
 {%- let requested_host = askama::get_value::<crate::extractors::RequestedHost>("requested_host").unwrap() -%}
 
                 <div class="spacer"></div>
-                {# The global alert, if there is one #}
-                {% include "header/global_alert.html" -%}
+                {# The current abnormalities, if there are any #}
+                <div id="abnormalities" class="hidden"></div>
 
                 <ul class="pure-menu-list">
                     {#

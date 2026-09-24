@@ -1,11 +1,12 @@
 use crate::Context;
 use anyhow::Result;
 use bon::bon;
+use docs_rs_build_queue::AsyncBuildQueue;
 use docs_rs_config::AppConfig;
 use docs_rs_database::{AsyncPoolClient, Config as DatabaseConfig, testing::TestDatabase};
 use docs_rs_fastly::Cdn;
 use docs_rs_opentelemetry::testing::{CollectedMetrics, TestMetrics};
-use docs_rs_registry_api::RegistryApi;
+use docs_rs_registry_api::testing::TestRegistry;
 use docs_rs_storage::{Config as StorageConfig, testing::TestStorage};
 use docs_rs_test_fakes::FakeRelease;
 use std::{ops::Deref, sync::Arc};
@@ -19,6 +20,7 @@ pub struct TestEnvironment<C> {
     storage: TestStorage,
     #[allow(dead_code)] // we need to keep the storage so it can be cleaned up.
     db: TestDatabase,
+    registry: TestRegistry,
 }
 
 impl<C: AppConfig> Deref for TestEnvironment<C> {
@@ -41,8 +43,8 @@ impl<C: AppConfig> TestEnvironment<C> {
     #[builder(finish_fn = build)]
     pub async fn builder(
         config: Option<C>,
-        registry_api_config: Option<docs_rs_registry_api::Config>,
         storage_config: Option<StorageConfig>,
+        build_queue_config: Option<docs_rs_build_queue::Config>,
     ) -> Result<Self> {
         docs_rs_logging::testing::init();
 
@@ -52,14 +54,7 @@ impl<C: AppConfig> TestEnvironment<C> {
             C::test_config()?
         });
 
-        let registry_api_config =
-            Arc::new(if let Some(registry_api_config) = registry_api_config {
-                registry_api_config
-            } else {
-                docs_rs_registry_api::Config::from_environment()?
-            });
-
-        let registry_api = RegistryApi::from_config(&registry_api_config)?;
+        let test_registry = TestRegistry::new().await?;
 
         let metrics = TestMetrics::new();
 
@@ -75,6 +70,18 @@ impl<C: AppConfig> TestEnvironment<C> {
         let test_storage =
             TestStorage::from_config(storage_config.clone(), metrics.provider()).await?;
 
+        let build_queue_config = Arc::new(if let Some(config) = build_queue_config {
+            config
+        } else {
+            docs_rs_build_queue::Config::from_environment()?
+        });
+
+        let build_queue = Arc::new(AsyncBuildQueue::new(
+            db.pool().clone(),
+            build_queue_config.clone(),
+            metrics.provider(),
+        ));
+
         Ok(Self {
             config: app_config,
             context: Context::builder()
@@ -83,8 +90,11 @@ impl<C: AppConfig> TestEnvironment<C> {
                 .meter_provider(metrics.provider().clone())
                 .pool(db_config.into(), db.pool().clone())
                 .storage(storage_config.clone(), test_storage.storage())
-                .with_build_queue()?
-                .registry_api(registry_api_config, registry_api.into())
+                .build_queue(build_queue_config, build_queue)
+                .registry_api(
+                    test_registry.test_config().clone(),
+                    test_registry.api().clone(),
+                )
                 .with_repository_stats()?
                 .maybe_cdn(
                     Arc::new(docs_rs_fastly::Config::test_config()?),
@@ -95,6 +105,7 @@ impl<C: AppConfig> TestEnvironment<C> {
                 .into(),
             db,
             storage: test_storage,
+            registry: test_registry,
             metrics,
         })
     }
@@ -111,6 +122,10 @@ impl<C: AppConfig> TestEnvironment<C> {
         self.context
             .cdn()
             .expect("we always have a CDN in test environments")
+    }
+
+    pub fn test_registry(&self) -> &TestRegistry {
+        &self.registry
     }
 
     pub async fn async_conn(&self) -> Result<AsyncPoolClient> {

@@ -1,194 +1,137 @@
 # just commands for CI & local development
 
+# Benchmark a rustdoc page with ApacheBench.
 [group('testing')]
 bench-rustdoc-page host="http://127.0.0.1:8888":
-  rm -rf ignored/cratesfyi-prefix/archive_cache/*
-  ab \
-    -n 10000 \
-    -c 500 \
-    {{ host }}/rayon/1.11.0/rayon/
+    rm -rf ignored/cratesfyi-prefix/archive_cache/*
+    ab \
+      -n 10000 \
+      -c 500 \
+      {{ host }}/rayon/1.11.0/rayon/
 
-# update sqlx metadata offline mode, for all 
-# crates that have it.
+# Build the crate fixtures required by the GUI test suite.
 [group('testing')]
-[group('sqlx')]
-sqlx-prepare *args: _ensure_db_and_s3_are_running
-  #!/usr/bin/env bash
-  set -euo pipefail
+prepare-gui-tests: _ensure_db_migrated
+    just _builder build update-toolchain
+    just _builder build crate sysinfo 0.23.4
+    just _builder build crate sysinfo 0.23.5
+    just _builder build crate libtest 0.0.1
+    just _builder build crate zbus 5.15.0
+    just _builder build add-essential-files
 
-  cargo sqlx prepare \
-      --database-url $DOCSRS_DATABASE_URL \
-      --workspace \
-      {{ args }} \
-      -- --all-targets --all-features
-
-  for subcrate in crates/lib/* crates/bin/*; do
-    echo "Preparing SQLx metadata for ${subcrate}..."
-    # NOTE: potential optimization: only run this command when `sqlx` 
-    # is in the dependencies of the subcrate.
-    (cd "${subcrate}" && cargo sqlx prepare \
-        --database-url $DOCSRS_DATABASE_URL \
-        {{ args }} \
-        -- --all-targets --all-features)
-  done
-
-
+# Run browser assertions against an existing web server on localhost:3000.
 [group('testing')]
-[group('sqlx')]
-sqlx-check:
-  just sqlx-prepare --check
+run-gui-browser-tests:
+    npm install --loglevel verbose
+    npx --no-install puppeteer browsers install chrome
+    node ./gui-tests/tester.js
 
+# Run GUI tests with the web server on the host, reusing existing fixtures.
 [group('testing')]
-[group('sqlx')]
-sqlx-migrate-run: _ensure_db_and_s3_are_running
-  cargo sqlx migrate run \
-    --database-url $DOCSRS_DATABASE_URL \
-    --source ./crates/lib/docs_rs_database/migrations
+run-gui-tests: _ensure_db_migrated
+    #!/usr/bin/env bash
+    set -euo pipefail
 
+    cargo build -p docs_rs_web
+
+    web_pid=""
+
+    cleanup() {
+      if [ -n "$web_pid" ]; then
+        kill -KILL "$web_pid" 2>/dev/null || true
+        wait "$web_pid" 2>/dev/null || true
+      fi
+    }
+    trap cleanup EXIT INT TERM
+
+    cargo run -p docs_rs_web &
+    web_pid=$!
+
+    # Fail instead of waiting forever if the server fails to start.
+    for _ in {1..100}; do
+      if curl --silent --fail http://localhost:3000/ >/dev/null; then
+        break
+      fi
+      if ! kill -0 "$web_pid" 2>/dev/null; then
+        wait "$web_pid"
+      fi
+      sleep 0.2
+    done
+
+    curl --silent --fail http://localhost:3000/ >/dev/null
+    just run-gui-browser-tests
+
+# Run GUI tests against the packaged web-server Compose service.
 [group('testing')]
-[group('sqlx')]
-sqlx-migrate-revert target="0": _ensure_db_and_s3_are_running
-  # --target 0 means "revert everything"
-  cargo sqlx migrate revert \
-    --database-url $DOCSRS_DATABASE_URL \
-    --source ./crates/lib/docs_rs_database/migrations \
-    --target-version {{ target }}
-
-
-# Format the code using `cargo fmt`. 
-[group('testing')]
-format:
-    rustup component add rustfmt
-    # like this we get both the non-zero exit code, and the local code is 
-    # formatted.
-    cargo fmt --all -- --check || { cargo fmt --all && exit 1; }
-
-# run clippy, in our config
-[group('testing')]
-clippy *args:
-  rustup component add clippy
-  cargo clippy \
-    --all-features \
-    --all-targets \
-    --workspace \
-    --locked \
-    {{ args }} \
-    -- -D warnings 
-
-# run clippy --fix
-[group('testing')]
-clippy-fix:
-    just clippy --fix --allow-dirty --allow-staged
-
-# run all linters, for local development & CI
-[group('testing')]
-lint: format lint-dependencies-machete
-  #!/usr/bin/env bash
-  set -euo pipefail
-
-  if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
-    just sort-cargo-toml --check
-    just clippy
-  else
-    just sort-cargo-toml 
-    just clippy-fix
-  fi
-
-[group('testing')]
-sort-cargo-toml *args:
-  #!/usr/bin/env bash
-  set -euo pipefail
-
-  if [ {{semver_matches(trim_start_match(shell("cargo-sort --version"), "cargo-sort "), ">=2.1.3")}} != 'true' ]; then 
-    echo "cargo-sort to old, must be >=2.1.3"
-    exit 1;
-  fi
-
-  cargo sort --workspace {{ args }} 
-
-
-[group('testing')]
-lint-dependencies-machete: 
-  #!/usr/bin/env bash
-  set -euo pipefail
-
-  # check unused deps with cargo machete is fast, 
-  # but has many false positives. 
-  # While it can also recurse into subdirs, it would 
-  # also stumble onto our broken crates in `/tests/crates/*`, 
-  # where I also don't want to add machete-metadata.
-  fd \
-    --glob 'Cargo.toml' \
-    --type file \
-    --exclude tests \
-    -X cargo machete {}
-
-[group('testing')]
-lint-dependencies-udeps:
-  #!/usr/bin/env bash
-  set -euo pipefail
-
-  # check unused deps with cargo udeps.
-  # Optional, since udeps is much slower because it 
-  # needs to additionally compile the workspace with nightly
-  echo "check for unused normal dependencies"
-  cargo +nightly udeps --workspace
-
-  echo "check for unused dev dependencies"
-  cargo +nightly udeps --workspace --all-targets
-
-[group('testing')]
-lint-js *args:
-  deno run -A npm:eslint@9 \
-    crates/bin/docs_rs_web/static \
-    crates/bin/docs_rs_web/templates \
-    eslint.config.js \
-    gui-tests \
-    {{ args }}
-  
-[group('testing')]
-run-gui-tests: _ensure_db_and_s3_are_running cli-db-migrate compose-up-web
-  just cli-build-update-toolchain
-  just cli-build-crate sysinfo 0.23.4
-  just cli-build-crate sysinfo 0.23.5
-  just cli-build-crate libtest 0.0.1
-  just cli-build-add-essential-files
-
-  just _cli gui_tests 
+run-gui-tests-e2e: compose-up-web run-gui-browser-tests
 
 _build-test-binaries:
-  #!/usr/bin/env bash
-  set -euo pipefail
+    #!/usr/bin/env bash
+    set -euo pipefail
 
-  export SQLX_OFFLINE=1
-  cargo test --no-run --workspace --locked
+    export SQLX_OFFLINE=1
+    cargo nextest run --no-run --workspace --locked
 
+# Build and run the complete Rust workspace test suite.
 [group('testing')]
-run-tests: _ensure_db_and_s3_are_running _build-test-binaries
-  #!/usr/bin/env bash
-  set -euo pipefail
+run-tests: compose-up-resources _build-test-binaries
+    #!/usr/bin/env bash
+    set -euo pipefail
 
-  export DOCSRS_INCLUDE_DEFAULT_TARGETS=false
-  export DOCSRS_LOG=docs_rs=debug,rustwide=info
-  export RUST_BACKTRACE=1
-  export DOCSRS_PREFIX=ignored/cratesfyi-prefix
-  export DOCSRS_DATABASE_URL=postgresql://cratesfyi:password@localhost:15432
-  export AWS_ACCESS_KEY_ID=cratesfyi
-  export AWS_SECRET_ACCESS_KEY=secret_key
-  export S3_ENDPOINT=http://localhost:9000
+    export DOCSRS_INCLUDE_DEFAULT_TARGETS=false
+    export DOCSRS_LOG=docs_rs=debug,rustwide=info
+    export RUST_BACKTRACE=1
+    export DOCSRS_PREFIX=ignored/cratesfyi-prefix
+    export DOCSRS_DATABASE_URL=postgresql://cratesfyi:password@localhost:15432
+    export AWS_ACCESS_KEY_ID=cratesfyi
+    export AWS_SECRET_ACCESS_KEY=secret_key
+    export S3_ENDPOINT=http://localhost:9000
 
-  cargo test --workspace --locked --no-fail-fast
+    cargo nextest run --workspace --locked --no-fail-fast
 
+# Run stress-tests of sub-crates that have them.
+#
+# Should be migrated to some test-tagging (with nextest?) at some point
 [group('testing')]
-[group('builder')]
-run-builder-tests: _ensure_db_and_s3_are_running
-  #!/usr/bin/env bash
-  set -euo pipefail
+run-stress-tests:
+    cargo test -p docs_rs_storage --features stress-tests archive_index::tests::stress_tests
 
-  export DOCSRS_INCLUDE_DEFAULT_TARGETS=true
-  export DOCSRS_DOCKER_IMAGE=ghcr.io/rust-lang/crates-build-env/linux-micro
-  export DOCSRS_LOG=docs_rs=debug,rustwide=info
-  export RUST_BACKTRACE=1
-  export DOCSRS_PREFIX=ignored/cratesfyi-prefix
+# Run ignored builder integration tests serially.
+[group('testing')]
+run-builder-tests: compose-up-resources
+    #!/usr/bin/env bash
+    set -euo pipefail
 
-  cargo test --locked -- --ignored --test-threads=1
+    export DOCSRS_INCLUDE_DEFAULT_TARGETS=true
+    export DOCSRS_DOCKER_IMAGE=ghcr.io/rust-lang/crates-build-env/linux-micro
+    export DOCSRS_LOG=docs_rs=debug,rustwide=info
+    export RUST_BACKTRACE=1
+    export DOCSRS_PREFIX=ignored/cratesfyi-prefix
+
+    cargo nextest run --locked --run-ignored only --workspace --test-threads=1
+
+# Remove the migrated template and any schemas left behind by interrupted test runs.
+[group('testing')]
+clean-test-db-schema: compose-up-resources
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    psql "$DOCSRS_DATABASE_URL" --set=ON_ERROR_STOP=1 <<'SQL'
+        DROP SCHEMA IF EXISTS docs_rs_test_template CASCADE;
+
+        -- `\gexec` takes the SQL statements found in the result of
+        -- the query, and executes them.
+        SELECT format('DROP SCHEMA IF EXISTS %I CASCADE;', schema_name)
+        FROM information_schema.schemata
+        WHERE schema_name ~ '^docs_rs_test_schema_'
+        \gexec
+    SQL
+
+# Test migrations with both SQLx CLI and docs_rs_admin.
+[group('testing')]
+test-database-migrations:
+    just sqlx-migrate-run
+    just sqlx-check
+    just sqlx-migrate-revert
+    just cli-db-migrate
+    just cli-db-migrate 0

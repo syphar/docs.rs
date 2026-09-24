@@ -4,13 +4,14 @@ use docs_rs_config::AppConfig as _;
 use docs_rs_context::Context;
 use docs_rs_types::{KrateName, Version};
 use docs_rs_watcher::{Config, Index, index_watcher};
+use futures_util::FutureExt as _;
 use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let _guard = docs_rs_logging::init_from_environment().context("error initializing logging")?;
 
-    if let Err(err) = CommandLine::parse().handle_args().await {
+    if let Err(err) = CommandLine::parse().handle_args().boxed().await {
         eprintln!("error running watcher: {:?}", err);
         drop(_guard);
         std::process::exit(1);
@@ -26,7 +27,7 @@ async fn main() -> Result<()> {
     rename_all = "kebab-case",
 )]
 enum CommandLine {
-    /// Run a regsitry euild-server
+    /// Run a registry build-server
     Start {
         /// Enable or disable the repository stats updater
         #[arg(long = "repository-stats-updater", default_value = "true")]
@@ -164,6 +165,10 @@ enum DatabaseSubcommand {
 
     /// Compares the database with the index and resolves inconsistencies
     Synchronize {
+        /// Only synchronize this crate
+        #[arg(name = "CRATE")]
+        name: Option<KrateName>,
+
         /// Don't actually resolve the inconsistencies, just log them
         #[arg(long)]
         dry_run: bool,
@@ -194,8 +199,13 @@ impl DatabaseSubcommand {
 
             Self::Delete { command } => command.handle_args(config, ctx).await?,
 
-            Self::Synchronize { dry_run } => {
-                docs_rs_watcher::consistency::run_check(&config, &ctx, dry_run).await?;
+            Self::Synchronize { name, dry_run } => {
+                if let Some(name) = name {
+                    docs_rs_watcher::consistency::run_single_check(&config, &ctx, &name, dry_run)
+                        .await?;
+                } else {
+                    docs_rs_watcher::consistency::run_check(&config, &ctx, dry_run).await?;
+                }
             }
         }
         Ok(())

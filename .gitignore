@@ -1,4 +1,4 @@
-*/ignored
+**/ignored
 /.env
 /.docker.env
 /src/web/badge/Cargo.lock
@@ -13,3 +13,7 @@ target
 .rustwide-docker
 archive_cache
 .workspace
+.workspace.test-lock
+node_modules/
+docs/book/
+docs/src/generated/

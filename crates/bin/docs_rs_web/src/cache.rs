@@ -22,7 +22,7 @@ pub const SURROGATE_KEY_ALL: SurrogateKey = SurrogateKey::from_static("all");
 /// invalidated everything we deploy a new version of docs.rs.
 pub const SURROGATE_KEY_DOCSRS_STATIC: SurrogateKey = SurrogateKey::from_static("docs-rs-static");
 
-/// cache poicy for static assets like rustdoc files or build assets.
+/// cache policy for static assets like rustdoc files or build assets.
 pub const STATIC_ASSET_CACHE_POLICY: CachePolicy = CachePolicy::ForeverInCdnAndBrowser;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -81,6 +81,16 @@ static SHORT: ResponseCacheHeaders = ResponseCacheHeaders {
     is_caching_something: true,
 };
 
+/// Cache for a little longer time in the browser & in the CDN.
+/// Helps protecting against traffic spikes.
+static LONGER: ResponseCacheHeaders = ResponseCacheHeaders {
+    cache_control: Some(HeaderValue::from_static("public, max-age=600")),
+    surrogate_control: None,
+    surrogate_keys: None,
+    needs_cdn_invalidation: false,
+    is_caching_something: true,
+};
+
 /// don't cache, don't even store. Never. Ever.
 static NO_STORE_MUST_REVALIDATE: ResponseCacheHeaders = ResponseCacheHeaders {
     cache_control: Some(HeaderValue::from_static(
@@ -125,7 +135,7 @@ static FOREVER_IN_CDN_AND_BROWSER: ResponseCacheHeaders = ResponseCacheHeaders {
 };
 
 /// defines the wanted caching behaviour for a web response.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum CachePolicy {
     /// no browser or CDN caching.
     /// In some cases the browser might still use cached content,
@@ -141,6 +151,11 @@ pub enum CachePolicy {
     /// Can be used when the content can be a _little_ outdated,
     /// while protecting against spikes in traffic.
     ShortInCdnAndBrowser,
+    /// cache for a little longer short time in the browser & CDN.
+    /// right now: 10 minutes
+    /// Can be used when the content can be a _little_ outdated,
+    /// while protecting against spikes in traffic.
+    LongerInCdnAndBrowser,
     /// cache forever in browser & CDN.
     /// Valid when you have hashed / versioned filenames and every rebuild would
     /// change the filename.
@@ -168,6 +183,7 @@ impl CachePolicy {
             CachePolicy::NoCaching => NO_CACHING.clone(),
             CachePolicy::NoStoreMustRevalidate => NO_STORE_MUST_REVALIDATE.clone(),
             CachePolicy::ShortInCdnAndBrowser => SHORT.clone(),
+            CachePolicy::LongerInCdnAndBrowser => LONGER.clone(),
             CachePolicy::ForeverInCdnAndBrowser => FOREVER_IN_CDN_AND_BROWSER.clone(),
             CachePolicy::ForeverInCdn(surrogate_keys) => {
                 if config.cache_invalidatable_responses {
@@ -190,8 +206,8 @@ impl CachePolicy {
 
                 if config.cache_invalidatable_responses
                     && let Some(cache_control) =
-                        config.cache_control_stale_while_revalidate.map(|seconds| {
-                            format!("stale-while-revalidate={seconds}")
+                        config.cache_control_stale_while_revalidate.map(|duration| {
+                            format!("stale-while-revalidate={}", duration.as_secs())
                                 .parse::<HeaderValue>()
                                 .unwrap()
                         })
@@ -270,6 +286,7 @@ mod tests {
     use axum::{Router, body::Body, routing::get};
     use axum_extra::headers::CacheControl;
     use docs_rs_config::AppConfig as _;
+    use docs_rs_types::Duration;
     use http::Request;
     use test_case::{test_case, test_matrix};
     use tower::{ServiceBuilder, ServiceExt as _};
@@ -300,11 +317,11 @@ mod tests {
 
     #[test_matrix(
         [true, false],
-        [Some(86400), None]
+        [Some(Duration::from_days(1)), None]
     )]
     fn test_validate_header_syntax_for_all_possible_combinations(
         cache_invalidatable_responses: bool,
-        stale_while_revalidate: Option<u32>,
+        stale_while_revalidate: Option<Duration>,
     ) -> Result<()> {
         let config = Config::builder()
             .test_config()?
@@ -333,6 +350,7 @@ mod tests {
             NoCaching,
             NoStoreMustRevalidate,
             ShortInCdnAndBrowser,
+            LongerInCdnAndBrowser,
             ForeverInCdnAndBrowser,
             ForeverInCdn(key.clone().into()),
             ForeverInCdnAndStaleInBrowser(key.clone().into()),
@@ -462,7 +480,7 @@ mod tests {
     fn render_stale_with_config_fastly() -> Result<()> {
         let config = Config::builder()
             .test_config()?
-            .cache_control_stale_while_revalidate(666)
+            .cache_control_stale_while_revalidate(Duration::from_secs(666))
             .build();
 
         let key = SurrogateKey::from_static("something");

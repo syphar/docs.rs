@@ -24,8 +24,8 @@ base64 = { workspace = true }
 bon = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }
-comrak = { version = "0.52.0", default-features = false }
-constant_time_eq = "0.5.0"
+comrak = { version = "0.55.0", default-features = false }
+constant_time_eq = "0.6.0"
 docs_rs_build_limits = { path = "../../lib/docs_rs_build_limits" }
 docs_rs_build_queue = { path = "../../lib/docs_rs_build_queue" }
 docs_rs_cargo_metadata = { path = "../../lib/docs_rs_cargo_metadata" }
@@ -47,27 +47,27 @@ font-awesome-as-a-crate = { path = "../../lib/font-awesome-as-a-crate" }
 futures-util = { workspace = true }
 getrandom = "0.4.0"
 http = { workspace = true }
-lol_html = "2.0.0"
+lol_html = "3.0.0"
 mime = { workspace = true }
 num_cpus = { workspace = true }
 opentelemetry = { workspace = true }
 postcard = { workspace = true }
 rayon-core = "1.13.0"
 regex = { workspace = true }
-reqwest = { workspace = true }
 sentry = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_with = { workspace = true }
 slug = { workspace = true }
 sqlx = { workspace = true }
+strum = { workspace = true }
 syntect = { version = "5.0.0", default-features = false, features = ["dump-load", "html", "parsing", "regex-onig"] }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { version = "0.7.15", default-features = false, features = ["io"] }
 toml = { workspace = true }
 tower = "0.5.1"
-tower-http = { version = "0.6.0", features = ["catch-panic", "fs", "timeout", "trace"] }
+tower-http = { version = "0.7.0", features = ["catch-panic", "fs", "timeout", "trace"] }
 tracing = { workspace = true }
 tracing-futures = { version = "0.2.5", features = ["futures-03", "std-future"] }
 url = { workspace = true }
@@ -84,15 +84,16 @@ docs_rs_config = { path = "../../lib/docs_rs_config", features = ["testing"] }
 docs_rs_context = { path = "../../lib/docs_rs_context", features = ["testing"] }
 docs_rs_database = { path = "../../lib/docs_rs_database", features = ["testing"] }
 docs_rs_headers = { path = "../../lib/docs_rs_headers", features = ["testing"] }
+docs_rs_registry_api = { path = "../../lib/docs_rs_registry_api", features = ["testing"] }
 docs_rs_storage = { path = "../../lib/docs_rs_storage", features = ["testing"] }
 docs_rs_test_fakes = { path = "../../lib/docs_rs_test_fakes" }
 docs_rs_types = { path = "../../lib/docs_rs_types", features = ["testing"] }
 http-body-util = "0.1.0"
 indoc = "2.0.0"
 kuchikiki = "0.8"
-mockito = { workspace = true }
 opentelemetry_sdk = { workspace = true }
 pretty_assertions = { workspace = true }
+reqwest = { workspace = true }
 tempfile = { workspace = true }
 test-case = { workspace = true }
 walkdir = { workspace = true }

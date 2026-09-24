@@ -2,6 +2,7 @@
 
 pub(crate) mod about;
 pub(crate) mod build_details;
+pub(crate) mod build_status;
 pub(crate) mod builds;
 pub(crate) mod crate_details;
 pub(crate) mod features;
@@ -14,7 +15,7 @@ pub(crate) mod status;
 
 use crate::cache::CachePolicy;
 use crate::metrics::WebMetrics;
-use crate::middleware::{csp, security};
+use crate::middleware::csp;
 use crate::page::{self, TemplateData};
 use crate::{Config, impl_axum_webpage};
 use crate::{cache, routes, routes::host_dispatch::HostDispatchService};
@@ -77,7 +78,6 @@ async fn apply_middleware(
     template_data: Option<Arc<TemplateData>>,
 ) -> Result<AxumRouter> {
     let has_templates = template_data.is_some();
-
     let web_metrics = Arc::new(WebMetrics::new(&context.meter_provider));
 
     Ok(router.layer(
@@ -89,14 +89,13 @@ async fn apply_middleware(
                 set_sentry_transaction_name_from_axum_route,
             ))
             .layer(CatchPanicLayer::new())
-            .layer(middleware::from_fn(security::security_middleware))
             .layer(option_layer(
                 config
                     .report_request_timeouts
                     .then_some(middleware::from_fn(log_timeouts_to_sentry)),
             ))
             .layer(option_layer(config.request_timeout.map(|to| {
-                TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, to)
+                TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, to.into())
             })))
             .layer(Extension(context.clone()))
             .layer(Extension(context.pool()?.clone()))
@@ -279,6 +278,23 @@ mod tests {
             assert!(web.get("/").await?.status().is_success());
             Ok(())
         });
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_abnormalities_placeholder_is_rendered() -> Result<()> {
+        let env = TestEnvironment::new().await?;
+
+        let web = env.web_app().await;
+        let page = kuchikiki::parse_html().one(web.assert_success("/").await?.text().await?);
+        let placeholder = page
+            .select("#abnormalities")
+            .unwrap()
+            .next()
+            .expect("missing abnormalities placeholder");
+
+        assert_eq!(placeholder.attributes.borrow().get("class"), Some("hidden"));
+        assert_eq!(page.select("a.pure-menu-link.error").unwrap().count(), 0);
+        Ok(())
     }
 
     #[test]

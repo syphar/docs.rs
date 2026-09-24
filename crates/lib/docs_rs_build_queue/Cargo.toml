@@ -21,9 +21,11 @@ docs_rs_env_vars = { path = "../docs_rs_env_vars" }
 docs_rs_opentelemetry = { path = "../docs_rs_opentelemetry" }
 docs_rs_repository_stats = { path = "../docs_rs_repository_stats" }
 docs_rs_types = { path = "../docs_rs_types" }
+docs_rs_uri = { path = "../docs_rs_uri" }
 docs_rs_utils = { path = "../docs_rs_utils" }
 futures-util = { workspace = true }
 opentelemetry = { workspace = true }
+regex = { workspace = true }
 sqlx = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
