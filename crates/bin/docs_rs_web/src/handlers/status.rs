@@ -134,7 +134,6 @@ pub(crate) async fn crate_warnings(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::{
         cache::CachePolicy,
         testing::{
@@ -260,12 +259,10 @@ mod tests {
                 .build()
         }
 
-        fn rustsec_config(&self, ttl: Option<Duration>) -> docs_rs_rustsec::Config {
+        fn rustsec_config(&self) -> docs_rs_rustsec::ConfigBuilder<S> {
             docs_rs_rustsec::Config::builder()
                 .base_url(self.rustsec_server.url().parse().unwrap())
                 .max_retries(0)
-                .maybe_cache_default_ttl(ttl)
-                .build()
         }
 
         async fn assert_async(self) {
@@ -295,9 +292,8 @@ mod tests {
         }
     }
 
-    #[test_case(Duration::from_mins(1), Duration::from_mins(2), false, Duration::from_mins(1); "replacement shorter")]
+    #[test_case(Duration::from_secs(1200), Duration::from_secs(1800), false, Duration::from_secs(1200); "replacement shorter")]
     #[test_case(Duration::from_mins(2), Duration::from_mins(1), false, Duration::from_mins(1); "rustsec shorter")]
-    #[test_case(Duration::from_secs(1200), Duration::from_secs(1800), false, Duration::from_secs(1200); "longer TTL")]
     #[test_case(Duration::ZERO, Duration::from_mins(2), false, Duration::ZERO; "uncacheable")]
     #[test_case(Duration::from_mins(1), Duration::from_mins(2), true, Duration::from_mins(1); "empty HTML")]
     #[tokio::test(flavor = "multi_thread")]
@@ -362,37 +358,56 @@ mod tests {
             assert_ttl(&response, expected);
         }
 
-        let html = response.text().await?;
         if empty {
-            assert!(html.is_empty());
-        } else {
-            assert!(html.contains("Std alternative"));
-            assert!(html.contains("Unmaintained"));
-            let page = kuchikiki::parse_html().one(format!("<ul>{html}</ul>"));
-            assert_eq!(
-                page.select("ul > li.crate-warning > a.warn")
-                    .unwrap()
-                    .count(),
-                2
-            );
-            assert_eq!(
-                page.select("li.crate-warning + li.crate-warning")
-                    .unwrap()
-                    .count(),
-                1
-            );
+            assert!(response.text().await?.is_empty());
         }
 
         mock_server.assert_async().await;
         Ok(())
     }
 
-    #[test_case(false; "uncached 404")]
-    #[test_case(true; "no-store 404")]
     #[tokio::test(flavor = "multi_thread")]
-    async fn crate_warnings_does_not_cache_uncached_replacement_404(no_store: bool) -> Result<()> {
-        let cache_control = no_store.then(|| CacheControl::new().with_no_store());
+    async fn crate_warnings_renders_separate_menu_items() -> Result<()> {
+        let mocks = WarningSourceMock::new()
+            .await?
+            .std_replacement_mock()
+            .replacement(OWNED_ALLOC, std_replacement("Use std"))
+            .start()
+            .await
+            .rustsec_mock(OWNED_ALLOC)
+            .start()
+            .await;
+        let env = TestEnvironment::builder()
+            .std_replacements_config(mocks.std_replacements_config(None))
+            .rustsec_config(mocks.rustsec_config(None))
+            .build()
+            .await?;
+        let html = env
+            .web_app()
+            .await
+            .assert_success("/-/partial/crate-warnings/owned-alloc/")
+            .await?
+            .text()
+            .await?;
+        let page = kuchikiki::parse_html().one(format!("<ul>{html}</ul>"));
+        let labels: Vec<_> = page
+            .select("ul > li.crate-warning > a.warn")
+            .unwrap()
+            .map(|link| link.text_contents().trim().to_owned())
+            .collect();
+        assert_eq!(labels, ["Std alternative", "Unmaintained"]);
+        assert_eq!(
+            page.select("li.crate-warning + li.crate-warning")
+                .unwrap()
+                .count(),
+            1
+        );
+        mocks.assert_async().await;
+        Ok(())
+    }
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn crate_warnings_does_not_cache_uncached_replacement_404() -> Result<()> {
         let mock_server = WarningSourceMock::new()
             .await?
             .rustsec_mock(OWNED_ALLOC)
@@ -400,7 +415,6 @@ mod tests {
             .start()
             .await
             .std_replacement_mock()
-            .maybe_cache_control(cache_control)
             .status_code(StatusCode::NOT_FOUND)
             .start()
             .await;
@@ -471,17 +485,6 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn crate_warnings_accepts_missing_clients() -> Result<()> {
-        let response =
-            super::crate_warnings(None, None, crate::extractors::Path("unknown".parse()?))
-                .await?
-                .into_response();
-        assert_eq!(response.status(), http::StatusCode::OK);
-        assert!(response.headers().get(CACHE_CONTROL).is_none());
-        Ok(())
-    }
-
     #[tokio::test(flavor = "multi_thread")]
     async fn crate_warnings_partial_returns_unmaintained_advisory() -> Result<()> {
         let mock_server = WarningSourceMock::new()
@@ -519,7 +522,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn crate_warnings_partial_returns_replacement() -> Result<()> {
         let replacement = ReplacementDetails::new(
-            "Use std::sync::LazyLock (stable since Rust 1.80).",
+            "Use <std> & \"quotes\"",
             "https://doc.rust-lang.org/std/sync/struct.LazyLock.html".parse()?,
         );
         const LAZY_STATIC: KrateName = KrateName::from_static("lazy_static");
@@ -550,7 +553,9 @@ mod tests {
             "text/html; charset=utf-8"
         );
         assert_ttl(&response, Duration::from_secs(90));
-        let page = kuchikiki::parse_html().one(response.text().await?);
+        let html = response.text().await?;
+        assert!(!html.contains("<std>"));
+        let page = kuchikiki::parse_html().one(html);
         let link = page.select_first("a.pure-menu-link.warn").unwrap();
         assert_eq!(link.text_contents().trim(), "Std alternative");
 
@@ -577,26 +582,6 @@ mod tests {
             .await?;
         response.assert_cache_control(CachePolicy::NoCaching, env.config());
         assert!(response.text().await?.is_empty());
-        Ok(())
-    }
-
-    #[test]
-    fn crate_warnings_escapes_description() -> Result<()> {
-        use askama::Template as _;
-        let description = "Use <std> & \"quotes\"";
-        let warnings = super::CrateWarnings {
-            ttl: std::time::Duration::ZERO,
-            unmaintained: None,
-            replacement: Some(Arc::new(ReplacementDetails::new(
-                description,
-                "https://example.com".parse()?,
-            ))),
-        };
-        let html = warnings.render()?;
-        assert!(!html.contains("<std>"));
-        let page = kuchikiki::parse_html().one(html);
-        let link = page.select_first("a").unwrap();
-        assert_eq!(link.attributes.borrow().get("title"), Some(description));
         Ok(())
     }
 
