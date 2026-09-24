@@ -43,27 +43,15 @@ impl StdReplacements {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::std_replacement;
+    use crate::testing::{StdReplacementMockServer, std_replacement};
+    use docs_rs_headers::CacheControl;
     use docs_rs_types::testing::KRATE;
     use std::time::Duration;
 
-    async fn fixture() -> Result<(mockito::ServerGuard, StdReplacements)> {
-        let server = mockito::Server::new_async().await;
-        let api = StdReplacements::from_config(
-            &Config::builder()
-                .url(server.url().parse()?)
-                .max_retries(0)
-                .build(),
-        )?;
+    async fn fixture() -> Result<(StdReplacementMockServer, StdReplacements)> {
+        let server = StdReplacementMockServer::new().await;
+        let api = StdReplacements::from_config(&server.config().build())?;
         Ok((server, api))
-    }
-
-    fn body(description: &str) -> String {
-        serde_json::to_string(&ReplacementMap::from_iter([(
-            KRATE,
-            Arc::new(std_replacement(description)),
-        )]))
-        .unwrap()
     }
 
     async fn advance(duration: Duration) {
@@ -75,14 +63,13 @@ mod tests {
     #[tokio::test]
     async fn crate_lookups_share_dataset_and_preserve_ttl() -> Result<()> {
         let (mut server, api) = fixture().await?;
-        let mock = server
-            .mock("GET", "/")
-            .with_status(200)
-            .with_body(body("replacement"))
-            .with_header("cache-control", "max-age=600")
-            .expect(1)
-            .create_async()
+        server = server
+            .mock()
+            .replacement(KRATE, std_replacement("replacement"))
+            .cache_control(CacheControl::new().with_max_age(Duration::from_mins(10)))
+            .start()
             .await;
+
         let name = KRATE;
         let missing_name = KrateName::from_static("missing");
         let (present, missing) = tokio::try_join!(api.get(&name), api.get(&missing_name))?;
@@ -92,55 +79,51 @@ mod tests {
             assert!(ttl <= Duration::from_secs(600));
             assert!(ttl > Duration::from_secs(590));
         }
-        mock.assert_async().await;
+        server.assert_async().await;
         Ok(())
     }
 
     #[tokio::test]
     async fn refreshed_dataset_can_remove_replacements() -> Result<()> {
         let (mut server, api) = fixture().await?;
-        let initial = server
-            .mock("GET", "/")
-            .with_status(200)
-            .with_body(body("old"))
-            .with_header("cache-control", "max-age=1")
-            .create_async()
+        server = server
+            .mock()
+            .replacement(KRATE, std_replacement("old"))
+            .cache_control(CacheControl::new().with_max_age(Duration::from_secs(1)))
+            .start()
             .await;
+
         api.get(&KRATE).await?;
-        initial.remove_async().await;
-        let updated = server
-            .mock("GET", "/")
-            .with_status(200)
-            .with_body("{}")
-            .expect(1)
-            .create_async()
-            .await;
+        server.remove_mock();
+
+        server = server.mock().start().await;
         advance(Duration::from_secs(2)).await;
         assert!(api.get(&KRATE).await?.value.is_none());
-        updated.assert_async().await;
+        server.assert_async().await;
         Ok(())
     }
 
     #[tokio::test]
     async fn forwards_configured_fallback_ttl() -> Result<()> {
-        let mut server = mockito::Server::new_async().await;
+        let server = StdReplacementMockServer::new()
+            .await
+            .mock()
+            .replacement(KRATE, std_replacement("replacement"))
+            .start()
+            .await;
+
         let api = StdReplacements::from_config(
-            &Config::builder()
-                .url(server.url().parse()?)
-                .max_retries(0)
+            &server
+                .config()
                 .cache_default_ttl(Duration::from_secs(90).into())
                 .build(),
         )?;
-        let mock = server
-            .mock("GET", "/")
-            .with_body(body("replacement"))
-            .create_async()
-            .await;
+
         let result = api.get(&KRATE).await?;
         assert_eq!(result.value.unwrap().description(), "replacement");
         assert!(result.ttl <= Duration::from_secs(90));
         assert!(result.ttl > Duration::from_secs(85));
-        mock.assert_async().await;
+        server.assert_async().await;
         Ok(())
     }
 }

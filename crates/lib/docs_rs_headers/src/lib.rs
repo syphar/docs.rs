@@ -3,8 +3,8 @@ mod canonical_url;
 mod etag;
 mod if_none_match;
 mod surrogate_key;
-#[cfg(test)]
-mod testing;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 
 pub use cache_control::{cache_control_ttl, response_ttl};
 pub use canonical_url::CanonicalUrl;

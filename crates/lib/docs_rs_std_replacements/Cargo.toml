@@ -6,17 +6,27 @@ repository.workspace = true
 edition.workspace = true
 
 [features]
-testing = []
+testing = [
+    "dep:mockito",
+    "dep:docs_rs_headers",
+    "dep:http",
+    "dep:serde_json",
+    "docs_rs_headers/testing"
+]
 
 [dependencies]
 anyhow = { workspace = true }
 bon = { workspace = true }
 docs_rs_config = { path = "../docs_rs_config" }
 docs_rs_env_vars = { path = "../docs_rs_env_vars" }
+docs_rs_headers = { path = "../docs_rs_headers", optional = true }
 docs_rs_reqwest = { path = "../docs_rs_reqwest" }
 docs_rs_types = { path = "../docs_rs_types" }
 serde = { workspace = true }
+serde_json = { workspace = true, optional = true }
 url = { workspace = true }
+http = { workspace = true, optional = true }
+mockito = { workspace = true, optional = true }
 
 [dev-dependencies]
 docs_rs_types = { path = "../docs_rs_types", features = ["testing"] }
@@ -24,6 +34,8 @@ mockito = { workspace = true }
 serde_json = { workspace = true }
 test-case = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
+docs_rs_headers = { path = "../docs_rs_headers", features = ["testing"] }
+http = { workspace = true }
 
 [lints]
 workspace = true
