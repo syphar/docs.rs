@@ -146,27 +146,28 @@ mod tests {
     use bon::bon;
     use docs_rs_config::AppConfig as _;
     use docs_rs_database::service_config::{Abnormality, ConfigName, set_config};
-    use docs_rs_std_replacements::{ReplacementDetails, ReplacementMap, testing::std_replacement};
+    use docs_rs_std_replacements::{
+        ReplacementDetails,
+        testing::{StdReplacementMockServer, std_replacement},
+    };
     use docs_rs_types::{Duration, KrateName, testing::V1};
     use docs_rs_uri::EscapedURI;
     use http::{StatusCode, header::CACHE_CONTROL};
     use kuchikiki::traits::TendrilSink;
-    use std::{str::FromStr, sync::Arc};
+    use std::str::FromStr;
     use test_case::test_case;
 
     const OWNED_ALLOC: KrateName = KrateName::from_static("owned-alloc");
 
-    struct WarningSourceMock {
-        std_replacement_server: mockito::ServerGuard,
+    struct RustsecMockServer {
         rustsec_server: mockito::ServerGuard,
         mocks: Vec<mockito::Mock>,
     }
 
     #[bon]
-    impl WarningSourceMock {
+    impl RustsecMockServer {
         async fn new() -> Result<Self> {
             Ok(Self {
-                std_replacement_server: mockito::Server::new_async().await,
                 rustsec_server: mockito::Server::new_async().await,
                 mocks: Vec::new(),
             })
@@ -203,55 +204,6 @@ mod tests {
             );
 
             self
-        }
-
-        #[builder(start_fn(name = std_replacement_mock), finish_fn(name = start))]
-        async fn create_std_replacement_mock(
-            mut self,
-            #[builder(with = |krate: KrateName, details: ReplacementDetails| (krate, details))]
-            replacement: Option<(KrateName, ReplacementDetails)>,
-            #[builder(default, with = FromIterator::from_iter)] replacements: Vec<(
-                KrateName,
-                ReplacementDetails,
-            )>,
-            cache_control: Option<CacheControl>,
-            #[builder(default = StatusCode::OK)] status_code: StatusCode,
-        ) -> Self {
-            let map = ReplacementMap::from_iter(
-                replacements
-                    .into_iter()
-                    .chain(replacement)
-                    .map(|(krate, details)| (krate, Arc::new(details))),
-            );
-
-            let mut mock = self
-                .std_replacement_server
-                .mock("GET", "/all.json")
-                .with_status(status_code.as_u16().into());
-
-            if let Some(cache_control) = cache_control {
-                let value = test_typed_encode(cache_control);
-                mock = mock.with_header(CACHE_CONTROL, value.to_str().unwrap());
-            }
-
-            self.mocks.push(
-                mock.with_body(serde_json::to_string(&map).unwrap())
-                    .expect(1)
-                    .create_async()
-                    .await,
-            );
-
-            self
-        }
-
-        fn std_replacements_config(&self) -> docs_rs_std_replacements::ConfigBuilder {
-            docs_rs_std_replacements::Config::builder()
-                .url(
-                    format!("{}/all.json", self.std_replacement_server.url())
-                        .parse()
-                        .unwrap(),
-                )
-                .max_retries(0)
         }
 
         fn rustsec_config(&self) -> docs_rs_rustsec::ConfigBuilder {
@@ -300,18 +252,14 @@ mod tests {
     ) -> Result<()> {
         let replacement = std_replacement("Use std");
 
-        let mut mock_server = WarningSourceMock::new().await?;
+        let std_server = StdReplacementMockServer::new().await;
 
         let std_cache = CacheControl::new().with_max_age(std_ttl.into());
-        mock_server = if empty {
-            mock_server
-                .std_replacement_mock()
-                .cache_control(std_cache)
-                .start()
-                .await
+        let std_server = if empty {
+            std_server.mock().cache_control(std_cache).start().await
         } else {
-            mock_server
-                .std_replacement_mock()
+            std_server
+                .mock()
                 .replacement(OWNED_ALLOC, replacement.clone())
                 .cache_control(std_cache)
                 .start()
@@ -319,7 +267,8 @@ mod tests {
         };
 
         let rustsec_cache = CacheControl::new().with_max_age(rustsec_ttl.into());
-        mock_server = if empty {
+        let mock_server = RustsecMockServer::new().await?;
+        let mock_server = if empty {
             mock_server
                 .rustsec_mock(OWNED_ALLOC)
                 .status_code(StatusCode::NOT_FOUND)
@@ -336,7 +285,7 @@ mod tests {
         };
 
         let env = TestEnvironment::builder()
-            .std_replacements_config(mock_server.std_replacements_config().build())
+            .std_replacements_config(std_server.config().build())
             .rustsec_config(
                 mock_server
                     .rustsec_config()
@@ -362,23 +311,26 @@ mod tests {
             assert!(response.text().await?.is_empty());
         }
 
+        std_server.assert_async().await;
         mock_server.assert_async().await;
         Ok(())
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn crate_warnings_renders_separate_menu_items() -> Result<()> {
-        let mocks = WarningSourceMock::new()
-            .await?
-            .std_replacement_mock()
+        let std_server = StdReplacementMockServer::new()
+            .await
+            .mock()
             .replacement(OWNED_ALLOC, std_replacement("Use std"))
             .start()
-            .await
+            .await;
+        let mocks = RustsecMockServer::new()
+            .await?
             .rustsec_mock(OWNED_ALLOC)
             .start()
             .await;
         let env = TestEnvironment::builder()
-            .std_replacements_config(mocks.std_replacements_config().build())
+            .std_replacements_config(std_server.config().build())
             .rustsec_config(mocks.rustsec_config().build())
             .build()
             .await?;
@@ -402,25 +354,28 @@ mod tests {
                 .count(),
             1
         );
+        std_server.assert_async().await;
         mocks.assert_async().await;
         Ok(())
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn crate_warnings_does_not_cache_uncached_replacement_404() -> Result<()> {
-        let mock_server = WarningSourceMock::new()
+        let mock_server = RustsecMockServer::new()
             .await?
             .rustsec_mock(OWNED_ALLOC)
             .cache_control(CacheControl::new().with_max_age(std::time::Duration::from_secs(600)))
             .start()
+            .await;
+        let std_server = StdReplacementMockServer::new()
             .await
-            .std_replacement_mock()
+            .mock()
             .status_code(StatusCode::NOT_FOUND)
             .start()
             .await;
 
         let env = TestEnvironment::builder()
-            .std_replacements_config(mock_server.std_replacements_config().build())
+            .std_replacements_config(std_server.config().build())
             .rustsec_config(mock_server.rustsec_config().build())
             .build()
             .await?;
@@ -437,6 +392,7 @@ mod tests {
         assert!(html.contains("Unmaintained"));
         assert!(!html.contains("Std alternative"));
 
+        std_server.assert_async().await;
         mock_server.assert_async().await;
         Ok(())
     }
@@ -445,30 +401,29 @@ mod tests {
     #[test_case(false; "rustsec unavailable")]
     #[tokio::test(flavor = "multi_thread")]
     async fn crate_warnings_preserves_healthy_source(replacement_fails: bool) -> Result<()> {
-        let mut mocks = WarningSourceMock::new().await?;
-        if replacement_fails {
-            mocks = mocks
-                .rustsec_mock(OWNED_ALLOC)
-                .maybe_cache_control(None)
-                .start()
-                .await
-                .std_replacement_mock()
-                .status_code(StatusCode::SERVICE_UNAVAILABLE)
-                .start()
-                .await;
-        } else {
-            mocks = mocks
-                .std_replacement_mock()
-                .replacement(OWNED_ALLOC, std_replacement("Use std"))
-                .start()
-                .await
-                .rustsec_mock(OWNED_ALLOC)
-                .status_code(StatusCode::SERVICE_UNAVAILABLE)
-                .start()
-                .await;
-        }
+        let std_server = StdReplacementMockServer::new()
+            .await
+            .mock()
+            .replacement(OWNED_ALLOC, std_replacement("Use std"))
+            .status_code(if replacement_fails {
+                StatusCode::SERVICE_UNAVAILABLE
+            } else {
+                StatusCode::OK
+            })
+            .start()
+            .await;
+        let mocks = RustsecMockServer::new()
+            .await?
+            .rustsec_mock(OWNED_ALLOC)
+            .status_code(if replacement_fails {
+                StatusCode::OK
+            } else {
+                StatusCode::SERVICE_UNAVAILABLE
+            })
+            .start()
+            .await;
         let env = TestEnvironment::builder()
-            .std_replacements_config(mocks.std_replacements_config().build())
+            .std_replacements_config(std_server.config().build())
             .rustsec_config(mocks.rustsec_config().build())
             .build()
             .await?;
@@ -481,13 +436,14 @@ mod tests {
         let html = response.text().await?;
         assert_eq!(html.contains("Unmaintained"), replacement_fails);
         assert_eq!(html.contains("Std alternative"), !replacement_fails);
+        std_server.assert_async().await;
         mocks.assert_async().await;
         Ok(())
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn crate_warnings_partial_returns_unmaintained_advisory() -> Result<()> {
-        let mock_server = WarningSourceMock::new()
+        let mock_server = RustsecMockServer::new()
             .await?
             .rustsec_mock(OWNED_ALLOC)
             .maybe_cache_control(None)
@@ -527,9 +483,9 @@ mod tests {
         );
         const LAZY_STATIC: KrateName = KrateName::from_static("lazy_static");
 
-        let mock_server = WarningSourceMock::new()
-            .await?
-            .std_replacement_mock()
+        let mock_server = StdReplacementMockServer::new()
+            .await
+            .mock()
             .replacement(LAZY_STATIC, replacement.clone())
             .start()
             .await;
@@ -537,7 +493,7 @@ mod tests {
         let env = TestEnvironment::builder()
             .std_replacements_config(
                 mock_server
-                    .std_replacements_config()
+                    .config()
                     .cache_default_ttl(Duration::from_secs(90))
                     .build(),
             )
