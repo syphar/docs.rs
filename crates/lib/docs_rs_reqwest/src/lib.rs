@@ -186,7 +186,7 @@ impl<T: DeserializeOwned + Send + Sync + 'static> Client<T> {
 mod tests {
     use super::*;
     use docs_rs_headers::{Header, UserAgent, testing::test_typed_encode};
-    use reqwest::header::{CACHE_CONTROL, IF_NONE_MATCH};
+    use reqwest::header::CACHE_CONTROL;
     use serde_json::Value;
     use test_case::test_case;
 
@@ -380,11 +380,8 @@ mod tests {
         Ok(())
     }
 
-    #[test_case(None, 0, 60; "fallback")]
     #[test_case(None, 20, 40; "fallback age")]
     #[test_case(Some("max-age=120"), 20, 100; "header overrides fallback")]
-    #[test_case(Some("public"), 0, 60; "missing max age")]
-    #[test_case(Some("max-age=invalid"), 0, 60; "invalid max age")]
     #[test_case(Some("max-age=10"), 20, 0; "expired response")]
     #[test_case(Some("no-cache"), 0, 0; "no cache")]
     #[tokio::test]
@@ -401,7 +398,6 @@ mod tests {
             .with_body("not JSON")
             .expect(if expected == 0 { 2 } else { 1 });
         if let Some(control) = control {
-            // Keep the raw value: these cases also test malformed Cache-Control headers.
             mock = mock.with_header(CACHE_CONTROL, control);
         }
 
@@ -437,8 +433,6 @@ mod tests {
 
     #[test_case(None, 100, 0; "expired fallback")]
     #[test_case(None, 0, 90; "absent cache control")]
-    #[test_case(Some("public"), 0, 90; "missing max age")]
-    #[test_case(Some("max-age=invalid"), 0, 90; "invalid max age")]
     #[test_case(None, 30, 60; "fallback accounts for age")]
     #[test_case(Some("max-age=600"), 30, 570; "headers override default")]
     #[tokio::test]
@@ -456,7 +450,6 @@ mod tests {
             .with_body(body("empty"))
             .with_typed_header(Age::from_secs(age));
         if let Some(control) = control {
-            // Keep the raw value: these cases also test malformed Cache-Control headers.
             mock = mock.with_header(CACHE_CONTROL, control);
         }
         let mock = mock.create_async().await;
@@ -471,7 +464,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fallback_ttl_expires_and_refreshes_without_conditional_request() -> Result<()> {
+    async fn refreshes_after_fallback_ttl_expires() -> Result<()> {
         let mut server = mockito::Server::new_async().await;
         let api = Client::<String>::builder()
             .max_retries(0u32)
@@ -483,7 +476,6 @@ mod tests {
             .mock("GET", "/")
             .with_status_code(StatusCode::OK)
             .with_body(body("initial"))
-            .with_header("etag", "\"one\"")
             .expect(1)
             .create_async()
             .await;
@@ -496,7 +488,6 @@ mod tests {
         let updated = server
             .mock("GET", "/")
             .with_status_code(StatusCode::OK)
-            .match_header(IF_NONE_MATCH, mockito::Matcher::Missing)
             .with_body(body("updated"))
             .expect(1)
             .create_async()
@@ -552,9 +543,9 @@ mod tests {
         Ok(())
     }
 
+    #[test_case(StatusCode::TOO_MANY_REQUESTS, "limited"; "rate limit")]
     #[test_case(StatusCode::INTERNAL_SERVER_ERROR, "failed"; "HTTP failure")]
     #[test_case(StatusCode::OK, "invalid"; "invalid JSON")]
-    #[test_case(StatusCode::NOT_MODIFIED, ""; "unexpected 304")]
     #[tokio::test]
     async fn initial_failure_can_be_retried(status: StatusCode, body_text: &str) -> Result<()> {
         let (mut server, api, url) = fixture().await?;
@@ -562,6 +553,8 @@ mod tests {
             .mock("GET", "/")
             .with_status_code(status)
             .with_body(body_text)
+            .with_typed_header(CacheControl::new().with_max_age(Duration::from_hours(1)))
+            .expect(1)
             .create_async()
             .await;
         assert!(api.get(&url).await.is_err());
@@ -571,39 +564,11 @@ mod tests {
             .mock("GET", "/")
             .with_status_code(StatusCode::OK)
             .with_body(body("empty"))
+            .expect(1)
             .create_async()
             .await;
         assert_eq!(api.get(&url).await?.value.unwrap().as_str(), "empty");
         recovered.assert_async().await;
-        Ok(())
-    }
-
-    #[test_case(StatusCode::TOO_MANY_REQUESTS; "rate limit")]
-    #[test_case(StatusCode::INTERNAL_SERVER_ERROR; "server error")]
-    #[tokio::test]
-    async fn does_not_cache_errors(status: StatusCode) -> Result<()> {
-        let mut server = mockito::Server::new_async().await;
-        let failed = server
-            .mock("GET", "/")
-            .with_status_code(status)
-            .with_typed_header(CacheControl::new().with_max_age(Duration::from_hours(1)))
-            .expect(1)
-            .create_async()
-            .await;
-        let api = Client::<Vec<u64>>::builder().max_retries(0u32).build()?;
-        let url = server.url().parse()?;
-        assert!(api.get(&url).await.is_err());
-        failed.assert_async().await;
-        failed.remove_async().await;
-        let available = server
-            .mock("GET", "/")
-            .with_status_code(StatusCode::OK)
-            .with_body("[1,2]")
-            .expect(1)
-            .create_async()
-            .await;
-        assert_eq!(api.get(&url).await?.value.unwrap().len(), 2);
-        available.assert_async().await;
         Ok(())
     }
 

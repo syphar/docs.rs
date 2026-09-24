@@ -492,7 +492,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn crate_warnings_partial_without_replacement_is_empty() -> Result<()> {
+    async fn crate_warnings_with_both_clients_disabled_is_empty() -> Result<()> {
         let env = TestEnvironment::new().await?;
         assert!(env.rustsec().is_none());
         assert!(env.std_replacements().is_none());

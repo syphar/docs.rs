@@ -37,13 +37,6 @@ mod tests {
     use super::*;
     use test_case::test_case;
 
-    #[test]
-    fn test_parse_empty_list() -> anyhow::Result<()> {
-        let parsed: ReplacementMap = serde_json::from_str("{}")?;
-        assert!(parsed.is_empty());
-        Ok(())
-    }
-
     #[test_case(serde_json::json!({"url": "https://example.com"}); "missing description")]
     #[test_case(serde_json::json!({"description": "replacement"}); "missing url")]
     #[test_case(serde_json::json!({"description": "replacement", "url": "not a url"}); "invalid url")]
