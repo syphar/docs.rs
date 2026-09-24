@@ -268,10 +268,7 @@ impl<T: DeserializeOwned + Send + Sync + 'static> Client<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use docs_rs_headers::{
-        Header, UserAgent,
-        testing::{test_typed_decode, test_typed_encode},
-    };
+    use docs_rs_headers::{Header, UserAgent, testing::test_typed_encode};
     use reqwest::header::{CACHE_CONTROL, IF_NONE_MATCH};
     use serde_json::Value;
     use test_case::test_case;
@@ -610,8 +607,8 @@ mod tests {
             .with_body("not JSON")
             .expect(if expected == 0 { 2 } else { 1 });
         if let Some(control) = control {
-            let cache_control: CacheControl = test_typed_decode(control)?.unwrap();
-            mock = mock.with_typed_header(cache_control);
+            // Keep the raw value: these cases also test malformed Cache-Control headers.
+            mock = mock.with_header(CACHE_CONTROL, control);
         }
 
         let mock = mock.create_async().await;
@@ -671,8 +668,8 @@ mod tests {
             .with_body(body("empty"))
             .with_typed_header(Age::from_secs(age));
         if let Some(control) = control {
-            let cache_control: CacheControl = test_typed_decode(control)?.unwrap();
-            mock = mock.with_typed_header(cache_control);
+            // Keep the raw value: these cases also test malformed Cache-Control headers.
+            mock = mock.with_header(CACHE_CONTROL, control);
         }
         let mock = mock.create_async().await;
         let result = api.get(&url).await?;
@@ -901,11 +898,13 @@ mod tests {
         Ok(())
     }
 
-    #[test_case(200; "successful response")]
-    #[test_case(404; "negative response")]
-    #[test_case(304; "revalidation")]
+    #[test_case(StatusCode::OK; "successful response")]
+    #[test_case(StatusCode::NOT_FOUND; "negative response")]
+    #[test_case(StatusCode::NOT_MODIFIED; "revalidation")]
     #[tokio::test]
-    async fn no_store_removes_snapshot_and_prevents_stale_fallback(status: usize) -> Result<()> {
+    async fn no_store_removes_snapshot_and_prevents_stale_fallback(
+        status: StatusCode,
+    ) -> Result<()> {
         let mut server = mockito::Server::new_async().await;
         let url = server.url().parse()?;
         let api = Client::<String>::builder()
@@ -929,7 +928,7 @@ mod tests {
 
         let no_store = server
             .mock("GET", "/")
-            .with_status_code(StatusCode::OK)
+            .with_status_code(status)
             .with_typed_header(CacheControl::new().with_no_store())
             .with_body(body("updated"))
             .create_async()
@@ -939,8 +938,8 @@ mod tests {
         assert_eq!(
             result.value.as_deref().map(String::as_str),
             match status {
-                200 => Some("updated"),
-                304 => Some("initial"),
+                StatusCode::OK => Some("updated"),
+                StatusCode::NOT_MODIFIED => Some("initial"),
                 _ => None,
             }
         );
