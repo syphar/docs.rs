@@ -113,7 +113,8 @@ impl<C: AppConfig> TestEnvironment<C> {
                     rustsec_config
                         .as_ref()
                         .map(docs_rs_rustsec::RustsecClient::from_config)
-                        .transpose()?,
+                        .transpose()?
+                        .map(Arc::new),
                 )
                 .with_build_limits()?
                 .build()?

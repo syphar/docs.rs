@@ -47,7 +47,8 @@ pub struct Context {
     #[builder(setters(vis = "", name = std_replacements_internal))]
     pub std_replacements: Option<Arc<StdReplacements>>,
 
-    pub rustsec: Option<RustsecClient>,
+    #[builder(setters(vis = "", name = rustsec_internal))]
+    pub rustsec: Option<Arc<RustsecClient>>,
 
     #[builder(setters(vis = "", name = cdn_internal))]
     pub cdn: Option<Arc<Cdn>>,
@@ -289,12 +290,26 @@ impl<S: State> ContextBuilder<S> {
         Ok(self.std_replacements(Arc::new(api)))
     }
 
+    pub fn rustsec(self, rustsec: Arc<RustsecClient>) -> ContextBuilder<SetRustsec<S>>
+    where
+        S::Rustsec: IsUnset,
+    {
+        self.rustsec_internal(rustsec)
+    }
+
+    pub fn maybe_rustsec(self, rustsec: Option<Arc<RustsecClient>>) -> ContextBuilder<SetRustsec<S>>
+    where
+        S::Rustsec: IsUnset,
+    {
+        self.maybe_rustsec_internal(rustsec)
+    }
+
     pub fn with_rustsec(self) -> Result<ContextBuilder<SetRustsec<S>>>
     where
         S::Rustsec: IsUnset,
     {
         let config = docs_rs_rustsec::Config::from_environment()?;
-        Ok(self.rustsec(RustsecClient::from_config(&config)?))
+        Ok(self.rustsec(Arc::new(RustsecClient::from_config(&config)?)))
     }
 
     pub fn repository_stats(
@@ -401,7 +416,7 @@ impl Context {
     }
 
     /// Return the RustSec client when configured.
-    pub fn rustsec(&self) -> Option<&RustsecClient> {
+    pub fn rustsec(&self) -> Option<&Arc<RustsecClient>> {
         self.rustsec.as_ref()
     }
 
