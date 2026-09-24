@@ -49,9 +49,10 @@ impl RustsecClient {
         ensure!(
             matches!(config.base_url.scheme(), "http" | "https")
                 && config.base_url.host_str().is_some()
+                && config.base_url.path() == "/"
                 && config.base_url.query().is_none()
                 && config.base_url.fragment().is_none(),
-            "RustSec base URL must be an HTTP(S) URL without a query or fragment"
+            "RustSec base URL must be an HTTP(S) site root without a query or fragment"
         );
         Ok(Self {
             client: Client::builder()
@@ -73,10 +74,7 @@ impl RustsecClient {
         name: &KrateName,
     ) -> Result<CachedResult<Arc<Vec<Arc<OsvAdvisory>>>>> {
         let mut url = self.base_url.clone();
-        url.path_segments_mut()
-            .expect("HTTP(S) base URL validated during construction")
-            .pop_if_empty()
-            .extend(["packages", &format!("{name}.json")]);
+        url.set_path(&format!("/packages/{name}.json"));
 
         Ok(self
             .client
@@ -335,28 +333,7 @@ mod tests {
         Ok(())
     }
 
-    #[test_case("/mirror"; "without trailing slash")]
-    #[test_case("/mirror/"; "with trailing slash")]
-    #[tokio::test]
-    async fn preserves_base_path_and_crate_name(base_path: &str) -> Result<()> {
-        let server = RustsecMockServer::new()
-            .await
-            .with_base_path(base_path)
-            .mock(KrateName::from_static("lazy_static"))
-            .body("[]")
-            .start()
-            .await;
-        let api = RustsecClient::from_config(&server.config().build())?;
-        assert!(
-            api.fetch_advisories(&"lazy_static".parse()?)
-                .await?
-                .value
-                .is_empty()
-        );
-        server.assert_async().await;
-        Ok(())
-    }
-
+    #[test_case("https://rustsec.org/mirror/"; "non-root path")]
     #[test_case("file:///tmp/rustsec"; "non HTTP URL")]
     #[test_case("https://rustsec.org/?query=value"; "query")]
     #[test_case("https://rustsec.org/#fragment"; "fragment")]

@@ -8,7 +8,7 @@ use url::Url;
 #[derive(Debug, bon::Builder)]
 #[builder(on(_, overwritable))]
 pub struct Config {
-    /// RustSec site URL. Package requests append `packages/{name}.json`.
+    /// RustSec site root URL, without a path prefix, query, or fragment.
     #[builder(default = "https://rustsec.org/".parse().unwrap())]
     pub base_url: Url,
 

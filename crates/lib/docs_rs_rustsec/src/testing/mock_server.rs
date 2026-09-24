@@ -6,7 +6,6 @@ use http::{StatusCode, header::CACHE_CONTROL};
 pub struct RustsecMockServer {
     server: mockito::ServerGuard,
     mocks: Vec<mockito::Mock>,
-    base_path: String,
 }
 
 #[bon]
@@ -15,13 +14,7 @@ impl RustsecMockServer {
         Self {
             server: mockito::Server::new_async().await,
             mocks: Vec::new(),
-            base_path: String::new(),
         }
-    }
-
-    pub fn with_base_path(mut self, base_path: impl Into<String>) -> Self {
-        self.base_path = base_path.into();
-        self
     }
 
     #[builder(start_fn(name = mock), finish_fn(name = start))]
@@ -35,15 +28,7 @@ impl RustsecMockServer {
     ) -> Self {
         let mut mock = self
             .server
-            .mock(
-                "GET",
-                format!(
-                    "{}/packages/{}.json",
-                    self.base_path.trim_end_matches('/'),
-                    krate
-                )
-                .as_str(),
-            )
+            .mock("GET", format!("/packages/{krate}.json").as_str())
             .with_status(status_code.as_u16().into());
 
         if let Some(cache_control) = cache_control {
@@ -68,11 +53,7 @@ impl RustsecMockServer {
 
     pub fn config(&self) -> crate::ConfigBuilder {
         crate::Config::builder()
-            .base_url(
-                format!("{}{}", self.server.url(), self.base_path)
-                    .parse()
-                    .unwrap(),
-            )
+            .base_url(self.server.url().parse().unwrap())
             .max_retries(0)
     }
 

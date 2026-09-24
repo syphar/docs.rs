@@ -268,8 +268,39 @@ impl<T: DeserializeOwned + Send + Sync + 'static> Client<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use docs_rs_headers::{
+        Header, UserAgent,
+        testing::{test_typed_decode, test_typed_encode},
+    };
+    use reqwest::header::{AGE, CACHE_CONTROL, ETAG, IF_NONE_MATCH, USER_AGENT};
     use serde_json::Value;
     use test_case::test_case;
+
+    trait MockExt {
+        fn with_typed_header<H: Header>(self, header: H) -> Self;
+        fn match_typed_header<H: Header>(self, header: H) -> Self;
+        fn with_status_code(self, status_code: StatusCode) -> Self;
+    }
+
+    impl MockExt for mockito::Mock {
+        fn match_typed_header<H: Header>(self, header: H) -> Self {
+            let name = H::name();
+            let value = test_typed_encode(header);
+
+            self.match_header(name, value.to_str().unwrap())
+        }
+
+        fn with_typed_header<H: Header>(self, header: H) -> Self {
+            let name = H::name();
+            let value = test_typed_encode(header);
+
+            self.with_header(name, value.to_str().unwrap())
+        }
+
+        fn with_status_code(self, status_code: StatusCode) -> Self {
+            self.with_status(status_code.as_u16().into())
+        }
+    }
 
     async fn advance(duration: Duration) {
         tokio::time::pause();
@@ -282,18 +313,22 @@ mod tests {
     #[tokio::test]
     async fn not_found_caching_is_opt_in(cache_missing: bool) -> Result<()> {
         let mut server = mockito::Server::new_async().await;
+        let ttl = Duration::from_mins(1);
+
         let mock = server
             .mock("GET", "/missing")
-            .with_status(404)
-            .with_header("cache-control", "max-age=60")
+            .with_status_code(StatusCode::NOT_FOUND)
+            .with_typed_header(CacheControl::new().with_max_age(ttl))
             .with_body("not JSON")
             .expect(if cache_missing { 1 } else { 2 })
             .create_async()
             .await;
+
         let client = Client::<Value>::builder()
             .max_retries(0u32)
-            .maybe_not_found_ttl(cache_missing.then_some(Duration::from_secs(60)))
+            .maybe_not_found_ttl(cache_missing.then_some(ttl))
             .build()?;
+
         let url = format!("{}/missing", server.url()).parse()?;
         for _ in 0..2 {
             let result = client.get(&url).await?;
@@ -316,56 +351,65 @@ mod tests {
     async fn refetches_after_negative_cache_expires() -> Result<()> {
         let mut server = mockito::Server::new_async().await;
         let url = server.url().parse()?;
+
         let client = Client::<u64>::builder()
             .max_retries(0u32)
             .not_found_ttl(Duration::from_secs(60))
             .build()?;
+
         let missing = server
             .mock("GET", "/")
-            .with_status(404)
+            .with_status_code(StatusCode::NOT_FOUND)
             .expect(1)
             .create_async()
             .await;
+
         assert!(client.get(&url).await?.value.is_none());
         assert!(client.get(&url).await?.value.is_none());
         missing.assert_async().await;
         missing.remove_async().await;
+
         let available = server
             .mock("GET", "/")
             .with_body("42")
             .expect(1)
             .create_async()
             .await;
+
         advance(Duration::from_secs(61)).await;
         assert_eq!(*client.get(&url).await?.value.unwrap(), 42);
+
         available.assert_async().await;
         Ok(())
     }
 
-    #[test_case(200, "42"; "successful response")]
-    #[test_case(404, "missing"; "negative response")]
+    #[test_case(StatusCode::OK, "42"; "successful response")]
+    #[test_case(StatusCode::NOT_FOUND, "missing"; "negative response")]
     #[tokio::test]
-    async fn zero_capacity_disables_cache(status: usize, body: &str) -> Result<()> {
+    async fn zero_capacity_disables_cache(status: StatusCode, body: &str) -> Result<()> {
         let mut server = mockito::Server::new_async().await;
+
         let mock = server
             .mock("GET", "/")
-            .with_status(status)
-            .with_header("cache-control", "max-age=3600")
+            .with_status_code(status)
+            .with_typed_header(CacheControl::new().with_max_age(Duration::from_hours(1)))
             .with_body(body)
             .expect(2)
             .create_async()
             .await;
+
         let client = Client::<u64>::builder()
             .max_retries(0u32)
             .cache_capacity(0u64)
             .not_found_ttl(Duration::from_secs(600))
             .build()?;
+
         let url = server.url().parse()?;
         for _ in 0..2 {
             let result = client.get(&url).await?;
             assert_eq!(
                 result.value.as_deref().copied(),
-                (status == 200).then_some(42)
+                (status == StatusCode::OK).then_some(42)
             );
         }
         mock.assert_async().await;
@@ -375,25 +419,32 @@ mod tests {
     #[tokio::test]
     async fn uncached_not_found_removes_previous_snapshot() -> Result<()> {
         let mut server = mockito::Server::new_async().await;
+
         let client = Client::<u64>::builder().max_retries(0u32).build()?;
+
+        let one: ETag = "\"one\"".parse().unwrap();
+
         let url = server.url().parse()?;
         let initial = server
             .mock("GET", "/")
             .with_body("1")
-            .with_header("etag", "\"one\"")
-            .with_header("cache-control", "max-age=0")
+            .with_typed_header(one.clone())
+            .with_typed_header(CacheControl::new().with_max_age(Duration::ZERO))
             .create_async()
             .await;
+
         assert_eq!(*client.get(&url).await?.value.unwrap(), 1);
         initial.assert_async().await;
         initial.remove_async().await;
+
         let missing = server
             .mock("GET", "/")
-            .match_header("if-none-match", "\"one\"")
-            .with_status(404)
-            .with_header("cache-control", "max-age=600")
+            .match_typed_header(IfNoneMatch(one.into()))
+            .with_status_code(StatusCode::NOT_FOUND)
+            .with_typed_header(CacheControl::new().with_max_age(Duration::from_mins(10)))
             .create_async()
             .await;
+
         let result = client.get(&url).await?;
         assert!(result.value.is_none());
         assert_eq!(result.ttl, Duration::ZERO);
@@ -402,7 +453,7 @@ mod tests {
         missing.remove_async().await;
         let recovered = server
             .mock("GET", "/")
-            .match_header("if-none-match", mockito::Matcher::Missing)
+            .match_header(IF_NONE_MATCH, mockito::Matcher::Missing)
             .with_body("2")
             .create_async()
             .await;
@@ -416,17 +467,19 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let a = server
             .mock("GET", "/a")
-            .match_header("user-agent", APP_USER_AGENT)
+            .match_typed_header(UserAgent(APP_USER_AGENT))
             .with_body("1")
             .expect(1)
             .create_async()
             .await;
+
         let b = server
             .mock("GET", "/b")
             .with_body("2")
             .expect(1)
             .create_async()
             .await;
+
         let client = Client::<u64>::builder().max_retries(0u32).build()?;
         let clone = client.clone();
         let url_a = format!("{}/a", server.url()).parse()?;
@@ -443,47 +496,57 @@ mod tests {
     #[tokio::test]
     async fn revalidation_retains_value_and_new_response_clears_etag() -> Result<()> {
         let mut server = mockito::Server::new_async().await;
+
         let client = Client::<u64>::builder().max_retries(0u32).build()?;
         let url = server.url().parse()?;
+
+        let one: ETag = "\"one\"".parse().unwrap();
+
         let initial = server
             .mock("GET", "/")
             .with_body("1")
-            .with_header("cache-control", "max-age=60")
-            .with_header("etag", "\"one\"")
+            .with_typed_header(CacheControl::new().with_max_age(Duration::from_mins(1)))
+            .with_typed_header(one.clone())
             .create_async()
             .await;
+
         let first = client.get(&url).await?.value.unwrap();
         initial.assert_async().await;
         initial.remove_async().await;
         advance(Duration::from_secs(61)).await;
+
         let unchanged = server
             .mock("GET", "/")
-            .match_header("if-none-match", "\"one\"")
-            .with_status(304)
+            .match_typed_header(IfNoneMatch(one.into()))
+            .with_status_code(StatusCode::NOT_MODIFIED)
             .create_async()
             .await;
+
         let second = client.get(&url).await?;
         assert!(Arc::ptr_eq(&first, &second.value.unwrap()));
         assert!(second.ttl > Duration::from_secs(55));
         unchanged.assert_async().await;
         unchanged.remove_async().await;
         advance(Duration::from_secs(61)).await;
+
         let changed = server
             .mock("GET", "/")
-            .match_header("if-none-match", "\"one\"")
+            .match_header(IF_NONE_MATCH, "\"one\"")
             .with_body("2")
-            .with_header("cache-control", "max-age=0")
+            .with_header(CACHE_CONTROL, "max-age=0")
             .create_async()
             .await;
         assert_eq!(*client.get(&url).await?.value.unwrap(), 2);
         changed.assert_async().await;
         changed.remove_async().await;
+
         let no_validator = server
             .mock("GET", "/")
-            .match_header("if-none-match", mockito::Matcher::Missing)
+            .match_header(IF_NONE_MATCH, mockito::Matcher::Missing)
             .with_body("3")
             .create_async()
             .await;
+
         assert_eq!(*client.get(&url).await?.value.unwrap(), 3);
         no_validator.assert_async().await;
         Ok(())
@@ -542,18 +605,21 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let mut mock = server
             .mock("GET", "/")
-            .with_status(404)
-            .with_header("age", &age.to_string())
+            .with_status_code(StatusCode::NOT_FOUND)
+            .with_typed_header(Age::from_secs(age))
             .with_body("not JSON")
             .expect(if expected == 0 { 2 } else { 1 });
         if let Some(control) = control {
-            mock = mock.with_header("cache-control", control);
+            let cache_control: CacheControl = test_typed_decode(control)?.unwrap();
+            mock = mock.with_typed_header(cache_control);
         }
+
         let mock = mock.create_async().await;
         let client = Client::<Value>::builder()
             .max_retries(0u32)
             .not_found_ttl(Duration::from_secs(60))
             .build()?;
+
         let url = server.url().parse()?;
         for _ in 0..2 {
             let result = client.get(&url).await?;
@@ -597,14 +663,16 @@ mod tests {
             .max_retries(0u32)
             .default_ttl(Duration::from_secs(90))
             .build()?;
+
         let url = server.url().parse()?;
         let mut mock = server
             .mock("GET", "/")
-            .with_status(200)
+            .with_status_code(StatusCode::OK)
             .with_body(body("empty"))
-            .with_header("age", &age.to_string());
+            .with_typed_header(Age::from_secs(age));
         if let Some(control) = control {
-            mock = mock.with_header("cache-control", control);
+            let cache_control: CacheControl = test_typed_decode(control)?.unwrap();
+            mock = mock.with_typed_header(cache_control);
         }
         let mock = mock.create_async().await;
         let result = api.get(&url).await?;
@@ -624,11 +692,14 @@ mod tests {
             .max_retries(0u32)
             .default_ttl(Duration::from_secs(90))
             .build()?;
+
+        let one: ETag = "\"one\"".parse().unwrap();
+
         let url = server.url().parse()?;
         let initial = server
             .mock("GET", "/")
-            .with_status(200)
-            .with_header("etag", "\"one\"")
+            .with_status_code(StatusCode::OK)
+            .with_typed_header(one.clone())
             .with_body(body("initial"))
             .expect(1)
             .create_async()
@@ -642,8 +713,8 @@ mod tests {
         initial.remove_async().await;
         let unchanged = server
             .mock("GET", "/")
-            .with_status(304)
-            .match_header("if-none-match", "\"one\"")
+            .with_status_code(StatusCode::NOT_MODIFIED)
+            .match_typed_header(IfNoneMatch(one.into()))
             .expect(1)
             .create_async()
             .await;
@@ -661,26 +732,32 @@ mod tests {
     #[tokio::test]
     async fn revalidates_etag_and_preserves_snapshot(change_ttl: bool) -> Result<()> {
         let (mut server, api, url) = fixture().await?;
+        let one: ETag = "W/\"one\"".parse().unwrap();
+        let two: ETag = "W/\"two\"".parse().unwrap();
+
         let initial = server
             .mock("GET", "/")
-            .with_status(200)
+            .with_status_code(StatusCode::OK)
             .with_body(body("initial"))
-            .with_header("cache-control", "max-age=600")
-            .with_header("age", "500")
-            .with_header("etag", "W/\"one\"")
+            .with_typed_header(CacheControl::new().with_max_age(Duration::from_mins(10)))
+            .with_typed_header(Age::from_secs(500))
+            .with_typed_header(one.clone())
             .create_async()
             .await;
+
         let old = api.get(&url).await?.value.unwrap();
         initial.assert_async().await;
         initial.remove_async().await;
         advance(Duration::from_secs(101)).await;
         let mut mock = server
             .mock("GET", "/")
-            .match_header("if-none-match", "W/\"one\"")
-            .with_status(304)
-            .with_header("etag", "W/\"two\"");
+            .match_typed_header(IfNoneMatch(one.into()))
+            .with_status_code(StatusCode::NOT_MODIFIED)
+            .with_typed_header(two.clone());
+
         if change_ttl {
-            mock = mock.with_header("cache-control", "max-age=1200");
+            mock =
+                mock.with_typed_header(CacheControl::new().with_max_age(Duration::from_secs(1200)));
         }
         let mock = mock.expect(1).create_async().await;
         let name = url.clone();
@@ -694,8 +771,8 @@ mod tests {
         advance(Duration::from_secs(101)).await;
         let changed = server
             .mock("GET", "/")
-            .match_header("if-none-match", "W/\"two\"")
-            .with_status(200)
+            .match_typed_header(IfNoneMatch(two.into()))
+            .with_status_code(StatusCode::OK)
             .with_body(body("changed"))
             .create_async()
             .await;
@@ -705,26 +782,26 @@ mod tests {
         Ok(())
     }
 
-    #[test_case(500, "failed"; "HTTP failure")]
-    #[test_case(200, "invalid"; "invalid JSON")]
+    #[test_case(StatusCode::INTERNAL_SERVER_ERROR, "failed"; "HTTP failure")]
+    #[test_case(StatusCode::OK, "invalid"; "invalid JSON")]
     #[tokio::test]
     async fn failed_refresh_retains_snapshot_and_backs_off(
-        status: usize,
+        status: StatusCode,
         body_text: &str,
     ) -> Result<()> {
         let (mut server, api, url) = fixture().await?;
         let initial = server
             .mock("GET", "/")
-            .with_status(200)
+            .with_status_code(StatusCode::OK)
             .with_body(body("old"))
-            .with_header("cache-control", "max-age=0")
+            .with_typed_header(CacheControl::new().with_max_age(Duration::ZERO))
             .create_async()
             .await;
         let old = api.get(&url).await?.value.unwrap();
         initial.remove_async().await;
         let failed = server
             .mock("GET", "/")
-            .with_status(status)
+            .with_status_code(status)
             .with_body(body_text)
             .expect(1)
             .create_async()
@@ -740,7 +817,7 @@ mod tests {
         advance(RETRY_DELAY).await;
         let recovered = server
             .mock("GET", "/")
-            .with_status(200)
+            .with_status_code(StatusCode::OK)
             .with_body(body("new"))
             .create_async()
             .await;
@@ -749,15 +826,15 @@ mod tests {
         Ok(())
     }
 
-    #[test_case(500, "failed"; "HTTP failure")]
-    #[test_case(200, "invalid"; "invalid JSON")]
-    #[test_case(304, ""; "unexpected 304")]
+    #[test_case(StatusCode::INTERNAL_SERVER_ERROR, "failed"; "HTTP failure")]
+    #[test_case(StatusCode::OK, "invalid"; "invalid JSON")]
+    #[test_case(StatusCode::NOT_MODIFIED, ""; "unexpected 304")]
     #[tokio::test]
-    async fn initial_failure_can_be_retried(status: usize, body_text: &str) -> Result<()> {
+    async fn initial_failure_can_be_retried(status: StatusCode, body_text: &str) -> Result<()> {
         let (mut server, api, url) = fixture().await?;
         let failed = server
             .mock("GET", "/")
-            .with_status(status)
+            .with_status_code(status)
             .with_body(body_text)
             .create_async()
             .await;
@@ -766,7 +843,7 @@ mod tests {
         failed.remove_async().await;
         let recovered = server
             .mock("GET", "/")
-            .with_status(200)
+            .with_status_code(StatusCode::OK)
             .with_body(body("empty"))
             .create_async()
             .await;
@@ -775,15 +852,15 @@ mod tests {
         Ok(())
     }
 
-    #[test_case(429; "rate limit")]
-    #[test_case(500; "server error")]
+    #[test_case(StatusCode::TOO_MANY_REQUESTS; "rate limit")]
+    #[test_case(StatusCode::INTERNAL_SERVER_ERROR; "server error")]
     #[tokio::test]
-    async fn does_not_cache_errors(status: usize) -> Result<()> {
+    async fn does_not_cache_errors(status: StatusCode) -> Result<()> {
         let mut server = mockito::Server::new_async().await;
         let failed = server
             .mock("GET", "/")
-            .with_status(status)
-            .with_header("cache-control", "max-age=3600")
+            .with_status_code(status)
+            .with_typed_header(CacheControl::new().with_max_age(Duration::from_hours(1)))
             .expect(1)
             .create_async()
             .await;
@@ -794,7 +871,7 @@ mod tests {
         failed.remove_async().await;
         let available = server
             .mock("GET", "/")
-            .with_status(200)
+            .with_status_code(StatusCode::OK)
             .with_body("[1,2]")
             .expect(1)
             .create_async()
@@ -809,8 +886,8 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let mock = server
             .mock("GET", "/")
-            .with_status(200)
-            .with_header("cache-control", "no-store")
+            .with_status_code(StatusCode::OK)
+            .with_typed_header(CacheControl::new().with_no_store())
             .with_body("[1,2]")
             .expect(2)
             .create_async()
@@ -836,11 +913,13 @@ mod tests {
             .not_found_ttl(Duration::from_secs(60))
             .stale_if_error(RETRY_DELAY)
             .build()?;
+        let etag: ETag = "\"initial\"".parse().unwrap();
+
         let initial = server
             .mock("GET", "/")
-            .with_status(200)
-            .with_header("cache-control", "max-age=0")
-            .with_header("etag", "\"initial\"")
+            .with_typed_header(etag.clone())
+            .with_status_code(StatusCode::OK)
+            .with_typed_header(CacheControl::new().with_max_age(Duration::ZERO))
             .with_body(body("initial"))
             .create_async()
             .await;
@@ -850,8 +929,8 @@ mod tests {
 
         let no_store = server
             .mock("GET", "/")
-            .with_status(status)
-            .with_header("cache-control", "no-store")
+            .with_status_code(StatusCode::OK)
+            .with_typed_header(CacheControl::new().with_no_store())
             .with_body(body("updated"))
             .create_async()
             .await;
@@ -871,8 +950,8 @@ mod tests {
 
         let failure = server
             .mock("GET", "/")
-            .match_header("if-none-match", mockito::Matcher::Missing)
-            .with_status(500)
+            .match_header(IF_NONE_MATCH, mockito::Matcher::Missing)
+            .with_status_code(StatusCode::INTERNAL_SERVER_ERROR)
             .create_async()
             .await;
         assert!(api.get(&url).await.is_err());
@@ -885,8 +964,8 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let initial = server
             .mock("GET", "/")
-            .with_status(200)
-            .with_header("cache-control", "max-age=0")
+            .with_status_code(StatusCode::OK)
+            .with_typed_header(CacheControl::new().with_max_age(Duration::ZERO))
             .with_body("[1,2]")
             .expect(1)
             .create_async()
@@ -898,8 +977,8 @@ mod tests {
         initial.remove_async().await;
         let updated = server
             .mock("GET", "/")
-            .with_status(200)
-            .with_header("cache-control", "max-age=600")
+            .with_status_code(StatusCode::OK)
+            .with_typed_header(CacheControl::new().with_max_age(Duration::from_mins(10)))
             .with_body("[]")
             .expect(1)
             .create_async()
@@ -915,13 +994,13 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let failure = server
             .mock("GET", "/")
-            .with_status(503)
+            .with_status_code(StatusCode::SERVICE_UNAVAILABLE)
             .expect(1)
             .create_async()
             .await;
         let success = server
             .mock("GET", "/")
-            .with_status(200)
+            .with_status_code(StatusCode::OK)
             .with_body("[1,2]")
             .expect(1)
             .create_async()

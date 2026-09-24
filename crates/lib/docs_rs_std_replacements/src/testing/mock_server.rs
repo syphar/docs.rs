@@ -1,10 +1,9 @@
-use std::sync::Arc;
-
 use crate::{ReplacementDetails, ReplacementMap};
 use bon::bon;
 use docs_rs_headers::{CacheControl, testing::test_typed_encode};
 use docs_rs_types::KrateName;
 use http::{StatusCode, header::CACHE_CONTROL};
+use std::sync::Arc;
 
 pub struct StdReplacementMockServer {
     server: mockito::ServerGuard,

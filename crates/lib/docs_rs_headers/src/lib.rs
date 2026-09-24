@@ -9,7 +9,7 @@ pub mod testing;
 pub use cache_control::{cache_control_ttl, response_ttl};
 pub use canonical_url::CanonicalUrl;
 pub use etag::{ETagComputer, compute_etag};
-pub use headers::{Age, CacheControl, ETag, HeaderMapExt};
+pub use headers::{Age, CacheControl, ETag, Header, HeaderMapExt, UserAgent};
 pub use if_none_match::IfNoneMatch;
 pub use surrogate_key::{SURROGATE_KEY, SurrogateKey, SurrogateKeys};
 
