@@ -173,7 +173,7 @@ mod tests {
             })
         }
 
-        #[builder(start_fn(name = mock_rustsec), finish_fn(name = mock))]
+        #[builder(start_fn(name = rustsec_mock), finish_fn(name = start))]
         async fn with_rustsec(
             mut self,
             #[builder(start_fn)] krate: KrateName,
@@ -338,17 +338,17 @@ mod tests {
         let rustsec_cache = CacheControl::new().with_max_age(rustsec_ttl.into());
         mock_server = if empty {
             mock_server
-                .mock_rustsec(OWNED_ALLOC)
+                .rustsec_mock(OWNED_ALLOC)
                 .status_code(StatusCode::NOT_FOUND)
                 .cache_control(rustsec_cache)
-                .mock()
+                .start()
                 .await
         } else {
             mock_server
-                .mock_rustsec(OWNED_ALLOC)
+                .rustsec_mock(OWNED_ALLOC)
                 .empty(false)
                 .cache_control(rustsec_cache)
-                .mock()
+                .start()
                 .await
         };
 
@@ -403,9 +403,9 @@ mod tests {
 
         let mock_server = WarningSourceMock::new()
             .await?
-            .mock_rustsec(OWNED_ALLOC)
+            .rustsec_mock(OWNED_ALLOC)
             .cache_control(CacheControl::new().with_max_age(std::time::Duration::from_secs(600)))
-            .mock()
+            .start()
             .await
             .with_replacements_and_status(iter::empty(), cache_control, StatusCode::NOT_FOUND)
             .await;
@@ -439,9 +439,9 @@ mod tests {
         let mut mocks = WarningSourceMock::new().await?;
         if replacement_fails {
             mocks = mocks
-                .mock_rustsec(OWNED_ALLOC)
+                .rustsec_mock(OWNED_ALLOC)
                 .maybe_cache_control(None)
-                .mock()
+                .start()
                 .await
                 .with_replacements_and_status(iter::empty(), None, StatusCode::SERVICE_UNAVAILABLE)
                 .await;
@@ -449,9 +449,9 @@ mod tests {
             mocks = mocks
                 .with_replacement(OWNED_ALLOC, std_replacement("Use std"), None)
                 .await
-                .mock_rustsec(OWNED_ALLOC)
+                .rustsec_mock(OWNED_ALLOC)
                 .status_code(StatusCode::SERVICE_UNAVAILABLE)
-                .mock()
+                .start()
                 .await;
         }
         let env = TestEnvironment::builder()
@@ -487,9 +487,9 @@ mod tests {
     async fn crate_warnings_partial_returns_unmaintained_advisory() -> Result<()> {
         let mock_server = WarningSourceMock::new()
             .await?
-            .mock_rustsec(OWNED_ALLOC)
+            .rustsec_mock(OWNED_ALLOC)
             .maybe_cache_control(None)
-            .mock()
+            .start()
             .await;
         let env = TestEnvironment::builder()
             .rustsec_config(mock_server.rustsec_config(None))
