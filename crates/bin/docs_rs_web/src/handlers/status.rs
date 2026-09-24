@@ -144,6 +144,7 @@ mod tests {
     };
     use anyhow::Result;
     use axum_extra::headers::{CacheControl, HeaderMapExt as _};
+    use bon::bon;
     use docs_rs_config::AppConfig as _;
     use docs_rs_database::service_config::{Abnormality, ConfigName, set_config};
     use docs_rs_std_replacements::{ReplacementDetails, ReplacementMap, testing::std_replacement};
@@ -162,6 +163,7 @@ mod tests {
         mocks: Vec<mockito::Mock>,
     }
 
+    #[bon]
     impl WarningSourceMock {
         async fn new() -> Result<Self> {
             Ok(Self {
@@ -171,60 +173,36 @@ mod tests {
             })
         }
 
-        async fn with_error_rustsec(mut self, krate: KrateName, status_code: StatusCode) -> Self {
-            let mock = self
-                .rustsec_server
-                .mock("GET", format!("/packages/{}.json", krate).as_str())
-                .with_status(status_code.as_u16().into())
-                .with_body("")
-                .create_async()
-                .await;
-
-            self.mocks.push(mock);
-            self
-        }
-
-        async fn with_empty_rustsec(
+        #[builder(start_fn(name = mock_rustsec), finish_fn(name = mock))]
+        async fn with_rustsec(
             mut self,
-            krate: KrateName,
+            #[builder(start_fn)] krate: KrateName,
+            #[builder(default = StatusCode::OK)] status_code: StatusCode,
+            #[builder(default = false)] empty: bool,
             cache_control: Option<CacheControl>,
         ) -> Self {
             let mut mock = self
                 .rustsec_server
                 .mock("GET", format!("/packages/{}.json", krate).as_str())
-                .with_status(StatusCode::NOT_FOUND.as_u16().into());
+                .with_status(status_code.as_u16().into());
 
             if let Some(cache_control) = cache_control {
                 let value = test_typed_encode(cache_control);
                 mock = mock.with_header(CACHE_CONTROL, value.to_str().unwrap());
             }
 
-            self.mocks.push(mock.with_body("").create_async().await);
-            self
-        }
-
-        async fn with_data_rustsec(
-            mut self,
-            krate: KrateName,
-            cache_control: Option<CacheControl>,
-        ) -> Self {
-            let mut mock = self
-                .rustsec_server
-                .mock("GET", format!("/packages/{}.json", krate).as_str())
-                .with_status(StatusCode::OK.as_u16().into());
-
-            if let Some(cache_control) = cache_control {
-                let value = test_typed_encode(cache_control);
-                mock = mock.with_header(CACHE_CONTROL, value.to_str().unwrap());
-            }
+            let empty = empty || (status_code.is_client_error() || status_code.is_server_error());
 
             self.mocks.push(
-                mock.with_body(include_str!(
-                    "../../../../lib/docs_rs_rustsec/tests/fixtures/owned-alloc.json"
-                ))
+                mock.with_body(if empty {
+                    ""
+                } else {
+                    include_str!("../../../../lib/docs_rs_rustsec/tests/fixtures/owned-alloc.json")
+                })
                 .create_async()
                 .await,
             );
+
             self
         }
 
@@ -360,11 +338,17 @@ mod tests {
         let rustsec_cache = CacheControl::new().with_max_age(rustsec_ttl.into());
         mock_server = if empty {
             mock_server
-                .with_empty_rustsec(OWNED_ALLOC, Some(rustsec_cache))
+                .mock_rustsec(OWNED_ALLOC)
+                .empty(true)
+                .cache_control(rustsec_cache)
+                .mock()
                 .await
         } else {
             mock_server
-                .with_data_rustsec(OWNED_ALLOC, Some(rustsec_cache))
+                .mock_rustsec(OWNED_ALLOC)
+                .empty(false)
+                .cache_control(rustsec_cache)
+                .mock()
                 .await
         };
 
@@ -419,10 +403,9 @@ mod tests {
 
         let mock_server = WarningSourceMock::new()
             .await?
-            .with_data_rustsec(
-                OWNED_ALLOC,
-                Some(CacheControl::new().with_max_age(std::time::Duration::from_secs(600))),
-            )
+            .mock_rustsec(OWNED_ALLOC)
+            .cache_control(CacheControl::new().with_max_age(std::time::Duration::from_secs(600)))
+            .mock()
             .await
             .with_replacements_and_status(iter::empty(), cache_control, StatusCode::NOT_FOUND)
             .await;
@@ -456,7 +439,9 @@ mod tests {
         let mut mocks = WarningSourceMock::new().await?;
         if replacement_fails {
             mocks = mocks
-                .with_data_rustsec(OWNED_ALLOC, None)
+                .mock_rustsec(OWNED_ALLOC)
+                .maybe_cache_control(None)
+                .mock()
                 .await
                 .with_replacements_and_status(iter::empty(), None, StatusCode::SERVICE_UNAVAILABLE)
                 .await;
@@ -464,7 +449,9 @@ mod tests {
             mocks = mocks
                 .with_replacement(OWNED_ALLOC, std_replacement("Use std"), None)
                 .await
-                .with_error_rustsec(OWNED_ALLOC, StatusCode::SERVICE_UNAVAILABLE)
+                .mock_rustsec(OWNED_ALLOC)
+                .status_code(StatusCode::SERVICE_UNAVAILABLE)
+                .mock()
                 .await;
         }
         let env = TestEnvironment::builder()
@@ -500,7 +487,9 @@ mod tests {
     async fn crate_warnings_partial_returns_unmaintained_advisory() -> Result<()> {
         let mock_server = WarningSourceMock::new()
             .await?
-            .with_data_rustsec(OWNED_ALLOC, None)
+            .mock_rustsec(OWNED_ALLOC)
+            .maybe_cache_control(None)
+            .mock()
             .await;
         let env = TestEnvironment::builder()
             .rustsec_config(mock_server.rustsec_config(None))
