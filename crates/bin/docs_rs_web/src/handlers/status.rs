@@ -339,7 +339,7 @@ mod tests {
         mock_server = if empty {
             mock_server
                 .mock_rustsec(OWNED_ALLOC)
-                .empty(true)
+                .status_code(StatusCode::NOT_FOUND)
                 .cache_control(rustsec_cache)
                 .mock()
                 .await
