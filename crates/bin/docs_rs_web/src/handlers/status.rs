@@ -174,7 +174,7 @@ mod tests {
         }
 
         #[builder(start_fn(name = rustsec_mock), finish_fn(name = start))]
-        async fn with_rustsec(
+        async fn create_rustsec_mock(
             mut self,
             #[builder(start_fn)] krate: KrateName,
             #[builder(default = StatusCode::OK)] status_code: StatusCode,
@@ -207,7 +207,7 @@ mod tests {
         }
 
         #[builder(start_fn(name = std_replacement_mock), finish_fn(name = start))]
-        async fn with_std_replacements(
+        async fn create_std_replacement_mock(
             mut self,
             #[builder(with = |krate: KrateName, details: ReplacementDetails| (krate, details))]
             replacement: Option<(KrateName, ReplacementDetails)>,
