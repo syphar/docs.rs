@@ -88,8 +88,8 @@ mod tests {
         advance(Duration::from_secs(100)).await;
         let second = api.get(&KrateName::from_static("missing")).await?;
         assert!(second.value.is_none());
-        assert!(second.ttl.unwrap() <= Duration::from_secs(500));
-        assert!(second.ttl.unwrap() > Duration::from_secs(490));
+        assert!(second.ttl <= Duration::from_secs(500));
+        assert!(second.ttl > Duration::from_secs(490));
         mock.assert_async().await;
         Ok(())
     }
@@ -162,8 +162,8 @@ mod tests {
             .await;
         let result = api.get(&KRATE).await?;
         assert_eq!(result.value.unwrap().description(), "replacement");
-        assert!(result.ttl.unwrap() <= Duration::from_secs(90));
-        assert!(result.ttl.unwrap() > Duration::from_secs(85));
+        assert!(result.ttl <= Duration::from_secs(90));
+        assert!(result.ttl > Duration::from_secs(85));
         mock.assert_async().await;
         Ok(())
     }
