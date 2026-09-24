@@ -5,11 +5,17 @@ license.workspace = true
 repository.workspace = true
 edition.workspace = true
 
+[features]
+testing = ["dep:mockito", "dep:docs_rs_headers", "dep:http", "docs_rs_headers/testing"]
+
 [dependencies]
 anyhow = { workspace = true }
 bon = { workspace = true }
 docs_rs_config = { path = "../docs_rs_config" }
 docs_rs_env_vars = { path = "../docs_rs_env_vars" }
+docs_rs_headers = { path = "../docs_rs_headers", optional = true }
+http = { workspace = true, optional = true }
+mockito = { workspace = true, optional = true }
 docs_rs_reqwest = { path = "../docs_rs_reqwest" }
 docs_rs_types = { path = "../docs_rs_types" }
 serde = { workspace = true }
@@ -17,6 +23,8 @@ tracing = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]
+docs_rs_headers = { path = "../docs_rs_headers", features = ["testing"] }
+http = { workspace = true }
 docs_rs_types = { path = "../docs_rs_types", features = ["testing"] }
 docs_rs_utils = { path = "../docs_rs_utils" }
 mockito = { workspace = true }

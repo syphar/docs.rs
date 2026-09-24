@@ -138,86 +138,25 @@ mod tests {
         cache::CachePolicy,
         testing::{
             AxumResponseTestExt, AxumRouterTestExt, TestEnvironment, TestEnvironmentExt as _,
-            headers::test_typed_encode,
         },
     };
     use anyhow::Result;
     use axum_extra::headers::{CacheControl, HeaderMapExt as _};
-    use bon::bon;
     use docs_rs_config::AppConfig as _;
     use docs_rs_database::service_config::{Abnormality, ConfigName, set_config};
+    use docs_rs_rustsec::testing::RustsecMockServer;
     use docs_rs_std_replacements::{
         ReplacementDetails,
         testing::{StdReplacementMockServer, std_replacement},
     };
     use docs_rs_types::{Duration, KrateName, testing::V1};
     use docs_rs_uri::EscapedURI;
-    use http::{StatusCode, header::CACHE_CONTROL};
+    use http::StatusCode;
     use kuchikiki::traits::TendrilSink;
     use std::str::FromStr;
     use test_case::test_case;
 
     const OWNED_ALLOC: KrateName = KrateName::from_static("owned-alloc");
-
-    struct RustsecMockServer {
-        rustsec_server: mockito::ServerGuard,
-        mocks: Vec<mockito::Mock>,
-    }
-
-    #[bon]
-    impl RustsecMockServer {
-        async fn new() -> Result<Self> {
-            Ok(Self {
-                rustsec_server: mockito::Server::new_async().await,
-                mocks: Vec::new(),
-            })
-        }
-
-        #[builder(start_fn(name = rustsec_mock), finish_fn(name = start))]
-        async fn create_rustsec_mock(
-            mut self,
-            #[builder(start_fn)] krate: KrateName,
-            #[builder(default = StatusCode::OK)] status_code: StatusCode,
-            #[builder(default = false)] empty: bool,
-            cache_control: Option<CacheControl>,
-        ) -> Self {
-            let mut mock = self
-                .rustsec_server
-                .mock("GET", format!("/packages/{}.json", krate).as_str())
-                .with_status(status_code.as_u16().into());
-
-            if let Some(cache_control) = cache_control {
-                let value = test_typed_encode(cache_control);
-                mock = mock.with_header(CACHE_CONTROL, value.to_str().unwrap());
-            }
-
-            let empty = empty || (status_code.is_client_error() || status_code.is_server_error());
-
-            self.mocks.push(
-                mock.with_body(if empty {
-                    ""
-                } else {
-                    include_str!("../../../../lib/docs_rs_rustsec/tests/fixtures/owned-alloc.json")
-                })
-                .create_async()
-                .await,
-            );
-
-            self
-        }
-
-        fn rustsec_config(&self) -> docs_rs_rustsec::ConfigBuilder {
-            docs_rs_rustsec::Config::builder()
-                .base_url(self.rustsec_server.url().parse().unwrap())
-                .max_retries(0)
-        }
-
-        async fn assert_async(self) {
-            for mock in self.mocks {
-                mock.assert_async().await;
-            }
-        }
-    }
 
     fn assert_ttl(response: &axum::response::Response, expected: Duration) {
         let header = response
@@ -267,17 +206,17 @@ mod tests {
         };
 
         let rustsec_cache = CacheControl::new().with_max_age(rustsec_ttl.into());
-        let mock_server = RustsecMockServer::new().await?;
+        let mock_server = RustsecMockServer::new().await;
         let mock_server = if empty {
             mock_server
-                .rustsec_mock(OWNED_ALLOC)
+                .mock(OWNED_ALLOC)
                 .status_code(StatusCode::NOT_FOUND)
                 .cache_control(rustsec_cache)
                 .start()
                 .await
         } else {
             mock_server
-                .rustsec_mock(OWNED_ALLOC)
+                .mock(OWNED_ALLOC)
                 .empty(false)
                 .cache_control(rustsec_cache)
                 .start()
@@ -286,12 +225,7 @@ mod tests {
 
         let env = TestEnvironment::builder()
             .std_replacements_config(std_server.config().build())
-            .rustsec_config(
-                mock_server
-                    .rustsec_config()
-                    .cache_default_ttl(rustsec_ttl)
-                    .build(),
-            )
+            .rustsec_config(mock_server.config().cache_default_ttl(rustsec_ttl).build())
             .build()
             .await?;
 
@@ -325,13 +259,13 @@ mod tests {
             .start()
             .await;
         let mocks = RustsecMockServer::new()
-            .await?
-            .rustsec_mock(OWNED_ALLOC)
+            .await
+            .mock(OWNED_ALLOC)
             .start()
             .await;
         let env = TestEnvironment::builder()
             .std_replacements_config(std_server.config().build())
-            .rustsec_config(mocks.rustsec_config().build())
+            .rustsec_config(mocks.config().build())
             .build()
             .await?;
         let html = env
@@ -362,8 +296,8 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn crate_warnings_does_not_cache_uncached_replacement_404() -> Result<()> {
         let mock_server = RustsecMockServer::new()
-            .await?
-            .rustsec_mock(OWNED_ALLOC)
+            .await
+            .mock(OWNED_ALLOC)
             .cache_control(CacheControl::new().with_max_age(std::time::Duration::from_secs(600)))
             .start()
             .await;
@@ -376,7 +310,7 @@ mod tests {
 
         let env = TestEnvironment::builder()
             .std_replacements_config(std_server.config().build())
-            .rustsec_config(mock_server.rustsec_config().build())
+            .rustsec_config(mock_server.config().build())
             .build()
             .await?;
 
@@ -413,8 +347,8 @@ mod tests {
             .start()
             .await;
         let mocks = RustsecMockServer::new()
-            .await?
-            .rustsec_mock(OWNED_ALLOC)
+            .await
+            .mock(OWNED_ALLOC)
             .status_code(if replacement_fails {
                 StatusCode::OK
             } else {
@@ -424,7 +358,7 @@ mod tests {
             .await;
         let env = TestEnvironment::builder()
             .std_replacements_config(std_server.config().build())
-            .rustsec_config(mocks.rustsec_config().build())
+            .rustsec_config(mocks.config().build())
             .build()
             .await?;
         let response = env
@@ -444,13 +378,13 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn crate_warnings_partial_returns_unmaintained_advisory() -> Result<()> {
         let mock_server = RustsecMockServer::new()
-            .await?
-            .rustsec_mock(OWNED_ALLOC)
+            .await
+            .mock(OWNED_ALLOC)
             .maybe_cache_control(None)
             .start()
             .await;
         let env = TestEnvironment::builder()
-            .rustsec_config(mock_server.rustsec_config().build())
+            .rustsec_config(mock_server.config().build())
             .build()
             .await?;
 

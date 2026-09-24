@@ -81,6 +81,7 @@ syntect = { version = "5.0.0", default-features = false, features = ["dump-creat
 walkdir = { workspace = true }
 
 [dev-dependencies]
+docs_rs_rustsec = { path = "../../lib/docs_rs_rustsec", features = ["testing"] }
 docs_rs_config = { path = "../../lib/docs_rs_config", features = ["testing"] }
 docs_rs_context = { path = "../../lib/docs_rs_context", features = ["testing"] }
 docs_rs_database = { path = "../../lib/docs_rs_database", features = ["testing"] }
