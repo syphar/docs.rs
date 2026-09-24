@@ -219,9 +219,9 @@ mod tests {
             #[builder(default = StatusCode::OK)] status_code: StatusCode,
         ) -> Self {
             let map = ReplacementMap::from_iter(
-                items
+                replacements
                     .into_iter()
-                    .chain(item)
+                    .chain(replacement)
                     .map(|(krate, details)| (krate, Arc::new(details))),
             );
 
