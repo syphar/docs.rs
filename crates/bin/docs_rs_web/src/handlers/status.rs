@@ -191,10 +191,9 @@ mod tests {
     ) -> Result<()> {
         let replacement = std_replacement("Use std");
 
-        let std_server = StdReplacementMockServer::new().await;
-
+        let mut std_server = StdReplacementMockServer::new().await;
         let std_cache = CacheControl::new().with_max_age(std_ttl.into());
-        let std_server = if empty {
+        std_server = if empty {
             std_server.mock().cache_control(std_cache).start().await
         } else {
             std_server
@@ -206,16 +205,16 @@ mod tests {
         };
 
         let rustsec_cache = CacheControl::new().with_max_age(rustsec_ttl.into());
-        let mock_server = RustsecMockServer::new().await;
-        let mock_server = if empty {
-            mock_server
+        let mut rustsec_server = RustsecMockServer::new().await;
+        rustsec_server = if empty {
+            rustsec_server
                 .mock(OWNED_ALLOC)
                 .status_code(StatusCode::NOT_FOUND)
                 .cache_control(rustsec_cache)
                 .start()
                 .await
         } else {
-            mock_server
+            rustsec_server
                 .mock(OWNED_ALLOC)
                 .empty(false)
                 .cache_control(rustsec_cache)
@@ -225,7 +224,12 @@ mod tests {
 
         let env = TestEnvironment::builder()
             .std_replacements_config(std_server.config().build())
-            .rustsec_config(mock_server.config().cache_default_ttl(rustsec_ttl).build())
+            .rustsec_config(
+                rustsec_server
+                    .config()
+                    .cache_default_ttl(rustsec_ttl)
+                    .build(),
+            )
             .build()
             .await?;
 
@@ -246,7 +250,7 @@ mod tests {
         }
 
         std_server.assert_async().await;
-        mock_server.assert_async().await;
+        rustsec_server.assert_async().await;
         Ok(())
     }
 
@@ -258,16 +262,19 @@ mod tests {
             .replacement(OWNED_ALLOC, std_replacement("Use std"))
             .start()
             .await;
-        let mocks = RustsecMockServer::new()
+
+        let rustsec_server = RustsecMockServer::new()
             .await
             .mock(OWNED_ALLOC)
             .start()
             .await;
+
         let env = TestEnvironment::builder()
             .std_replacements_config(std_server.config().build())
-            .rustsec_config(mocks.config().build())
+            .rustsec_config(rustsec_server.config().build())
             .build()
             .await?;
+
         let html = env
             .web_app()
             .await
@@ -275,12 +282,14 @@ mod tests {
             .await?
             .text()
             .await?;
+
         let page = kuchikiki::parse_html().one(format!("<ul>{html}</ul>"));
         let labels: Vec<_> = page
             .select("ul > li.crate-warning > a.warn")
             .unwrap()
             .map(|link| link.text_contents().trim().to_owned())
             .collect();
+
         assert_eq!(labels, ["Std alternative", "Unmaintained"]);
         assert_eq!(
             page.select("li.crate-warning + li.crate-warning")
@@ -288,14 +297,15 @@ mod tests {
                 .count(),
             1
         );
+
         std_server.assert_async().await;
-        mocks.assert_async().await;
+        rustsec_server.assert_async().await;
         Ok(())
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn crate_warnings_does_not_cache_uncached_replacement_404() -> Result<()> {
-        let mock_server = RustsecMockServer::new()
+        let rustsec_server = RustsecMockServer::new()
             .await
             .mock(OWNED_ALLOC)
             .cache_control(CacheControl::new().with_max_age(std::time::Duration::from_secs(600)))
@@ -310,7 +320,7 @@ mod tests {
 
         let env = TestEnvironment::builder()
             .std_replacements_config(std_server.config().build())
-            .rustsec_config(mock_server.config().build())
+            .rustsec_config(rustsec_server.config().build())
             .build()
             .await?;
 
@@ -327,7 +337,7 @@ mod tests {
         assert!(!html.contains("Std alternative"));
 
         std_server.assert_async().await;
-        mock_server.assert_async().await;
+        rustsec_server.assert_async().await;
         Ok(())
     }
 
@@ -346,7 +356,7 @@ mod tests {
             })
             .start()
             .await;
-        let mocks = RustsecMockServer::new()
+        let rustsec_server = RustsecMockServer::new()
             .await
             .mock(OWNED_ALLOC)
             .status_code(if replacement_fails {
@@ -356,44 +366,52 @@ mod tests {
             })
             .start()
             .await;
+
         let env = TestEnvironment::builder()
             .std_replacements_config(std_server.config().build())
-            .rustsec_config(mocks.config().build())
+            .rustsec_config(rustsec_server.config().build())
             .build()
             .await?;
+
         let response = env
             .web_app()
             .await
             .assert_success("/-/partial/crate-warnings/owned-alloc/")
             .await?;
+
         response.assert_cache_control(CachePolicy::NoCaching, env.config());
+
         let html = response.text().await?;
         assert_eq!(html.contains("Unmaintained"), replacement_fails);
         assert_eq!(html.contains("Std alternative"), !replacement_fails);
+
         std_server.assert_async().await;
-        mocks.assert_async().await;
+        rustsec_server.assert_async().await;
         Ok(())
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn crate_warnings_partial_returns_unmaintained_advisory() -> Result<()> {
-        let mock_server = RustsecMockServer::new()
+        let rustsec_server = RustsecMockServer::new()
             .await
             .mock(OWNED_ALLOC)
             .maybe_cache_control(None)
             .start()
             .await;
+
         let env = TestEnvironment::builder()
-            .rustsec_config(mock_server.config().build())
+            .rustsec_config(rustsec_server.config().build())
             .build()
             .await?;
 
         assert!(env.rustsec().is_some());
+
         let web = env.web_app().await;
         let response = web
             .assert_success("/-/partial/crate-warnings/owned-alloc/")
             .await?;
         assert_ttl(&response, Duration::from_mins(10));
+
         let page = kuchikiki::parse_html().one(response.text().await?);
         let link = page.select_first("a.pure-menu-link.warn").unwrap();
         assert_eq!(link.text_contents().trim(), "Unmaintained");
@@ -405,7 +423,8 @@ mod tests {
             );
             assert_eq!(attrs.get("title"), Some("`owned-alloc` is unmaintained"));
         }
-        mock_server.assert_async().await;
+
+        rustsec_server.assert_async().await;
         Ok(())
     }
 
@@ -417,7 +436,7 @@ mod tests {
         );
         const LAZY_STATIC: KrateName = KrateName::from_static("lazy_static");
 
-        let mock_server = StdReplacementMockServer::new()
+        let std_server = StdReplacementMockServer::new()
             .await
             .mock()
             .replacement(LAZY_STATIC, replacement.clone())
@@ -426,7 +445,7 @@ mod tests {
 
         let env = TestEnvironment::builder()
             .std_replacements_config(
-                mock_server
+                std_server
                     .config()
                     .cache_default_ttl(Duration::from_secs(90))
                     .build(),
@@ -460,7 +479,8 @@ mod tests {
             );
             assert_eq!(attrs.get("title"), Some(replacement.description()));
         }
-        mock_server.assert_async().await;
+
+        std_server.assert_async().await;
         Ok(())
     }
 
