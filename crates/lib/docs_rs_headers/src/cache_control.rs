@@ -1,8 +1,7 @@
 use headers::CacheControl;
 use std::time::Duration;
 
-/// Compute freshness using parsed cache directives, which may have been retained
-/// from an earlier response when a 304 omits `Cache-Control`.
+/// Compute remaining freshness using parsed cache directives and the response age.
 /// This interprets `max-age`, `no-cache`, and `no-store`; it is not a full HTTP
 /// cache policy evaluator. Missing `max-age` returns `None`.
 pub fn cache_control_ttl(control: Option<&CacheControl>, age: Duration) -> Option<Duration> {

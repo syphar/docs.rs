@@ -1,12 +1,12 @@
-//! Retrying JSON GET requests with a bounded, shared cache and ETag revalidation.
-use anyhow::{Result, bail};
-use docs_rs_headers::{Age, CacheControl, ETag, HeaderMapExt, IfNoneMatch, cache_control_ttl};
+//! Retrying JSON GET requests with a bounded, shared cache.
+use anyhow::Result;
+use docs_rs_headers::{Age, CacheControl, HeaderMapExt, cache_control_ttl};
 use docs_rs_utils::APP_USER_AGENT;
 use moka::{
     future::Cache,
     ops::compute::{CompResult, Op},
 };
-use reqwest::{StatusCode, header::HeaderMap};
+use reqwest::StatusCode;
 use reqwest_middleware::{ClientBuilder as MiddlewareClientBuilder, ClientWithMiddleware};
 use reqwest_retry::{RetryTransientMiddleware, policies::ExponentialBackoff};
 use serde::de::DeserializeOwned;
@@ -25,8 +25,7 @@ pub use cached_result::CachedResult;
 /// Clones share connections and cached values.
 /// Only GET requests are supported; cache keys are complete URLs.
 ///
-/// Moka bounds the retained entries. Freshness is checked separately so expired
-/// values and validators remain available for conditional requests.
+/// Moka bounds the retained entries. Expired values are replaced on the next lookup.
 ///
 /// Compared to a browser, additionally supports:
 /// * caching 404, even without caching headers in the response
@@ -54,8 +53,7 @@ struct Inner<T: Send + Sync + 'static> {
 #[derive(Debug)]
 struct Snapshot<T> {
     value: Option<Arc<T>>,
-    etag: Option<ETag>,
-    cache_control: Option<CacheControl>,
+    no_store: bool,
     expires_at: Instant,
 }
 
@@ -117,7 +115,7 @@ impl<T: DeserializeOwned + Send + Sync + 'static> Client<T> {
         })
     }
 
-    /// Fetch or revalidate JSON. Concurrent requests for a cached URL serialize
+    /// Fetch or reuse cached JSON. Concurrent requests for a cached URL serialize
     /// refreshes; unrelated URLs never hold the same lock. Invalid JSON is not cached.
     #[instrument(skip(self), fields(%url))]
     pub async fn get(&self, url: &Url) -> Result<CachedResult<Option<Arc<T>>>> {
@@ -139,12 +137,8 @@ impl<T: DeserializeOwned + Send + Sync + 'static> Client<T> {
                 if snapshot.is_some_and(Snapshot::is_fresh) {
                     return Ok(Op::Nop);
                 }
-                let refreshed = self.refresh(url, snapshot).await?;
-                if refreshed
-                    .cache_control
-                    .as_ref()
-                    .is_some_and(CacheControl::no_store)
-                {
+                let refreshed = self.refresh(url).await?;
+                if refreshed.no_store {
                     // Return this response only to its caller, removing any older snapshot.
                     *uncached_result = Some(refreshed.cached_result());
                     Ok(Op::Remove)
@@ -171,23 +165,13 @@ impl<T: DeserializeOwned + Send + Sync + 'static> Client<T> {
     }
 
     #[instrument(skip_all, fields(%url))]
-    async fn refresh(&self, url: &Url, snapshot: Option<&Snapshot<T>>) -> Result<Snapshot<T>> {
-        let mut request = self.inner.http.get(url.clone());
-        if let Some(etag) = snapshot
-            .as_ref()
-            .and_then(|snapshot| snapshot.etag.as_ref())
-        {
-            let mut headers = HeaderMap::new();
-            headers.typed_insert(IfNoneMatch(etag.clone().into()));
-
-            request = request.headers(headers);
-        }
-
+    async fn refresh(&self, url: &Url) -> Result<Snapshot<T>> {
         debug!(%url, "fetching JSON");
-        let response = request.send().await?;
+        let response = self.inner.http.get(url.clone()).send().await?;
         let received_at = Instant::now();
 
         let cache_control = response.headers().typed_get::<CacheControl>();
+        let no_store = cache_control.as_ref().is_some_and(CacheControl::no_store);
         let age = response
             .headers()
             .typed_get::<Age>()
@@ -201,46 +185,22 @@ impl<T: DeserializeOwned + Send + Sync + 'static> Client<T> {
             });
             return Ok(Snapshot {
                 value: None,
-                etag: None,
-                cache_control,
+                no_store,
                 expires_at: received_at + ttl,
             });
         }
 
         let response = response.error_for_status()?;
 
-        let etag: Option<ETag> = response.headers().typed_get();
-        let expires_at = |control: Option<&CacheControl>| {
-            received_at
-                + cache_control_ttl(control, age)
-                    .unwrap_or(self.inner.default_ttl.saturating_sub(age))
-        };
-
-        if response.status() == StatusCode::NOT_MODIFIED {
-            let Some(snapshot) = snapshot else {
-                bail!("received 304 without a cached JSON response");
-            };
-            // if the 304 response doesn't have a cache-control header, use the one
-            // from the cached response.
-            let cache_control = cache_control.or_else(|| snapshot.cache_control.clone());
-            debug!(%url, "cached JSON unchanged");
-            Ok(Snapshot {
-                value: snapshot.value.clone(),
-                // if the 304 response doesn't have an Etag header, use the one
-                // from the cached response.
-                etag: etag.or_else(|| snapshot.etag.clone()),
-                expires_at: expires_at(cache_control.as_ref()),
-                cache_control,
-            })
-        } else {
-            let value = response.json::<T>().await?;
-            Ok(Snapshot {
-                value: Some(Arc::new(value)),
-                etag,
-                expires_at: expires_at(cache_control.as_ref()),
-                cache_control,
-            })
-        }
+        let expires_at = received_at
+            + cache_control_ttl(cache_control.as_ref(), age)
+                .unwrap_or(self.inner.default_ttl.saturating_sub(age));
+        let value = response.json::<T>().await?;
+        Ok(Snapshot {
+            value: Some(Arc::new(value)),
+            expires_at,
+            no_store,
+        })
     }
 }
 
@@ -398,13 +358,10 @@ mod tests {
 
         let client = Client::<u64>::builder().max_retries(0u32).build()?;
 
-        let one: ETag = "\"one\"".parse().unwrap();
-
         let url = server.url().parse()?;
         let initial = server
             .mock("GET", "/")
             .with_body("1")
-            .with_typed_header(one.clone())
             .with_typed_header(CacheControl::new().with_max_age(Duration::ZERO))
             .create_async()
             .await;
@@ -415,7 +372,6 @@ mod tests {
 
         let missing = server
             .mock("GET", "/")
-            .match_typed_header(IfNoneMatch(one.into()))
             .with_status_code(StatusCode::NOT_FOUND)
             .with_typed_header(CacheControl::new().with_max_age(Duration::from_mins(10)))
             .create_async()
@@ -427,12 +383,7 @@ mod tests {
         assert!(client.inner.cache.get(&url).await.is_none());
         missing.assert_async().await;
         missing.remove_async().await;
-        let recovered = server
-            .mock("GET", "/")
-            .match_header(IF_NONE_MATCH, mockito::Matcher::Missing)
-            .with_body("2")
-            .create_async()
-            .await;
+        let recovered = server.mock("GET", "/").with_body("2").create_async().await;
         assert_eq!(*client.get(&url).await?.value.unwrap(), 2);
         recovered.assert_async().await;
         Ok(())
@@ -466,65 +417,6 @@ mod tests {
         assert_eq!(*other.value.unwrap(), 2);
         a.assert_async().await;
         b.assert_async().await;
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn revalidation_retains_value_and_new_response_clears_etag() -> Result<()> {
-        let mut server = mockito::Server::new_async().await;
-
-        let client = Client::<u64>::builder().max_retries(0u32).build()?;
-        let url = server.url().parse()?;
-
-        let one: ETag = "\"one\"".parse().unwrap();
-
-        let initial = server
-            .mock("GET", "/")
-            .with_body("1")
-            .with_typed_header(CacheControl::new().with_max_age(Duration::from_mins(1)))
-            .with_typed_header(one.clone())
-            .create_async()
-            .await;
-
-        let first = client.get(&url).await?.value.unwrap();
-        initial.assert_async().await;
-        initial.remove_async().await;
-        advance(Duration::from_secs(61)).await;
-
-        let unchanged = server
-            .mock("GET", "/")
-            .match_typed_header(IfNoneMatch(one.into()))
-            .with_status_code(StatusCode::NOT_MODIFIED)
-            .create_async()
-            .await;
-
-        let second = client.get(&url).await?;
-        assert!(Arc::ptr_eq(&first, &second.value.unwrap()));
-        assert!(second.ttl > Duration::from_secs(55));
-        unchanged.assert_async().await;
-        unchanged.remove_async().await;
-        advance(Duration::from_secs(61)).await;
-
-        let changed = server
-            .mock("GET", "/")
-            .match_header(IF_NONE_MATCH, "\"one\"")
-            .with_body("2")
-            .with_header(CACHE_CONTROL, "max-age=0")
-            .create_async()
-            .await;
-        assert_eq!(*client.get(&url).await?.value.unwrap(), 2);
-        changed.assert_async().await;
-        changed.remove_async().await;
-
-        let no_validator = server
-            .mock("GET", "/")
-            .match_header(IF_NONE_MATCH, mockito::Matcher::Missing)
-            .with_body("3")
-            .create_async()
-            .await;
-
-        assert_eq!(*client.get(&url).await?.value.unwrap(), 3);
-        no_validator.assert_async().await;
         Ok(())
     }
 
@@ -657,99 +549,47 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fallback_ttl_expires_and_is_renewed_by_304() -> Result<()> {
+    async fn fallback_ttl_expires_and_refreshes_without_conditional_request() -> Result<()> {
         let mut server = mockito::Server::new_async().await;
         let api = Client::<String>::builder()
             .max_retries(0u32)
             .default_ttl(Duration::from_secs(90))
             .build()?;
 
-        let one: ETag = "\"one\"".parse().unwrap();
-
         let url = server.url().parse()?;
         let initial = server
             .mock("GET", "/")
             .with_status_code(StatusCode::OK)
-            .with_typed_header(one.clone())
             .with_body(body("initial"))
+            .with_header("etag", "\"one\"")
             .expect(1)
             .create_async()
             .await;
-        let first = api.get(&url).await?;
+        api.get(&url).await?;
         advance(Duration::from_secs(60)).await;
         let cached = api.get(&url).await?;
         assert!(cached.ttl <= Duration::from_secs(30));
         assert!(cached.ttl > Duration::from_secs(25));
         initial.assert_async().await;
         initial.remove_async().await;
-        let unchanged = server
+        let updated = server
             .mock("GET", "/")
-            .with_status_code(StatusCode::NOT_MODIFIED)
-            .match_typed_header(IfNoneMatch(one.into()))
+            .with_status_code(StatusCode::OK)
+            .match_header(IF_NONE_MATCH, mockito::Matcher::Missing)
+            .with_body(body("updated"))
             .expect(1)
             .create_async()
             .await;
         advance(Duration::from_secs(31)).await;
-        let renewed = api.get(&url).await?;
-        assert!(Arc::ptr_eq(&first.value.unwrap(), &renewed.value.unwrap()));
+        let (renewed, concurrent) = tokio::try_join!(api.get(&url), api.get(&url))?;
+        assert_eq!(renewed.value.as_deref().unwrap(), "updated");
+        assert!(Arc::ptr_eq(
+            renewed.value.as_ref().unwrap(),
+            concurrent.value.as_ref().unwrap()
+        ));
         assert!(renewed.ttl <= Duration::from_secs(90));
         assert!(renewed.ttl > Duration::from_secs(85));
-        unchanged.assert_async().await;
-        Ok(())
-    }
-
-    #[test_case(false; "retain cache directives")]
-    #[test_case(true; "replace cache directives")]
-    #[tokio::test]
-    async fn revalidates_etag_and_preserves_snapshot(change_ttl: bool) -> Result<()> {
-        let (mut server, api, url) = fixture().await?;
-        let one: ETag = "W/\"one\"".parse().unwrap();
-        let two: ETag = "W/\"two\"".parse().unwrap();
-
-        let initial = server
-            .mock("GET", "/")
-            .with_status_code(StatusCode::OK)
-            .with_body(body("initial"))
-            .with_typed_header(CacheControl::new().with_max_age(Duration::from_mins(10)))
-            .with_typed_header(Age::from_secs(500))
-            .with_typed_header(one.clone())
-            .create_async()
-            .await;
-
-        let old = api.get(&url).await?.value.unwrap();
-        initial.assert_async().await;
-        initial.remove_async().await;
-        advance(Duration::from_secs(101)).await;
-        let mut mock = server
-            .mock("GET", "/")
-            .match_typed_header(IfNoneMatch(one.into()))
-            .with_status_code(StatusCode::NOT_MODIFIED)
-            .with_typed_header(two.clone());
-
-        if change_ttl {
-            mock =
-                mock.with_typed_header(CacheControl::new().with_max_age(Duration::from_secs(1200)));
-        }
-        let mock = mock.expect(1).create_async().await;
-        let name = url.clone();
-        let (first, second) = tokio::try_join!(api.get(&name), api.get(&name))?;
-        assert!(Arc::ptr_eq(&old, &first.value.unwrap()));
-        assert!(Arc::ptr_eq(&old, &second.value.unwrap()));
-        mock.assert_async().await;
-        mock.remove_async().await;
-        advance(Duration::from_secs(if change_ttl { 1100 } else { 500 })).await;
-        assert!(Arc::ptr_eq(&old, &api.get(&url).await?.value.unwrap()));
-        advance(Duration::from_secs(101)).await;
-        let changed = server
-            .mock("GET", "/")
-            .match_typed_header(IfNoneMatch(two.into()))
-            .with_status_code(StatusCode::OK)
-            .with_body(body("changed"))
-            .create_async()
-            .await;
-        assert_eq!(api.get(&url).await?.value.unwrap().as_str(), "changed");
-        assert_eq!(old.as_str(), "initial");
-        changed.assert_async().await;
+        updated.assert_async().await;
         Ok(())
     }
 
@@ -868,20 +708,17 @@ mod tests {
 
     #[test_case(StatusCode::OK; "successful response")]
     #[test_case(StatusCode::NOT_FOUND; "negative response")]
-    #[test_case(StatusCode::NOT_MODIFIED; "revalidation")]
     #[tokio::test]
-    async fn no_store_removes_snapshot_and_validator(status: StatusCode) -> Result<()> {
+    async fn no_store_removes_snapshot(status: StatusCode) -> Result<()> {
         let mut server = mockito::Server::new_async().await;
         let url = server.url().parse()?;
         let api = Client::<String>::builder()
             .max_retries(0u32)
             .not_found_ttl(Duration::from_secs(60))
             .build()?;
-        let etag: ETag = "\"initial\"".parse().unwrap();
 
         let initial = server
             .mock("GET", "/")
-            .with_typed_header(etag.clone())
             .with_status_code(StatusCode::OK)
             .with_typed_header(CacheControl::new().with_max_age(Duration::ZERO))
             .with_body(body("initial"))
@@ -904,7 +741,6 @@ mod tests {
             result.value.as_deref().map(String::as_str),
             match status {
                 StatusCode::OK => Some("updated"),
-                StatusCode::NOT_MODIFIED => Some("initial"),
                 _ => None,
             }
         );
@@ -914,7 +750,6 @@ mod tests {
 
         let failure = server
             .mock("GET", "/")
-            .match_header(IF_NONE_MATCH, mockito::Matcher::Missing)
             .with_status_code(StatusCode::INTERNAL_SERVER_ERROR)
             .create_async()
             .await;

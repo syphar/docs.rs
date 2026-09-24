@@ -5,7 +5,7 @@ use docs_rs_types::KrateName;
 use std::sync::Arc;
 use url::Url;
 
-/// A single snapshot, fetched lazily and revalidated on demand using its ETag.
+/// A single snapshot, fetched lazily and refreshed on demand when its TTL expires.
 #[derive(Debug)]
 pub struct StdReplacements {
     client: Client<ReplacementMap>,
