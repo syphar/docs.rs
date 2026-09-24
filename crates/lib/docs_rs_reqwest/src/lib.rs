@@ -289,7 +289,7 @@ mod tests {
                 assert!(result.ttl <= Duration::from_secs(60));
                 assert!(result.ttl > Duration::from_secs(55));
             } else {
-                assert!(result.ttl.is_none());
+                assert_eq!(result.ttl, Duration::ZERO);
                 assert!(client.inner.cache.get(&url).await.is_none());
                 client.inner.cache.run_pending_tasks().await;
                 assert_eq!(client.inner.cache.entry_count(), 0);
@@ -323,7 +323,7 @@ mod tests {
             .await;
         let result = client.get(&url).await?;
         assert!(result.value.is_none());
-        assert!(result.ttl.is_none());
+        assert_eq!(result.ttl, Duration::ZERO);
         assert!(client.inner.cache.get(&url).await.is_none());
         missing.assert_async().await;
         missing.remove_async().await;
