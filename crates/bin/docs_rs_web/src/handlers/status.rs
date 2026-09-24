@@ -82,7 +82,7 @@ impl_axum_webpage! {
 
 /// Render crate warnings for insertion into the documentation topbar.
 pub(crate) async fn crate_warnings(
-    rustsec: Option<Extension<RustsecClient>>,
+    rustsec: Option<Extension<Arc<RustsecClient>>>,
     std_replacements: Option<Extension<Arc<StdReplacements>>>,
     Path(name): Path<KrateName>,
 ) -> AxumResult<impl IntoResponse> {
