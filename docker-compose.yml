@@ -285,7 +285,7 @@ services:
         command:
             - -c
             - >-
-                aws --endpoint-url http://s3:9000 s3api head-bucket --bucket "$$DOCSRS_S3_BUCKET"
+                aws --endpoint-url http://s3:9000 s3api head-bucket --bucket "$$DOCSRS_S3_BUCKET" >/dev/null 2>&1
                 || aws --endpoint-url http://s3:9000 s3api create-bucket --bucket "$$DOCSRS_S3_BUCKET"
         profiles:
             - manual
