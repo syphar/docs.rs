@@ -22,6 +22,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use tracing::error;
 
 #[derive(Debug, Clone, PartialEq, Template)]
 #[template(path = "core/about/status.html")]
@@ -85,30 +86,34 @@ pub(crate) async fn crate_warnings(
     Path(name): Path<KrateName>,
 ) -> AxumResult<impl IntoResponse> {
     let started_at = Instant::now();
+
+    // Failed lookups return an empty result with zero TTL; disabled clients return None.
     let (std_replacement, unmaintained) = tokio::join!(
         async {
             match std_replacements {
-                Some(Extension(client)) => client.get(&name).await.map(Some),
-                None => Ok(None),
+                Some(Extension(client)) => Some(
+                    client.get(&name).await
+                        .inspect_err(|err| error!(?err, %name, "failed to fetch standard-library replacements"))
+                        .unwrap_or_default(),
+                ),
+                None => None,
             }
         },
         async {
             match rustsec {
-                Some(Extension(client)) => client.find_unmaintained(&name).await.map(Some),
-                None => Ok(None),
+                Some(Extension(client)) => Some(
+                    client
+                        .find_unmaintained(&name)
+                        .await
+                        .inspect_err(
+                            |err| error!(?err, %name, "failed to fetch RustSec advisories"),
+                        )
+                        .unwrap_or_default(),
+                ),
+                None => None,
             }
         }
     );
-    // A failed source contributes no warning and a zero TTL, so recovery is visible
-    // on the next request without suppressing the healthy source.
-    let std_replacement = std_replacement.unwrap_or_else(|error| {
-        tracing::warn!(?error, %name, "failed to fetch standard-library replacements");
-        Some(Default::default())
-    });
-    let unmaintained = unmaintained.unwrap_or_else(|error| {
-        tracing::warn!(?error, %name, "failed to fetch RustSec advisories");
-        Some(Default::default())
-    });
 
     let ttl = match (&std_replacement, &unmaintained) {
         (Some(replacement), Some(advisory)) => replacement.ttl.min(advisory.ttl),
