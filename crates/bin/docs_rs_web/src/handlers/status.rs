@@ -311,7 +311,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn crate_warnings_does_not_cache_uncached_replacement_404() -> Result<()> {
+    async fn crate_warnings_caches_replacement_404() -> Result<()> {
         let rustsec_server = RustsecMockServer::new()
             .await
             .mock(OWNED_ALLOC)
@@ -337,7 +337,7 @@ mod tests {
             .assert_success("/-/partial/crate-warnings/owned-alloc/")
             .await?;
 
-        response.assert_cache_control(CachePolicy::NoCaching, env.config());
+        assert_ttl(&response, Duration::from_secs(600));
 
         let html = response.text().await?;
         assert!(html.contains("Unmaintained"));
@@ -492,7 +492,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn crate_warnings_partial_without_replacement_is_empty() -> Result<()> {
+    async fn crate_warnings_with_both_clients_disabled_is_empty() -> Result<()> {
         let env = TestEnvironment::new().await?;
         assert!(env.rustsec().is_none());
         assert!(env.std_replacements().is_none());

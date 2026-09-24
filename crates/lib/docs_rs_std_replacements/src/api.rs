@@ -2,10 +2,10 @@ use crate::{Config, ReplacementDetails, ReplacementMap};
 use anyhow::Result;
 use docs_rs_reqwest::{CachedResult, Client};
 use docs_rs_types::KrateName;
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 use url::Url;
 
-/// A single snapshot, fetched lazily and revalidated on demand using its ETag.
+/// A single snapshot, fetched lazily and refreshed on demand when its TTL expires.
 #[derive(Debug)]
 pub struct StdReplacements {
     client: Client<ReplacementMap>,
@@ -13,15 +13,13 @@ pub struct StdReplacements {
 }
 
 impl StdReplacements {
-    /// Create a client without fetching data. Failed refreshes retain the last
-    /// snapshot and defer retries for 30 seconds; initial-load failures propagate.
+    /// Create a client without fetching data. Fetch failures propagate to the caller.
     pub fn from_config(config: &Config) -> Result<Self> {
         Ok(Self {
             client: Client::builder()
                 .max_retries(config.max_retries)
                 .cache_capacity(1u64)
                 .default_ttl(config.cache_default_ttl)
-                .stale_if_error(Duration::from_secs(30))
                 .build()?,
             url: config.url.clone(),
         })
@@ -52,12 +50,6 @@ mod tests {
         let server = StdReplacementMockServer::new().await;
         let api = StdReplacements::from_config(&server.config().build())?;
         Ok((server, api))
-    }
-
-    async fn advance(duration: Duration) {
-        tokio::time::pause();
-        tokio::time::advance(duration).await;
-        tokio::time::resume();
     }
 
     #[tokio::test]
@@ -97,7 +89,7 @@ mod tests {
         server.remove_mock();
 
         server = server.mock().start().await;
-        advance(Duration::from_secs(2)).await;
+        tokio::time::sleep(Duration::from_millis(1100)).await;
         assert!(api.get(&KRATE).await?.value.is_none());
         server.assert_async().await;
         Ok(())

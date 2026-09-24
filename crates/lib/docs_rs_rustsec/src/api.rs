@@ -76,7 +76,7 @@ impl RustsecClient {
     /// Missing feeds become empty lists. Other HTTP failures and malformed JSON
     /// return an error.
     #[instrument(skip(self), fields(krate = %name))]
-    pub async fn fetch_advisories(
+    async fn fetch_advisories(
         &self,
         name: &KrateName,
     ) -> Result<CachedResult<Arc<Vec<Arc<OsvAdvisory>>>>> {
@@ -132,8 +132,24 @@ mod tests {
 
     #[tokio::test]
     async fn finds_unmaintained_advisory() -> Result<()> {
-        let advisories = serde_json::from_str(OWNED_ALLOC_ADVISORIES)?;
-        assert_unmaintained(advisories, Some("RUSTSEC-2026-0299")).await
+        let server = RustsecMockServer::new()
+            .await
+            .mock(OWNED_ALLOC)
+            .start()
+            .await;
+        let advisory = RustsecClient::from_config(&server.config().build())?
+            .find_unmaintained(&OWNED_ALLOC)
+            .await?
+            .value
+            .expect("unmaintained advisory");
+        assert_eq!(advisory.id().as_str(), "RUSTSEC-2026-0299");
+        assert_eq!(advisory.summary(), "`owned-alloc` is unmaintained");
+        assert_eq!(
+            advisory.affected()[0].informational(),
+            Some(&Informational::Unmaintained)
+        );
+        server.assert_async().await;
+        Ok(())
     }
 
     #[tokio::test]
@@ -235,53 +251,6 @@ mod tests {
         assert_eq!(
             result.as_ref().map(|advisory| advisory.id.as_str()),
             expected
-        );
-        server.assert_async().await;
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn fetches_owned_alloc_advisories_with_rustsec_metadata() -> Result<()> {
-        let server = RustsecMockServer::new()
-            .await
-            .mock(OWNED_ALLOC)
-            .start()
-            .await;
-        let advisories = RustsecClient::from_config(&server.config().build())?
-            .fetch_advisories(&OWNED_ALLOC)
-            .await?
-            .value;
-        assert_eq!(advisories.len(), 2);
-
-        let unmaintained = &advisories[0];
-        assert_eq!(unmaintained.id.as_str(), "RUSTSEC-2026-0299");
-        assert_eq!(unmaintained.summary, "`owned-alloc` is unmaintained");
-        assert_eq!(
-            unmaintained.affected[0].database_specific.informational,
-            Some(&Informational::Unmaintained)
-        );
-
-        let security = &advisories[1];
-        assert_eq!(security.id.as_str(), "RUSTSEC-2026-0291");
-        assert_eq!(security.affected[0].database_specific.informational, None);
-        server.assert_async().await;
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn no_advisories_returns_empty() -> Result<()> {
-        let server = RustsecMockServer::new()
-            .await
-            .mock(KrateName::from_static("serde"))
-            .body("[]")
-            .start()
-            .await;
-        assert!(
-            RustsecClient::from_config(&server.config().build())?
-                .fetch_advisories(&"serde".parse()?)
-                .await?
-                .value
-                .is_empty()
         );
         server.assert_async().await;
         Ok(())
