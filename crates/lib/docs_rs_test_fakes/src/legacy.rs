@@ -13,9 +13,15 @@ use docs_rs_storage::{
     source_archive_path,
 };
 use docs_rs_types::{
-    BuildError, BuildId, BuildStatus, DocCoverage, KrateName, ReleaseId, Version, VersionReq,
+    BuildError, BuildId, BuildStatus, ByteSize, DocCoverage, KrateName, ReleaseId,
+    SimpleBuildError, Version, VersionReq,
 };
 use std::{collections::BTreeMap, fmt, iter, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fmt, iter,
+    sync::Arc,
+};
 use tracing::debug;
 
 /// Create a fake release in the database that failed before the build.
@@ -528,7 +534,7 @@ impl<'a> FakeRelease<'a> {
             self.has_examples,
             iter::once(stats.alg),
             repository,
-            24,
+            ByteSize::b(24),
         )
         .await?;
         docs_rs_database::releases::update_crate_data_in_database(

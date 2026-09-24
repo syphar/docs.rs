@@ -90,7 +90,7 @@ clippy-fix: (clippy "--fix --allow-dirty --allow-staged")
 
 # Run Rust linting, applying fixes outside CI.
 [group('linting')]
-lint-rust:
+lint-rust: compose-up-resources
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -103,11 +103,12 @@ lint-rust:
 # Run the standard local and CI lint suite.
 [group('linting')]
 lint: lint-rust lint-actions lint-js lint-dependencies-machete lint-mise-lock
+    typos
 
 # Verify that mise.lock matches the tools pinned in mise.toml.
 [group('linting')]
 lint-mise-lock:
-    mise lock --upgrade --jobs=1
+    mise lock --jobs=1
     git diff --exit-code -- mise.lock
 
 # Validate GitHub Actions workflows with actionlint when installed.

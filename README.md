@@ -106,13 +106,17 @@ The `cli` and `watcher` recipes similarly use `DOCSRS_CLI_MODE`, but default to
 `local` on every platform. Set either mode variable to `docker` to keep using
 the same high-level recipe through its corresponding Compose service.
 
-To test a local package instead:
+To test a local package on a Linux host with Docker, use the standalone build
+CLI from this repository:
 
 ```console
-$ just builder build crate --local /path/to/package
+$ cargo run --locked -p docs_rs_build -- /path/to/package
 ```
 
-Some workspace packages must first be packaged with Cargo. See
+This packages the crate automatically and does not require a docs.rs database.
+For installation, options, and output locations, see the
+[build CLI README](crates/bin/docs_rs_build/README.md). For workspace selection,
+see
 [Building workspace packages](https://rust-lang.github.io/docs.rs/development/build-workspaces.html).
 
 If you only need an existing release in your local environment, import it
@@ -179,8 +183,18 @@ $ just run-tests
 ```
 
 This starts PostgreSQL and S3, builds tests for every workspace member, and runs
-`cargo test --workspace --locked --no-fail-fast` with the required test
+`cargo nextest run --workspace --locked --no-fail-fast` with the required test
 environment. Plain `cargo test` only tests the workspace's default members.
+
+At the start of each nextest run, the test setup rebuilds a template schema by
+applying every migration, captures its DDL with `pg_dump`, then uses that DDL to
+create an isolated schema for each test. PostgreSQL 18 client tools are required
+when tests run on the host. If installing them is not practical, use the
+`pg_dump` bundled in the local Compose database container instead:
+
+```console
+$ DOCSRS_TEST_PG_DUMP_FROM_COMPOSE=true just run-tests
+```
 
 Run the ignored builder tests separately with:
 
