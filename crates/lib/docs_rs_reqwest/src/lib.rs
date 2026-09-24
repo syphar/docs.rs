@@ -69,7 +69,7 @@ impl<T> Snapshot<T> {
     fn cached_result(&self) -> CachedResult<Option<Arc<T>>> {
         CachedResult {
             value: self.value.clone(),
-            ttl: Some(self.expires_at.saturating_duration_since(Instant::now())),
+            ttl: self.expires_at.saturating_duration_since(Instant::now()),
         }
     }
 }
@@ -170,7 +170,7 @@ impl<T: DeserializeOwned + Send + Sync + 'static> Client<T> {
         Ok(match result {
             CompResult::Removed(_) | CompResult::StillNone(_) => CachedResult {
                 value: None,
-                ttl: None,
+                ttl: Duration::ZERO,
             },
             CompResult::Inserted(entry)
             | CompResult::ReplacedWith(entry)
@@ -286,8 +286,8 @@ mod tests {
             let result = client.get(&url).await?;
             assert!(result.value.is_none());
             if cache_missing {
-                assert!(result.ttl.unwrap() <= Duration::from_secs(60));
-                assert!(result.ttl.unwrap() > Duration::from_secs(55));
+                assert!(result.ttl <= Duration::from_secs(60));
+                assert!(result.ttl > Duration::from_secs(55));
             } else {
                 assert!(result.ttl.is_none());
                 assert!(client.inner.cache.get(&url).await.is_none());
@@ -390,7 +390,7 @@ mod tests {
             .await;
         let second = client.get(&url).await?;
         assert!(Arc::ptr_eq(&first, &second.value.unwrap()));
-        assert!(second.ttl.unwrap() > Duration::from_secs(55));
+        assert!(second.ttl > Duration::from_secs(55));
         unchanged.assert_async().await;
         unchanged.remove_async().await;
         advance(Duration::from_secs(61)).await;
@@ -484,9 +484,9 @@ mod tests {
         for _ in 0..2 {
             let result = client.get(&url).await?;
             assert!(result.value.is_none());
-            assert!(result.ttl.unwrap() <= Duration::from_secs(expected));
+            assert!(result.ttl <= Duration::from_secs(expected));
             if expected > 0 {
-                assert!(result.ttl.unwrap() > Duration::from_secs(expected - 5));
+                assert!(result.ttl > Duration::from_secs(expected - 5));
             }
         }
         mock.assert_async().await;
@@ -535,9 +535,9 @@ mod tests {
         let mock = mock.create_async().await;
         let result = api.get(&url).await?;
         assert_eq!(result.value.unwrap().as_str(), "empty");
-        assert!(result.ttl.unwrap() <= Duration::from_secs(expected));
+        assert!(result.ttl <= Duration::from_secs(expected));
         if expected > 0 {
-            assert!(result.ttl.unwrap() > Duration::from_secs(expected - 5));
+            assert!(result.ttl > Duration::from_secs(expected - 5));
         }
         mock.assert_async().await;
         Ok(())
@@ -562,8 +562,8 @@ mod tests {
         let first = api.get(&url).await?;
         advance(Duration::from_secs(60)).await;
         let cached = api.get(&url).await?;
-        assert!(cached.ttl.unwrap() <= Duration::from_secs(30));
-        assert!(cached.ttl.unwrap() > Duration::from_secs(25));
+        assert!(cached.ttl <= Duration::from_secs(30));
+        assert!(cached.ttl > Duration::from_secs(25));
         initial.assert_async().await;
         initial.remove_async().await;
         let unchanged = server
@@ -576,8 +576,8 @@ mod tests {
         advance(Duration::from_secs(31)).await;
         let renewed = api.get(&url).await?;
         assert!(Arc::ptr_eq(&first.value.unwrap(), &renewed.value.unwrap()));
-        assert!(renewed.ttl.unwrap() <= Duration::from_secs(90));
-        assert!(renewed.ttl.unwrap() > Duration::from_secs(85));
+        assert!(renewed.ttl <= Duration::from_secs(90));
+        assert!(renewed.ttl > Duration::from_secs(85));
         unchanged.assert_async().await;
         Ok(())
     }
@@ -658,8 +658,8 @@ mod tests {
         for _ in 0..2 {
             let result = api.get(&url).await?;
             assert!(Arc::ptr_eq(&old, &result.value.unwrap()));
-            assert!(result.ttl.unwrap() <= RETRY_DELAY);
-            assert!(result.ttl.unwrap() > Duration::from_secs(20));
+            assert!(result.ttl <= RETRY_DELAY);
+            assert!(result.ttl > Duration::from_secs(20));
         }
         failed.assert_async().await;
         failed.remove_async().await;

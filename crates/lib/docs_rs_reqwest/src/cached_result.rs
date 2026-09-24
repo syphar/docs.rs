@@ -4,8 +4,7 @@ use std::time::Duration;
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct CachedResult<T> {
     pub value: T,
-    /// `None` means this result must not be cached.
-    pub ttl: Option<Duration>,
+    pub ttl: Duration,
 }
 
 impl<T> CachedResult<T> {
