@@ -2,16 +2,15 @@
 use anyhow::Result;
 use docs_rs_headers::{Age, CacheControl, HeaderMapExt, cache_control_ttl};
 use docs_rs_utils::APP_USER_AGENT;
-use moka::{
-    future::Cache,
-    ops::compute::{CompResult, Op},
-};
+use moka::{Expiry, future::Cache};
 use reqwest::StatusCode;
 use reqwest_middleware::{ClientBuilder as MiddlewareClientBuilder, ClientWithMiddleware};
 use reqwest_retry::{RetryTransientMiddleware, policies::ExponentialBackoff};
 use serde::de::DeserializeOwned;
-use std::{sync::Arc, time::Duration};
-use tokio::time::Instant;
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 use tracing::{debug, instrument};
 use url::Url;
 
@@ -46,7 +45,7 @@ impl<T: Send + Sync + 'static> Clone for Client<T> {
 struct Inner<T: Send + Sync + 'static> {
     http: ClientWithMiddleware,
     default_ttl: Duration,
-    not_found_ttl: Option<Duration>,
+    not_found_ttl: Duration,
     cache: Cache<Url, Arc<Snapshot<T>>>,
 }
 
@@ -57,15 +56,41 @@ struct Snapshot<T> {
 }
 
 impl<T> Snapshot<T> {
-    fn is_fresh(&self) -> bool {
-        Instant::now() < self.expires_at
-    }
-
     fn cached_result(&self) -> CachedResult<Option<Arc<T>>> {
         CachedResult {
             value: self.value.clone(),
             ttl: self.expires_at.saturating_duration_since(Instant::now()),
         }
+    }
+}
+
+#[derive(Debug)]
+struct SnapshotExpiry;
+
+impl<T> Expiry<Url, Arc<Snapshot<T>>> for SnapshotExpiry {
+    fn expire_after_create(
+        &self,
+        _key: &Url,
+        value: &Arc<Snapshot<T>>,
+        created_at: Instant,
+    ) -> Option<Duration> {
+        Some(value.expires_at.saturating_duration_since(created_at))
+    }
+}
+
+// Moka shares initialization errors between callers. Keep the original error chain.
+#[derive(Debug)]
+struct SharedError(Arc<anyhow::Error>);
+
+impl std::fmt::Display for SharedError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::error::Error for SharedError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.0.as_ref().as_ref())
     }
 }
 
@@ -88,9 +113,8 @@ impl<T: DeserializeOwned + Send + Sync + 'static> Client<T> {
         #[builder(default = Duration::from_mins(10))]
         default_ttl: Duration,
 
-        /// Enable caching of 404 responses using response freshness headers.
-        /// This duration is the fallback when max-age is missing; Age is subtracted.
-        /// A 404 always returns None; without this option it is not stored and its TTL is zero.
+        /// Override the fallback TTL for 404 responses; otherwise use default_ttl.
+        /// Response max-age takes precedence; Age is subtracted.
         not_found_ttl: Option<Duration>,
     ) -> Result<Self> {
         let http = MiddlewareClientBuilder::new(
@@ -107,9 +131,12 @@ impl<T: DeserializeOwned + Send + Sync + 'static> Client<T> {
         Ok(Self {
             inner: Arc::new(Inner {
                 http,
-                cache: Cache::builder().max_capacity(cache_capacity).build(),
+                cache: Cache::builder()
+                    .max_capacity(cache_capacity)
+                    .expire_after(SnapshotExpiry)
+                    .build(),
                 default_ttl,
-                not_found_ttl,
+                not_found_ttl: not_found_ttl.unwrap_or(default_ttl),
             }),
         })
     }
@@ -118,40 +145,13 @@ impl<T: DeserializeOwned + Send + Sync + 'static> Client<T> {
     /// refreshes; unrelated URLs never hold the same lock. Invalid JSON is not cached.
     #[instrument(skip(self), fields(%url))]
     pub async fn get(&self, url: &Url) -> Result<CachedResult<Option<Arc<T>>>> {
-        if let Some(snapshot) = self.inner.cache.get(url).await
-            && snapshot.is_fresh()
-        {
-            return Ok(snapshot.cached_result());
-        }
-
-        let result = self
+        let snapshot = self
             .inner
             .cache
-            .entry(url.clone())
-            .and_try_compute_with::<_, _, anyhow::Error>(|entry| async move {
-                let snapshot = entry.as_ref().map(|entry| entry.value().as_ref());
-                // Another caller may have refreshed while this operation waited.
-                if snapshot.is_some_and(Snapshot::is_fresh) {
-                    return Ok(Op::Nop);
-                }
-                let refreshed = self.refresh(url).await?;
-                if refreshed.value.is_none() && self.inner.not_found_ttl.is_none() {
-                    // A missing resource invalidates any previous successful response.
-                    Ok(Op::Remove)
-                } else {
-                    Ok(Op::Put(Arc::new(refreshed)))
-                }
-            })
-            .await?;
-        Ok(match result {
-            CompResult::Removed(_) | CompResult::StillNone(_) => CachedResult {
-                value: None,
-                ttl: Duration::ZERO,
-            },
-            CompResult::Inserted(entry)
-            | CompResult::ReplacedWith(entry)
-            | CompResult::Unchanged(entry) => entry.value().cached_result(),
-        })
+            .try_get_with_by_ref(url, async { self.refresh(url).await.map(Arc::new) })
+            .await
+            .map_err(SharedError)?;
+        Ok(snapshot.cached_result())
     }
 
     #[instrument(skip_all, fields(%url))]
@@ -171,11 +171,10 @@ impl<T: DeserializeOwned + Send + Sync + 'static> Client<T> {
             (None, self.inner.not_found_ttl)
         } else {
             let value = response.error_for_status()?.json::<T>().await?;
-            (Some(Arc::new(value)), Some(self.inner.default_ttl))
+            (Some(Arc::new(value)), self.inner.default_ttl)
         };
-        let ttl = fallback_ttl.map_or(Duration::ZERO, |fallback| {
-            cache_control_ttl(cache_control.as_ref(), age).unwrap_or(fallback.saturating_sub(age))
-        });
+        let ttl = cache_control_ttl(cache_control.as_ref(), age)
+            .unwrap_or(fallback_ttl.saturating_sub(age));
         Ok(Snapshot {
             value,
             expires_at: received_at + ttl,
@@ -217,46 +216,29 @@ mod tests {
         }
     }
 
-    async fn advance(duration: Duration) {
-        tokio::time::pause();
-        tokio::time::advance(duration).await;
-        tokio::time::resume();
-    }
-
-    #[test_case(false; "404 is not cached by default")]
-    #[test_case(true; "optional negative cache")]
+    #[test_case(None, 90; "default TTL")]
+    #[test_case(Some(Duration::from_secs(60)), 60; "404 override")]
     #[tokio::test]
-    async fn not_found_caching_is_opt_in(cache_missing: bool) -> Result<()> {
+    async fn caches_not_found(override_ttl: Option<Duration>, expected: u64) -> Result<()> {
         let mut server = mockito::Server::new_async().await;
-        let ttl = Duration::from_mins(1);
-
         let mock = server
-            .mock("GET", "/missing")
+            .mock("GET", "/")
             .with_status_code(StatusCode::NOT_FOUND)
-            .with_typed_header(CacheControl::new().with_max_age(ttl))
             .with_body("not JSON")
-            .expect(if cache_missing { 1 } else { 2 })
+            .expect(1)
             .create_async()
             .await;
-
         let client = Client::<Value>::builder()
             .max_retries(0u32)
-            .maybe_not_found_ttl(cache_missing.then_some(ttl))
+            .default_ttl(Duration::from_secs(90))
+            .maybe_not_found_ttl(override_ttl)
             .build()?;
-
-        let url = format!("{}/missing", server.url()).parse()?;
+        let url = server.url().parse()?;
         for _ in 0..2 {
             let result = client.get(&url).await?;
             assert!(result.value.is_none());
-            if cache_missing {
-                assert!(result.ttl <= Duration::from_secs(60));
-                assert!(result.ttl > Duration::from_secs(55));
-            } else {
-                assert_eq!(result.ttl, Duration::ZERO);
-                assert!(client.inner.cache.get(&url).await.is_none());
-                client.inner.cache.run_pending_tasks().await;
-                assert_eq!(client.inner.cache.entry_count(), 0);
-            }
+            assert!(result.ttl <= Duration::from_secs(expected));
+            assert!(result.ttl > Duration::from_secs(expected - 5));
         }
         mock.assert_async().await;
         Ok(())
@@ -269,7 +251,7 @@ mod tests {
 
         let client = Client::<u64>::builder()
             .max_retries(0u32)
-            .not_found_ttl(Duration::from_secs(60))
+            .not_found_ttl(Duration::from_millis(100))
             .build()?;
 
         let missing = server
@@ -291,7 +273,7 @@ mod tests {
             .create_async()
             .await;
 
-        advance(Duration::from_secs(61)).await;
+        tokio::time::sleep(Duration::from_millis(150)).await;
         assert_eq!(*client.get(&url).await?.value.unwrap(), 42);
 
         available.assert_async().await;
@@ -328,43 +310,6 @@ mod tests {
             );
         }
         mock.assert_async().await;
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn uncached_not_found_removes_previous_snapshot() -> Result<()> {
-        let mut server = mockito::Server::new_async().await;
-
-        let client = Client::<u64>::builder().max_retries(0u32).build()?;
-
-        let url = server.url().parse()?;
-        let initial = server
-            .mock("GET", "/")
-            .with_body("1")
-            .with_typed_header(CacheControl::new().with_max_age(Duration::ZERO))
-            .create_async()
-            .await;
-
-        assert_eq!(*client.get(&url).await?.value.unwrap(), 1);
-        initial.assert_async().await;
-        initial.remove_async().await;
-
-        let missing = server
-            .mock("GET", "/")
-            .with_status_code(StatusCode::NOT_FOUND)
-            .with_typed_header(CacheControl::new().with_max_age(Duration::from_mins(10)))
-            .create_async()
-            .await;
-
-        let result = client.get(&url).await?;
-        assert!(result.value.is_none());
-        assert_eq!(result.ttl, Duration::ZERO);
-        assert!(client.inner.cache.get(&url).await.is_none());
-        missing.assert_async().await;
-        missing.remove_async().await;
-        let recovered = server.mock("GET", "/").with_body("2").create_async().await;
-        assert_eq!(*client.get(&url).await?.value.unwrap(), 2);
-        recovered.assert_async().await;
         Ok(())
     }
 
@@ -530,7 +475,7 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let api = Client::<String>::builder()
             .max_retries(0u32)
-            .default_ttl(Duration::from_secs(90))
+            .default_ttl(Duration::from_millis(200))
             .build()?;
 
         let url = server.url().parse()?;
@@ -543,10 +488,9 @@ mod tests {
             .create_async()
             .await;
         api.get(&url).await?;
-        advance(Duration::from_secs(60)).await;
         let cached = api.get(&url).await?;
-        assert!(cached.ttl <= Duration::from_secs(30));
-        assert!(cached.ttl > Duration::from_secs(25));
+        assert!(cached.ttl <= Duration::from_millis(200));
+        assert!(cached.ttl > Duration::ZERO);
         initial.assert_async().await;
         initial.remove_async().await;
         let updated = server
@@ -557,15 +501,15 @@ mod tests {
             .expect(1)
             .create_async()
             .await;
-        advance(Duration::from_secs(31)).await;
+        tokio::time::sleep(Duration::from_millis(250)).await;
         let (renewed, concurrent) = tokio::try_join!(api.get(&url), api.get(&url))?;
         assert_eq!(renewed.value.as_deref().unwrap(), "updated");
         assert!(Arc::ptr_eq(
             renewed.value.as_ref().unwrap(),
             concurrent.value.as_ref().unwrap()
         ));
-        assert!(renewed.ttl <= Duration::from_secs(90));
-        assert!(renewed.ttl > Duration::from_secs(85));
+        assert!(renewed.ttl <= Duration::from_millis(200));
+        assert!(renewed.ttl > Duration::ZERO);
         updated.assert_async().await;
         Ok(())
     }

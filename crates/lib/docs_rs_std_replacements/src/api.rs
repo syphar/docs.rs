@@ -52,12 +52,6 @@ mod tests {
         Ok((server, api))
     }
 
-    async fn advance(duration: Duration) {
-        tokio::time::pause();
-        tokio::time::advance(duration).await;
-        tokio::time::resume();
-    }
-
     #[tokio::test]
     async fn crate_lookups_share_dataset_and_preserve_ttl() -> Result<()> {
         let (mut server, api) = fixture().await?;
@@ -95,7 +89,7 @@ mod tests {
         server.remove_mock();
 
         server = server.mock().start().await;
-        advance(Duration::from_secs(2)).await;
+        tokio::time::sleep(Duration::from_millis(1100)).await;
         assert!(api.get(&KRATE).await?.value.is_none());
         server.assert_async().await;
         Ok(())
