@@ -53,7 +53,6 @@ struct Inner<T: Send + Sync + 'static> {
 #[derive(Debug)]
 struct Snapshot<T> {
     value: Option<Arc<T>>,
-    no_store: bool,
     expires_at: Instant,
 }
 
@@ -125,8 +124,6 @@ impl<T: DeserializeOwned + Send + Sync + 'static> Client<T> {
             return Ok(snapshot.cached_result());
         }
 
-        let mut uncached = None;
-        let uncached_result = &mut uncached;
         let result = self
             .inner
             .cache
@@ -138,11 +135,7 @@ impl<T: DeserializeOwned + Send + Sync + 'static> Client<T> {
                     return Ok(Op::Nop);
                 }
                 let refreshed = self.refresh(url).await?;
-                if refreshed.no_store {
-                    // Return this response only to its caller, removing any older snapshot.
-                    *uncached_result = Some(refreshed.cached_result());
-                    Ok(Op::Remove)
-                } else if refreshed.value.is_none() && self.inner.not_found_ttl.is_none() {
+                if refreshed.value.is_none() && self.inner.not_found_ttl.is_none() {
                     // A missing resource invalidates any previous successful response.
                     Ok(Op::Remove)
                 } else {
@@ -150,9 +143,6 @@ impl<T: DeserializeOwned + Send + Sync + 'static> Client<T> {
                 }
             })
             .await?;
-        if let Some(result) = uncached {
-            return Ok(result);
-        }
         Ok(match result {
             CompResult::Removed(_) | CompResult::StillNone(_) => CachedResult {
                 value: None,
@@ -171,7 +161,6 @@ impl<T: DeserializeOwned + Send + Sync + 'static> Client<T> {
         let received_at = Instant::now();
 
         let cache_control = response.headers().typed_get::<CacheControl>();
-        let no_store = cache_control.as_ref().is_some_and(CacheControl::no_store);
         let age = response
             .headers()
             .typed_get::<Age>()
@@ -185,7 +174,6 @@ impl<T: DeserializeOwned + Send + Sync + 'static> Client<T> {
             });
             return Ok(Snapshot {
                 value: None,
-                no_store,
                 expires_at: received_at + ttl,
             });
         }
@@ -199,7 +187,6 @@ impl<T: DeserializeOwned + Send + Sync + 'static> Client<T> {
         Ok(Snapshot {
             value: Some(Arc::new(value)),
             expires_at,
-            no_store,
         })
     }
 }
@@ -462,7 +449,6 @@ mod tests {
     #[test_case(Some("public"), 0, 60; "missing max age")]
     #[test_case(Some("max-age=invalid"), 0, 60; "invalid max age")]
     #[test_case(Some("max-age=10"), 20, 0; "expired response")]
-    #[test_case(Some("no-store"), 0, 0; "no store")]
     #[test_case(Some("no-cache"), 0, 0; "no cache")]
     #[tokio::test]
     async fn not_found_respects_freshness(
@@ -518,7 +504,6 @@ mod tests {
     #[test_case(Some("max-age=invalid"), 0, 90; "invalid max age")]
     #[test_case(None, 30, 60; "fallback accounts for age")]
     #[test_case(Some("max-age=600"), 30, 570; "headers override default")]
-    #[test_case(Some("no-store"), 0, 0; "no store overrides default")]
     #[tokio::test]
     async fn configured_fallback_ttl(control: Option<&str>, age: u64, expected: u64) -> Result<()> {
         let mut server = mockito::Server::new_async().await;
@@ -683,78 +668,6 @@ mod tests {
             .await;
         assert_eq!(api.get(&url).await?.value.unwrap().len(), 2);
         available.assert_async().await;
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn respects_no_store() -> Result<()> {
-        let mut server = mockito::Server::new_async().await;
-        let mock = server
-            .mock("GET", "/")
-            .with_status_code(StatusCode::OK)
-            .with_typed_header(CacheControl::new().with_no_store())
-            .with_body("[1,2]")
-            .expect(2)
-            .create_async()
-            .await;
-        let api = Client::<Vec<u64>>::builder().max_retries(0u32).build()?;
-        let url = server.url().parse()?;
-        for _ in 0..2 {
-            assert_eq!(api.get(&url).await?.value.unwrap().len(), 2);
-        }
-        mock.assert_async().await;
-        Ok(())
-    }
-
-    #[test_case(StatusCode::OK; "successful response")]
-    #[test_case(StatusCode::NOT_FOUND; "negative response")]
-    #[tokio::test]
-    async fn no_store_removes_snapshot(status: StatusCode) -> Result<()> {
-        let mut server = mockito::Server::new_async().await;
-        let url = server.url().parse()?;
-        let api = Client::<String>::builder()
-            .max_retries(0u32)
-            .not_found_ttl(Duration::from_secs(60))
-            .build()?;
-
-        let initial = server
-            .mock("GET", "/")
-            .with_status_code(StatusCode::OK)
-            .with_typed_header(CacheControl::new().with_max_age(Duration::ZERO))
-            .with_body(body("initial"))
-            .create_async()
-            .await;
-        api.get(&url).await?;
-        initial.assert_async().await;
-        initial.remove_async().await;
-
-        let no_store = server
-            .mock("GET", "/")
-            .with_status_code(status)
-            .with_typed_header(CacheControl::new().with_no_store())
-            .with_body(body("updated"))
-            .create_async()
-            .await;
-        let result = api.get(&url).await?;
-        assert_eq!(result.ttl, Duration::ZERO);
-        assert_eq!(
-            result.value.as_deref().map(String::as_str),
-            match status {
-                StatusCode::OK => Some("updated"),
-                _ => None,
-            }
-        );
-        assert!(api.inner.cache.get(&url).await.is_none());
-        no_store.assert_async().await;
-        no_store.remove_async().await;
-
-        let failure = server
-            .mock("GET", "/")
-            .with_status_code(StatusCode::INTERNAL_SERVER_ERROR)
-            .create_async()
-            .await;
-        assert!(api.get(&url).await.is_err());
-        failure.assert_async().await;
         Ok(())
     }
 

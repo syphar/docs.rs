@@ -2,10 +2,10 @@ use headers::CacheControl;
 use std::time::Duration;
 
 /// Compute remaining freshness using parsed cache directives and the response age.
-/// This interprets `max-age`, `no-cache`, and `no-store`; it is not a full HTTP
+/// This interprets `max-age` and `no-cache`; it is not a full HTTP
 /// cache policy evaluator. Missing `max-age` returns `None`.
 pub fn cache_control_ttl(control: Option<&CacheControl>, age: Duration) -> Option<Duration> {
-    if control.is_some_and(|control| control.no_cache() || control.no_store()) {
+    if control.is_some_and(CacheControl::no_cache) {
         return Some(Duration::ZERO);
     }
     control
@@ -23,7 +23,6 @@ mod tests {
     #[test_case("max-age=600", 0, Some(600); "max age")]
     #[test_case("public, max-age=600", 86, Some(514); "subtract age")]
     #[test_case("max-age=600", 700, Some(0); "already stale")]
-    #[test_case("no-store, max-age=600", 0, Some(0); "no store")]
     #[test_case("no-cache, max-age=600", 0, Some(0); "no cache")]
     #[test_case("max-age=0", 0, Some(0); "zero")]
     #[test_case("", 0, None; "missing max age")]
@@ -54,11 +53,6 @@ mod tests {
         assert_eq!(
             cache_control_ttl(headers.typed_get::<CacheControl>().as_ref(), Duration::ZERO),
             Some(Duration::from_secs(600))
-        );
-        headers.append(http::header::CACHE_CONTROL, "no-store".parse().unwrap());
-        assert_eq!(
-            cache_control_ttl(headers.typed_get::<CacheControl>().as_ref(), Duration::ZERO),
-            Some(Duration::ZERO)
         );
     }
 }
