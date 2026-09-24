@@ -109,37 +109,26 @@ impl RustsecClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::RustsecMockServer;
+    use http::StatusCode;
     use serde_json::{Value, json};
     use std::time::Duration;
     use test_case::test_case;
 
     const OWNED_ALLOC_ADVISORIES: &str = include_str!("../tests/fixtures/owned-alloc.json");
     const OWNED_ALLOC: KrateName = KrateName::from_static("owned-alloc");
-    const PATH: &str = "/packages/owned-alloc.json";
-
-    fn client(server: &mockito::Server, max_retries: u32) -> Result<RustsecClient> {
-        RustsecClient::from_config(
-            &Config::builder()
-                .base_url(server.url().parse()?)
-                .max_retries(max_retries)
-                .build(),
-        )
-    }
-
     #[tokio::test]
     async fn missing_feed_is_cached_as_empty_with_configured_ttl() -> Result<()> {
-        let mut server = mockito::Server::new_async().await;
-        let missing = server
-            .mock("GET", PATH)
-            .with_status(404)
-            .with_body("HTML error page")
-            .expect(1)
-            .create_async()
+        let server = RustsecMockServer::new()
+            .await
+            .mock(OWNED_ALLOC)
+            .status_code(StatusCode::NOT_FOUND)
+            .body("HTML error page")
+            .start()
             .await;
         let api = RustsecClient::from_config(
-            &Config::builder()
-                .base_url(server.url().parse()?)
-                .max_retries(0)
+            &server
+                .config()
                 .cache_default_ttl(Duration::from_secs(90).into())
                 .build(),
         )?;
@@ -151,7 +140,7 @@ mod tests {
         assert!(warning.value.is_none());
         assert!(warning.ttl <= advisories.ttl);
         assert!(warning.ttl > Duration::from_secs(85));
-        missing.assert_async().await;
+        server.assert_async().await;
         Ok(())
     }
 
@@ -247,14 +236,13 @@ mod tests {
     }
 
     async fn assert_unmaintained(advisories: Value, expected: Option<&str>) -> Result<()> {
-        let mut server = mockito::Server::new_async().await;
-        let mock = server
-            .mock("GET", PATH)
-            .with_status(200)
-            .with_body(advisories.to_string())
-            .create_async()
+        let server = RustsecMockServer::new()
+            .await
+            .mock(OWNED_ALLOC)
+            .body(advisories.to_string())
+            .start()
             .await;
-        let result = client(&server, 0)?
+        let result = RustsecClient::from_config(&server.config().build())?
             .find_unmaintained(&OWNED_ALLOC)
             .await?
             .value;
@@ -262,21 +250,18 @@ mod tests {
             result.as_ref().map(|advisory| advisory.id().as_str()),
             expected
         );
-        mock.assert_async().await;
+        server.assert_async().await;
         Ok(())
     }
 
     #[tokio::test]
     async fn fetches_owned_alloc_advisories_with_rustsec_metadata() -> Result<()> {
-        let mut server = mockito::Server::new_async().await;
-        let mock = server
-            .mock("GET", PATH)
-            .with_status(200)
-            .with_header("content-type", "application/json")
-            .with_body(OWNED_ALLOC_ADVISORIES)
-            .create_async()
+        let server = RustsecMockServer::new()
+            .await
+            .mock(OWNED_ALLOC)
+            .start()
             .await;
-        let advisories = client(&server, 0)?
+        let advisories = RustsecClient::from_config(&server.config().build())?
             .fetch_advisories(&OWNED_ALLOC)
             .await?
             .value;
@@ -293,41 +278,39 @@ mod tests {
         let security = &advisories[1];
         assert_eq!(security.id().as_str(), "RUSTSEC-2026-0291");
         assert_eq!(security.affected()[0].informational(), None);
-        mock.assert_async().await;
+        server.assert_async().await;
         Ok(())
     }
 
-    #[test_case(200, "[]"; "empty feed")]
     #[tokio::test]
-    async fn no_advisories_returns_empty(status: usize, body: &str) -> Result<()> {
-        let mut server = mockito::Server::new_async().await;
-        let mock = server
-            .mock("GET", "/packages/serde.json")
-            .with_status(status)
-            .with_body(body)
-            .create_async()
+    async fn no_advisories_returns_empty() -> Result<()> {
+        let server = RustsecMockServer::new()
+            .await
+            .mock(KrateName::from_static("serde"))
+            .body("[]")
+            .start()
             .await;
         assert!(
-            client(&server, 0)?
+            RustsecClient::from_config(&server.config().build())?
                 .fetch_advisories(&"serde".parse()?)
                 .await?
                 .value
                 .is_empty()
         );
-        mock.assert_async().await;
+        server.assert_async().await;
         Ok(())
     }
 
     #[tokio::test]
     async fn fetch_error_includes_crate_name() -> Result<()> {
-        let mut server = mockito::Server::new_async().await;
-        let mock = server
-            .mock("GET", PATH)
-            .with_status(500)
-            .with_body("server error")
-            .create_async()
+        let server = RustsecMockServer::new()
+            .await
+            .mock(OWNED_ALLOC)
+            .status_code(StatusCode::INTERNAL_SERVER_ERROR)
+            .body("server error")
+            .start()
             .await;
-        let error = client(&server, 0)?
+        let error = RustsecClient::from_config(&server.config().build())?
             .fetch_advisories(&OWNED_ALLOC)
             .await
             .unwrap_err();
@@ -342,7 +325,7 @@ mod tests {
                 .as_u16(),
             500
         );
-        mock.assert_async().await;
+        server.assert_async().await;
         Ok(())
     }
 
@@ -350,14 +333,13 @@ mod tests {
     #[test_case("[{}]"; "incomplete advisory")]
     #[tokio::test]
     async fn invalid_response_is_an_error(body: &str) -> Result<()> {
-        let mut server = mockito::Server::new_async().await;
-        let mock = server
-            .mock("GET", PATH)
-            .with_status(200)
-            .with_body(body)
-            .create_async()
+        let server = RustsecMockServer::new()
+            .await
+            .mock(OWNED_ALLOC)
+            .body(body)
+            .start()
             .await;
-        let error = client(&server, 0)?
+        let error = RustsecClient::from_config(&server.config().build())?
             .fetch_advisories(&OWNED_ALLOC)
             .await
             .unwrap_err();
@@ -368,7 +350,7 @@ mod tests {
                 .unwrap()
                 .is_decode()
         );
-        mock.assert_async().await;
+        server.assert_async().await;
         Ok(())
     }
 
@@ -376,25 +358,21 @@ mod tests {
     #[test_case("/mirror/"; "with trailing slash")]
     #[tokio::test]
     async fn preserves_base_path_and_crate_name(base_path: &str) -> Result<()> {
-        let mut server = mockito::Server::new_async().await;
-        let mock = server
-            .mock("GET", "/mirror/packages/lazy_static.json")
-            .with_status(200)
-            .with_body("[]")
-            .expect(1)
-            .create_async()
+        let server = RustsecMockServer::new()
+            .await
+            .with_base_path(base_path)
+            .mock(KrateName::from_static("lazy_static"))
+            .body("[]")
+            .start()
             .await;
-        let config = Config::builder()
-            .base_url(format!("{}{base_path}", server.url()).parse()?)
-            .build();
-        let api = RustsecClient::from_config(&config)?;
+        let api = RustsecClient::from_config(&server.config().build())?;
         assert!(
             api.fetch_advisories(&"lazy_static".parse()?)
                 .await?
                 .value
                 .is_empty()
         );
-        mock.assert_async().await;
+        server.assert_async().await;
         Ok(())
     }
 
