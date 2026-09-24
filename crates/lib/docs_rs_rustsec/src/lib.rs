@@ -18,4 +18,4 @@ pub mod testing;
 pub use api::RustsecClient;
 pub use config::{Config, ConfigBuilder};
 pub use models::advisory::{Id, Informational};
-pub use models::osv::{OsvAdvisory, OsvAffected, OsvJsonRange, OsvTimelineEvent};
+pub use models::osv::{OsvAdvisory, OsvAffected};

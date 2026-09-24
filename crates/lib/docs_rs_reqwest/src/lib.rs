@@ -12,7 +12,7 @@ use reqwest_retry::{RetryTransientMiddleware, policies::ExponentialBackoff};
 use serde::de::DeserializeOwned;
 use std::{sync::Arc, time::Duration};
 use tokio::time::Instant;
-use tracing::{debug, error, instrument};
+use tracing::{debug, instrument};
 use url::Url;
 
 mod cached_result;
@@ -26,11 +26,10 @@ pub use cached_result::CachedResult;
 /// Only GET requests are supported; cache keys are complete URLs.
 ///
 /// Moka bounds the retained entries. Freshness is checked separately so expired
-/// values and validators remain available for conditional requests and error fallback.
+/// values and validators remain available for conditional requests.
 ///
 /// Compared to a browser, additionally supports:
 /// * caching 404, even without caching headers in the response
-/// * serving stale data from the cache when the refresh fails.
 #[derive(Debug)]
 pub struct Client<T: Send + Sync + 'static> {
     inner: Arc<Inner<T>>,
@@ -49,7 +48,6 @@ struct Inner<T: Send + Sync + 'static> {
     http: ClientWithMiddleware,
     default_ttl: Duration,
     not_found_ttl: Option<Duration>,
-    stale_if_error: Option<Duration>,
     cache: Cache<Url, Arc<Snapshot<T>>>,
 }
 
@@ -97,10 +95,6 @@ impl<T: DeserializeOwned + Send + Sync + 'static> Client<T> {
         /// This duration is the fallback when max-age is missing; Age is subtracted.
         /// A 404 always returns None; without this option it is not stored and its TTL is zero.
         not_found_ttl: Option<Duration>,
-
-        /// On refresh failure, reuse the previous result and defer retries by this duration.
-        /// Without this option, errors propagate. Initial-load errors always propagate.
-        stale_if_error: Option<Duration>,
     ) -> Result<Self> {
         let http = MiddlewareClientBuilder::new(
             reqwest::Client::builder()
@@ -119,7 +113,6 @@ impl<T: DeserializeOwned + Send + Sync + 'static> Client<T> {
                 cache: Cache::builder().max_capacity(cache_capacity).build(),
                 default_ttl,
                 not_found_ttl,
-                stale_if_error,
             }),
         })
     }
@@ -140,27 +133,13 @@ impl<T: DeserializeOwned + Send + Sync + 'static> Client<T> {
             .inner
             .cache
             .entry(url.clone())
-            .and_try_compute_with(|entry| async move {
+            .and_try_compute_with::<_, _, anyhow::Error>(|entry| async move {
                 let snapshot = entry.as_ref().map(|entry| entry.value().as_ref());
                 // Another caller may have refreshed while this operation waited.
                 if snapshot.is_some_and(Snapshot::is_fresh) {
                     return Ok(Op::Nop);
                 }
-                let refreshed = match self.refresh(url, snapshot).await {
-                    Ok(refreshed) => refreshed,
-                    Err(error) => match (snapshot, self.inner.stale_if_error) {
-                        (Some(snapshot), Some(delay)) => {
-                            error!(?error, %url, "refresh failed; serving cached JSON");
-                            Snapshot {
-                                value: snapshot.value.clone(),
-                                etag: snapshot.etag.clone(),
-                                cache_control: snapshot.cache_control.clone(),
-                                expires_at: Instant::now() + delay,
-                            }
-                        }
-                        _ => return Err(error),
-                    },
-                };
+                let refreshed = self.refresh(url, snapshot).await?;
                 if refreshed
                     .cache_control
                     .as_ref()
@@ -630,15 +609,10 @@ mod tests {
         Ok(())
     }
 
-    const RETRY_DELAY: Duration = Duration::from_secs(30);
-
     async fn fixture() -> Result<(mockito::ServerGuard, Client<String>, Url)> {
         let server = mockito::Server::new_async().await;
         let url = server.url().parse()?;
-        let api = Client::builder()
-            .max_retries(0u32)
-            .stale_if_error(RETRY_DELAY)
-            .build()?;
+        let api = Client::builder().max_retries(0u32).build()?;
         Ok((server, api, url))
     }
 
@@ -782,7 +756,7 @@ mod tests {
     #[test_case(StatusCode::INTERNAL_SERVER_ERROR, "failed"; "HTTP failure")]
     #[test_case(StatusCode::OK, "invalid"; "invalid JSON")]
     #[tokio::test]
-    async fn failed_refresh_retains_snapshot_and_backs_off(
+    async fn failed_refresh_returns_error_and_can_be_retried(
         status: StatusCode,
         body_text: &str,
     ) -> Result<()> {
@@ -794,7 +768,7 @@ mod tests {
             .with_typed_header(CacheControl::new().with_max_age(Duration::ZERO))
             .create_async()
             .await;
-        let old = api.get(&url).await?.value.unwrap();
+        api.get(&url).await?;
         initial.remove_async().await;
         let failed = server
             .mock("GET", "/")
@@ -803,15 +777,9 @@ mod tests {
             .expect(1)
             .create_async()
             .await;
-        for _ in 0..2 {
-            let result = api.get(&url).await?;
-            assert!(Arc::ptr_eq(&old, &result.value.unwrap()));
-            assert!(result.ttl <= RETRY_DELAY);
-            assert!(result.ttl > Duration::from_secs(20));
-        }
+        assert!(api.get(&url).await.is_err());
         failed.assert_async().await;
         failed.remove_async().await;
-        advance(RETRY_DELAY).await;
         let recovered = server
             .mock("GET", "/")
             .with_status_code(StatusCode::OK)
@@ -902,15 +870,12 @@ mod tests {
     #[test_case(StatusCode::NOT_FOUND; "negative response")]
     #[test_case(StatusCode::NOT_MODIFIED; "revalidation")]
     #[tokio::test]
-    async fn no_store_removes_snapshot_and_prevents_stale_fallback(
-        status: StatusCode,
-    ) -> Result<()> {
+    async fn no_store_removes_snapshot_and_validator(status: StatusCode) -> Result<()> {
         let mut server = mockito::Server::new_async().await;
         let url = server.url().parse()?;
         let api = Client::<String>::builder()
             .max_retries(0u32)
             .not_found_ttl(Duration::from_secs(60))
-            .stale_if_error(RETRY_DELAY)
             .build()?;
         let etag: ETag = "\"initial\"".parse().unwrap();
 

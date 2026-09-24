@@ -1,19 +1,5 @@
-use headers::{Age, CacheControl, HeaderMapExt};
-use http::HeaderMap;
+use headers::CacheControl;
 use std::time::Duration;
-
-/// Remaining freshness from `Cache-Control: max-age` and the response's `Age`.
-/// Returns zero for `no-cache` or `no-store`, and `None` when no usable
-/// `max-age` is available, leaving the fallback policy to the caller.
-pub fn response_ttl(headers: &HeaderMap) -> Option<Duration> {
-    cache_control_ttl(
-        headers.typed_get::<CacheControl>().as_ref(),
-        headers
-            .typed_get::<Age>()
-            .map(Duration::from)
-            .unwrap_or_default(),
-    )
-}
 
 /// Compute freshness using parsed cache directives, which may have been retained
 /// from an earlier response when a 304 omits `Cache-Control`.
@@ -31,6 +17,8 @@ pub fn cache_control_ttl(control: Option<&CacheControl>, age: Duration) -> Optio
 #[cfg(test)]
 mod tests {
     use super::*;
+    use headers::HeaderMapExt;
+    use http::HeaderMap;
     use test_case::test_case;
 
     #[test_case("max-age=600", 0, Some(600); "max age")]
@@ -44,9 +32,7 @@ mod tests {
     fn parses_ttl(control: &str, age: u64, seconds: Option<u64>) {
         let mut headers = HeaderMap::new();
         headers.insert(http::header::CACHE_CONTROL, control.parse().unwrap());
-        headers.typed_insert(Age::from_secs(age));
         let expected = seconds.map(Duration::from_secs);
-        assert_eq!(response_ttl(&headers), expected);
         assert_eq!(
             cache_control_ttl(
                 headers.typed_get::<CacheControl>().as_ref(),
@@ -58,7 +44,7 @@ mod tests {
 
     #[test]
     fn absent_headers_leave_fallback_to_caller() {
-        assert_eq!(response_ttl(&HeaderMap::new()), None);
+        assert_eq!(cache_control_ttl(None, Duration::ZERO), None);
     }
 
     #[test]
@@ -66,8 +52,14 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.append(http::header::CACHE_CONTROL, "public".parse().unwrap());
         headers.append(http::header::CACHE_CONTROL, "max-age=600".parse().unwrap());
-        assert_eq!(response_ttl(&headers), Some(Duration::from_secs(600)));
+        assert_eq!(
+            cache_control_ttl(headers.typed_get::<CacheControl>().as_ref(), Duration::ZERO),
+            Some(Duration::from_secs(600))
+        );
         headers.append(http::header::CACHE_CONTROL, "no-store".parse().unwrap());
-        assert_eq!(response_ttl(&headers), Some(Duration::ZERO));
+        assert_eq!(
+            cache_control_ttl(headers.typed_get::<CacheControl>().as_ref(), Duration::ZERO),
+            Some(Duration::ZERO)
+        );
     }
 }

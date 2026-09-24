@@ -69,7 +69,7 @@ impl RustsecClient {
     /// Missing feeds become empty lists. Other HTTP failures and malformed JSON
     /// return an error.
     #[instrument(skip(self), fields(krate = %name))]
-    pub async fn fetch_advisories(
+    async fn fetch_advisories(
         &self,
         name: &KrateName,
     ) -> Result<CachedResult<Arc<Vec<Arc<OsvAdvisory>>>>> {
