@@ -115,9 +115,16 @@ pub(crate) async fn crate_warnings(
         }
     );
 
+    // NOTE: both std replacements and rustsec advisories are fetched from github pages.
+    // They have a TTL when we fetch them, and based on that we locally cache the responses.
+    // What happens here, based on that:
+    // we take the shorter of these TTLs, and use it to cache the partial in Fastly as long as it's
+    // allowed.
     let ttl = match (&std_replacement, &unmaintained) {
         (Some(replacement), Some(advisory)) => replacement.ttl.min(advisory.ttl),
         // Disabled sources don't restrict the other source's TTL.
+        // This can only happen when services don't configure / activate the std replacements
+        // & rustsec in their context.
         (Some(replacement), None) => replacement.ttl,
         (None, Some(advisory)) => advisory.ttl,
         (None, None) => Duration::ZERO,
