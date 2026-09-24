@@ -142,11 +142,11 @@ mod tests {
             .await?
             .value
             .expect("unmaintained advisory");
-        assert_eq!(advisory.id().as_str(), "RUSTSEC-2026-0299");
-        assert_eq!(advisory.summary(), "`owned-alloc` is unmaintained");
+        assert_eq!(advisory.id.as_str(), "RUSTSEC-2026-0299");
+        assert_eq!(advisory.summary, "`owned-alloc` is unmaintained");
         assert_eq!(
-            advisory.affected()[0].informational(),
-            Some(&Informational::Unmaintained)
+            advisory.affected[0].database_specific.informational,
+            Some(Informational::Unmaintained)
         );
         server.assert_async().await;
         Ok(())
@@ -329,7 +329,7 @@ mod tests {
         assert!(advisory.withdrawn.is_some());
         assert_eq!(
             advisory.affected[0].database_specific.informational,
-            Some(&Informational::Other("future-notice".into()))
+            Some(Informational::Other("future-notice".into()))
         );
         Ok(())
     }
