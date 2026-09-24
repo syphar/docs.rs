@@ -70,14 +70,12 @@ pub(crate) async fn abnormalities(
 struct CrateWarnings {
     replacement: Option<Arc<ReplacementDetails>>,
     unmaintained: Option<Arc<OsvAdvisory>>,
-    ttl: Option<Duration>,
+    ttl: Duration,
 }
 
 impl_axum_webpage! {
     CrateWarnings,
-    cache_policy = |page| {
-        page.ttl.map(CachePolicy::InCdnAndBrowser).unwrap_or(CachePolicy::NoCaching)
-    }
+    cache_policy = |page| CachePolicy::InCdnAndBrowser(page.ttl)
 }
 
 /// Render crate warnings for insertion into the documentation topbar.
@@ -102,20 +100,22 @@ pub(crate) async fn crate_warnings(
         }
     )?;
 
-    let ttl = match (&std_replacement, &unmaintained) {
-        // Both sources must allow caching; use the shorter TTL.
-        (Some(replacement), Some(advisory)) => match (replacement.ttl, advisory.ttl) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            // when any source forbids caching, we don't cache in the CDN
-            _ => None,
-        },
-        // A disabled source imposes no restriction on the other source.
-        (Some(replacement), None) => replacement.ttl,
-        (None, Some(advisory)) => advisory.ttl,
-        (None, None) => None,
-    };
-    // Conservatively account for time spent waiting for the slower lookup.
-    let ttl = ttl.map(|ttl| ttl.saturating_sub(started_at.elapsed()));
+    // let ttl = std_replacement.ttl.min(&unmaintained.ttl);
+
+    // {
+    //     // Both sources must allow caching; use the shorter TTL.
+    //     (Some(replacement), Some(advisory)) => match (replacement.ttl, advisory.ttl) {
+    //         (Some(a), Some(b)) => Some(a.min(b)),
+    //         // when any source forbids caching, we don't cache in the CDN
+    //         _ => None,
+    //     },
+    //     // A disabled source imposes no restriction on the other source.
+    //     (Some(replacement), None) => replacement.ttl,
+    //     (None, Some(advisory)) => advisory.ttl,
+    //     (None, None) => None,
+    // };
+    // // Conservatively account for time spent waiting for the slower lookup.
+    // let ttl = ttl.map(|ttl| ttl.saturating_sub(started_at.elapsed()));
 
     Ok(CrateWarnings {
         replacement: std_replacement.and_then(|result| result.value),
