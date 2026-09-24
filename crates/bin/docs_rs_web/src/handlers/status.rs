@@ -206,30 +206,12 @@ mod tests {
             self
         }
 
-        async fn with_replacement(
-            self,
-            krate: KrateName,
-            details: ReplacementDetails,
-            cache_control: Option<CacheControl>,
-        ) -> Self {
-            self.with_replacements([(krate, details)], cache_control)
-                .await
-        }
-
-        async fn with_replacements(
-            self,
-            items: impl IntoIterator<Item = (KrateName, ReplacementDetails)>,
-            cache_control: Option<CacheControl>,
-        ) -> Self {
-            self.with_replacements_and_status(items, cache_control, StatusCode::OK)
-                .await
-        }
-
-        async fn with_replacements_and_status(
+        #[builder(start_fn(name = std_replacement_mock), finish_fn(name = start))]
+        async fn with_std_replacements(
             mut self,
             items: impl IntoIterator<Item = (KrateName, ReplacementDetails)>,
             cache_control: Option<CacheControl>,
-            status_code: StatusCode,
+            #[builder(default = StatusCode::OK)] status_code: StatusCode,
         ) -> Self {
             let map = ReplacementMap::from_iter(
                 items
