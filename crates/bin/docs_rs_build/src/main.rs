@@ -2,6 +2,7 @@ mod args;
 mod logging;
 mod package;
 mod report;
+mod source;
 
 #[cfg(test)]
 mod tests;
@@ -49,9 +50,24 @@ fn run(args: &Args) -> Result<bool> {
         .canonicalize()
         .with_context(|| format!("resolving crate path {}", args.crate_path.display()))?;
     ensure_docker_available()?;
-    let packaged = package::create(&crate_path, args.package.as_deref())?;
-
     let workspace_path = absolute_path(&args.workspace_path())?;
+    let packaged;
+    let staged;
+    let (source_path, directory_label, manifest_path) = if args.source_build {
+        staged = source::create(&crate_path, args.package.as_deref(), &workspace_path)?;
+        (
+            staged.directory.path(),
+            staged.directory_label,
+            staged.manifest_path,
+        )
+    } else {
+        packaged = package::create(&crate_path, args.package.as_deref())?;
+        (
+            packaged.source.path(),
+            packaged.directory_label,
+            PathBuf::from("Cargo.toml"),
+        )
+    };
     info!(crate_path = %crate_path.display(), workspace = %workspace_path.display(), "initializing docs.rs build environment");
     let mut environment = BuildEnvironment::builder(workspace_path.as_path())
         .fast_init(true)
@@ -74,10 +90,11 @@ fn run(args: &Args) -> Result<bool> {
     }
 
     info!("starting docs.rs build");
-    let krate = Crate::local(packaged.source.path());
+    let krate = Crate::local(source_path);
     let build = environment
         .release(&krate)
-        .directory_label(packaged.directory_label)
+        .directory_label(directory_label)
+        .manifest_path(manifest_path)?
         .run(|release| Ok(release.build_docs()))
         .context("running the docs.rs build")?;
     let duration = build.duration();

@@ -81,6 +81,31 @@ You can also point directly at a member directory:
 docs_rs_build crates/my-crate
 ```
 
+## Building workspace source
+
+Use `--source-build` to build unpublished local changes, including path
+dependencies between workspace crates:
+
+```console
+docs_rs_build --source-build --package docs_rs_rustwide /path/to/docs.rs
+```
+
+This skips `cargo package` and stages the workspace with its manifests,
+lockfile, and local source files. Package `include`/`exclude` rules do not apply.
+The selected member's docs.rs metadata still controls the documentation build.
+In source mode, `--package` accepts a workspace member name; a virtual workspace
+requires it. Pointing directly at a member directory also works.
+
+The copy excludes `.git`, `target`, `.workspace`, `.rustwide-docker`, Cargo's
+configured target directory, and the directory passed to `--workspace`.
+Absolute dependency paths inside the workspace are rebased in the copy.
+Dependencies and symlinks outside the workspace are currently unsupported and
+produce an error. The original checkout is not changed. Rustwide still removes
+root Cargo configuration and toolchain overrides as part of sandbox preparation.
+
+Use the default packaged mode when checking publication contents and registry
+dependencies; source mode tests the workspace's local versions instead.
+
 ## GitHub Actions
 
 A workflow template using the temporary Git installation looks like this.

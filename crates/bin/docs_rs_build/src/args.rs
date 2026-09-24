@@ -29,6 +29,12 @@ pub(crate) struct Args {
     #[arg(short, long, value_name = "SPEC")]
     pub(crate) package: Option<String>,
 
+    /// Build the local workspace source, preserving path dependencies.
+    ///
+    /// Skips cargo package. With this mode, --package takes a workspace member name.
+    #[arg(long)]
+    pub(crate) source_build: bool,
+
     /// Directory used for rustwide caches and build state.
     ///
     /// Defaults to <CRATE_PATH>/target/docsrs-build

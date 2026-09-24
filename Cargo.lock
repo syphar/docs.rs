@@ -2021,10 +2021,12 @@ dependencies = [
  "docs_rs_rustwide",
  "docs_rs_types",
  "rustwide",
+ "serde_json",
  "tempfile",
  "toml",
  "tracing",
  "tracing-subscriber",
+ "walkdir",
 ]
 
 [[package]]

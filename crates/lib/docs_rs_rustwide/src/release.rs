@@ -5,7 +5,7 @@ use rustwide::Crate;
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
-    path::Path,
+    path::{Component, Path, PathBuf},
     time::Instant,
 };
 use tracing::{debug, info, instrument};
@@ -26,10 +26,27 @@ pub struct ReleaseContext<'release, State = Unfetched> {
     pub(crate) krate: &'release Crate,
     pub(crate) limits: Option<Limits>,
     pub(crate) directory_label: Option<String>,
+    pub(crate) manifest_path: PathBuf,
     pub(crate) state: State,
 }
 
 impl<State> ReleaseContext<'_, State> {
+    /// Select a package manifest relative to the staged source root.
+    ///
+    /// The full workspace remains available for path dependencies. The default
+    /// is `Cargo.toml` at the source root.
+    pub fn manifest_path(mut self, path: impl Into<PathBuf>) -> Result<Self> {
+        let path = path.into();
+        anyhow::ensure!(
+            path.components()
+                .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
+                && path.file_name().is_some_and(|name| name == "Cargo.toml"),
+            "manifest path must be a relative Cargo.toml path within the source tree"
+        );
+        self.manifest_path = path;
+        Ok(self)
+    }
+
     /// Add a human-readable label to the build directory, such as `headers-0.4.1`.
     ///
     /// Characters other than ASCII letters, digits, dots, hyphens, and underscores
@@ -60,6 +77,7 @@ impl<'release> ReleaseContext<'release, Unfetched> {
             krate,
             limits,
             directory_label,
+            manifest_path,
             state: Unfetched,
         } = self;
 
@@ -73,6 +91,7 @@ impl<'release> ReleaseContext<'release, Unfetched> {
             krate,
             limits,
             directory_label,
+            manifest_path,
         })
     }
 
@@ -136,6 +155,7 @@ impl ReleaseContext<'_, Fetched> {
             krate,
             limits,
             directory_label,
+            manifest_path,
         } = self;
 
         let effective_limits = limits.unwrap_or_else(|| environment.default_limits().clone());
@@ -152,7 +172,14 @@ impl ReleaseContext<'_, Fetched> {
         let sandbox_builder = environment.sandbox_builder(&effective_limits);
         let result = build_dir
             .build(environment.configured_toolchain(), krate, sandbox_builder)
-            .run(|build| callback(ReleaseBuild::new(environment, build, &effective_limits)?))?;
+            .run(|build| {
+                callback(ReleaseBuild::new(
+                    environment,
+                    build,
+                    &effective_limits,
+                    &manifest_path,
+                )?)
+            })?;
 
         debug!("release sandbox completed; purging crate source cache");
         krate.purge_from_cache(environment.workspace())?;

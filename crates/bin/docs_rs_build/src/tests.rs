@@ -63,3 +63,44 @@ fn retains_artifacts_and_applies_exit_policy() -> Result<()> {
     assert_eq!(fs::read(&temporary_json)?, original_json);
     Ok(())
 }
+
+#[test]
+#[ignore = "requires Docker and a Rust toolchain"]
+fn builds_workspace_source_with_unpublished_sibling() -> Result<()> {
+    docs_rs_rustwide::logging::init(false);
+    let fixture = super::source::tests::fixture();
+    let workspace = test_workspace_path();
+    let source = super::source::create(fixture.path(), Some("selected"), &workspace)?;
+    let mut environment = BuildEnvironment::builder(workspace.as_path())
+        .wait_for_workspace_lock(true)
+        .fast_init(true)
+        .validate_host_resources(false)
+        .sandbox_image(docs_rs_rustwide::testing::test_sandbox_image())
+        .build()?;
+    let krate = Crate::local(source.directory.path());
+    let result = environment
+        .release(&krate)
+        .manifest_path(source.manifest_path)?
+        .run(|build| Ok(build.build_docs()))?
+        .into_inner();
+    report::print(
+        &result,
+        std::time::Duration::ZERO.into(),
+        report::build_succeeded(&result, true),
+        true,
+    )?;
+    assert!(report::build_succeeded(&result, true));
+    assert_eq!(result.cargo_metadata().root().name, "selected");
+    assert!(
+        result
+            .default_target()
+            .documentation()
+            .as_inner()
+            .unwrap()
+            .path()
+            .join("selected/index.html")
+            .is_file()
+    );
+    assert!(!fixture.path().join("Cargo.lock").exists());
+    Ok(())
+}

@@ -96,15 +96,17 @@ pub fn load_cargo_metadata<'build, 'ws>(
     environment: &'build BuildEnvironment,
     build: &'build Build<'ws>,
     limits: &'build Limits,
+    manifest_path: &Path,
 ) -> StepResult<CargoMetadata> {
     capture_rustwide_step(limits.max_log_size(), || {
-        read_cargo_metadata(environment, build)
+        read_cargo_metadata(environment, build, manifest_path)
     })
 }
 
 fn read_cargo_metadata(
     environment: &BuildEnvironment,
     build: &Build<'_>,
+    manifest_path: &Path,
 ) -> Result<CargoMetadata, BuildStepError> {
     let source_dir = &build.host_source_dir();
 
@@ -113,7 +115,8 @@ fn read_cargo_metadata(
         environment.workspace(),
         environment.configured_toolchain().cargo(),
     )
-    .args(["metadata", "--format-version", "1"])
+    .args(["metadata", "--format-version", "1", "--manifest-path"])
+    .arg(manifest_path)
     .current_directory(source_dir)
     .log_output(false)
     .run_capture()
@@ -138,6 +141,7 @@ pub struct ReleaseBuild<'build, 'ws> {
     pub(crate) cargo_metadata: RefCell<CargoMetadata>,
     pub(crate) limits: &'build Limits,
     pub(crate) resource_suffix: String,
+    pub(crate) manifest_path: PathBuf,
     fetched_build_std_targets: RefCell<HashSet<String>>,
 }
 
@@ -148,11 +152,18 @@ impl<'build, 'ws> ReleaseBuild<'build, 'ws> {
         environment: &'build BuildEnvironment,
         build: &'build Build<'ws>,
         limits: &'build Limits,
+        manifest_path: &Path,
     ) -> Result<Self> {
         debug!("reading docs.rs metadata");
-        let docsrs_metadata = Metadata::from_crate_root(build.host_source_dir())?;
+        let docsrs_metadata = Metadata::from_crate_root(
+            build
+                .host_source_dir()
+                .join(manifest_path)
+                .parent()
+                .expect("manifest has a parent"),
+        )?;
         debug!("reading cargo metadata");
-        let cargo_metadata = load_cargo_metadata(environment, build, limits)
+        let cargo_metadata = load_cargo_metadata(environment, build, limits, manifest_path)
             .context("error loading cargo metadata")?
             .into_inner();
 
@@ -166,6 +177,7 @@ impl<'build, 'ws> ReleaseBuild<'build, 'ws> {
             docsrs_metadata,
             limits,
             resource_suffix,
+            manifest_path: manifest_path.to_owned(),
             fetched_build_std_targets: RefCell::new(HashSet::new()),
         })
     }
@@ -631,7 +643,7 @@ impl<'build, 'ws> ReleaseBuild<'build, 'ws> {
             .map_err(BuildStepError::Command)?;
 
             debug!("refreshing Cargo metadata for the replacement lockfile");
-            let metadata = read_cargo_metadata(self.environment, self.build)?;
+            let metadata = read_cargo_metadata(self.environment, self.build, &self.manifest_path)?;
             *self.cargo_metadata.borrow_mut() = metadata;
 
             debug!("replacement lockfile and metadata are ready");

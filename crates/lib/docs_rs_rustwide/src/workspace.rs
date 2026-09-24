@@ -376,6 +376,7 @@ impl BuildEnvironment {
             krate,
             limits: None,
             directory_label: None,
+            manifest_path: "Cargo.toml".into(),
             state: crate::release::Unfetched,
         }
     }

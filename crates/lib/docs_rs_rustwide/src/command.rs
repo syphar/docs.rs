@@ -73,11 +73,28 @@ impl<'release_build, 'build, 'ws> PrepareCommand<'release_build, 'build, 'ws> {
             rustdoc_arg_count = self.rustdoc_args.len(),
             "preparing Cargo command"
         );
+        let mut selected_args = vec![
+            "--manifest-path".into(),
+            self.release_build
+                .manifest_path
+                .to_string_lossy()
+                .into_owned(),
+        ];
+        selected_args.extend([
+            "--package".into(),
+            self.release_build
+                .cargo_metadata
+                .borrow()
+                .root()
+                .name
+                .clone(),
+        ]);
+        selected_args.extend(self.cargo_args);
         let cargo_args = cargo_args(
             &self.target,
             &self.release_build.docsrs_metadata,
             self.release_build.environment.cargo_jobs(),
-            self.cargo_args,
+            selected_args,
             self.rustdoc_args,
         );
 
