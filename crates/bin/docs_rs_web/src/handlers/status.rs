@@ -209,15 +209,24 @@ mod tests {
         #[builder(start_fn(name = std_replacement_mock), finish_fn(name = start))]
         async fn with_std_replacements(
             mut self,
-            items: impl IntoIterator<Item = (KrateName, ReplacementDetails)>,
+            item: Option<(KrateName, ReplacementDetails)>,
+            items: Option<impl IntoIterator<Item = (KrateName, ReplacementDetails)>>,
             cache_control: Option<CacheControl>,
             #[builder(default = StatusCode::OK)] status_code: StatusCode,
         ) -> Self {
-            let map = ReplacementMap::from_iter(
-                items
-                    .into_iter()
-                    .map(|(krate, details)| (krate, Arc::new(details))),
-            );
+            let mut map = ReplacementMap::new();
+
+            if let Some((krate, details)) = item {
+                map.insert(krate, Arc::new(details));
+            }
+
+            if let Some(items) = items {
+                map.extend(
+                    items
+                        .into_iter()
+                        .map(|(krate, details)| (krate, Arc::new(details))),
+                );
+            }
 
             let mut mock = self
                 .std_replacement_server
@@ -309,11 +318,16 @@ mod tests {
         let std_cache = CacheControl::new().with_max_age(std_ttl.into());
         mock_server = if empty {
             mock_server
-                .with_replacements(iter::empty(), Some(std_cache))
+                .std_replacement_mock()
+                .cache_control(std_cache)
+                .start()
                 .await
         } else {
             mock_server
-                .with_replacement(OWNED_ALLOC, replacement.clone(), Some(std_cache))
+                .std_replacement_mock()
+                .item((OWNED_ALLOC, replacement.clone()))
+                .cache_control(std_cache)
+                .start()
                 .await
         };
 
@@ -389,7 +403,10 @@ mod tests {
             .cache_control(CacheControl::new().with_max_age(std::time::Duration::from_secs(600)))
             .start()
             .await
-            .with_replacements_and_status(iter::empty(), cache_control, StatusCode::NOT_FOUND)
+            .std_replacement_mock()
+            .maybe_cache_control(cache_control)
+            .status_code(StatusCode::NOT_FOUND)
+            .start()
             .await;
 
         let env = TestEnvironment::builder()
