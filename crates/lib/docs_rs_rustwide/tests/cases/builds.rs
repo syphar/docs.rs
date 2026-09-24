@@ -302,3 +302,43 @@ fn reports_failure_before_sandbox_preparation() -> Result<()> {
     assert!(error.to_string().contains("Cargo.toml"));
     Ok(())
 }
+
+// The workspace default is the sibling. Both explicit selections must override
+// it, load their own docs.rs features, and resolve the unpublished path dependency.
+#[test_case("Cargo.toml", "workspace-root", false; "root_direct")]
+#[test_case("Cargo.toml", "workspace-root", true; "root_fetched")]
+#[test_case("member/Cargo.toml", "workspace-member", false; "member_direct")]
+#[test_case("member/Cargo.toml", "workspace-member", true; "member_fetched")]
+#[ignore = "requires Docker and a Rust toolchain"]
+fn builds_selected_workspace_manifest(
+    manifest_path: &str,
+    package_name: &str,
+    fetch_first: bool,
+) -> Result<()> {
+    let mut test = TestEnvironment::new()?;
+    let krate = Crate::local(&fixture("workspace-selection"));
+    let context = test
+        .environment
+        .release(&krate)
+        .manifest_path(manifest_path)?;
+    let result = if fetch_first {
+        context.fetch()?.run(|build| Ok(build.build_docs()))?
+    } else {
+        context.run(|build| Ok(build.build_docs()))?
+    }
+    .into_inner();
+
+    assert_eq!(result.cargo_metadata().root().name, package_name);
+    assert!(result.build_succeeded());
+    let target = result.default_target();
+    let html = target.documentation().as_inner().unwrap();
+    let library = package_name.replace('-', "_");
+    assert!(html.path().join(&library).join("index.html").is_file());
+    assert!(!html.path().join("workspace_sibling/index.html").exists());
+    let json = target.rustdoc_json().as_inner().unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&fs::read(json.path())?)?;
+    let root_id = json["root"].to_string();
+    assert_eq!(json["index"][&root_id]["name"], library);
+    assert!(target.coverage().as_inner().unwrap().is_some());
+    Ok(())
+}

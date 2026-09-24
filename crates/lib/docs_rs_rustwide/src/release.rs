@@ -37,12 +37,7 @@ impl<State> ReleaseContext<'_, State> {
     /// is `Cargo.toml` at the source root.
     pub fn manifest_path(mut self, path: impl Into<PathBuf>) -> Result<Self> {
         let path = path.into();
-        anyhow::ensure!(
-            path.components()
-                .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
-                && path.file_name().is_some_and(|name| name == "Cargo.toml"),
-            "manifest path must be a relative Cargo.toml path within the source tree"
-        );
+        validate_manifest_path(&path)?;
         self.manifest_path = path;
         Ok(self)
     }
@@ -192,6 +187,16 @@ impl ReleaseContext<'_, Fetched> {
     }
 }
 
+fn validate_manifest_path(path: &Path) -> Result<()> {
+    anyhow::ensure!(
+        path.components()
+            .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
+            && path.file_name().is_some_and(|name| name == "Cargo.toml"),
+        "manifest path must be a relative Cargo.toml path within the source tree"
+    );
+    Ok(())
+}
+
 fn build_dir_name(krate: &Crate, label: Option<&str>) -> String {
     let mut hasher = DefaultHasher::new();
     krate.to_string().hash(&mut hasher);
@@ -214,6 +219,29 @@ fn build_dir_name(krate: &Crate, label: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test_case::test_case("Cargo.toml", true; "root")]
+    #[test_case::test_case("./Cargo.toml", true; "explicit_relative_root")]
+    #[test_case::test_case("crates/member/Cargo.toml", true; "nested_member")]
+    #[test_case::test_case("crates/member with spaces/Cargo.toml", true; "spaces")]
+    #[test_case::test_case("/tmp/Cargo.toml", false; "absolute")]
+    #[test_case::test_case("../Cargo.toml", false; "parent")]
+    #[test_case::test_case("member/../../Cargo.toml", false; "nested_escape")]
+    #[test_case::test_case("member/../Cargo.toml", false; "parent_component")]
+    #[test_case::test_case("", false; "empty")]
+    #[test_case::test_case("member", false; "directory")]
+    #[test_case::test_case("member/Other.toml", false; "wrong_filename")]
+    fn validates_selected_manifest_path(path: &str, valid: bool) {
+        let result = validate_manifest_path(Path::new(path));
+        assert_eq!(result.is_ok(), valid);
+        if let Err(error) = result {
+            assert!(
+                error
+                    .to_string()
+                    .contains("relative Cargo.toml path within the source tree")
+            );
+        }
+    }
 
     #[test]
     fn directory_labels_are_safe_and_preserve_the_hash() {

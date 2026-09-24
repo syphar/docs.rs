@@ -708,9 +708,15 @@ mod tests {
     use crate::StepResultExt as _;
     use std::ffi::OsStr;
 
-    #[test]
+    #[test_case::test_case("hello-world", "Cargo.toml", "hello-world"; "standalone")]
+    #[test_case::test_case("workspace-selection", "Cargo.toml", "workspace-root"; "workspace_root")]
+    #[test_case::test_case("workspace-selection", "member/Cargo.toml", "workspace-member"; "workspace_member")]
     #[ignore = "requires Docker and a Rust toolchain"]
-    fn refreshes_metadata_after_lockfile_regeneration() -> Result<()> {
+    fn refreshes_metadata_after_lockfile_regeneration(
+        fixture_name: &str,
+        manifest_path: &str,
+        package_name: &str,
+    ) -> Result<()> {
         crate::logging::init(false);
         let workspace = crate::testing::test_workspace_path();
         let mut environment = BuildEnvironment::builder(workspace.as_path())
@@ -719,14 +725,18 @@ mod tests {
             .validate_host_resources(false)
             .sandbox_image(crate::testing::test_sandbox_image())
             .build()?;
-        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/hello-world");
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(fixture_name);
         let krate = rustwide::Crate::local(&fixture);
         let release = environment
             .release(&krate)
+            .manifest_path(manifest_path)?
             .run(|build| {
                 assert!(build.cargo_metadata.borrow().root().description.is_none());
                 let source = build.build.host_source_dir();
-                let manifest = source.join("Cargo.toml");
+                assert_eq!(build.cargo_metadata.borrow().root().name, package_name);
+                let manifest = source.join(manifest_path);
                 let contents = fs::read_to_string(&manifest)?;
                 fs::write(
                     manifest,
@@ -742,6 +752,7 @@ mod tests {
             })?
             .into_inner();
         assert!(release.has_docs());
+        assert_eq!(release.cargo_metadata().root().name, package_name);
         assert!(
             release
                 .default_target()

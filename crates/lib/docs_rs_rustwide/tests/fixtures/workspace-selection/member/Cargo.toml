@@ -1,0 +1,14 @@
+[package]
+name = "workspace-member"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+workspace-sibling.workspace = true
+
+[features]
+member-docs = []
+
+[package.metadata.docs.rs]
+features = ["member-docs"]

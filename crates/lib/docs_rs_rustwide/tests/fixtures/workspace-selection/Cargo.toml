@@ -1,0 +1,26 @@
+[workspace]
+members = ["member", "sibling"]
+default-members = ["sibling"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+workspace-sibling = { path = "sibling" }
+
+[package]
+name = "workspace-root"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+workspace-sibling.workspace = true
+
+[features]
+root-docs = []
+
+[package.metadata.docs.rs]
+features = ["root-docs"]
