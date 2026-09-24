@@ -1,11 +1,11 @@
+use crate::{Config, Informational, OsvAdvisory};
 use anyhow::{Context, Result, ensure};
 use docs_rs_reqwest::{CachedResult, Client};
 use docs_rs_types::KrateName;
+use rustsec::osv::OsvTimelineEvent;
 use std::sync::Arc;
 use tracing::instrument;
 use url::Url;
-
-use crate::{Config, Informational, OsvAdvisory, OsvAffected};
 
 /// A reusable HTTP client caching parsed results, shared by clones.
 /// Missing feeds are cached as empty lists using response freshness headers,
@@ -31,14 +31,21 @@ impl RustsecClient {
             advisories
                 .iter()
                 .find(|advisory| {
-                    !advisory.withdrawn()
-                        && advisory.affected().iter().any(|entry| {
-                            entry.informational() == Some(&Informational::Unmaintained)
+                    advisory.withdrawn.is_none()
+                        && advisory.affected.iter().any(|entry| {
+                            entry.database_specific.informational.as_ref()
+                                == Some(&Informational::Unmaintained)
                         })
-                        && !advisory
-                            .affected()
-                            .iter()
-                            .any(OsvAffected::has_patched_versions)
+                        && !advisory.affected.iter().any(|affected| {
+                            affected.ranges.iter().flatten().any(|range| {
+                                range
+                                    .events
+                                    .iter()
+                                    .any(|event| matches!(event, OsvTimelineEvent::Fixed(_)))
+                            })
+
+                            // OsvAffected::has_patched_versions
+                        })
                 })
                 .cloned()
         }))
@@ -226,7 +233,7 @@ mod tests {
             .await?
             .value;
         assert_eq!(
-            result.as_ref().map(|advisory| advisory.id().as_str()),
+            result.as_ref().map(|advisory| advisory.id.as_str()),
             expected
         );
         server.assert_async().await;
@@ -247,16 +254,16 @@ mod tests {
         assert_eq!(advisories.len(), 2);
 
         let unmaintained = &advisories[0];
-        assert_eq!(unmaintained.id().as_str(), "RUSTSEC-2026-0299");
-        assert_eq!(unmaintained.summary(), "`owned-alloc` is unmaintained");
+        assert_eq!(unmaintained.id.as_str(), "RUSTSEC-2026-0299");
+        assert_eq!(unmaintained.summary, "`owned-alloc` is unmaintained");
         assert_eq!(
-            unmaintained.affected()[0].informational(),
+            unmaintained.affected[0].database_specific.informational,
             Some(&Informational::Unmaintained)
         );
 
         let security = &advisories[1];
-        assert_eq!(security.id().as_str(), "RUSTSEC-2026-0291");
-        assert_eq!(security.affected()[0].informational(), None);
+        assert_eq!(security.id.as_str(), "RUSTSEC-2026-0291");
+        assert_eq!(security.affected[0].database_specific.informational, None);
         server.assert_async().await;
         Ok(())
     }
@@ -350,9 +357,9 @@ mod tests {
         value["withdrawn"] = json!("2026-09-23T12:00:00Z");
         value["affected"][0]["database_specific"]["informational"] = json!("future-notice");
         let advisory: OsvAdvisory = serde_json::from_value(value.clone())?;
-        assert!(advisory.withdrawn());
+        assert!(advisory.withdrawn.is_some());
         assert_eq!(
-            advisory.affected()[0].informational(),
+            advisory.affected[0].database_specific.informational,
             Some(&Informational::Other("future-notice".into()))
         );
         Ok(())
