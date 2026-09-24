@@ -12,7 +12,7 @@
 mod config;
 mod models;
 
-pub use config::Config;
+pub use config::{Config, ConfigBuilder};
 pub use models::advisory::{Id, Informational};
 pub use models::osv::{OsvAdvisory, OsvAffected, OsvJsonRange, OsvTimelineEvent};
 

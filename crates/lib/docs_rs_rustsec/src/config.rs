@@ -6,6 +6,7 @@ use url::Url;
 
 /// Configuration for [`crate::RustsecClient`].
 #[derive(Debug, bon::Builder)]
+#[builder(on(_, overwritable))]
 pub struct Config {
     /// RustSec site URL. Package requests append `packages/{name}.json`.
     #[builder(default = "https://rustsec.org/".parse().unwrap())]

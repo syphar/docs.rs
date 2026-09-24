@@ -6,5 +6,5 @@ mod models;
 pub mod testing;
 
 pub use api::StdReplacements;
-pub use config::Config;
+pub use config::{Config, ConfigBuilder};
 pub use models::{ReplacementDetails, ReplacementMap};

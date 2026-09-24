@@ -11,6 +11,7 @@ static FETCH_URL: LazyLock<Url> = LazyLock::new(|| {
 
 /// Configuration for the standard-library replacement client.
 #[derive(Debug, bon::Builder)]
+#[builder(on(_, overwritable))]
 pub struct Config {
     /// URL of the complete replacement dataset.
     #[builder(default = FETCH_URL.clone())]

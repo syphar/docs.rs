@@ -244,10 +244,7 @@ mod tests {
             self
         }
 
-        fn std_replacements_config(
-            &self,
-            default_ttl: Option<Duration>,
-        ) -> docs_rs_std_replacements::Config {
+        fn std_replacements_config(&self) -> docs_rs_std_replacements::ConfigBuilder {
             docs_rs_std_replacements::Config::builder()
                 .url(
                     format!("{}/all.json", self.std_replacement_server.url())
@@ -255,11 +252,9 @@ mod tests {
                         .unwrap(),
                 )
                 .max_retries(0)
-                .maybe_cache_default_ttl(default_ttl)
-                .build()
         }
 
-        fn rustsec_config(&self) -> docs_rs_rustsec::ConfigBuilder<S> {
+        fn rustsec_config(&self) -> docs_rs_rustsec::ConfigBuilder {
             docs_rs_rustsec::Config::builder()
                 .base_url(self.rustsec_server.url().parse().unwrap())
                 .max_retries(0)
@@ -341,8 +336,13 @@ mod tests {
         };
 
         let env = TestEnvironment::builder()
-            .std_replacements_config(mock_server.std_replacements_config(None))
-            .rustsec_config(mock_server.rustsec_config(Some(rustsec_ttl)))
+            .std_replacements_config(mock_server.std_replacements_config().build())
+            .rustsec_config(
+                mock_server
+                    .rustsec_config()
+                    .cache_default_ttl(rustsec_ttl)
+                    .build(),
+            )
             .build()
             .await?;
 
@@ -378,8 +378,8 @@ mod tests {
             .start()
             .await;
         let env = TestEnvironment::builder()
-            .std_replacements_config(mocks.std_replacements_config(None))
-            .rustsec_config(mocks.rustsec_config(None))
+            .std_replacements_config(mocks.std_replacements_config().build())
+            .rustsec_config(mocks.rustsec_config().build())
             .build()
             .await?;
         let html = env
@@ -420,8 +420,8 @@ mod tests {
             .await;
 
         let env = TestEnvironment::builder()
-            .std_replacements_config(mock_server.std_replacements_config(None))
-            .rustsec_config(mock_server.rustsec_config(None))
+            .std_replacements_config(mock_server.std_replacements_config().build())
+            .rustsec_config(mock_server.rustsec_config().build())
             .build()
             .await?;
 
@@ -468,8 +468,8 @@ mod tests {
                 .await;
         }
         let env = TestEnvironment::builder()
-            .std_replacements_config(mocks.std_replacements_config(None))
-            .rustsec_config(mocks.rustsec_config(None))
+            .std_replacements_config(mocks.std_replacements_config().build())
+            .rustsec_config(mocks.rustsec_config().build())
             .build()
             .await?;
         let response = env
@@ -494,7 +494,7 @@ mod tests {
             .start()
             .await;
         let env = TestEnvironment::builder()
-            .rustsec_config(mock_server.rustsec_config(None))
+            .rustsec_config(mock_server.rustsec_config().build())
             .build()
             .await?;
 
@@ -536,7 +536,10 @@ mod tests {
 
         let env = TestEnvironment::builder()
             .std_replacements_config(
-                mock_server.std_replacements_config(Some(Duration::from_secs(90))),
+                mock_server
+                    .std_replacements_config()
+                    .cache_default_ttl(Duration::from_secs(90))
+                    .build(),
             )
             .build()
             .await?;
