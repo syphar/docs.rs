@@ -209,8 +209,9 @@ mod tests {
         #[builder(start_fn(name = std_replacement_mock), finish_fn(name = start))]
         async fn with_std_replacements(
             mut self,
-            item: Option<(KrateName, ReplacementDetails)>,
-            #[builder(default, with = FromIterator::from_iter)] items: Vec<(
+            #[builder(with = |krate: KrateName, details: ReplacementDetails| (krate, details))]
+            replacement: Option<(KrateName, ReplacementDetails)>,
+            #[builder(default, with = FromIterator::from_iter)] replacements: Vec<(
                 KrateName,
                 ReplacementDetails,
             )>,
@@ -321,7 +322,7 @@ mod tests {
         } else {
             mock_server
                 .std_replacement_mock()
-                .item((OWNED_ALLOC, replacement.clone()))
+                .replacement(OWNED_ALLOC, replacement.clone())
                 .cache_control(std_cache)
                 .start()
                 .await
@@ -445,7 +446,7 @@ mod tests {
         } else {
             mocks = mocks
                 .std_replacement_mock()
-                .item((OWNED_ALLOC, std_replacement("Use std")))
+                .replacement(OWNED_ALLOC, std_replacement("Use std"))
                 .start()
                 .await
                 .rustsec_mock(OWNED_ALLOC)
@@ -527,7 +528,7 @@ mod tests {
         let mock_server = WarningSourceMock::new()
             .await?
             .std_replacement_mock()
-            .item((LAZY_STATIC, replacement.clone()))
+            .replacement(LAZY_STATIC, replacement.clone())
             .start()
             .await;
 
