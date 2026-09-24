@@ -710,7 +710,7 @@ mod tests {
     use docs_rs_database::Pool;
     use docs_rs_database::{crate_details::releases_for_crate, releases::update_build_status};
     use docs_rs_registry_api::CrateOwner;
-    use docs_rs_test_fakes::{FakeBuild, fake_release_that_failed_before_build};
+    use docs_rs_test_fakes::{FakeBuild, FakeFinishedBuild, fake_release_that_failed_before_build};
     use docs_rs_types::testing::{FOO, V1};
     use docs_rs_types::{KrateName, SimpleBuildError};
     use http::StatusCode;
@@ -1223,11 +1223,7 @@ mod tests {
                 .await
                 .name("foo")
                 .version("0.1.0")
-                .builds(vec![
-                    FakeBuild::builder()
-                        .build_status(BuildStatus::InProgress)
-                        .build(),
-                ])
+                .builds(vec![FakeBuild::InProgress])
                 .create()
                 .await?;
 
@@ -2107,15 +2103,12 @@ path = "src/lib.rs"
                 .name("dummy")
                 .version("0.1.0")
                 .builds(vec![
-                    FakeBuild::builder()
-                        .build_status(BuildStatus::Success)
-                        .build(),
-                    FakeBuild::builder()
-                        .build_status(BuildStatus::Failure)
-                        .build(),
-                    FakeBuild::builder()
-                        .build_status(BuildStatus::InProgress)
-                        .build(),
+                    FakeFinishedBuild::builder().successful(true).build().into(),
+                    FakeFinishedBuild::builder()
+                        .successful(false)
+                        .build()
+                        .into(),
+                    FakeBuild::InProgress,
                 ])
                 .create()
                 .await?;
@@ -2139,12 +2132,11 @@ path = "src/lib.rs"
                 .name("dummy")
                 .version("0.1.0")
                 .builds(vec![
-                    FakeBuild::builder()
-                        .build_status(BuildStatus::Failure)
-                        .build(),
-                    FakeBuild::builder()
-                        .build_status(BuildStatus::InProgress)
-                        .build(),
+                    FakeFinishedBuild::builder()
+                        .successful(false)
+                        .build()
+                        .into(),
+                    FakeBuild::InProgress,
                 ])
                 .create()
                 .await?;
@@ -2167,11 +2159,7 @@ path = "src/lib.rs"
                 .await
                 .name("dummy")
                 .version("0.1.0")
-                .builds(vec![
-                    FakeBuild::builder()
-                        .build_status(BuildStatus::InProgress)
-                        .build(),
-                ])
+                .builds(vec![FakeBuild::InProgress])
                 .create()
                 .await?;
 

@@ -81,7 +81,7 @@ mod tests {
     use super::*;
     use crate::testing::TestEnvironment;
     use docs_rs_config::AppConfig as _;
-    use docs_rs_test_fakes::FakeBuild;
+    use docs_rs_test_fakes::FakeFinishedBuild;
     use docs_rs_types::testing::{BAR, BAZ, FOO, V1};
     use pretty_assertions::assert_eq;
 
@@ -96,9 +96,10 @@ mod tests {
             .name(&FOO)
             .version(V1)
             .builds(vec![
-                FakeBuild::builder()
+                FakeFinishedBuild::builder()
                     .rustc_version("rustc 1.84.0-nightly (e7c0d2750 2020-10-15)")
-                    .build(),
+                    .build()
+                    .into(),
             ])
             .create()
             .await?;
@@ -144,9 +145,10 @@ mod tests {
             .name(&FOO)
             .version(V1)
             .builds(vec![
-                FakeBuild::builder()
+                FakeFinishedBuild::builder()
                     .rustc_version("rustc 1.84.0-nightly (e7c0d2750 2020-10-15)")
-                    .build(),
+                    .build()
+                    .into(),
             ])
             .create()
             .await?;
@@ -177,9 +179,10 @@ mod tests {
             .name(&BAZ)
             .version(V1)
             .builds(vec![
-                FakeBuild::builder()
+                FakeFinishedBuild::builder()
                     .rustc_version("rustc 1.84.0-nightly (e7c0d2750 2020-10-15)")
-                    .build(),
+                    .build()
+                    .into(),
             ])
             .create()
             .await?;

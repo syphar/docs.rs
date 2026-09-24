@@ -1,71 +1,65 @@
 use anyhow::Result;
-use docs_rs_types::{BuildError, BuildId, ReleaseId, SimpleBuildError};
+use docs_rs_types::{BuildError, BuildId, ReleaseId};
+use std::fmt;
 
+/// An owned error retaining the original display text and classification.
+#[derive(Debug)]
+pub(crate) struct StoredBuildError {
+    message: String,
+    kind: &'static str,
+}
+
+impl StoredBuildError {
+    pub(crate) fn new(error: impl BuildError) -> Self {
+        Self {
+            message: error.to_string(),
+            kind: error.kind(),
+        }
+    }
+}
+
+impl fmt::Display for StoredBuildError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for StoredBuildError {}
+
+impl BuildError for StoredBuildError {
+    fn kind(&self) -> &'static str {
+        self.kind
+    }
+}
+
+/// A build that failed before compiler versions and metrics were available.
 #[derive(bon::Builder)]
-#[builder(
-    on(_, into),
-    generics(setters(
-        name = "with_{}",
-        vis = "",
-    )),
-    start_fn(vis = "", name = builder_internal),
-)]
-pub struct FakeEarlyErrorBuild<E> {
-    #[builder(setters(name = error_internal, vis = ""))]
-    error: Option<E>,
+pub struct FakeEarlyErrorBuild {
+    #[builder(with = |error: impl BuildError| StoredBuildError::new(error))]
+    error: Option<StoredBuildError>,
 }
 
-impl FakeEarlyErrorBuild<SimpleBuildError> {
-    pub fn builder() -> FakeEarlyErrorBuildBuilder<SimpleBuildError> {
-        Self::builder_internal()
-    }
-}
-
-use fake_early_error_build_builder::{IsComplete, IsUnset, SetError, State};
-
-impl<E, S> FakeEarlyErrorBuildBuilder<E, S>
-where
-    E: BuildError,
-    S: State,
-{
-    pub fn error<NewE>(self, error: NewE) -> FakeEarlyErrorBuildBuilder<NewE, SetError<S>>
-    where
-        NewE: BuildError,
-        S::Error: IsUnset,
-    {
-        self.with_e().error_internal(error)
-    }
-
+impl<S: fake_early_error_build_builder::State> FakeEarlyErrorBuildBuilder<S> {
     pub async fn create(
         self,
         conn: &mut sqlx::PgConnection,
         release_id: ReleaseId,
     ) -> Result<BuildId>
     where
-        S: IsComplete,
+        S: fake_early_error_build_builder::IsComplete,
     {
         self.build().create(conn, release_id).await
     }
 }
 
-impl<E> FakeEarlyErrorBuild<E>
-where
-    E: BuildError,
-{
+impl FakeEarlyErrorBuild {
     pub async fn create(
         &self,
         conn: &mut sqlx::PgConnection,
         release_id: ReleaseId,
     ) -> Result<BuildId> {
         let build_id = docs_rs_database::releases::initialize_build(&mut *conn, release_id).await?;
-
-        docs_rs_database::releases::update_build_with_error(
-            &mut *conn,
-            build_id,
-            self.error.as_ref(),
-        )
-        .await?;
-
-        Ok(build_id)
+        docs_rs_database::releases::update_build_with_error(conn, build_id, self.error.as_ref())
+            .await
     }
 }

@@ -248,15 +248,127 @@ mod tests {
     use anyhow::Result;
     use axum::{body::Body, http::Request};
     use docs_rs_build_limits::Overrides;
-    use docs_rs_test_fakes::{FakeBuild, fake_release_that_failed_before_build};
+    use docs_rs_test_fakes::{
+        FakeBuild, FakeEarlyErrorBuild, FakeFinishedBuild, fake_release_that_failed_before_build,
+    };
     use docs_rs_types::{
         BuildStatus, ByteSize, Duration, SimpleBuildError,
         testing::{FOO, V0_1, V1, V2},
     };
     use kuchikiki::traits::TendrilSink;
     use reqwest::StatusCode;
-    use test_case::{test_case, test_matrix};
+    use test_case::test_case;
     use tower::ServiceExt;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fake_build_lifecycle_fields() -> Result<()> {
+        let env = TestEnvironment::new().await?;
+        let release_id = env
+            .fake_release()
+            .await
+            .name(FOO)
+            .version(V0_1)
+            .builds(vec![
+                FakeFinishedBuild::default().into(),
+                FakeFinishedBuild::builder()
+                    .successful(false)
+                    .error(SimpleBuildError("finished error".into()))
+                    .build()
+                    .into(),
+                FakeEarlyErrorBuild::builder()
+                    .error(SimpleBuildError("early error".into()))
+                    .build()
+                    .into(),
+                FakeEarlyErrorBuild::builder().build().into(),
+                FakeBuild::InProgress,
+            ])
+            .create()
+            .await?;
+        let mut conn = env.async_conn().await?;
+        let rows = sqlx::query_as::<
+            _,
+            (
+                BuildStatus,
+                bool,
+                bool,
+                bool,
+                bool,
+                bool,
+                bool,
+                Option<String>,
+                Option<String>,
+            ),
+        >(
+            "SELECT build_status, build_started IS NOT NULL, build_finished IS NOT NULL,
+                    rustc_version IS NOT NULL, docsrs_version IS NOT NULL,
+                    memory_peak IS NOT NULL, documentation_size IS NOT NULL, errors, error_kind
+             FROM builds WHERE rid = $1 ORDER BY id",
+        )
+        .bind(release_id)
+        .fetch_all(&mut *conn)
+        .await?;
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    BuildStatus::Success,
+                    true,
+                    true,
+                    true,
+                    true,
+                    true,
+                    true,
+                    None,
+                    None
+                ),
+                (
+                    BuildStatus::Failure,
+                    true,
+                    true,
+                    true,
+                    true,
+                    true,
+                    true,
+                    Some("build error: finished error".into()),
+                    Some("SimpleBuildError".into())
+                ),
+                (
+                    BuildStatus::Failure,
+                    true,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    Some("build error: early error".into()),
+                    Some("SimpleBuildError".into())
+                ),
+                (
+                    BuildStatus::Failure,
+                    true,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    None,
+                    None
+                ),
+                (
+                    BuildStatus::InProgress,
+                    true,
+                    false,
+                    false,
+                    false,
+                    false,
+                    false,
+                    None,
+                    None
+                ),
+            ]
+        );
+        Ok(())
+    }
 
     #[test]
     fn build_list_empty_build() {
@@ -302,24 +414,23 @@ mod tests {
                 .name("foo")
                 .version("0.1.0")
                 .builds(vec![
-                    FakeBuild::builder()
+                    FakeFinishedBuild::builder()
                         .rustc_version("rustc (blabla 2019-01-01)")
                         .docsrs_version("docs.rs 1.0.0")
-                        .build(),
-                    FakeBuild::builder()
+                        .build()
+                        .into(),
+                    FakeFinishedBuild::builder()
                         .successful(false)
                         .rustc_version("rustc (blabla 2020-01-01)")
                         .docsrs_version("docs.rs 2.0.0")
-                        .build(),
-                    FakeBuild::builder()
+                        .build()
+                        .into(),
+                    FakeFinishedBuild::builder()
                         .rustc_version("rustc (blabla 2021-01-01)")
                         .docsrs_version("docs.rs 3.0.0")
-                        .build(),
-                    FakeBuild::builder()
-                        .build_status(BuildStatus::InProgress)
-                        .rustc_version("rustc (blabla 2022-01-01)")
-                        .docsrs_version("docs.rs 4.0.0")
-                        .build(),
+                        .build()
+                        .into(),
+                    FakeBuild::InProgress,
                 ])
                 .create()
                 .await?;
@@ -357,11 +468,12 @@ mod tests {
                 .name("foo")
                 .version("0.1.0")
                 .builds(vec![
-                    FakeBuild::builder()
+                    FakeFinishedBuild::builder()
                         .rustc_version("rustc (blabla 2019-01-01)")
                         .docsrs_version("docs.rs 1.0.0")
                         .memory_peak(test_memory_bytes)
-                        .build(),
+                        .build()
+                        .into(),
                 ])
                 .create()
                 .await?;
@@ -648,10 +760,11 @@ mod tests {
                 .name("aquarelle")
                 .version(V1)
                 .builds(vec![
-                    FakeBuild::builder()
+                    FakeFinishedBuild::builder()
                         .rustc_version("rustc (blabla 2019-01-01)")
                         .docsrs_version("docs.rs 1.0.0")
-                        .build(),
+                        .build()
+                        .into(),
                 ])
                 .create()
                 .await?;
@@ -661,10 +774,11 @@ mod tests {
                 .name("aquarelle")
                 .version(V2)
                 .builds(vec![
-                    FakeBuild::builder()
+                    FakeFinishedBuild::builder()
                         .rustc_version("rustc (blabla 2019-01-01)")
                         .docsrs_version("docs.rs 1.0.0")
-                        .build(),
+                        .build()
+                        .into(),
                 ])
                 .create()
                 .await?;
@@ -697,10 +811,11 @@ mod tests {
                 .name("foo")
                 .version(V1)
                 .builds(vec![
-                    FakeBuild::builder()
+                    FakeFinishedBuild::builder()
                         .rustc_version("rustc (blabla 2019-01-01)")
                         .docsrs_version("docs.rs 1.0.0")
-                        .build(),
+                        .build()
+                        .into(),
                 ])
                 .create()
                 .await?;
@@ -723,10 +838,11 @@ mod tests {
                 .name("foo")
                 .version("0.1.0")
                 .builds(vec![
-                    FakeBuild::builder()
+                    FakeFinishedBuild::builder()
                         .rustc_version("rustc (blabla 2019-01-01)")
                         .docsrs_version("docs.rs 1.0.0")
-                        .build(),
+                        .build()
+                        .into(),
                 ])
                 .create()
                 .await?;
@@ -749,12 +865,17 @@ mod tests {
             .await
             .name(FOO)
             .version(V0_1)
-            .builds(vec![
-                FakeBuild::builder()
-                    .build_status(build_status)
+            .builds(vec![match build_status {
+                BuildStatus::PartialFailure => {
+                    unreachable!("partial failure is derived from target logs")
+                }
+                BuildStatus::InProgress => FakeBuild::InProgress,
+                BuildStatus::Success | BuildStatus::Failure => FakeFinishedBuild::builder()
+                    .successful(build_status == BuildStatus::Success)
                     .legacy_build_logs(true)
-                    .build(),
-            ])
+                    .build()
+                    .into(),
+            }])
             .create()
             .await?;
 
@@ -774,24 +895,20 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    #[test_matrix(
-        [BuildStatus::InProgress, BuildStatus::Failure],
-        [true, false]
-    )]
-    async fn get_builds_new_logs_just_passes_build_status_if_not_success(
-        build_status: BuildStatus,
-        build_log_success: bool,
-    ) -> Result<()> {
+    #[test_case(true)]
+    #[test_case(false)]
+    async fn get_builds_new_logs_preserves_failure_status(build_log_success: bool) -> Result<()> {
         let env = TestEnvironment::new().await?;
         env.fake_release()
             .await
             .name(FOO)
             .version(V0_1)
             .builds(vec![
-                FakeBuild::builder()
-                    .build_status(build_status)
+                FakeFinishedBuild::builder()
+                    .successful(false)
                     .s3_build_log("some log", build_log_success)
-                    .build(),
+                    .build()
+                    .into(),
             ])
             .create()
             .await?;
@@ -805,7 +922,7 @@ mod tests {
                 .map(|b| b.build_status)
                 .next()
                 .unwrap(),
-            build_status,
+            BuildStatus::Failure,
         );
 
         Ok(())
@@ -819,11 +936,12 @@ mod tests {
             .name(FOO)
             .version(V0_1)
             .builds(vec![
-                FakeBuild::builder()
-                    .build_status(BuildStatus::Success)
+                FakeFinishedBuild::builder()
+                    .successful(true)
                     .s3_build_log("some log", true)
                     .build_log_for_other_target("other-target", "other log", true)
-                    .build(),
+                    .build()
+                    .into(),
             ])
             .create()
             .await?;
@@ -851,11 +969,12 @@ mod tests {
             .name(FOO)
             .version(V0_1)
             .builds(vec![
-                FakeBuild::builder()
-                    .build_status(BuildStatus::Success)
+                FakeFinishedBuild::builder()
+                    .successful(true)
                     .s3_build_log("some log", true)
                     .build_log_for_other_target("other-target", "other log", false)
-                    .build(),
+                    .build()
+                    .into(),
             ])
             .create()
             .await?;

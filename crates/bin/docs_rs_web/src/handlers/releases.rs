@@ -955,13 +955,7 @@ mod tests {
                 .await
                 .name("in_progress")
                 .version(V0_1)
-                .builds(vec![
-                    FakeBuild::builder()
-                        .build_status(BuildStatus::InProgress)
-                        .rustc_version("rustc (blabla 2022-01-01)")
-                        .docsrs_version("docs.rs 4.0.0")
-                        .build(),
-                ])
+                .builds(vec![FakeBuild::InProgress])
                 .create()
                 .await?;
 
@@ -1405,13 +1399,7 @@ mod tests {
             .await
             .name("in_progress")
             .version("0.1.0")
-            .builds(vec![
-                FakeBuild::builder()
-                    .build_status(BuildStatus::InProgress)
-                    .rustc_version("rustc (blabla 2022-01-01)")
-                    .docsrs_version("docs.rs 4.0.0")
-                    .build(),
-            ])
+            .builds(vec![FakeBuild::InProgress])
             .create()
             .await?;
 
@@ -1851,13 +1839,7 @@ mod tests {
                 .await
                 .name("foo")
                 .version(V1)
-                .builds(vec![
-                    FakeBuild::builder()
-                        .build_status(BuildStatus::InProgress)
-                        .rustc_version("rustc (blabla 2022-01-01)")
-                        .docsrs_version("docs.rs 4.0.0")
-                        .build(),
-                ])
+                .builds(vec![FakeBuild::InProgress])
                 .create()
                 .await?;
 
