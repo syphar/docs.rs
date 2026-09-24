@@ -98,10 +98,13 @@ requires it. Pointing directly at a member directory also works.
 
 The copy excludes `.git`, `target`, `.workspace`, `.rustwide-docker`, Cargo's
 configured target directory, and the directory passed to `--workspace`.
-Absolute dependency paths inside the workspace are rebased in the copy.
-Dependencies and symlinks outside the workspace are currently unsupported and
-produce an error. The original checkout is not changed. Rustwide still removes
-root Cargo configuration and toolchain overrides as part of sandbox preparation.
+Source builds support relative path dependencies within the workspace. Dependency
+paths are copied unchanged; absolute paths and dependencies outside the workspace
+are unsupported, and Cargo reports dependencies it cannot resolve. Symlinks
+outside the workspace are rejected during copying. The original checkout is not
+changed. Standalone source copies get an empty `[workspace]` table to isolate them
+from surrounding workspaces. Rustwide still removes root Cargo configuration and
+toolchain overrides as part of sandbox preparation.
 
 Use the default packaged mode when checking publication contents and registry
 dependencies; source mode tests the workspace's local versions instead.

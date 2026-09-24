@@ -81,47 +81,6 @@ pub(crate) fn create(
         .strip_prefix(&root)
         .context("selected package is outside the workspace")?
         .to_owned();
-    let mut manifests: Vec<PathBuf> = packages
-        .iter()
-        .filter_map(|p| p["manifest_path"].as_str().map(PathBuf::from))
-        .chain(std::iter::once(root.join("Cargo.toml")))
-        .collect();
-    let mut staged_manifests = std::collections::HashMap::new();
-    while let Some(path) = manifests.pop() {
-        let path = path.canonicalize()?;
-        if staged_manifests.contains_key(&path) {
-            continue;
-        }
-        ensure!(
-            path.starts_with(&root),
-            "manifest {} is outside the source workspace",
-            path.display()
-        );
-        let original = fs::read_to_string(&path)?;
-        let mut value: toml::Value = toml::from_str(&original)?;
-        let mut changed = rebase_paths(
-            &mut value,
-            path.parent().unwrap(),
-            &root,
-            false,
-            &mut manifests,
-        )?;
-        if path == root.join("Cargo.toml") && value.get("workspace").is_none() {
-            value
-                .as_table_mut()
-                .context("invalid source manifest")?
-                .insert("workspace".into(), toml::Value::Table(toml::Table::new()));
-            changed = true;
-        }
-        staged_manifests.insert(
-            path,
-            if changed {
-                toml::to_string(&value)?
-            } else {
-                original
-            },
-        );
-    }
     let directory_label = format!(
         "{}-{}",
         string(selected, "name")?,
@@ -163,15 +122,20 @@ pub(crate) fn create(
         } else if entry.file_type().is_file() {
             fs::copy(entry.path(), &destination)
                 .with_context(|| format!("staging {}", entry.path().display()))?;
-            if let Some(manifest) = staged_manifests.get(&canonical) {
-                fs::write(&destination, manifest)?;
-            }
         }
     }
     ensure!(
         directory.path().join(&manifest_path).is_file(),
         "selected manifest was excluded from the source copy"
     );
+    // Keep standalone sources from joining the checkout's workspace when
+    // Rustwide copies them into its build directory.
+    let root_manifest_path = directory.path().join("Cargo.toml");
+    let mut root_manifest: toml::Table = toml::from_str(&fs::read_to_string(&root_manifest_path)?)?;
+    if !root_manifest.contains_key("workspace") {
+        root_manifest.insert("workspace".into(), toml::Value::Table(toml::Table::new()));
+        fs::write(root_manifest_path, toml::to_string(&root_manifest)?)?;
+    }
     Ok(StagedSource {
         directory,
         directory_label,
@@ -183,65 +147,6 @@ fn string<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
     value[key]
         .as_str()
         .with_context(|| format!("missing metadata {key}"))
-}
-
-fn rebase_paths(
-    value: &mut toml::Value,
-    manifest_dir: &Path,
-    root: &Path,
-    dependency: bool,
-    manifests: &mut Vec<PathBuf>,
-) -> Result<bool> {
-    let Some(table) = value.as_table_mut() else {
-        return Ok(false);
-    };
-    let mut changed = false;
-    if dependency
-        && let Some(path) = table.get_mut("path")
-        && let Some(original) = path.as_str()
-    {
-        let resolved = manifest_dir
-            .join(original)
-            .canonicalize()
-            .with_context(|| {
-                format!(
-                    "resolving path dependency {original} in {}",
-                    manifest_dir.display()
-                )
-            })?;
-        let relative = resolved.strip_prefix(root).with_context(|| format!("path dependency `{original}` in `{}` is outside the workspace; external path dependencies are not supported by --source-build", manifest_dir.display()))?;
-        manifests.push(resolved.join("Cargo.toml"));
-        if Path::new(original).is_absolute() {
-            let mut rebased = PathBuf::new();
-            for _ in manifest_dir.strip_prefix(root)?.components() {
-                rebased.push("..");
-            }
-            rebased.push(relative);
-            *path = toml::Value::String(rebased.to_string_lossy().into_owned());
-            changed = true;
-        }
-    }
-    for (key, child) in table.iter_mut() {
-        if !dependency && matches!(key.as_str(), "package" | "metadata") {
-            continue;
-        }
-        changed |= rebase_paths(
-            child,
-            manifest_dir,
-            root,
-            dependency
-                || matches!(
-                    key.as_str(),
-                    "dependencies"
-                        | "dev-dependencies"
-                        | "build-dependencies"
-                        | "patch"
-                        | "replace"
-                ),
-            manifests,
-        )?;
-    }
-    Ok(changed)
 }
 
 #[cfg(test)]
@@ -328,10 +233,12 @@ publish = false
                 .exists()
         );
         assert!(!root.join("Cargo.lock").exists());
-        assert_eq!(
-            fs::read(root.join("Cargo.toml"))?,
-            fs::read(source.directory.path().join("Cargo.toml"))?
-        );
+        for manifest in ["Cargo.toml", "selected/Cargo.toml", "sibling/Cargo.toml"] {
+            assert_eq!(
+                fs::read(root.join(manifest))?,
+                fs::read(source.directory.path().join(manifest))?
+            );
+        }
         let direct = create(&root.join("selected"), None, &root.join("target/cache"))?;
         assert_eq!(direct.manifest_path, source.manifest_path);
         assert!(create(root, None, &root.join("target/cache")).is_err());
@@ -375,41 +282,6 @@ publish = false
             staged.directory.path().join("Cargo.toml"),
         )?)?;
         assert!(manifest["workspace"].as_table().unwrap().is_empty());
-        Ok(())
-    }
-
-    #[test]
-    fn rebases_absolute_dependencies_and_rejects_external_paths() -> Result<()> {
-        let original = fixture();
-        let root = original.path();
-        let manifest = root.join("Cargo.toml");
-        let text = fs::read_to_string(&manifest)?;
-        fs::write(
-            &manifest,
-            text.replace(
-                "path = \"sibling\"",
-                &format!("path = {:?}", root.join("sibling")),
-            ),
-        )?;
-        let staged = create(root, Some("selected"), &root.join("target/cache"))?;
-        let staged_manifest: toml::Value = toml::from_str(&fs::read_to_string(
-            staged.directory.path().join("Cargo.toml"),
-        )?)?;
-        assert_eq!(
-            staged_manifest["workspace"]["dependencies"]["sibling"]["path"].as_str(),
-            Some("sibling")
-        );
-        let external = tempfile::tempdir()?;
-        let mut dependency: toml::Value = toml::from_str(&format!(
-            "[dependencies.external]\npath = {:?}",
-            external.path()
-        ))?;
-        assert!(
-            rebase_paths(&mut dependency, root, root, false, &mut Vec::new())
-                .unwrap_err()
-                .to_string()
-                .contains("outside the workspace")
-        );
         Ok(())
     }
 }
