@@ -272,7 +272,7 @@ mod tests {
         Header, UserAgent,
         testing::{test_typed_decode, test_typed_encode},
     };
-    use reqwest::header::{AGE, CACHE_CONTROL, ETAG, IF_NONE_MATCH, USER_AGENT};
+    use reqwest::header::{CACHE_CONTROL, IF_NONE_MATCH};
     use serde_json::Value;
     use test_case::test_case;
 
@@ -467,7 +467,7 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let a = server
             .mock("GET", "/a")
-            .match_typed_header(UserAgent(APP_USER_AGENT))
+            .match_typed_header(UserAgent::from_static(APP_USER_AGENT))
             .with_body("1")
             .expect(1)
             .create_async()
