@@ -13,6 +13,8 @@ use std::{
 use tracing::{debug, instrument};
 use url::Url;
 
+use crate::CachedResult;
+
 /// A simplified caching HTTP client for one JSON response type.
 ///
 /// Built for fetching & caching rustsec & std-replacements from github pages.
