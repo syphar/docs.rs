@@ -17,7 +17,7 @@ docs_rs_headers = { path = "../docs_rs_headers", optional = true }
 docs_rs_reqwest = { path = "../docs_rs_reqwest" }
 docs_rs_types = { path = "../docs_rs_types" }
 http = { workspace = true, optional = true }
-rustsec = { path = "/home/syphar/src/rustsec/rustsec" }
+rustsec = { path = "/home/syphar/src/rustsec/rustsec", default-features = false }
 mockito = { workspace = true, optional = true }
 serde = { workspace = true }
 tracing = { workspace = true }
