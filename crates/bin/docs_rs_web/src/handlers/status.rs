@@ -218,9 +218,19 @@ mod tests {
         }
 
         async fn with_replacements(
+            self,
+            items: impl IntoIterator<Item = (KrateName, ReplacementDetails)>,
+            cache_control: Option<CacheControl>,
+        ) -> Self {
+            self.with_replacements_and_status(items, cache_control, StatusCode::OK)
+                .await
+        }
+
+        async fn with_replacements_and_status(
             mut self,
             items: impl IntoIterator<Item = (KrateName, ReplacementDetails)>,
             cache_control: Option<CacheControl>,
+            status_code: StatusCode,
         ) -> Self {
             let map = ReplacementMap::from_iter(
                 items
@@ -232,7 +242,7 @@ mod tests {
                 .std_replacement_server
                 .mock("GET", "/all.json")
                 .expect(1)
-                .with_status(StatusCode::OK.as_u16().into());
+                .with_status(status_code.as_u16().into());
 
             if let Some(cache_control) = cache_control {
                 let value = test_typed_encode(cache_control);
@@ -393,7 +403,7 @@ mod tests {
                 Some(CacheControl::new().with_max_age(std::time::Duration::from_secs(600))),
             )
             .await
-            .with_replacements(iter::empty(), cache_control)
+            .with_replacements_and_status(iter::empty(), cache_control, StatusCode::NOT_FOUND)
             .await;
 
         let env = TestEnvironment::builder()
