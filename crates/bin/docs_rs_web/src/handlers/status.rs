@@ -100,22 +100,15 @@ pub(crate) async fn crate_warnings(
         }
     )?;
 
-    // let ttl = std_replacement.ttl.min(&unmaintained.ttl);
-
-    // {
-    //     // Both sources must allow caching; use the shorter TTL.
-    //     (Some(replacement), Some(advisory)) => match (replacement.ttl, advisory.ttl) {
-    //         (Some(a), Some(b)) => Some(a.min(b)),
-    //         // when any source forbids caching, we don't cache in the CDN
-    //         _ => None,
-    //     },
-    //     // A disabled source imposes no restriction on the other source.
-    //     (Some(replacement), None) => replacement.ttl,
-    //     (None, Some(advisory)) => advisory.ttl,
-    //     (None, None) => None,
-    // };
-    // // Conservatively account for time spent waiting for the slower lookup.
-    // let ttl = ttl.map(|ttl| ttl.saturating_sub(started_at.elapsed()));
+    let ttl = match (&std_replacement, &unmaintained) {
+        (Some(replacement), Some(advisory)) => replacement.ttl.min(advisory.ttl),
+        // Disabled sources don't restrict the other source's TTL.
+        (Some(replacement), None) => replacement.ttl,
+        (None, Some(advisory)) => advisory.ttl,
+        (None, None) => Duration::ZERO,
+    };
+    // Conservatively account for time spent waiting for the slower lookup.
+    let ttl = ttl.saturating_sub(started_at.elapsed());
 
     Ok(CrateWarnings {
         replacement: std_replacement.and_then(|result| result.value),
@@ -538,7 +531,7 @@ mod tests {
         use askama::Template as _;
         let description = "Use <std> & \"quotes\"";
         let warnings = super::CrateWarnings {
-            ttl: None,
+            ttl: std::time::Duration::ZERO,
             unmaintained: None,
             replacement: Some(Arc::new(ReplacementDetails::new(
                 description,
