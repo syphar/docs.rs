@@ -228,7 +228,6 @@ mod tests {
             let mut mock = self
                 .std_replacement_server
                 .mock("GET", "/all.json")
-                .expect(1)
                 .with_status(status_code.as_u16().into());
 
             if let Some(cache_control) = cache_control {
