@@ -167,26 +167,18 @@ impl<T: DeserializeOwned + Send + Sync + 'static> Client<T> {
             .map(Duration::from)
             .unwrap_or_default();
 
-        if response.status() == StatusCode::NOT_FOUND {
-            let ttl = self.inner.not_found_ttl.map_or(Duration::ZERO, |fallback| {
-                cache_control_ttl(cache_control.as_ref(), age)
-                    .unwrap_or(fallback.saturating_sub(age))
-            });
-            return Ok(Snapshot {
-                value: None,
-                expires_at: received_at + ttl,
-            });
-        }
-
-        let response = response.error_for_status()?;
-
-        let expires_at = received_at
-            + cache_control_ttl(cache_control.as_ref(), age)
-                .unwrap_or(self.inner.default_ttl.saturating_sub(age));
-        let value = response.json::<T>().await?;
+        let (value, fallback_ttl) = if response.status() == StatusCode::NOT_FOUND {
+            (None, self.inner.not_found_ttl)
+        } else {
+            let value = response.error_for_status()?.json::<T>().await?;
+            (Some(Arc::new(value)), Some(self.inner.default_ttl))
+        };
+        let ttl = fallback_ttl.map_or(Duration::ZERO, |fallback| {
+            cache_control_ttl(cache_control.as_ref(), age).unwrap_or(fallback.saturating_sub(age))
+        });
         Ok(Snapshot {
-            value: Some(Arc::new(value)),
-            expires_at,
+            value,
+            expires_at: received_at + ttl,
         })
     }
 }
