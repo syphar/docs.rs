@@ -124,7 +124,7 @@ impl FakeBuild {
             &self.rustc_version,
             &self.docsrs_version,
             self.build_status,
-            Some(42),
+            Some(42u64.into()),
             Some(self.memory_peak),
             None::<&SimpleBuildError>,
         )
