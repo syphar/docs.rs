@@ -144,6 +144,7 @@ mod tests {
     use http::{StatusCode, header::CACHE_CONTROL};
     use kuchikiki::traits::TendrilSink;
     use std::{iter, str::FromStr, sync::Arc};
+    use test_case::test_case;
 
     const OWNED_ALLOC: KrateName = KrateName::from_static("owned-alloc");
 
@@ -231,7 +232,7 @@ mod tests {
                 .std_replacement_server
                 .mock("GET", "/all.json")
                 .expect(1)
-                .with_status(200);
+                .with_status(StatusCode::OK.as_u16().into());
 
             if let Some(cache_control) = cache_control {
                 let value = test_typed_encode(cache_control);
@@ -298,11 +299,11 @@ mod tests {
         }
     }
 
-    #[test_case::test_case(Duration::from_mins(1), Duration::from_mins(2), false, Duration::from_mins(1); "replacement shorter")]
-    #[test_case::test_case(Duration::from_mins(2), Duration::from_mins(1), false, Duration::from_mins(1); "rustsec shorter")]
-    #[test_case::test_case(Duration::from_secs(1200), Duration::from_secs(1800), false, Duration::from_secs(1200); "longer TTL")]
-    #[test_case::test_case(Duration::ZERO, Duration::from_mins(2), false, Duration::ZERO; "uncacheable")]
-    #[test_case::test_case(Duration::from_mins(1), Duration::from_mins(2), true, Duration::from_mins(1); "empty HTML")]
+    #[test_case(Duration::from_mins(1), Duration::from_mins(2), false, Duration::from_mins(1); "replacement shorter")]
+    #[test_case(Duration::from_mins(2), Duration::from_mins(1), false, Duration::from_mins(1); "rustsec shorter")]
+    #[test_case(Duration::from_secs(1200), Duration::from_secs(1800), false, Duration::from_secs(1200); "longer TTL")]
+    #[test_case(Duration::ZERO, Duration::from_mins(2), false, Duration::ZERO; "uncacheable")]
+    #[test_case(Duration::from_mins(1), Duration::from_mins(2), true, Duration::from_mins(1); "empty HTML")]
     #[tokio::test(flavor = "multi_thread")]
     async fn crate_warnings_uses_remaining_ttl(
         std_ttl: Duration,
@@ -379,40 +380,40 @@ mod tests {
         Ok(())
     }
 
-    #[test_case::test_case(false; "uncached 404")]
-    #[test_case::test_case(true; "no-store 404")]
+    #[test_case(false; "uncached 404")]
+    #[test_case(true; "no-store 404")]
     #[tokio::test(flavor = "multi_thread")]
     async fn crate_warnings_does_not_cache_uncached_replacement_404(no_store: bool) -> Result<()> {
-        let mut mock_server = WarningSourceMock::new()
+        let cache_control = no_store.then(|| CacheControl::new().with_no_store());
+
+        let mock_server = WarningSourceMock::new()
             .await?
             .with_data_rustsec(
                 OWNED_ALLOC,
                 Some(CacheControl::new().with_max_age(std::time::Duration::from_secs(600))),
             )
+            .await
+            .with_replacements(iter::empty(), cache_control)
             .await;
-        let mut mock = mock_server
-            .std_replacement_server
-            .mock("GET", "/all.json")
-            .with_status(404);
-        if no_store {
-            mock = mock.with_header("cache-control", "no-store");
-        }
-        mock_server.mocks.push(mock.create_async().await);
 
         let env = TestEnvironment::builder()
             .std_replacements_config(mock_server.std_replacements_config(None))
             .rustsec_config(mock_server.rustsec_config(None))
             .build()
             .await?;
+
         let response = env
             .web_app()
             .await
             .assert_success("/-/partial/crate-warnings/owned-alloc/")
             .await?;
+
         response.assert_cache_control(CachePolicy::NoCaching, env.config());
+
         let html = response.text().await?;
         assert!(html.contains("Unmaintained"));
         assert!(!html.contains("Std alternative"));
+
         mock_server.assert_async().await;
         Ok(())
     }
