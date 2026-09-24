@@ -85,7 +85,7 @@ pub(crate) async fn crate_warnings(
     Path(name): Path<KrateName>,
 ) -> AxumResult<impl IntoResponse> {
     let started_at = Instant::now();
-    let (std_replacement, unmaintained) = tokio::try_join!(
+    let (std_replacement, unmaintained) = tokio::join!(
         async {
             match std_replacements {
                 Some(Extension(client)) => client.get(&name).await.map(Some),
@@ -98,7 +98,17 @@ pub(crate) async fn crate_warnings(
                 None => Ok(None),
             }
         }
-    )?;
+    );
+    // A failed source contributes no warning and a zero TTL, so recovery is visible
+    // on the next request without suppressing the healthy source.
+    let std_replacement = std_replacement.unwrap_or_else(|error| {
+        tracing::warn!(?error, %name, "failed to fetch standard-library replacements");
+        Some(Default::default())
+    });
+    let unmaintained = unmaintained.unwrap_or_else(|error| {
+        tracing::warn!(?error, %name, "failed to fetch RustSec advisories");
+        Some(Default::default())
+    });
 
     let ttl = match (&std_replacement, &unmaintained) {
         (Some(replacement), Some(advisory)) => replacement.ttl.min(advisory.ttl),
@@ -154,6 +164,19 @@ mod tests {
                 rustsec_server: mockito::Server::new_async().await,
                 mocks: Vec::new(),
             })
+        }
+
+        async fn with_error_rustsec(mut self, krate: KrateName, status_code: StatusCode) -> Self {
+            let mock = self
+                .rustsec_server
+                .mock("GET", format!("/packages/{}.json", krate).as_str())
+                .with_status(status_code.as_u16().into())
+                .with_body("")
+                .create_async()
+                .await;
+
+            self.mocks.push(mock);
+            self
         }
 
         async fn with_empty_rustsec(
@@ -418,6 +441,42 @@ mod tests {
         assert!(!html.contains("Std alternative"));
 
         mock_server.assert_async().await;
+        Ok(())
+    }
+
+    #[test_case(true; "replacement unavailable")]
+    #[test_case(false; "rustsec unavailable")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn crate_warnings_preserves_healthy_source(replacement_fails: bool) -> Result<()> {
+        let mut mocks = WarningSourceMock::new().await?;
+        if replacement_fails {
+            mocks = mocks
+                .with_data_rustsec(OWNED_ALLOC, None)
+                .await
+                .with_replacements_and_status(iter::empty(), None, StatusCode::SERVICE_UNAVAILABLE)
+                .await;
+        } else {
+            mocks = mocks
+                .with_replacement(OWNED_ALLOC, std_replacement("Use std"), None)
+                .await
+                .with_error_rustsec(OWNED_ALLOC, StatusCode::SERVICE_UNAVAILABLE)
+                .await;
+        }
+        let env = TestEnvironment::builder()
+            .std_replacements_config(mocks.std_replacements_config(None))
+            .rustsec_config(mocks.rustsec_config(None))
+            .build()
+            .await?;
+        let response = env
+            .web_app()
+            .await
+            .assert_success("/-/partial/crate-warnings/owned-alloc/")
+            .await?;
+        response.assert_cache_control(CachePolicy::NoCaching, env.config());
+        let html = response.text().await?;
+        assert_eq!(html.contains("Unmaintained"), replacement_fails);
+        assert_eq!(html.contains("Std alternative"), !replacement_fails);
+        mocks.assert_async().await;
         Ok(())
     }
 

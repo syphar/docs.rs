@@ -134,6 +134,8 @@ impl<T: DeserializeOwned + Send + Sync + 'static> Client<T> {
             return Ok(snapshot.cached_result());
         }
 
+        let mut uncached = None;
+        let uncached_result = &mut uncached;
         let result = self
             .inner
             .cache
@@ -159,7 +161,15 @@ impl<T: DeserializeOwned + Send + Sync + 'static> Client<T> {
                         _ => return Err(error),
                     },
                 };
-                if refreshed.value.is_none() && self.inner.not_found_ttl.is_none() {
+                if refreshed
+                    .cache_control
+                    .as_ref()
+                    .is_some_and(CacheControl::no_store)
+                {
+                    // Return this response only to its caller, removing any older snapshot.
+                    *uncached_result = Some(refreshed.cached_result());
+                    Ok(Op::Remove)
+                } else if refreshed.value.is_none() && self.inner.not_found_ttl.is_none() {
                     // A missing resource invalidates any previous successful response.
                     Ok(Op::Remove)
                 } else {
@@ -167,6 +177,9 @@ impl<T: DeserializeOwned + Send + Sync + 'static> Client<T> {
                 }
             })
             .await?;
+        if let Some(result) = uncached {
+            return Ok(result);
+        }
         Ok(match result {
             CompResult::Removed(_) | CompResult::StillNone(_) => CachedResult {
                 value: None,
@@ -210,7 +223,7 @@ impl<T: DeserializeOwned + Send + Sync + 'static> Client<T> {
             return Ok(Snapshot {
                 value: None,
                 etag: None,
-                cache_control: None,
+                cache_control,
                 expires_at: received_at + ttl,
             });
         }
@@ -747,6 +760,62 @@ mod tests {
             assert_eq!(api.get(&url).await?.value.unwrap().len(), 2);
         }
         mock.assert_async().await;
+        Ok(())
+    }
+
+    #[test_case(200; "successful response")]
+    #[test_case(404; "negative response")]
+    #[test_case(304; "revalidation")]
+    #[tokio::test]
+    async fn no_store_removes_snapshot_and_prevents_stale_fallback(status: usize) -> Result<()> {
+        let mut server = mockito::Server::new_async().await;
+        let url = server.url().parse()?;
+        let api = Client::<String>::builder()
+            .max_retries(0u32)
+            .not_found_ttl(Duration::from_secs(60))
+            .stale_if_error(RETRY_DELAY)
+            .build()?;
+        let initial = server
+            .mock("GET", "/")
+            .with_status(200)
+            .with_header("cache-control", "max-age=0")
+            .with_header("etag", "\"initial\"")
+            .with_body(body("initial"))
+            .create_async()
+            .await;
+        api.get(&url).await?;
+        initial.assert_async().await;
+        initial.remove_async().await;
+
+        let no_store = server
+            .mock("GET", "/")
+            .with_status(status)
+            .with_header("cache-control", "no-store")
+            .with_body(body("updated"))
+            .create_async()
+            .await;
+        let result = api.get(&url).await?;
+        assert_eq!(result.ttl, Duration::ZERO);
+        assert_eq!(
+            result.value.as_deref().map(String::as_str),
+            match status {
+                200 => Some("updated"),
+                304 => Some("initial"),
+                _ => None,
+            }
+        );
+        assert!(api.inner.cache.get(&url).await.is_none());
+        no_store.assert_async().await;
+        no_store.remove_async().await;
+
+        let failure = server
+            .mock("GET", "/")
+            .match_header("if-none-match", mockito::Matcher::Missing)
+            .with_status(500)
+            .create_async()
+            .await;
+        assert!(api.get(&url).await.is_err());
+        failure.assert_async().await;
         Ok(())
     }
 
