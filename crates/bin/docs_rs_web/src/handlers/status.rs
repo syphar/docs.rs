@@ -152,7 +152,7 @@ mod tests {
     use docs_rs_uri::EscapedURI;
     use http::{StatusCode, header::CACHE_CONTROL};
     use kuchikiki::traits::TendrilSink;
-    use std::{iter, str::FromStr, sync::Arc};
+    use std::{str::FromStr, sync::Arc};
     use test_case::test_case;
 
     const OWNED_ALLOC: KrateName = KrateName::from_static("owned-alloc");
@@ -210,23 +210,19 @@ mod tests {
         async fn with_std_replacements(
             mut self,
             item: Option<(KrateName, ReplacementDetails)>,
-            items: Option<impl IntoIterator<Item = (KrateName, ReplacementDetails)>>,
+            #[builder(default, with = FromIterator::from_iter)] items: Vec<(
+                KrateName,
+                ReplacementDetails,
+            )>,
             cache_control: Option<CacheControl>,
             #[builder(default = StatusCode::OK)] status_code: StatusCode,
         ) -> Self {
-            let mut map = ReplacementMap::new();
-
-            if let Some((krate, details)) = item {
-                map.insert(krate, Arc::new(details));
-            }
-
-            if let Some(items) = items {
-                map.extend(
-                    items
-                        .into_iter()
-                        .map(|(krate, details)| (krate, Arc::new(details))),
-                );
-            }
+            let map = ReplacementMap::from_iter(
+                items
+                    .into_iter()
+                    .chain(item)
+                    .map(|(krate, details)| (krate, Arc::new(details))),
+            );
 
             let mut mock = self
                 .std_replacement_server
@@ -442,11 +438,15 @@ mod tests {
                 .maybe_cache_control(None)
                 .start()
                 .await
-                .with_replacements_and_status(iter::empty(), None, StatusCode::SERVICE_UNAVAILABLE)
+                .std_replacement_mock()
+                .status_code(StatusCode::SERVICE_UNAVAILABLE)
+                .start()
                 .await;
         } else {
             mocks = mocks
-                .with_replacement(OWNED_ALLOC, std_replacement("Use std"), None)
+                .std_replacement_mock()
+                .item((OWNED_ALLOC, std_replacement("Use std")))
+                .start()
                 .await
                 .rustsec_mock(OWNED_ALLOC)
                 .status_code(StatusCode::SERVICE_UNAVAILABLE)
@@ -526,7 +526,9 @@ mod tests {
 
         let mock_server = WarningSourceMock::new()
             .await?
-            .with_replacement(LAZY_STATIC, replacement.clone(), None)
+            .std_replacement_mock()
+            .item((LAZY_STATIC, replacement.clone()))
+            .start()
             .await;
 
         let env = TestEnvironment::builder()
