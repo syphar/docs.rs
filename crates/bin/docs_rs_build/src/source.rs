@@ -42,14 +42,16 @@ pub(crate) fn create(
     let packages = metadata["packages"]
         .as_array()
         .context("missing metadata packages")?;
-    let members = metadata["workspace_members"]
-        .as_array()
-        .context("missing workspace members")?;
     let defaults = metadata["workspace_default_members"]
         .as_array()
         .context("missing default members")?;
-    let requested: toml::Table = toml::from_str(&fs::read_to_string(&requested_manifest)?)?;
-    if package.is_none() && !requested.contains_key("package") {
+    // --no-deps lists only workspace packages. A manifest without a matching
+    // package is a virtual workspace, for which the CLI requires --package.
+    if package.is_none()
+        && !packages
+            .iter()
+            .any(|p| p["manifest_path"] == requested_manifest.to_string_lossy().as_ref())
+    {
         bail!(
             "`{}` is a virtual workspace; select a member with `--package <NAME>`",
             requested_manifest.display()
@@ -57,17 +59,11 @@ pub(crate) fn create(
     }
     let selected: Vec<_> = packages
         .iter()
-        .filter(|p| {
-            members.contains(&p["id"])
-                && match package {
-                    Some(name) => p["name"].as_str() == Some(name),
-                    None if requested_manifest == root.join("Cargo.toml") => {
-                        defaults.contains(&p["id"])
-                    }
-                    None => p["manifest_path"]
-                        .as_str()
-                        .is_some_and(|path| Path::new(path) == requested_manifest),
-                }
+        .filter(|p| match package {
+            Some(name) => p["name"] == name,
+            // Cargo resolves defaults for the supplied --manifest-path, even
+            // when it points directly at a member. Do not reconstruct its rules.
+            None => defaults.contains(&p["id"]),
         })
         .collect();
     let [selected] = selected.as_slice() else {
@@ -273,6 +269,11 @@ publish = false
         )?;
         let staged = create(root, None, &root.join("target/cache"))?;
         assert_eq!(staged.manifest_path, Path::new("selected/Cargo.toml"));
+        // An explicit package or member path overrides the workspace default.
+        let staged = create(root, Some("sibling"), &root.join("target/cache"))?;
+        assert_eq!(staged.manifest_path, Path::new("sibling/Cargo.toml"));
+        let staged = create(&root.join("sibling"), None, &root.join("target/cache"))?;
+        assert_eq!(staged.manifest_path, Path::new("sibling/Cargo.toml"));
         fs::write(
             &root_manifest,
             "[package]\nname = \"standalone\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
