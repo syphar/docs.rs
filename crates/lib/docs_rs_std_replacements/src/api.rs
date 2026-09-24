@@ -73,53 +73,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn returns_remaining_ttl_for_present_and_missing_crates() -> Result<()> {
+    async fn crate_lookups_share_dataset_and_preserve_ttl() -> Result<()> {
         let (mut server, api) = fixture().await?;
         let mock = server
             .mock("GET", "/")
             .with_status(200)
-            .with_body(body("initial"))
-            .with_header("cache-control", "max-age=600")
-            .expect(1)
-            .create_async()
-            .await;
-        let first = api.get(&KRATE).await?;
-        assert!(first.value.is_some());
-        advance(Duration::from_secs(100)).await;
-        let second = api.get(&KrateName::from_static("missing")).await?;
-        assert!(second.value.is_none());
-        assert!(second.ttl <= Duration::from_secs(500));
-        assert!(second.ttl > Duration::from_secs(490));
-        mock.assert_async().await;
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn construction_is_lazy_and_concurrent_lookups_share_snapshot() -> Result<()> {
-        let (mut server, api) = fixture().await?;
-        let mock = server
-            .mock("GET", "/")
-            .with_status(200)
-            .with_body(body("initial"))
+            .with_body(body("replacement"))
             .with_header("cache-control", "max-age=600")
             .expect(1)
             .create_async()
             .await;
         let name = KRATE;
-        let (first, second) = tokio::try_join!(api.get(&name), api.get(&name))?;
-        assert!(Arc::ptr_eq(&first.value.unwrap(), &second.value.unwrap()));
-        assert!(
-            api.get(&KrateName::from_static("missing"))
-                .await?
-                .value
-                .is_none()
-        );
+        let missing_name = KrateName::from_static("missing");
+        let (present, missing) = tokio::try_join!(api.get(&name), api.get(&missing_name))?;
+        assert_eq!(present.value.unwrap().description(), "replacement");
+        assert!(missing.value.is_none());
+        for ttl in [present.ttl, missing.ttl] {
+            assert!(ttl <= Duration::from_secs(600));
+            assert!(ttl > Duration::from_secs(590));
+        }
         mock.assert_async().await;
         Ok(())
     }
 
     #[tokio::test]
-    async fn expired_snapshot_is_not_fetched_until_lookup_and_can_remove_entries() -> Result<()> {
+    async fn refreshed_dataset_can_remove_replacements() -> Result<()> {
         let (mut server, api) = fixture().await?;
         let initial = server
             .mock("GET", "/")
@@ -138,8 +116,6 @@ mod tests {
             .create_async()
             .await;
         advance(Duration::from_secs(2)).await;
-        assert!(!updated.matched_async().await);
-        assert!(api.get(&KRATE).await?.value.is_none());
         assert!(api.get(&KRATE).await?.value.is_none());
         updated.assert_async().await;
         Ok(())

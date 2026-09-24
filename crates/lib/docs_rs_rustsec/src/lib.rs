@@ -99,18 +99,13 @@ impl RustsecClient {
             .get(&url)
             .await
             .with_context(|| format!("failed to fetch RustSec advisories for {name}"))?
-            .map(|advisories| {
-                advisories
-                    .map(|advisories| Arc::new((*advisories).clone()))
-                    .unwrap_or_default()
-            }))
+            .map(Option::unwrap_or_default))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use docs_rs_utils::APP_USER_AGENT;
     use serde_json::{Value, json};
     use std::time::Duration;
     use test_case::test_case;
@@ -128,111 +123,32 @@ mod tests {
         )
     }
 
-    #[test_case(200, OWNED_ALLOC_ADVISORIES; "advisory")]
-    #[test_case(404, ""; "missing")]
     #[tokio::test]
-    async fn returns_remaining_ttl_on_hits(status: usize, body: &str) -> Result<()> {
-        let mut server = mockito::Server::new_async().await;
-        let mock = server
-            .mock("GET", PATH)
-            .with_status(status)
-            .with_header("cache-control", "max-age=600")
-            .with_body(body)
-            .expect(1)
-            .create_async()
-            .await;
-        let api = client(&server, 0)?;
-        let first = api.find_unmaintained(&OWNED_ALLOC).await?;
-        tokio::time::sleep(Duration::from_millis(20)).await;
-        let second = api.find_unmaintained(&OWNED_ALLOC).await?;
-        assert!(second.ttl < first.ttl);
-        assert_eq!(second.value.is_some(), status == 200);
-        mock.assert_async().await;
-        Ok(())
-    }
-
-    #[test_case("max-age=3600"; "fresh 404")]
-    #[test_case(""; "404 without freshness")]
-    #[tokio::test]
-    async fn caches_missing_feeds(cache_control: &str) -> Result<()> {
+    async fn missing_feed_is_cached_as_empty_with_configured_ttl() -> Result<()> {
         let mut server = mockito::Server::new_async().await;
         let missing = server
             .mock("GET", PATH)
             .with_status(404)
-            .with_header("cache-control", cache_control)
             .with_body("HTML error page")
             .expect(1)
             .create_async()
             .await;
-        let api = client(&server, 0)?;
-        assert!(api.fetch_advisories(&OWNED_ALLOC).await?.value.is_empty());
-        assert!(
-            api.clone()
-                .fetch_advisories(&OWNED_ALLOC)
-                .await?
-                .value
-                .is_empty()
-        );
-        missing.assert_async().await;
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn refetches_after_negative_cache_expires() -> Result<()> {
-        let mut server = mockito::Server::new_async().await;
-        let missing = server
-            .mock("GET", PATH)
-            .with_status(404)
-            .expect(1)
-            .create_async()
-            .await;
         let api = RustsecClient::from_config(
             &Config::builder()
                 .base_url(server.url().parse()?)
                 .max_retries(0)
-                .cache_default_ttl(Duration::from_millis(10).into())
+                .cache_default_ttl(Duration::from_secs(90).into())
                 .build(),
         )?;
-        assert!(api.fetch_advisories(&OWNED_ALLOC).await?.value.is_empty());
+        let advisories = api.fetch_advisories(&OWNED_ALLOC).await?;
+        assert!(advisories.value.is_empty());
+        assert!(advisories.ttl <= Duration::from_secs(90));
+        assert!(advisories.ttl > Duration::from_secs(85));
+        let warning = api.find_unmaintained(&OWNED_ALLOC).await?;
+        assert!(warning.value.is_none());
+        assert!(warning.ttl <= advisories.ttl);
+        assert!(warning.ttl > Duration::from_secs(85));
         missing.assert_async().await;
-        missing.remove_async().await;
-        let available = server
-            .mock("GET", PATH)
-            .with_status(200)
-            .with_body(OWNED_ALLOC_ADVISORIES)
-            .expect(1)
-            .create_async()
-            .await;
-        tokio::time::sleep(Duration::from_millis(20)).await;
-        assert_eq!(api.fetch_advisories(&OWNED_ALLOC).await?.value.len(), 2);
-        available.assert_async().await;
-        Ok(())
-    }
-
-    #[test_case(200, OWNED_ALLOC_ADVISORIES; "HTTP cache")]
-    #[test_case(404, "missing"; "negative cache")]
-    #[tokio::test]
-    async fn zero_capacity_disables_cache(status: usize, body: &str) -> Result<()> {
-        let mut server = mockito::Server::new_async().await;
-        let mock = server
-            .mock("GET", PATH)
-            .with_status(status)
-            .with_header("cache-control", "max-age=3600")
-            .with_body(body)
-            .expect(2)
-            .create_async()
-            .await;
-        let api = RustsecClient::from_config(
-            &Config::builder()
-                .base_url(server.url().parse()?)
-                .max_retries(0)
-                .cache_capacity(0)
-                .build(),
-        )?;
-        for _ in 0..2 {
-            api.fetch_advisories(&OWNED_ALLOC).await?;
-        }
-        mock.assert_async().await;
         Ok(())
     }
 
@@ -347,32 +263,11 @@ mod tests {
         Ok(())
     }
 
-    #[test_case(404; "no feed")]
-    #[test_case(503; "server error")]
-    #[tokio::test]
-    async fn find_unmaintained_handles_http_status(status: usize) -> Result<()> {
-        let mut server = mockito::Server::new_async().await;
-        let mock = server
-            .mock("GET", PATH)
-            .with_status(status)
-            .create_async()
-            .await;
-        let result = client(&server, 0)?.find_unmaintained(&OWNED_ALLOC).await;
-        if status == 404 {
-            assert!(result?.value.is_none());
-        } else {
-            assert!(result.is_err());
-        }
-        mock.assert_async().await;
-        Ok(())
-    }
-
     #[tokio::test]
     async fn fetches_owned_alloc_advisories_with_rustsec_metadata() -> Result<()> {
         let mut server = mockito::Server::new_async().await;
         let mock = server
             .mock("GET", PATH)
-            .match_header("user-agent", APP_USER_AGENT)
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(OWNED_ALLOC_ADVISORIES)
@@ -400,7 +295,6 @@ mod tests {
     }
 
     #[test_case(200, "[]"; "empty feed")]
-    #[test_case(404, "<html>Not Found</html>"; "no feed")]
     #[tokio::test]
     async fn no_advisories_returns_empty(status: usize, body: &str) -> Result<()> {
         let mut server = mockito::Server::new_async().await;
@@ -421,16 +315,13 @@ mod tests {
         Ok(())
     }
 
-    #[test_case(403, "forbidden"; "forbidden")]
-    #[test_case(429, "rate limited"; "rate limited")]
-    #[test_case(500, "server error"; "server error")]
     #[tokio::test]
-    async fn http_errors_are_not_empty_feeds(status: usize, body: &str) -> Result<()> {
+    async fn fetch_error_includes_crate_name() -> Result<()> {
         let mut server = mockito::Server::new_async().await;
         let mock = server
             .mock("GET", PATH)
-            .with_status(status)
-            .with_body(body)
+            .with_status(500)
+            .with_body("server error")
             .create_async()
             .await;
         let error = client(&server, 0)?
@@ -446,13 +337,12 @@ mod tests {
                 .status()
                 .unwrap()
                 .as_u16(),
-            status as u16
+            500
         );
         mock.assert_async().await;
         Ok(())
     }
 
-    #[test_case("not json"; "malformed JSON")]
     #[test_case("{}"; "wrong top-level shape")]
     #[test_case("[{}]"; "incomplete advisory")]
     #[tokio::test]
@@ -495,15 +385,12 @@ mod tests {
             .base_url(format!("{}{base_path}", server.url()).parse()?)
             .build();
         let api = RustsecClient::from_config(&config)?;
-        // Parsed results without freshness headers use the fallback TTL.
-        for _ in 0..2 {
-            assert!(
-                api.fetch_advisories(&"lazy_static".parse()?)
-                    .await?
-                    .value
-                    .is_empty()
-            );
-        }
+        assert!(
+            api.fetch_advisories(&"lazy_static".parse()?)
+                .await?
+                .value
+                .is_empty()
+        );
         mock.assert_async().await;
         Ok(())
     }

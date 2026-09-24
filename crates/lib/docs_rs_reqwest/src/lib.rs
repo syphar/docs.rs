@@ -313,6 +313,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn refetches_after_negative_cache_expires() -> Result<()> {
+        let mut server = mockito::Server::new_async().await;
+        let url = server.url().parse()?;
+        let client = Client::<u64>::builder()
+            .max_retries(0u32)
+            .not_found_ttl(Duration::from_secs(60))
+            .build()?;
+        let missing = server
+            .mock("GET", "/")
+            .with_status(404)
+            .expect(1)
+            .create_async()
+            .await;
+        assert!(client.get(&url).await?.value.is_none());
+        assert!(client.get(&url).await?.value.is_none());
+        missing.assert_async().await;
+        missing.remove_async().await;
+        let available = server
+            .mock("GET", "/")
+            .with_body("42")
+            .expect(1)
+            .create_async()
+            .await;
+        advance(Duration::from_secs(61)).await;
+        assert_eq!(*client.get(&url).await?.value.unwrap(), 42);
+        available.assert_async().await;
+        Ok(())
+    }
+
+    #[test_case(200, "42"; "successful response")]
+    #[test_case(404, "missing"; "negative response")]
+    #[tokio::test]
+    async fn zero_capacity_disables_cache(status: usize, body: &str) -> Result<()> {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/")
+            .with_status(status)
+            .with_header("cache-control", "max-age=3600")
+            .with_body(body)
+            .expect(2)
+            .create_async()
+            .await;
+        let client = Client::<u64>::builder()
+            .max_retries(0u32)
+            .cache_capacity(0u64)
+            .not_found_ttl(Duration::from_secs(600))
+            .build()?;
+        let url = server.url().parse()?;
+        for _ in 0..2 {
+            let result = client.get(&url).await?;
+            assert_eq!(
+                result.value.as_deref().copied(),
+                (status == 200).then_some(42)
+            );
+        }
+        mock.assert_async().await;
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn uncached_not_found_removes_previous_snapshot() -> Result<()> {
         let mut server = mockito::Server::new_async().await;
         let client = Client::<u64>::builder().max_retries(0u32).build()?;
@@ -356,6 +416,7 @@ mod tests {
         let mut server = mockito::Server::new_async().await;
         let a = server
             .mock("GET", "/a")
+            .match_header("user-agent", APP_USER_AGENT)
             .with_body("1")
             .expect(1)
             .create_async()
