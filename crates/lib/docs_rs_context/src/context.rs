@@ -44,10 +44,8 @@ pub struct Context {
     #[builder(setters(vis = "", name = registry_api_internal))]
     pub registry_api: Option<Arc<RegistryApi>>,
 
-    #[builder(setters(vis = "", name = std_replacements_internal))]
     pub std_replacements: Option<Arc<StdReplacements>>,
 
-    #[builder(setters(vis = "", name = rustsec_internal))]
     pub rustsec: Option<Arc<RustsecClient>>,
 
     #[builder(setters(vis = "", name = cdn_internal))]
@@ -260,26 +258,6 @@ impl<S: State> ContextBuilder<S> {
         Ok(self.registry_api(config.into(), api.into()))
     }
 
-    pub fn std_replacements(
-        self,
-        std_replacements: Arc<StdReplacements>,
-    ) -> ContextBuilder<SetStdReplacements<S>>
-    where
-        S::StdReplacements: IsUnset,
-    {
-        self.std_replacements_internal(std_replacements)
-    }
-
-    pub fn maybe_std_replacements(
-        self,
-        std_replacements: Option<Arc<StdReplacements>>,
-    ) -> ContextBuilder<SetStdReplacements<S>>
-    where
-        S::StdReplacements: IsUnset,
-    {
-        self.maybe_std_replacements_internal(std_replacements)
-    }
-
     pub fn with_std_replacements(self) -> Result<ContextBuilder<SetStdReplacements<S>>>
     where
         S::StdReplacements: IsUnset,
@@ -288,20 +266,6 @@ impl<S: State> ContextBuilder<S> {
         let api = StdReplacements::from_config(&config)?;
 
         Ok(self.std_replacements(Arc::new(api)))
-    }
-
-    pub fn rustsec(self, rustsec: Arc<RustsecClient>) -> ContextBuilder<SetRustsec<S>>
-    where
-        S::Rustsec: IsUnset,
-    {
-        self.rustsec_internal(rustsec)
-    }
-
-    pub fn maybe_rustsec(self, rustsec: Option<Arc<RustsecClient>>) -> ContextBuilder<SetRustsec<S>>
-    where
-        S::Rustsec: IsUnset,
-    {
-        self.maybe_rustsec_internal(rustsec)
     }
 
     pub fn with_rustsec(self) -> Result<ContextBuilder<SetRustsec<S>>>
