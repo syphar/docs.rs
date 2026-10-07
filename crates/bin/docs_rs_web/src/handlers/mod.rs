@@ -74,7 +74,37 @@ fn apply_middleware(router: AxumRouter<AppState>, state: AppState) -> AxumRouter
     router
         .layer(
             ServiceBuilder::new()
-                .layer(TraceLayer::new_for_http())
+                .layer(
+                    TraceLayer::new_for_http()
+                        .make_span_with(|request: &AxumRequest| {
+                            let route = request
+                                .extensions()
+                                .get::<MatchedPath>()
+                                .map(|path| path.as_str())
+                                .unwrap_or("unmatched");
+                            tracing::info_span!("http.request",
+                                otel.name = %format!("{} {route}", request.method()),
+                                otel.kind = "server",
+                                http.request.method = %request.method(),
+                                http.route = route,
+                                http.response.status_code = tracing::field::Empty,
+                                otel.status_code = tracing::field::Empty,
+                            )
+                        })
+                        .on_response(
+                            |response: &AxumResponse,
+                             _latency: std::time::Duration,
+                             span: &tracing::Span| {
+                                span.record(
+                                    "http.response.status_code",
+                                    i64::from(response.status().as_u16()),
+                                );
+                                if response.status().is_server_error() {
+                                    span.record("otel.status_code", "ERROR");
+                                }
+                            },
+                        ),
+                )
                 .layer(sentry_tower::NewSentryLayer::new_from_top())
                 .layer(sentry_tower::SentryHttpLayer::new().enable_transaction())
                 .layer(middleware::from_fn(

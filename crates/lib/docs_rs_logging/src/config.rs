@@ -15,6 +15,7 @@ pub struct Config {
     pub format: LogFormat,
     pub filter: EnvFilter,
     pub sentry: Option<SentryConfig>,
+    pub opentelemetry: Option<docs_rs_opentelemetry::TraceConfig>,
 
     /// Whether to output the build logs to stdout too,
     /// or just store them on S3.
@@ -39,6 +40,7 @@ impl AppConfig for Config {
                 dsn,
                 traces_sample_rate: env("SENTRY_TRACES_SAMPLE_RATE", 0.0).unwrap_or(0.0),
             }),
+            opentelemetry: docs_rs_opentelemetry::TraceConfig::from_environment()?,
             log_build_logs: env("DOCSRS_LOG_BUILD_LOGS", true)?,
         })
     }
@@ -49,6 +51,7 @@ impl AppConfig for Config {
             format: LogFormat::Pretty,
             filter: Self::filter_from_env("trace")?,
             sentry: None,
+            opentelemetry: None,
             log_build_logs: true,
         })
     }

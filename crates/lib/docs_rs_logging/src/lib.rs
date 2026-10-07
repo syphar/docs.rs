@@ -7,6 +7,7 @@ pub use config::Config;
 pub use log_format::LogFormat;
 
 use docs_rs_config::AppConfig as _;
+use opentelemetry::trace::TracerProvider as _;
 use sentry::{
     TransactionContext, integrations::panic as sentry_panic,
     integrations::tracing as sentry_tracing,
@@ -25,6 +26,8 @@ pub const BUILD_PACKAGE_TRANSACTION_NAME: &str = "docbuilder.build_package";
 pub struct Guard {
     #[allow(dead_code)]
     sentry_guard: Option<sentry::ClientInitGuard>,
+    #[allow(dead_code)]
+    trace_guard: Option<docs_rs_opentelemetry::TraceGuard>,
 }
 
 pub fn init_from_environment() -> anyhow::Result<Guard> {
@@ -39,7 +42,17 @@ pub fn init_with_config(config: &Config) -> anyhow::Result<Guard> {
         LogFormat::Json => tracing_subscriber::fmt::layer().json().boxed(),
     };
 
+    let trace_guard = config
+        .opentelemetry
+        .as_ref()
+        .map(docs_rs_opentelemetry::get_tracer_provider)
+        .transpose()?;
+    let otel_layer = trace_guard.as_ref().map(|guard| {
+        tracing_opentelemetry::layer().with_tracer(guard.provider().tracer("docs_rs"))
+    });
+
     let tracing_registry = tracing_subscriber::registry()
+        .with(otel_layer)
         .with(log_formatter)
         .with(config.filter.clone());
 
@@ -89,5 +102,76 @@ pub fn init_with_config(config: &Config) -> anyhow::Result<Guard> {
         None
     };
 
-    Ok(Guard { sentry_guard })
+    Ok(Guard {
+        sentry_guard,
+        trace_guard,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use opentelemetry::{Value, trace::SpanKind};
+    use opentelemetry_sdk::trace::{InMemorySpanExporter, Sampler, SdkTracerProvider};
+
+    #[test]
+    fn exports_parent_child_spans_and_updated_fields_alongside_sentry() {
+        let exporter = InMemorySpanExporter::default();
+        let provider = SdkTracerProvider::builder()
+            .with_sampler(Sampler::AlwaysOn)
+            .with_simple_exporter(exporter.clone())
+            .build();
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("test")))
+            .with(sentry_tracing::layer().enable_span_attributes());
+
+        tracing::subscriber::with_default(subscriber, || {
+            let request = tracing::info_span!(
+                "http.request",
+                otel.name = "GET /{name}",
+                otel.kind = "server",
+                http.response.status_code = tracing::field::Empty
+            );
+            let _entered = request.enter();
+            {
+                let child = tracing::info_span!("archive_index_copy", bytes = 1024_i64);
+                let _entered = child.enter();
+            }
+            request.record("http.response.status_code", 200_i64);
+        });
+        provider.force_flush().unwrap();
+        let spans = exporter.get_finished_spans().unwrap();
+        assert_eq!(spans.len(), 2);
+        let request = spans
+            .iter()
+            .find(|span| span.name == "GET /{name}")
+            .unwrap();
+        let child = spans
+            .iter()
+            .find(|span| span.name == "archive_index_copy")
+            .unwrap();
+        assert_eq!(request.span_kind, SpanKind::Server);
+        assert_eq!(child.parent_span_id, request.span_context.span_id());
+        assert_eq!(
+            child.span_context.trace_id(),
+            request.span_context.trace_id()
+        );
+        assert!(
+            request
+                .attributes
+                .iter()
+                .any(
+                    |attribute| attribute.key.as_str() == "http.response.status_code"
+                        && attribute.value == Value::I64(200)
+                )
+        );
+        assert!(
+            child
+                .attributes
+                .iter()
+                .any(|attribute| attribute.key.as_str() == "bytes"
+                    && attribute.value == Value::I64(1024))
+        );
+        provider.shutdown().unwrap();
+    }
 }

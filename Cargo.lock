@@ -2330,9 +2330,13 @@ dependencies = [
  "anyhow",
  "docs_rs_config",
  "docs_rs_env_vars",
+ "docs_rs_opentelemetry",
  "docs_rs_utils",
+ "opentelemetry",
+ "opentelemetry_sdk",
  "sentry",
  "tracing",
+ "tracing-opentelemetry",
  "tracing-subscriber",
 ]
 
@@ -2356,6 +2360,7 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry-resource-detectors",
  "opentelemetry_sdk",
+ "tokio",
  "tracing",
  "url",
 ]
@@ -8818,6 +8823,33 @@ dependencies = [
  "futures-task",
  "pin-project",
  "tracing",
+]
+
+[[package]]
+name = "tracing-log"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ee855f1f400bd0e5c02d150ae5de3840039a3f54b025156404e34c23c03f47c3"
+dependencies = [
+ "log",
+ "once_cell",
+ "tracing-core",
+]
+
+[[package]]
+name = "tracing-opentelemetry"
+version = "0.34.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a904802a1b902f43638b677ff2a650847e3b4404101b6c586d648e8c1e3e8fe"
+dependencies = [
+ "js-sys",
+ "opentelemetry",
+ "smallvec",
+ "tracing",
+ "tracing-core",
+ "tracing-log",
+ "tracing-subscriber",
+ "web-time",
 ]
 
 [[package]]

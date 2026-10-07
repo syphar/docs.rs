@@ -11,12 +11,16 @@ testing = ["docs_rs_config/testing"]
 anyhow = { workspace = true }
 docs_rs_config = { path = "../docs_rs_config" }
 docs_rs_env_vars = { path = "../docs_rs_env_vars" }
+docs_rs_opentelemetry = { path = "../docs_rs_opentelemetry" }
+opentelemetry = { workspace = true }
+tracing-opentelemetry = "0.34.0"
 docs_rs_utils = { path = "../docs_rs_utils" }
 sentry = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { version = "0.3.20", default-features = false, features = ["ansi", "env-filter", "fmt", "json"] }
 
 [dev-dependencies]
+opentelemetry_sdk = { workspace = true, features = ["testing"] }
 docs_rs_config = { path = "../docs_rs_config", features = ["testing"] }
 
 [lints]
