@@ -155,6 +155,7 @@ impl SourceArchive {
     where
         W: AsyncWrite + Unpin,
     {
+        //FIXME:  perhaps return StreamingBlob? it could also handle async decompression?
         let range_start = entry.data_offset;
         let range_end = entry.data_offset + entry.compressed_size - 1;
 
