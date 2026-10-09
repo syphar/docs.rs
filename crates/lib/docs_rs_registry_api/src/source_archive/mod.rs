@@ -101,7 +101,7 @@ impl SourceArchive {
             "Cargo.toml uses an unsupported ZIP data descriptor"
         );
         let expected_size = first.reader().entry().uncompressed_size();
-        let mut contents = Vec::new();
+        let mut contents = Vec::with_capacity(expected_size as usize);
         first
             .reader_mut()
             .read_to_end_checked(&mut contents)
