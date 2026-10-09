@@ -11,6 +11,8 @@ testing = ["dep:mockito", "dep:zip"]
 [dependencies]
 anyhow = { workspace = true }
 async-compression = { workspace = true }
+async_http_range_reader = { workspace = true }
+async_zip = { workspace = true }
 bon = { workspace = true }
 chrono = { workspace = true }
 docs_rs_config = { path = "../docs_rs_config" }
@@ -25,7 +27,7 @@ serde_json = { workspace = true }
 sqlx = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
-tokio-util = { workspace = true }
+tokio-util = { workspace = true, features = ["compat"] }
 tracing = { workspace = true }
 url = { workspace = true }
 zip = { workspace = true, optional = true }

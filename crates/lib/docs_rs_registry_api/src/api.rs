@@ -225,6 +225,18 @@ impl RegistryApi {
         })
     }
 
+    /// Fetch `Cargo.toml` from the first source ZIP entry without fetching its JSON inventory.
+    pub async fn cargo_toml(&self, name: &KrateName, version: &Version) -> Result<Vec<u8>> {
+        SourceArchive::fetch_cargo_toml(
+            self.client.clone(),
+            self.static_base.clone(),
+            name.as_str(),
+            &version.to_string(),
+        )
+        .await?
+        .ok_or(Error::MissingReleases)
+    }
+
     /// open the crates.io source archive zip for this crate / version.
     ///
     /// We directly fetch the manifest JSON file.

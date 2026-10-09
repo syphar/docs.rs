@@ -1,15 +1,17 @@
 pub mod manifest;
 
 use crate::source_archive::manifest::{FileEntry, Manifest};
-use anyhow::{Result, bail};
+use anyhow::{Context as _, Result, bail, ensure};
 use async_compression::tokio::bufread::DeflateDecoder;
+use async_http_range_reader::AsyncHttpRangeReader;
+use async_zip::base::read::stream::ZipFileReader;
 use futures_util::TryStreamExt as _;
 use reqwest::{
     StatusCode, Url,
     header::{HeaderMap, HeaderName, RANGE},
 };
 use tokio::io::{self, AsyncWrite, AsyncWriteExt as _};
-use tokio_util::io::StreamReader;
+use tokio_util::{compat::TokioAsyncReadCompatExt as _, io::StreamReader};
 use tracing::{debug, field, instrument};
 
 pub static X_CACHE: HeaderName = HeaderName::from_static("x-cache");
@@ -27,7 +29,80 @@ pub struct SourceArchive {
     client: reqwest::Client,
 }
 
+/// Number of bytes requested initially and buffered during sequential ZIP reads.
+const ZIP_READ_BLOCK_SIZE: usize = 8192;
+
 impl SourceArchive {
+    /// Fetch the first ZIP entry without loading the archive inventory or central directory.
+    #[instrument(skip_all, fields(%base_url, %name, %version, cache_hit=field::Empty))]
+    pub(crate) async fn fetch_cargo_toml(
+        client: reqwest::Client,
+        mut base_url: Url,
+        name: &str,
+        version: &str,
+    ) -> Result<Option<Vec<u8>>> {
+        base_url.set_path("crates/");
+        let zip_url = base_url.join(&format!("{name}/{name}-{version}.zip"))?;
+        let response = client
+            .get(zip_url.clone())
+            .header(RANGE, format!("bytes=0-{}", ZIP_READ_BLOCK_SIZE - 1))
+            .send()
+            .await?;
+        if matches!(
+            response.status(),
+            StatusCode::NOT_FOUND | StatusCode::FORBIDDEN
+        ) {
+            return Ok(None);
+        }
+        let response = response.error_for_status()?;
+        ensure!(
+            response.status() == StatusCode::PARTIAL_CONTENT,
+            "source archive server did not honor the range request"
+        );
+        tracing::Span::current().record("cache_hit", is_cache_hit(response.headers()));
+        ensure!(
+            response
+                .headers()
+                .get(reqwest::header::CONTENT_RANGE)
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|value| value.starts_with("bytes 0-")),
+            "source archive range response does not start at byte zero"
+        );
+
+        let reader =
+            AsyncHttpRangeReader::from_range_response(client, response, zip_url, HeaderMap::new())
+                .await?;
+        let reader = tokio::io::BufReader::with_capacity(ZIP_READ_BLOCK_SIZE, reader);
+        let mut first = ZipFileReader::new(reader.compat())
+            .next_with_entry()
+            .await?
+            .context("source archive contains no first entry")?;
+        ensure!(
+            first
+                .reader()
+                .entry()
+                .filename()
+                .as_str()?
+                .eq_ignore_ascii_case("Cargo.toml"),
+            "first source archive entry is not Cargo.toml"
+        );
+        ensure!(
+            !first.reader().entry().data_descriptor(),
+            "Cargo.toml uses an unsupported ZIP data descriptor"
+        );
+        let expected_size = first.reader().entry().uncompressed_size();
+        let mut contents = Vec::new();
+        first
+            .reader_mut()
+            .read_to_end_checked(&mut contents)
+            .await?;
+        ensure!(
+            contents.len() as u64 == expected_size,
+            "Cargo.toml uncompressed size mismatch"
+        );
+        Ok(Some(contents))
+    }
+
     #[instrument(skip_all, fields( %base_url, %name, %version, cache_hit=field::Empty))]
     pub(crate) async fn load(
         client: reqwest::Client,
@@ -120,6 +195,94 @@ mod tests {
 
     fn client() -> reqwest::Client {
         reqwest::Client::builder().build().unwrap()
+    }
+
+    /// Exercise prefix-only reads and automatic continuation without a JSON inventory.
+    #[test_case::test_case("Cargo.toml", 32, false; "small")]
+    #[test_case::test_case("cargo.toml", 32, false; "lowercase")]
+    #[test_case::test_case("Cargo.toml", 32768, false; "multiple_ranges")]
+    #[test_case::test_case("src/lib.rs", 32, true; "wrong_first_entry")]
+    #[test_case::test_case("Cargo.toml", 32, true; "bad_crc")]
+    #[tokio::test]
+    async fn test_fetch_cargo_toml(path: &str, size: usize, invalid: bool) -> anyhow::Result<()> {
+        // Deterministic pseudo-random data keeps the large entry larger than one block.
+        let mut state = 42u32;
+        let contents: Vec<u8> = (0..size)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                state as u8
+            })
+            .collect();
+        let (_, mut zip) = create_test_source_archive([
+            (path, contents.as_slice()),
+            ("other.txt", b"other".as_slice()),
+        ])?;
+        if invalid && path == "Cargo.toml" {
+            zip[14] ^= 1;
+        }
+        let mut server = mockito::Server::new_async().await;
+        let manifest = server
+            .mock("GET", "/crates/krate/krate-0.1.0.zip.json")
+            .expect(0)
+            .create_async()
+            .await;
+        let initial_end = (ZIP_READ_BLOCK_SIZE - 1).min(zip.len() - 1);
+        let initial = server
+            .mock("GET", "/crates/krate/krate-0.1.0.zip")
+            .match_header("range", "bytes=0-8191")
+            .with_status(206)
+            .with_header(
+                "content-range",
+                &format!("bytes 0-{initial_end}/{}", zip.len()),
+            )
+            .with_body(&zip[..=initial_end])
+            .expect(1)
+            .create_async()
+            .await;
+        let len = zip.len();
+        let continuation = server
+            .mock("GET", "/crates/krate/krate-0.1.0.zip")
+            .match_header(
+                "range",
+                mockito::Matcher::Regex("^bytes=[1-9][0-9]*-[0-9]+$".into()),
+            )
+            .with_status(206)
+            .with_header_from_request("content-range", move |request| {
+                let range = request.header("range")[0].to_str().unwrap();
+                let (start, end) = range
+                    .strip_prefix("bytes=")
+                    .unwrap()
+                    .split_once('-')
+                    .unwrap();
+                format!("bytes {start}-{end}/{len}")
+            })
+            .with_body_from_request(move |request| {
+                let range = request.header("range")[0].to_str().unwrap();
+                let (start, end) = range
+                    .strip_prefix("bytes=")
+                    .unwrap()
+                    .split_once('-')
+                    .unwrap();
+                zip[start.parse::<usize>().unwrap()..=end.parse::<usize>().unwrap()].to_vec()
+            })
+            .expect_at_least(usize::from(size > ZIP_READ_BLOCK_SIZE))
+            .expect_at_most(if size > ZIP_READ_BLOCK_SIZE { 10 } else { 0 })
+            .create_async()
+            .await;
+        let result =
+            SourceArchive::fetch_cargo_toml(client(), Url::parse(&server.url())?, "krate", "0.1.0")
+                .await;
+        if invalid {
+            assert!(result.is_err());
+        } else {
+            assert_eq!(result?.unwrap(), contents);
+        }
+        manifest.assert_async().await;
+        initial.assert_async().await;
+        continuation.assert_async().await;
+        Ok(())
     }
 
     #[tokio::test]

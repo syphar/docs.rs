@@ -27,6 +27,8 @@ repository = "https://github.com/rust-lang/docs.rs"
 edition = "2024"
 
 [workspace.dependencies]
+async_http_range_reader = { package = "astral_async_http_range_reader", version = "0.11.1" }
+async_zip = { package = "astral_async_zip", version = "0.0.20", default-features = false, features = ["deflate"] }
 anyhow = { version = "1.0.42", features = ["backtrace"] }
 askama = "0.16.0"
 async-compression = { version = "0.4.32", features = ["bzip2", "deflate", "gzip", "tokio", "zstd"] }

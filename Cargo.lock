@@ -370,6 +370,52 @@ dependencies = [
 ]
 
 [[package]]
+name = "astral-reqwest-middleware"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "98e1c6be25cfbf1bb4fea1a9da51bc05d3259a9062df4e53f54e5607895e33c9"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "http 1.4.2",
+ "reqwest",
+ "thiserror",
+ "tower-service",
+]
+
+[[package]]
+name = "astral_async_http_range_reader"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d5ba70a583d0819c44078238014752e85ebca0cb398ab712bbd2e40fb754b80"
+dependencies = [
+ "astral-reqwest-middleware",
+ "futures",
+ "http-content-range",
+ "itertools 0.14.0",
+ "memmap2",
+ "reqwest",
+ "thiserror",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "astral_async_zip"
+version = "0.0.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd939d79959c3f49a648a1d7857d63cc62548725a6b060b8dbf0ea5c92470b63"
+dependencies = [
+ "async-compression",
+ "crc32fast",
+ "futures-lite",
+ "pin-project",
+ "thiserror",
+]
+
+[[package]]
 name = "async-compression"
 version = "0.4.42"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -377,6 +423,7 @@ checksum = "e79b3f8a79cccc2898f31920fc69f304859b3bd567490f75ebf51ae1c792a9ac"
 dependencies = [
  "compression-codecs",
  "compression-core",
+ "futures-io",
  "pin-project-lite",
  "tokio",
 ]
@@ -2274,6 +2321,8 @@ name = "docs_rs_registry_api"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "astral_async_http_range_reader",
+ "astral_async_zip",
  "async-compression",
  "bon",
  "chrono",
@@ -2876,6 +2925,19 @@ name = "futures-io"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cecba35d7ad927e23624b22ad55235f2239cfa44fd10428eecbeba6d6a717718"
+
+[[package]]
+name = "futures-lite"
+version = "2.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f78e10609fe0e0b3f4157ffab1876319b5b0db102a2c60dc4626306dc46b44ad"
+dependencies = [
+ "fastrand",
+ "futures-core",
+ "futures-io",
+ "parking",
+ "pin-project-lite",
+]
 
 [[package]]
 name = "futures-macro"
@@ -4558,6 +4620,12 @@ dependencies = [
  "http-body 1.0.1",
  "pin-project-lite",
 ]
+
+[[package]]
+name = "http-content-range"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0298eab7a8b2346aa6e6b3502dfddf643735e45864cbe4ce9c73606cecb8b53f"
 
 [[package]]
 name = "http-range-header"
@@ -8005,6 +8073,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -8015,6 +8084,7 @@ checksum = "9ae9cec805b01e8fc3fd2fe289f89149a9b66dd16786abd8b19cfa7b48cb0098"
 dependencies = [
  "bytes",
  "futures-core",
+ "futures-io",
  "futures-sink",
  "pin-project-lite",
  "tokio",
