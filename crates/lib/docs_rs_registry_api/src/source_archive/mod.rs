@@ -32,17 +32,27 @@ pub struct SourceArchive {
 /// Number of bytes requested initially and buffered during sequential ZIP reads.
 const ZIP_READ_BLOCK_SIZE: usize = 8192;
 
+/// Construct a source archive URL relative to the registry's static host.
+fn source_archive_url(
+    mut base_url: Url,
+    name: &str,
+    version: &str,
+    extension: &str,
+) -> Result<Url> {
+    base_url.set_path("crates/");
+    Ok(base_url.join(&format!("{name}/{name}-{version}.{extension}"))?)
+}
+
 impl SourceArchive {
     /// Fetch the first ZIP entry without loading the archive inventory or central directory.
     #[instrument(skip_all, fields(%base_url, %name, %version, cache_hit=field::Empty))]
     pub(crate) async fn fetch_cargo_toml(
         client: reqwest::Client,
-        mut base_url: Url,
+        base_url: Url,
         name: &str,
         version: &str,
     ) -> Result<Option<Vec<u8>>> {
-        base_url.set_path("crates/");
-        let zip_url = base_url.join(&format!("{name}/{name}-{version}.zip"))?;
+        let zip_url = source_archive_url(base_url, name, version, "zip")?;
         let response = client
             .get(zip_url.clone())
             .header(RANGE, format!("bytes=0-{}", ZIP_READ_BLOCK_SIZE - 1))
@@ -106,13 +116,11 @@ impl SourceArchive {
     #[instrument(skip_all, fields( %base_url, %name, %version, cache_hit=field::Empty))]
     pub(crate) async fn load(
         client: reqwest::Client,
-        mut base_url: Url,
+        base_url: Url,
         name: &str,
         version: &str,
     ) -> Result<Option<Self>> {
-        base_url.set_path("crates/");
-
-        let index_url = base_url.join(&format!("{0}/{0}-{1}.zip.json", name, version))?;
+        let index_url = source_archive_url(base_url.clone(), name, version, "zip.json")?;
 
         debug!(%index_url, "fetching source archive manifest");
         let response = client.get(index_url.clone()).send().await?;
@@ -128,7 +136,7 @@ impl SourceArchive {
 
         Ok(Some(Self {
             manifest: response.json().await?,
-            zip_url: base_url.join(&format!("{0}/{0}-{1}.zip", name, version))?,
+            zip_url: source_archive_url(base_url, name, version, "zip")?,
             client,
         }))
     }
