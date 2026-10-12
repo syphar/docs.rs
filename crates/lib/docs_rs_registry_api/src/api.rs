@@ -11,14 +11,9 @@ use anyhow::Context as _;
 use docs_rs_crate_archive::{SourceDir, unpack_crate_archive};
 use docs_rs_opentelemetry::AnyMeterProvider;
 use docs_rs_types::{KrateName, Version};
-use docs_rs_utils::{APP_USER_AGENT, retry_async};
 use docs_rs_utils::{APP_USER_AGENT, spawn_blocking};
 use futures_util::StreamExt as _;
 use reqwest::header::ACCEPT;
-use reqwest::{
-    StatusCode,
-    header::{ACCEPT, HeaderMap, HeaderValue, USER_AGENT},
-};
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
 use reqwest_retry::{RetryTransientMiddleware, policies::ExponentialBackoff};
 use serde::{Deserialize, de::DeserializeOwned};
@@ -26,6 +21,17 @@ use std::{ffi::OsStr, fmt, io, path::Path};
 use tokio::io::{AsyncSeekExt as _, AsyncWriteExt as _};
 use tracing::instrument;
 use url::Url;
+
+/// Construct a source archive URL relative to the registry's static host.
+fn source_archive_url(
+    mut base_url: Url,
+    name: &str,
+    version: &str,
+    extension: &str,
+) -> Result<Url> {
+    base_url.set_path("crates/");
+    Ok(base_url.join(&format!("{name}/{name}-{version}.{extension}"))?)
+}
 
 /// Send a `crates_index` request via reqwest.
 ///
@@ -106,7 +112,6 @@ async fn fetch_index_config(
 pub struct RegistryApi {
     index_config: crates_index::IndexConfig,
     api_base: Url,
-    static_base: Url,
     pub(crate) sparse_index: crates_index::SparseIndex,
     client: ClientWithMiddleware,
     metrics: RegistryApiMetrics,
@@ -118,7 +123,6 @@ impl RegistryApi {
     /// The index's `config.json` determines the API and download URLs.
     pub async fn from_config(config: &Config, meter_provider: &AnyMeterProvider) -> Result<Self> {
         Self::new(
-            config.registry_static_host.clone(),
             config.sparse_index_host.clone(),
             config.crates_io_api_call_retries,
             None,
@@ -127,12 +131,6 @@ impl RegistryApi {
         .await
     }
 
-    // <<<<<<< HEAD
-    //     pub fn new(api_base: Url, static_base: Url, max_retries: u32) -> Result<Self> {
-    //         let mut headers = HeaderMap::with_capacity(2);
-    //         headers.insert(USER_AGENT, HeaderValue::from_static(APP_USER_AGENT));
-    //         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
-    // =======
     /// Create a client from a sparse-index URL.
     ///
     /// The index's `config.json` determines the API and download URLs. When `cargo_home` is
@@ -165,7 +163,6 @@ impl RegistryApi {
         let index_config = fetch_index_config(&sparse_index, &client, &metrics).await?;
 
         Ok(Self {
-            static_base,
             api_base: index_config
                 .api
                 .as_deref()
@@ -178,6 +175,29 @@ impl RegistryApi {
             client,
             metrics,
         })
+    }
+
+    pub fn source_archive_url(&self, name: &KrateName, version: &Version) -> Result<Url> {
+        let download_base_url =
+            Url::parse(&self.index_config.dl).map_err(|err| Error::Other(err.into()))?;
+        source_archive_url(
+            download_base_url,
+            name.as_str(),
+            &version.to_string(),
+            "zip",
+        )
+    }
+
+    pub fn source_archive_manifest_url(&self, name: &KrateName, version: &Version) -> Result<Url> {
+        // FIXME: less duplication?
+        let download_base_url =
+            Url::parse(&self.index_config.dl).map_err(|err| Error::Other(err.into()))?;
+        source_archive_url(
+            download_base_url,
+            name.as_str(),
+            &version.to_string(),
+            "zip.json",
+        )
     }
 
     /// Return the download URL for a crate version according to the index configuration.
