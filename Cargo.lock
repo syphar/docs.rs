@@ -375,7 +375,7 @@ checksum = "98e1c6be25cfbf1bb4fea1a9da51bc05d3259a9062df4e53f54e5607895e33c9"
 dependencies = [
  "anyhow",
  "async-trait",
- "http 1.4.2",
+ "http 1.5.0",
  "reqwest",
  "thiserror",
  "tower-service",
@@ -2425,10 +2425,7 @@ dependencies = [
  "docs_rs_types",
  "docs_rs_utils",
  "futures-util",
-<<<<<<< HEAD
-=======
  "http 1.5.0",
->>>>>>> main
  "mime",
  "mockito",
  "opentelemetry",
