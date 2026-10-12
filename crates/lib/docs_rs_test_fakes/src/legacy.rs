@@ -1,5 +1,5 @@
+use crate::FakeGithubStats;
 use anyhow::{Context as _, Result, bail};
-use base64::{Engine, engine::general_purpose::STANDARD as b64};
 use chrono::{DateTime, Utc};
 use docs_rs_cargo_metadata::{Dependency, MetadataPackage, Target};
 use docs_rs_database::{
@@ -13,11 +13,11 @@ use docs_rs_registry_api::{
 };
 use docs_rs_rustdoc_json::{RUSTDOC_JSON_COMPRESSION_ALGORITHMS, RustdocJsonFormatVersion};
 use docs_rs_storage::{
-    AsyncStorage, FileEntry, compress, file_list_to_json, rustdoc_archive_path, rustdoc_json_path,
+    ArchiveStatistics, AsyncStorage, compress, rustdoc_archive_path, rustdoc_json_path,
     source_archive_path,
 };
 use docs_rs_types::{
-    BuildError, BuildId, BuildStatus, CompressionAlgorithm, DocCoverage, KrateName, ReleaseId,
+    BuildError, BuildId, BuildStatus, ByteSize, DocCoverage, KrateName, ReleaseId,
     SimpleBuildError, Version, VersionReq,
 };
 use std::{
@@ -85,10 +85,8 @@ pub struct FakeRelease<'a> {
     registry_release_data: ReleaseData,
     has_docs: bool,
     has_examples: bool,
-    archive_storage: bool,
-    /// This stores the content, while `package.readme` stores the filename
-    readme: Option<&'a str>,
     github_stats: Option<FakeGithubStats>,
+    github_stats_id: Option<i32>,
     doc_coverage: Option<DocCoverage>,
     no_cargo_toml: bool,
 }
@@ -100,7 +98,7 @@ pub struct FakeBuild {
     rustc_version: String,
     docsrs_version: String,
     build_status: BuildStatus,
-    memory_peak: Option<u64>,
+    memory_peak: Option<ByteSize>,
     /// new build logs: we have a record in the `builds_logs` table for each log, including a status
     /// old build logs: people have to run `s3 ls` with prefix to know which build logs exist
     legacy_build_logs: bool,
@@ -137,7 +135,6 @@ impl<'a> FakeRelease<'a> {
                 }],
                 targets: vec![Target::dummy_lib("fake_package".into(), None)],
                 readme: None,
-                keywords: vec!["fake".into(), "package".into()],
                 features: [
                     ("default".into(), vec!["feature1".into(), "feature3".into()]),
                     ("feature1".into(), Vec::new()),
@@ -154,17 +151,12 @@ impl<'a> FakeRelease<'a> {
             doc_targets: Vec::new(),
             default_target: None,
             registry_crate_data: CrateData { owners: Vec::new() },
-            registry_release_data: ReleaseData {
-                release_time: Utc::now(),
-                yanked: false,
-                downloads: 0,
-            },
+            registry_release_data: ReleaseData::dummy(),
             has_docs: true,
             has_examples: false,
-            readme: None,
             github_stats: None,
+            github_stats_id: None,
             doc_coverage: None,
-            archive_storage: false,
             no_cargo_toml: false,
         }
     }
@@ -180,7 +172,7 @@ impl<'a> FakeRelease<'a> {
     }
 
     pub fn release_time(mut self, new: DateTime<Utc>) -> Self {
-        self.registry_release_data.release_time = new;
+        self.registry_release_data.release_time = Some(new);
         self
     }
 
@@ -247,11 +239,6 @@ impl<'a> FakeRelease<'a> {
         self
     }
 
-    pub fn archive_storage(mut self, new: bool) -> Self {
-        self.archive_storage = new;
-        self
-    }
-
     /// Since we switched to LOL HTML, all data must have a valid <head> and <body>.
     /// To avoid duplicating them in every test, this just makes up some content.
     pub fn rustdoc_file(mut self, path: &'a str) -> Self {
@@ -312,15 +299,8 @@ impl<'a> FakeRelease<'a> {
     }
 
     /// NOTE: this should be markdown. It will be rendered as HTML when served.
-    pub fn readme(mut self, content: &'a str) -> Self {
-        self.readme = Some(content);
+    pub fn readme(self, content: &'a str) -> Self {
         self.source_file("README.md", content.as_bytes())
-    }
-
-    /// NOTE: this should be markdown. It will be rendered as HTML when served.
-    pub fn readme_only_database(mut self, content: &'a str) -> Self {
-        self.readme = Some(content);
-        self
     }
 
     pub fn add_owner(mut self, owner: CrateOwner) -> Self {
@@ -347,12 +327,19 @@ impl<'a> FakeRelease<'a> {
         forks: i32,
         issues: i32,
     ) -> Self {
-        self.github_stats = Some(FakeGithubStats {
-            repo: repo.into(),
-            stars,
-            forks,
-            issues,
-        });
+        self.github_stats = Some(
+            FakeGithubStats::builder()
+                .repo(repo)
+                .stars(stars)
+                .forks(forks)
+                .issues(issues)
+                .build(),
+        );
+        self
+    }
+
+    pub fn github_stats_id(mut self, id: i32) -> Self {
+        self.github_stats_id = Some(id);
         self
     }
 
@@ -370,7 +357,6 @@ impl<'a> FakeRelease<'a> {
         let pool = self.pool;
         let mut rustdoc_files = self.rustdoc_files;
         let storage = self.storage;
-        let archive_storage = self.archive_storage;
 
         // Upload all source files as rustdoc files
         // In real life, these would be highlighted HTML, but for testing we just use the files themselves.
@@ -423,39 +409,25 @@ impl<'a> FakeRelease<'a> {
         async fn upload_files(
             kind: FileKind,
             source_directory: &Path,
-            archive_storage: bool,
             package: &MetadataPackage,
             storage: &AsyncStorage,
-        ) -> Result<(Vec<FileEntry>, CompressionAlgorithm)> {
+        ) -> Result<ArchiveStatistics> {
             debug!(
                 "adding directory {:?} from {}",
                 kind,
                 source_directory.display()
             );
-            if archive_storage {
-                // NOTE: should we migrate MetadataPackage?
-                let krate_name: KrateName = package.name.parse()?;
+            let krate_name: KrateName = package.name.parse()?;
+            let archive = match kind {
+                FileKind::Rustdoc => rustdoc_archive_path(&krate_name, &package.version),
+                FileKind::Sources => source_archive_path(&krate_name, &package.version),
+            };
+            debug!("store in archive: {:?}", archive);
+            let stats = storage
+                .store_all_in_archive(&archive, source_directory)
+                .await?;
 
-                let archive = match kind {
-                    FileKind::Rustdoc => rustdoc_archive_path(&krate_name, &package.version),
-                    FileKind::Sources => source_archive_path(&krate_name, &package.version),
-                };
-                debug!("store in archive: {:?}", archive);
-                Ok(storage
-                    .store_all_in_archive(&archive, source_directory)
-                    .await?)
-            } else {
-                let prefix = match kind {
-                    FileKind::Rustdoc => "rustdoc",
-                    FileKind::Sources => "sources",
-                };
-                storage
-                    .store_all(
-                        format!("{}/{}/{}/", prefix, package.name, package.version),
-                        source_directory,
-                    )
-                    .await
-            }
+            Ok(stats)
         }
 
         debug!("before upload source");
@@ -498,20 +470,13 @@ impl<'a> FakeRelease<'a> {
                 .await?;
         }
 
-        let (source_meta, algs) = upload_files(
-            FileKind::Sources,
-            source_tmp.path(),
-            archive_storage,
-            &package,
-            &storage,
-        )
-        .await?;
-        debug!(?source_meta, "added source files");
+        let stats = upload_files(FileKind::Sources, source_tmp.path(), &package, &storage).await?;
+        debug!("added source files");
 
         // If the test didn't add custom builds, inject a default one
         let builds = self.builds.unwrap_or_else(|| vec![FakeBuild::default()]);
 
-        if builds.last().map(|b| b.build_status) == Some(BuildStatus::Success) {
+        if self.has_docs {
             let index = [&package.name, "index.html"].join("/");
             if package.is_library() && !rustdoc_files.iter().any(|(path, _)| path == &index) {
                 rustdoc_files.push((&index, DEFAULT_CONTENT));
@@ -533,29 +498,23 @@ impl<'a> FakeRelease<'a> {
                 debug!("added platform files for {}", platform);
             }
 
-            let (files, _) = upload_files(
-                FileKind::Rustdoc,
-                rustdoc_path,
-                archive_storage,
-                &package,
-                &storage,
-            )
-            .await?;
-            debug!(?files, "uploaded rustdoc files");
+            upload_files(FileKind::Rustdoc, rustdoc_path, &package, &storage).await?;
+            debug!("uploaded rustdoc files");
         }
 
         let mut async_conn = pool.get_async().await?;
 
-        let repository = match self.github_stats {
-            Some(stats) => Some(stats.create(&mut async_conn).await?),
-            None => None,
+        let repository = match (self.github_stats, self.github_stats_id) {
+            (Some(_), Some(_)) => {
+                bail!("can't have both given github stats and an external github stats id")
+            }
+            (Some(stats), None) => Some(stats.create(&mut async_conn).await?),
+            (None, Some(id)) => Some(id),
+            (None, None) => None,
         };
 
         let crate_tmp = create_temp_dir();
         let crate_dir = crate_tmp.path();
-        if let Some(markdown) = self.readme {
-            fs::write(crate_dir.join("README.md"), markdown)?;
-        }
         store_files_into(&self.source_files, crate_dir)?;
 
         let default_target = self.default_target.unwrap_or("x86_64-unknown-linux-gnu");
@@ -563,30 +522,34 @@ impl<'a> FakeRelease<'a> {
             self.doc_targets.insert(0, default_target.to_owned());
         }
 
-        for target in &self.doc_targets {
-            let dummy_rustdoc_json_content = serde_json::to_vec(&serde_json::json!({
-                "format_version": 42
-            }))?;
+        let krate_name: KrateName = package.name.parse()?;
 
-            for alg in RUSTDOC_JSON_COMPRESSION_ALGORITHMS {
-                let compressed_json: Vec<u8> = compress(&*dummy_rustdoc_json_content, *alg)?;
+        if self.has_docs {
+            for target in &self.doc_targets {
+                let dummy_rustdoc_json_content = serde_json::to_vec(&serde_json::json!({
+                    "format_version": 42
+                }))?;
 
-                for format_version in [
-                    RustdocJsonFormatVersion::Version(42),
-                    RustdocJsonFormatVersion::Latest,
-                ] {
-                    storage
-                        .store_one_uncompressed(
-                            &rustdoc_json_path(
-                                &krate_name,
-                                &package.version,
-                                target,
-                                format_version,
-                                Some(*alg),
-                            ),
-                            compressed_json.clone(),
-                        )
-                        .await?;
+                for alg in RUSTDOC_JSON_COMPRESSION_ALGORITHMS {
+                    let compressed_json: Vec<u8> = compress(&*dummy_rustdoc_json_content, *alg)?;
+
+                    for format_version in [
+                        RustdocJsonFormatVersion::Version(42),
+                        RustdocJsonFormatVersion::Latest,
+                    ] {
+                        storage
+                            .store_one_uncompressed(
+                                &rustdoc_json_path(
+                                    &krate_name,
+                                    &package.version,
+                                    target,
+                                    format_version,
+                                    Some(*alg),
+                                ),
+                                compressed_json.clone(),
+                            )
+                            .await?;
+                    }
                 }
             }
         }
@@ -605,15 +568,13 @@ impl<'a> FakeRelease<'a> {
             &package,
             crate_dir,
             default_target,
-            file_list_to_json(source_meta),
             self.doc_targets,
             &self.registry_release_data,
             self.has_docs,
             self.has_examples,
-            iter::once(algs),
+            iter::once(stats.alg),
             repository,
-            archive_storage,
-            24,
+            ByteSize::b(24),
         )
         .await?;
         docs_rs_database::releases::update_crate_data_in_database(
@@ -633,32 +594,6 @@ impl<'a> FakeRelease<'a> {
         }
 
         Ok(release_id)
-    }
-}
-
-pub struct FakeGithubStats {
-    pub repo: String,
-    pub stars: i32,
-    pub forks: i32,
-    pub issues: i32,
-}
-
-impl FakeGithubStats {
-    pub async fn create(&self, conn: &mut sqlx::PgConnection) -> Result<i32> {
-        let existing_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM repositories")
-            .fetch_one(&mut *conn)
-            .await?
-            .unwrap();
-        let host_id = b64.encode(format!("FAKE ID {existing_count}"));
-
-        let id = sqlx::query_scalar!(
-            "INSERT INTO repositories (host, host_id, name, description, last_commit, stars, forks, issues, updated_at)
-             VALUES ('github.com', $1, $2, 'Fake description!', NOW(), $3, $4, $5, NOW())
-             RETURNING id",
-            host_id, self.repo, self.stars, self.forks, self.issues,
-        ).fetch_one(&mut *conn).await?;
-
-        Ok(id)
     }
 }
 
@@ -724,7 +659,7 @@ impl FakeBuild {
         }
     }
 
-    pub fn memory_peak(self, memory_peak: u64) -> Self {
+    pub fn memory_peak(self, memory_peak: ByteSize) -> Self {
         Self {
             memory_peak: Some(memory_peak),
             ..self
@@ -753,7 +688,7 @@ impl FakeBuild {
             &self.rustc_version,
             &self.docsrs_version,
             self.build_status,
-            Some(42),
+            Some(ByteSize::b(42)),
             self.memory_peak,
             None::<&SimpleBuildError>,
         )
@@ -811,7 +746,7 @@ impl Default for FakeBuild {
             rustc_version: "rustc 2.0.0-nightly (000000000 1970-01-01)".into(),
             docsrs_version: "docs.rs 1.0.0 (000000000 1970-01-01)".into(),
             build_status: BuildStatus::Success,
-            memory_peak: Some(23),
+            memory_peak: Some(23u64.into()),
             legacy_build_logs: false,
         }
     }

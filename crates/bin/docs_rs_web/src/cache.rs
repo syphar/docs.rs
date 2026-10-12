@@ -1,6 +1,7 @@
 use crate::config::Config;
 use axum::{
-    Extension, extract::Request as AxumHttpRequest, middleware::Next,
+    extract::{Request as AxumHttpRequest, State},
+    middleware::Next,
     response::Response as AxumResponse,
 };
 use axum_extra::headers::HeaderMapExt as _;
@@ -20,7 +21,7 @@ pub const SURROGATE_KEY_ALL: SurrogateKey = SurrogateKey::from_static("all");
 /// invalidated everything we deploy a new version of docs.rs.
 pub const SURROGATE_KEY_DOCSRS_STATIC: SurrogateKey = SurrogateKey::from_static("docs-rs-static");
 
-/// cache poicy for static assets like rustdoc files or build assets.
+/// cache policy for static assets like rustdoc files or build assets.
 pub const STATIC_ASSET_CACHE_POLICY: CachePolicy = CachePolicy::ForeverInCdnAndBrowser;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -127,7 +128,7 @@ static FOREVER_IN_CDN_AND_BROWSER: ResponseCacheHeaders = ResponseCacheHeaders {
 };
 
 /// defines the wanted caching behaviour for a web response.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum CachePolicy {
     /// no browser or CDN caching.
     /// In some cases the browser might still use cached content,
@@ -198,8 +199,8 @@ impl CachePolicy {
 
                 if config.cache_invalidatable_responses
                     && let Some(cache_control) =
-                        config.cache_control_stale_while_revalidate.map(|seconds| {
-                            format!("stale-while-revalidate={seconds}")
+                        config.cache_control_stale_while_revalidate.map(|duration| {
+                            format!("stale-while-revalidate={}", duration.as_secs())
                                 .parse::<HeaderValue>()
                                 .unwrap()
                         })
@@ -223,7 +224,7 @@ impl CachePolicy {
 }
 
 pub(crate) async fn cache_middleware(
-    Extension(config): Extension<Arc<Config>>,
+    State(config): State<Arc<Config>>,
     req: AxumHttpRequest,
     next: Next,
 ) -> AxumResponse {
@@ -275,12 +276,13 @@ mod tests {
         headers::{test_typed_decode, test_typed_encode},
     };
     use anyhow::{Context as _, Result};
-    use axum::{Router, body::Body, routing::get};
+    use axum::{Extension, Router, body::Body, routing::get};
     use axum_extra::headers::CacheControl;
     use docs_rs_config::AppConfig as _;
+    use docs_rs_types::Duration;
     use http::Request;
     use test_case::{test_case, test_matrix};
-    use tower::{ServiceBuilder, ServiceExt as _};
+    use tower::ServiceExt as _;
 
     fn validate_cache_control(value: &HeaderValue) -> Result<()> {
         assert!(!value.as_bytes().is_empty());
@@ -308,11 +310,11 @@ mod tests {
 
     #[test_matrix(
         [true, false],
-        [Some(86400), None]
+        [Some(Duration::from_days(1)), None]
     )]
     fn test_validate_header_syntax_for_all_possible_combinations(
         cache_invalidatable_responses: bool,
-        stale_while_revalidate: Option<u32>,
+        stale_while_revalidate: Option<Duration>,
     ) -> Result<()> {
         let config = Config::builder()
             .test_config()?
@@ -471,7 +473,7 @@ mod tests {
     fn render_stale_with_config_fastly() -> Result<()> {
         let config = Config::builder()
             .test_config()?
-            .cache_control_stale_while_revalidate(666)
+            .cache_control_stale_while_revalidate(Duration::from_secs(666))
             .build();
 
         let key = SurrogateKey::from_static("something");
@@ -540,11 +542,10 @@ mod tests {
                     move || async move { (Extension(policy), "Hello, World!") }
                 }),
             )
-            .layer(
-                ServiceBuilder::new()
-                    .layer(Extension(config.clone()))
-                    .layer(axum::middleware::from_fn(cache_middleware)),
-            );
+            .layer(axum::middleware::from_fn_with_state(
+                config.clone(),
+                cache_middleware,
+            ));
 
         let builder = Request::builder().uri("/krate");
 
@@ -577,11 +578,10 @@ mod tests {
                     )
                 }),
             )
-            .layer(
-                ServiceBuilder::new()
-                    .layer(Extension(config.clone()))
-                    .layer(axum::middleware::from_fn(cache_middleware)),
-            );
+            .layer(axum::middleware::from_fn_with_state(
+                config.clone(),
+                cache_middleware,
+            ));
 
         let builder = Request::builder().uri("/");
 

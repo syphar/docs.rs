@@ -1,10 +1,9 @@
 mod rebuilds;
-mod repackage;
 #[cfg(test)]
 pub(crate) mod testing;
 
 use anyhow::{Context as _, Result, bail};
-use chrono::NaiveDate;
+use chrono::{NaiveDate, Utc};
 use clap::{Parser, Subcommand};
 use docs_rs_build_limits::{Overrides, blacklist};
 use docs_rs_build_queue::priority::{
@@ -14,12 +13,12 @@ use docs_rs_build_queue::priority::{
 use docs_rs_context::Context;
 use docs_rs_database::{
     crate_details,
-    service_config::{Abnormality, ConfigName, remove_config, set_config},
+    service_config::{Abnormality, Alert, ConfigName, remove_config, set_config},
 };
 use docs_rs_fastly::CdnBehaviour as _;
 use docs_rs_headers::SurrogateKey;
 use docs_rs_repository_stats::workspaces;
-use docs_rs_types::{CrateId, KrateName, ReleaseId, Version};
+use docs_rs_types::{ByteSize, CrateId, Duration, KrateName, Version};
 use docs_rs_uri::EscapedURI;
 use futures_util::StreamExt;
 use rebuilds::queue_rebuilds_faulty_rustdoc;
@@ -80,7 +79,8 @@ impl CommandLine {
             .await?
             .with_build_queue()?
             .with_repository_stats()?
-            .with_registry_api()?
+            .with_registry_api()
+            .await?
             .with_maybe_cdn()?
             .build()?;
 
@@ -360,20 +360,16 @@ enum DatabaseSubcommand {
         version: Option<i64>,
     },
 
+    /// Manage the alert popup shown to the users.
+    Alert {
+        #[command(subcommand)]
+        command: AlertSubcommand,
+    },
+
     /// Manage the abnormality shown in the site header
     Abnormality {
         #[command(subcommand)]
         command: AbnormalitySubcommand,
-    },
-
-    /// temporary command to repackage missing crates into archive storage.
-    /// starts at the earliest release and works forwards.
-    Repackage {
-        /// process at most this amount of releases
-        #[arg(long)]
-        limit: Option<u32>,
-        #[arg(long)]
-        download_concurrency: Option<usize>,
     },
 
     /// temporary command to update the `crates.latest_version_id` field
@@ -415,51 +411,7 @@ impl DatabaseSubcommand {
 
             Self::Abnormality { command } => command.handle_args(ctx).await?,
 
-            Self::Repackage {
-                limit,
-                download_concurrency,
-            } => {
-                let pool = ctx.pool()?;
-                let storage = ctx.storage()?;
-                let mut list_conn = pool.get_async().await?;
-                let mut update_conn = pool.get_async().await?;
-
-                let limit = limit.unwrap_or(2_000_000u32);
-
-                let mut stream = sqlx::query!(
-                    r#"SELECT
-                           r.id as "rid: ReleaseId",
-                           c.name as "name: KrateName",
-                           r.version as "version: Version"
-                       FROM
-                            crates as c
-                            INNER JOIN releases as r ON c.id = r.crate_id
-                       WHERE
-                            r.archive_storage = FALSE
-                       ORDER BY r.id
-                       LIMIT $1
-                    "#,
-                    limit as i64,
-                )
-                .fetch(&mut *list_conn);
-
-                while let Some(row) = stream.next().await {
-                    let row = row?;
-
-                    crate::repackage::repackage(
-                        &mut update_conn,
-                        storage,
-                        row.rid,
-                        &row.name,
-                        &row.version,
-                        download_concurrency.unwrap_or(8),
-                    )
-                    .await?;
-                }
-
-                Ok::<(), anyhow::Error>(())
-            }
-            .context("Failed to repackage storage")?,
+            Self::Alert { command } => command.handle_args(ctx).await?,
 
             Self::UpdateLatestVersionId => {
                 let pool = ctx.pool()?;
@@ -519,6 +471,46 @@ impl DatabaseSubcommand {
 
             Self::Limits { command } => command.handle_args(ctx).await?,
         }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Subcommand)]
+enum AlertSubcommand {
+    /// Set the alert shown to users as popup.
+    Set {
+        /// Identifier used to remember dismissals; defaults to the current Unix timestamp.
+        #[arg(long, default_value_t = Utc::now().timestamp() as usize)]
+        alert_id: usize,
+        /// HTML text that will be shown as popup to the users.
+        text: String,
+    },
+
+    /// Remove the alert popup.
+    Remove,
+}
+
+impl AlertSubcommand {
+    async fn handle_args(self, ctx: Context) -> Result<()> {
+        let mut conn = ctx
+            .pool()?
+            .get_async()
+            .await
+            .context("failed to get a database connection")?;
+
+        match self {
+            Self::Set { alert_id, text } => {
+                set_config(&mut conn, ConfigName::Alert, Alert { alert_id, text })
+                    .await
+                    .context("failed to set alert in database")?;
+            }
+            Self::Remove => {
+                remove_config(&mut conn, ConfigName::Alert)
+                    .await
+                    .context("failed to remove alert from database")?;
+            }
+        }
+
         Ok(())
     }
 }
@@ -589,11 +581,11 @@ enum LimitsSubcommand {
     Set {
         crate_name: KrateName,
         #[arg(long)]
-        memory: Option<usize>,
+        memory: Option<ByteSize>,
         #[arg(long)]
         targets: Option<usize>,
         #[arg(long)]
-        timeout: Option<usize>,
+        timeout: Option<Duration>,
     },
 
     /// Remove sandbox limits overrides for a crate
@@ -627,7 +619,7 @@ impl LimitsSubcommand {
                 let overrides = Overrides {
                     memory,
                     targets,
-                    timeout: timeout.map(|timeout| std::time::Duration::from_secs(timeout as _)),
+                    timeout,
                 };
                 Overrides::save(&mut conn, &crate_name, overrides).await?;
                 let overrides = Overrides::for_crate(&mut conn, &crate_name).await?;

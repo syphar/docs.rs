@@ -125,6 +125,7 @@ mod tests {
     use crate::{StreamingBlob, errors::SizeLimitReached};
     use anyhow::Result;
     use chrono::Utc;
+    use docs_rs_types::ByteSize;
     use strum::IntoEnumIterator;
     use test_case::test_case;
 
@@ -219,19 +220,20 @@ mod tests {
         }
 
         // try decompress via storage API
-        let blob = StreamingBlob {
+        let stream = StreamingBlob {
             path: "some_path.db".into(),
             mime: mime::APPLICATION_OCTET_STREAM,
             date_updated: Utc::now(),
             etag: None,
             compression: Some(alg),
-            content_length: compressed_index_content.len(),
+            content_length: Some(compressed_index_content.len()),
             content: Box::new(io::Cursor::new(compressed_index_content)),
         }
         .decompress()
-        .await?
-        .materialize(usize::MAX)
         .await?;
+        assert!(stream.content_length.is_none());
+
+        let blob = stream.materialize(ByteSize::MAX).await?;
 
         assert_eq!(blob.compression, None);
         assert_eq!(blob.content, CONTENT);

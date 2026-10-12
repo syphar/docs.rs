@@ -6,7 +6,7 @@ use crate::{
     page::templates::{RenderBrands, RenderSolid, filters},
 };
 use askama::Template;
-use axum::{extract::Extension, http::StatusCode, response::IntoResponse};
+use axum::{extract::State, http::StatusCode, response::IntoResponse};
 use docs_rs_build_limits::Limits;
 use docs_rs_context::Context;
 use docs_rs_database::service_config::{ConfigName, get_config};
@@ -33,11 +33,11 @@ impl_axum_webpage!(
 
 pub(crate) async fn about_builds_handler(
     mut conn: DbConnection,
-    Extension(context): Extension<Arc<Context>>,
+    State(context): State<Arc<Context>>,
 ) -> AxumResult<impl IntoResponse> {
     Ok(AboutBuilds {
         rustc_version: get_config::<String>(&mut conn, ConfigName::RustcVersion).await?,
-        limits: Limits::new(context.config().build_limits()?),
+        limits: Limits::from_config(context.config().build_limits()?),
         active_tab: "builds",
     })
 }
@@ -82,6 +82,10 @@ pub(crate) async fn about_handler(subpage: Option<Path<String>>) -> AxumResult<i
                 title: "The requested page does not exist",
                 message: msg.into(),
                 status: StatusCode::NOT_FOUND,
+                recovery: Vec::new(),
+                cache_policy: Some(CachePolicy::ForeverInCdn(
+                    SURROGATE_KEY_DOCSRS_STATIC.into(),
+                )),
             };
             page.into_response()
         }
@@ -125,6 +129,20 @@ mod tests {
             }
         }
         web.assert_success("/about").await?;
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn nonexistent_about_page_is_cached() -> Result<()> {
+        let env = TestEnvironment::new().await?;
+        let response = env.web_app().await.get("/about/does-not-exist").await?;
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        response.assert_cache_control(
+            CachePolicy::ForeverInCdn(SURROGATE_KEY_DOCSRS_STATIC.into()),
+            env.config(),
+        );
+
         Ok(())
     }
 }

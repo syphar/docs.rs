@@ -209,7 +209,7 @@ pub fn start_async_cron_in_runtime<F, Fut>(
 /// * async stuff -> in the tokio runtime, other async functions
 /// * blocking I/O -> `spawn_blocking`
 /// * CPU-Bound things:
-///   - `render_in_threadpool` (continious load like rendering)
+///   - `render_in_threadpool` (continuous load like rendering)
 ///   - `run_blocking` (sporadic CPU bound load)
 ///
 /// The thread-name will help us better seeing where our CPU load is coming from on the
@@ -235,7 +235,7 @@ where
             // at which point we don't need the result anymore.
             let _ = send.send(f());
         })
-        .with_context(|| format!("couldn't spawn worker thread for {}", &name))?;
+        .with_context(|| format!("couldn't spawn worker thread for {}", name))?;
 
     recv.await.context("sender was dropped")?
 }
