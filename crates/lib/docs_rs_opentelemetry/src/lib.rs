@@ -1,6 +1,6 @@
 mod config;
 mod traces;
-pub use traces::{TraceConfig, TraceGuard, get_tracer_provider};
+pub use traces::{TraceGuard, get_tracer_provider};
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 pub use config::Config;

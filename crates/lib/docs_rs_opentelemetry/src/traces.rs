@@ -1,32 +1,10 @@
-use anyhow::{Context as _, Result, bail};
-use docs_rs_env_vars::{env, maybe_env};
+use crate::Config;
+use anyhow::Result;
 use opentelemetry_otlp::{Protocol, WithExportConfig as _};
 use opentelemetry_resource_detectors::{OsResourceDetector, ProcessResourceDetector};
 use opentelemetry_sdk::{Resource, trace::SdkTracerProvider};
 use std::time::Duration;
 use tokio::runtime::{Builder, Runtime};
-use url::Url;
-
-#[derive(Debug)]
-pub struct TraceConfig {
-    pub endpoint: Url,
-}
-
-impl TraceConfig {
-    /// Traces are opt-in, independently of the existing metrics exporter.
-    pub fn from_environment() -> Result<Option<Self>> {
-        match env("OTEL_TRACES_EXPORTER", "none".to_string())?.as_str() {
-            "none" => Ok(None),
-            "otlp" => {
-                let endpoint = maybe_env("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")?
-                    .or(maybe_env("OTEL_EXPORTER_OTLP_ENDPOINT")?)
-                    .context("OTLP traces require OTEL_EXPORTER_OTLP_ENDPOINT or OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")?;
-                Ok(Some(Self { endpoint }))
-            }
-            exporter => bail!("unsupported OTEL_TRACES_EXPORTER: {exporter}"),
-        }
-    }
-}
 
 /// Keep the transport runtime alive until all queued spans have been exported.
 pub struct TraceGuard {
@@ -53,7 +31,11 @@ impl Drop for TraceGuard {
     }
 }
 
-pub fn get_tracer_provider(config: &TraceConfig) -> Result<TraceGuard> {
+/// Export traces when the shared OpenTelemetry endpoint is configured.
+pub fn get_tracer_provider(config: &Config) -> Result<Option<TraceGuard>> {
+    let Some(endpoint) = &config.endpoint else {
+        return Ok(None);
+    };
     // Some binaries initialize logging before creating their application runtime.
     // A separate runtime also keeps tonic exports running during blocking shutdown.
     let runtime = Builder::new_multi_thread()
@@ -65,7 +47,7 @@ pub fn get_tracer_provider(config: &TraceConfig) -> Result<TraceGuard> {
         let _entered = runtime.enter();
         opentelemetry_otlp::SpanExporter::builder()
             .with_tonic()
-            .with_endpoint(config.endpoint.to_string())
+            .with_endpoint(endpoint.to_string())
             .with_protocol(Protocol::Grpc)
             .with_timeout(Duration::from_secs(3))
             .build()
@@ -84,10 +66,10 @@ pub fn get_tracer_provider(config: &TraceConfig) -> Result<TraceGuard> {
             })
     };
     match provider {
-        Ok(provider) => Ok(TraceGuard {
+        Ok(provider) => Ok(Some(TraceGuard {
             provider,
             runtime: Some(runtime),
-        }),
+        })),
         Err(err) => {
             runtime.shutdown_background();
             Err(err.into())
@@ -99,10 +81,19 @@ pub fn get_tracer_provider(config: &TraceConfig) -> Result<TraceGuard> {
 mod tests {
     use super::*;
 
-    fn config() -> TraceConfig {
-        TraceConfig {
-            endpoint: "http://127.0.0.1:4317".parse().unwrap(),
+    fn config() -> Config {
+        Config {
+            endpoint: Some("http://127.0.0.1:4317".parse().unwrap()),
         }
+    }
+
+    #[test]
+    fn disables_traces_without_an_endpoint() {
+        assert!(
+            get_tracer_provider(&Config { endpoint: None })
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]

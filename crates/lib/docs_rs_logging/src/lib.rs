@@ -42,11 +42,7 @@ pub fn init_with_config(config: &Config) -> anyhow::Result<Guard> {
         LogFormat::Json => tracing_subscriber::fmt::layer().json().boxed(),
     };
 
-    let trace_guard = config
-        .opentelemetry
-        .as_ref()
-        .map(docs_rs_opentelemetry::get_tracer_provider)
-        .transpose()?;
+    let trace_guard = docs_rs_opentelemetry::get_tracer_provider(&config.opentelemetry)?;
     let otel_layer = trace_guard.as_ref().map(|guard| {
         tracing_opentelemetry::layer().with_tracer(guard.provider().tracer("docs_rs"))
     });
