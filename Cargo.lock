@@ -2357,6 +2357,7 @@ dependencies = [
  "anyhow",
  "docs_rs_config",
  "docs_rs_env_vars",
+ "docs_rs_utils",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry-resource-detectors",

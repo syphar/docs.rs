@@ -68,6 +68,10 @@ impl MeterProviderWithExt for opentelemetry_sdk::metrics::SdkMeterProvider {
 /// Resource attributes shared by metrics and traces, including SDK and environment defaults.
 fn resource() -> Resource {
     Resource::builder()
+        .with_attribute(opentelemetry::KeyValue::new(
+            "service.version",
+            docs_rs_utils::BUILD_VERSION,
+        ))
         .with_detector(Box::new(OsResourceDetector))
         .with_detector(Box::new(ProcessResourceDetector))
         .build()
