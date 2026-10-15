@@ -9,15 +9,13 @@ use std::sync::Arc;
 use tokio::runtime;
 
 fn main() -> Result<()> {
-    let runtime = runtime::Builder::new_multi_thread().enable_all().build()?;
-    let _entered = runtime.enter();
     let logging_config = docs_rs_logging::Config::from_environment()?;
     docs_rs_rustwide::logging::init(logging_config.log_build_logs);
     let opentelemetry_config = docs_rs_opentelemetry::Config::from_environment()?;
     let _guard = docs_rs_logging::init_with_config(&logging_config, &opentelemetry_config)
         .context("error initializing logging")?;
 
-    if let Err(err) = CommandLine::parse().handle_args(&runtime) {
+    if let Err(err) = CommandLine::parse().handle_args() {
         eprintln!("error running builder: {:?}", err);
         drop(_guard);
         std::process::exit(1);
@@ -42,7 +40,8 @@ enum CommandLine {
     },
 }
 impl CommandLine {
-    fn handle_args(self, runtime: &runtime::Runtime) -> Result<()> {
+    fn handle_args(self) -> Result<()> {
+        let runtime = runtime::Builder::new_multi_thread().enable_all().build()?;
         let config = Arc::new(Config::from_environment()?);
         let ctx = runtime.block_on(async {
             Context::builder()
