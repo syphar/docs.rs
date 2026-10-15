@@ -39,6 +39,7 @@ pub fn get_tracer_provider(config: &Config) -> Result<Option<TraceGuard>> {
         .with_protocol(Protocol::Grpc)
         .with_timeout(Duration::from_secs(3))
         .build()?;
+
     let provider = SdkTracerProvider::builder()
         .with_batch_exporter(exporter)
         // The SDK honors OTEL_TRACES_SAMPLER[_ARG] through its defaults.
