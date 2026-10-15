@@ -25,7 +25,6 @@ impl Drop for TraceGuard {
 }
 
 /// Export traces when the shared OpenTelemetry endpoint is configured.
-/// Call within the application Tokio runtime, and drop the guard before that runtime.
 pub fn get_tracer_provider(config: &Config) -> Result<Option<TraceGuard>> {
     let Some(endpoint) = &config.endpoint else {
         return Ok(None);
@@ -45,6 +44,7 @@ pub fn get_tracer_provider(config: &Config) -> Result<Option<TraceGuard>> {
         // The SDK honors OTEL_TRACES_SAMPLER[_ARG] through its defaults.
         .with_resource(resource())
         .build();
+
     Ok(Some(TraceGuard { provider }))
 }
 
