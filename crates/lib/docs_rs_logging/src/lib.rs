@@ -31,10 +31,16 @@ pub struct Guard {
 }
 
 pub fn init_from_environment() -> anyhow::Result<Guard> {
-    init_with_config(&Config::from_environment()?)
+    init_with_config(
+        &Config::from_environment()?,
+        &docs_rs_opentelemetry::Config::from_environment()?,
+    )
 }
 
-pub fn init_with_config(config: &Config) -> anyhow::Result<Guard> {
+pub fn init_with_config(
+    config: &Config,
+    opentelemetry_config: &docs_rs_opentelemetry::Config,
+) -> anyhow::Result<Guard> {
     let log_formatter = match config.format {
         LogFormat::Full => tracing_subscriber::fmt::layer().boxed(),
         LogFormat::Compact => tracing_subscriber::fmt::layer().compact().boxed(),
@@ -42,7 +48,7 @@ pub fn init_with_config(config: &Config) -> anyhow::Result<Guard> {
         LogFormat::Json => tracing_subscriber::fmt::layer().json().boxed(),
     };
 
-    let trace_guard = docs_rs_opentelemetry::get_tracer_provider(&config.opentelemetry)?;
+    let trace_guard = docs_rs_opentelemetry::get_tracer_provider(opentelemetry_config)?;
     let otel_layer = trace_guard.as_ref().map(|guard| {
         tracing_opentelemetry::layer().with_tracer(guard.provider().tracer("docs_rs"))
     });

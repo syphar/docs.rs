@@ -13,8 +13,9 @@ fn main() -> Result<()> {
     let _entered = runtime.enter();
     let logging_config = docs_rs_logging::Config::from_environment()?;
     docs_rs_rustwide::logging::init(logging_config.log_build_logs);
-    let _guard =
-        docs_rs_logging::init_with_config(&logging_config).context("error initializing logging")?;
+    let opentelemetry_config = docs_rs_opentelemetry::Config::from_environment()?;
+    let _guard = docs_rs_logging::init_with_config(&logging_config, &opentelemetry_config)
+        .context("error initializing logging")?;
 
     if let Err(err) = CommandLine::parse().handle_args(&runtime) {
         eprintln!("error running builder: {:?}", err);

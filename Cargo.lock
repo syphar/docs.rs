@@ -1585,6 +1585,7 @@ dependencies = [
  "docs_rs_config",
  "docs_rs_context",
  "docs_rs_logging",
+ "docs_rs_opentelemetry",
  "docs_rs_rustwide",
  "docs_rs_utils",
  "docs_rs_watcher",
