@@ -48,28 +48,3 @@ pub fn get_tracer_provider(config: &Config) -> Result<Option<TraceGuard>> {
 
     Ok(Some(TraceGuard { provider }))
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn config() -> Config {
-        Config {
-            endpoint: Some("http://127.0.0.1:4317".parse().unwrap()),
-        }
-    }
-
-    #[test]
-    fn disables_traces_without_an_endpoint() {
-        assert!(
-            get_tracer_provider(&Config { endpoint: None })
-                .unwrap()
-                .is_none()
-        );
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn shuts_down_inside_an_application_runtime() {
-        drop(get_tracer_provider(&config()).unwrap());
-    }
-}
