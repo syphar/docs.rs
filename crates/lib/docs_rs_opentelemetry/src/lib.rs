@@ -1,11 +1,12 @@
 mod config;
 mod traces;
+use tokio::runtime;
 pub use traces::{TraceGuard, get_tracer_provider};
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 pub use config::Config;
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use opentelemetry::{
     InstrumentationScope,
     metrics::{InstrumentProvider, Meter, MeterProvider},
@@ -73,9 +74,13 @@ fn resource() -> Resource {
 }
 
 /// opentelemetry metric provider setup,
-/// if no endpoint is configured, use a no-op provider
+/// if no endpoint is configured, use a no-op provider.
+/// An entered Tokio runtime is required when an endpoint is configured.
 pub fn get_meter_provider(config: &config::Config) -> Result<AnyMeterProvider> {
     if let Some(ref endpoint) = config.endpoint {
+        runtime::Handle::try_current()
+            .context("OpenTelemetry metrics exporter requires an entered Tokio runtime")?;
+
         let endpoint = endpoint.to_string();
         info!(endpoint, "setting up OpenTelemetry metrics exporter");
 
@@ -141,3 +146,33 @@ impl NoopMeter {
 }
 
 impl InstrumentProvider for NoopMeter {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exporters_require_a_runtime_only_when_enabled() {
+        let disabled = Config { endpoint: None };
+        assert!(get_meter_provider(&disabled).is_ok());
+        assert!(get_tracer_provider(&disabled).unwrap().is_none());
+
+        let enabled = Config {
+            endpoint: Some("http://127.0.0.1:4317".parse().unwrap()),
+        };
+        let metrics_error = get_meter_provider(&enabled).err().expect("missing runtime");
+        assert!(
+            metrics_error
+                .to_string()
+                .contains("requires an entered Tokio runtime")
+        );
+        let traces_error = get_tracer_provider(&enabled)
+            .err()
+            .expect("missing runtime");
+        assert!(
+            traces_error
+                .to_string()
+                .contains("requires an entered Tokio runtime")
+        );
+    }
+}

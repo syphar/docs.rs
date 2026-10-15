@@ -1,8 +1,9 @@
 use crate::{Config, resource};
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use opentelemetry_otlp::{Protocol, WithExportConfig as _};
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use std::time::Duration;
+use tokio::runtime;
 
 /// Flush queued spans while the application runtime is still alive.
 pub struct TraceGuard {
@@ -29,6 +30,10 @@ pub fn get_tracer_provider(config: &Config) -> Result<Option<TraceGuard>> {
     let Some(endpoint) = &config.endpoint else {
         return Ok(None);
     };
+
+    runtime::Handle::try_current()
+        .context("OpenTelemetry traces exporter requires an entered Tokio runtime")?;
+
     let exporter = opentelemetry_otlp::SpanExporter::builder()
         .with_tonic()
         .with_endpoint(endpoint.to_string())
