@@ -64,6 +64,14 @@ impl MeterProviderWithExt for opentelemetry_sdk::metrics::SdkMeterProvider {
     }
 }
 
+/// Resource attributes shared by metrics and traces, including SDK and environment defaults.
+fn resource() -> Resource {
+    Resource::builder()
+        .with_detector(Box::new(OsResourceDetector))
+        .with_detector(Box::new(ProcessResourceDetector))
+        .build()
+}
+
 /// opentelemetry metric provider setup,
 /// if no endpoint is configured, use a no-op provider
 pub fn get_meter_provider(config: &config::Config) -> Result<AnyMeterProvider> {
@@ -81,12 +89,7 @@ pub fn get_meter_provider(config: &config::Config) -> Result<AnyMeterProvider> {
 
         let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
             .with_periodic_exporter(exporter)
-            .with_resource(
-                Resource::builder()
-                    .with_detector(Box::new(OsResourceDetector))
-                    .with_detector(Box::new(ProcessResourceDetector))
-                    .build(),
-            )
+            .with_resource(resource())
             .build();
 
         Ok(Arc::new(provider))

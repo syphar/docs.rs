@@ -1,8 +1,7 @@
-use crate::Config;
+use crate::{Config, resource};
 use anyhow::Result;
 use opentelemetry_otlp::{Protocol, WithExportConfig as _};
-use opentelemetry_resource_detectors::{OsResourceDetector, ProcessResourceDetector};
-use opentelemetry_sdk::{Resource, trace::SdkTracerProvider};
+use opentelemetry_sdk::trace::SdkTracerProvider;
 use std::time::Duration;
 
 /// Flush queued spans while the application runtime is still alive.
@@ -38,14 +37,8 @@ pub fn get_tracer_provider(config: &Config) -> Result<Option<TraceGuard>> {
         .build()?;
     let provider = SdkTracerProvider::builder()
         .with_batch_exporter(exporter)
-        // The SDK honors OTEL_TRACES_SAMPLER[_ARG], OTEL_SERVICE_NAME,
-        // and OTEL_RESOURCE_ATTRIBUTES through its defaults.
-        .with_resource(
-            Resource::builder()
-                .with_detector(Box::new(OsResourceDetector))
-                .with_detector(Box::new(ProcessResourceDetector))
-                .build(),
-        )
+        // The SDK honors OTEL_TRACES_SAMPLER[_ARG] through its defaults.
+        .with_resource(resource())
         .build();
     Ok(Some(TraceGuard { provider }))
 }
