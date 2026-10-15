@@ -152,9 +152,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn metrics_require_a_runtime_only_when_enabled() {
+    fn exporters_require_a_runtime_only_when_enabled() {
         let disabled = Config { endpoint: None };
         assert!(get_meter_provider(&disabled).is_ok());
+        assert!(get_tracer_provider(&disabled).unwrap().is_none());
 
         let enabled = Config {
             endpoint: Some("http://127.0.0.1:4317".parse().unwrap()),
@@ -162,6 +163,14 @@ mod tests {
         let metrics_error = get_meter_provider(&enabled).err().expect("missing runtime");
         assert!(
             metrics_error
+                .to_string()
+                .contains("requires an entered Tokio runtime")
+        );
+        let traces_error = get_tracer_provider(&enabled)
+            .err()
+            .expect("missing runtime");
+        assert!(
+            traces_error
                 .to_string()
                 .contains("requires an entered Tokio runtime")
         );

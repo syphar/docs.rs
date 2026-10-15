@@ -1,14 +1,13 @@
 use crate::{Config, resource};
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use opentelemetry_otlp::{Protocol, WithExportConfig as _};
 use opentelemetry_sdk::trace::SdkTracerProvider;
 use std::time::Duration;
 use tokio::runtime;
 
-/// Keep the exporter runtime alive until queued spans have been flushed.
+/// Flush queued spans while the application runtime is still alive.
 pub struct TraceGuard {
     provider: SdkTracerProvider,
-    runtime: Option<runtime::Runtime>,
 }
 
 impl TraceGuard {
@@ -22,10 +21,6 @@ impl Drop for TraceGuard {
         if let Err(err) = self.provider.shutdown() {
             eprintln!("failed to shut down OpenTelemetry traces: {err}");
         }
-        // Guards may drop inside async main, where blocking runtime shutdown panics.
-        if let Some(runtime) = self.runtime.take() {
-            runtime.shutdown_background();
-        }
     }
 }
 
@@ -35,27 +30,15 @@ pub fn get_tracer_provider(config: &Config) -> Result<Option<TraceGuard>> {
         return Ok(None);
     };
 
-    let runtime = runtime::Builder::new_multi_thread()
-        .worker_threads(1)
-        .thread_name("otel-traces")
-        .enable_all()
+    runtime::Handle::try_current()
+        .context("OpenTelemetry traces exporter requires an entered Tokio runtime")?;
+
+    let exporter = opentelemetry_otlp::SpanExporter::builder()
+        .with_tonic()
+        .with_endpoint(endpoint.to_string())
+        .with_protocol(Protocol::Grpc)
+        .with_timeout(Duration::from_secs(3))
         .build()?;
-    let exporter = {
-        let _entered = runtime.enter();
-        opentelemetry_otlp::SpanExporter::builder()
-            .with_tonic()
-            .with_endpoint(endpoint.to_string())
-            .with_protocol(Protocol::Grpc)
-            .with_timeout(Duration::from_secs(3))
-            .build()
-    };
-    let exporter = match exporter {
-        Ok(exporter) => exporter,
-        Err(err) => {
-            runtime.shutdown_background();
-            return Err(err.into());
-        }
-    };
 
     let provider = SdkTracerProvider::builder()
         .with_batch_exporter(exporter)
@@ -63,10 +46,7 @@ pub fn get_tracer_provider(config: &Config) -> Result<Option<TraceGuard>> {
         .with_resource(resource())
         .build();
 
-    Ok(Some(TraceGuard {
-        provider,
-        runtime: Some(runtime),
-    }))
+    Ok(Some(TraceGuard { provider }))
 }
 
 #[cfg(test)]
@@ -86,11 +66,6 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-    }
-
-    #[test]
-    fn initializes_and_shuts_down_without_an_application_runtime() {
-        drop(get_tracer_provider(&config()).unwrap());
     }
 
     #[tokio::test(flavor = "current_thread")]

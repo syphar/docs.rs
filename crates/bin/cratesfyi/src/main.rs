@@ -7,6 +7,11 @@ use std::env;
 use tokio::runtime;
 
 fn main() {
+    let runtime = runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("error creating application runtime");
+    let _entered = runtime.enter();
     let logging_config =
         docs_rs_logging::Config::from_environment().expect("error loading logging config");
     // set the global log::logger for backwards compatibility
@@ -17,7 +22,7 @@ fn main() {
     let guard = docs_rs_logging::init_with_config(&logging_config, &opentelemetry_config)
         .expect("error initializing logging");
 
-    if let Err(err) = CommandLine::parse().handle_args() {
+    if let Err(err) = CommandLine::parse().handle_args(&runtime) {
         eprintln!("error running watcher: {:?}", err);
         drop(guard);
         std::process::exit(1);
@@ -36,8 +41,7 @@ enum CommandLine {
 }
 
 impl CommandLine {
-    fn handle_args(self) -> Result<()> {
-        let runtime = runtime::Builder::new_multi_thread().enable_all().build()?;
+    fn handle_args(self, runtime: &runtime::Runtime) -> Result<()> {
         let ctx = runtime.block_on(async {
             Context::builder()
                 .with_runtime()
