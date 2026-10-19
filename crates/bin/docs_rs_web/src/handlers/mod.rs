@@ -89,6 +89,7 @@ fn apply_middleware(router: AxumRouter<AppState>, state: AppState) -> AxumRouter
                                 http.request.method = %request.method(),
                                 http.route = route,
                                 http.response.status_code = tracing::field::Empty,
+                                url.path = %request.uri().path(),
                                 otel.status_code = tracing::field::Empty,
                             )
                         })
