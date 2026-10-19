@@ -15,8 +15,8 @@ use docs_rs_storage::{
     source_archive_path,
 };
 use docs_rs_types::{
-    BuildError, BuildId, BuildStatus, DocCoverage, KrateName, ReleaseId, SimpleBuildError, Version,
-    VersionReq,
+    BuildError, BuildId, BuildStatus, ByteSize, DocCoverage, KrateName, ReleaseId,
+    SimpleBuildError, Version, VersionReq,
 };
 use std::{
     collections::{BTreeMap, HashMap},
@@ -82,8 +82,6 @@ pub struct FakeRelease<'a> {
     registry_release_data: ReleaseData,
     has_docs: bool,
     has_examples: bool,
-    /// This stores the content, while `package.readme` stores the filename
-    readme: Option<&'a str>,
     github_stats: Option<FakeGithubStats>,
     github_stats_id: Option<i32>,
     doc_coverage: Option<DocCoverage>,
@@ -97,7 +95,7 @@ pub struct FakeBuild {
     rustc_version: String,
     docsrs_version: String,
     build_status: BuildStatus,
-    memory_peak: Option<u64>,
+    memory_peak: Option<ByteSize>,
     /// new build logs: we have a record in the `builds_logs` table for each log, including a status
     /// old build logs: people have to run `s3 ls` with prefix to know which build logs exist
     legacy_build_logs: bool,
@@ -129,7 +127,6 @@ impl<'a> FakeRelease<'a> {
                 }],
                 targets: vec![Target::dummy_lib("fake_package".into(), None)],
                 readme: None,
-                keywords: vec!["fake".into(), "package".into()],
                 features: [
                     ("default".into(), vec!["feature1".into(), "feature3".into()]),
                     ("feature1".into(), Vec::new()),
@@ -146,14 +143,9 @@ impl<'a> FakeRelease<'a> {
             doc_targets: Vec::new(),
             default_target: None,
             registry_crate_data: CrateData { owners: Vec::new() },
-            registry_release_data: ReleaseData {
-                release_time: Utc::now(),
-                yanked: false,
-                downloads: 0,
-            },
+            registry_release_data: ReleaseData::dummy(),
             has_docs: true,
             has_examples: false,
-            readme: None,
             github_stats: None,
             github_stats_id: None,
             doc_coverage: None,
@@ -172,7 +164,7 @@ impl<'a> FakeRelease<'a> {
     }
 
     pub fn release_time(mut self, new: DateTime<Utc>) -> Self {
-        self.registry_release_data.release_time = new;
+        self.registry_release_data.release_time = Some(new);
         self
     }
 
@@ -299,15 +291,8 @@ impl<'a> FakeRelease<'a> {
     }
 
     /// NOTE: this should be markdown. It will be rendered as HTML when served.
-    pub fn readme(mut self, content: &'a str) -> Self {
-        self.readme = Some(content);
+    pub fn readme(self, content: &'a str) -> Self {
         self.source_file("README.md", content.as_bytes())
-    }
-
-    /// NOTE: this should be markdown. It will be rendered as HTML when served.
-    pub fn readme_only_database(mut self, content: &'a str) -> Self {
-        self.readme = Some(content);
-        self
     }
 
     pub fn add_owner(mut self, owner: CrateOwner) -> Self {
@@ -503,9 +488,6 @@ impl<'a> FakeRelease<'a> {
 
         let crate_tmp = create_temp_dir();
         let crate_dir = crate_tmp.path();
-        if let Some(markdown) = self.readme {
-            fs::write(crate_dir.join("README.md"), markdown)?;
-        }
         store_files_into(&self.source_files, crate_dir)?;
 
         let default_target = self.default_target.unwrap_or("x86_64-unknown-linux-gnu");
@@ -565,7 +547,7 @@ impl<'a> FakeRelease<'a> {
             self.has_examples,
             iter::once(stats.alg),
             repository,
-            24,
+            ByteSize::b(24),
         )
         .await?;
         docs_rs_database::releases::update_crate_data_in_database(
@@ -650,7 +632,7 @@ impl FakeBuild {
         }
     }
 
-    pub fn memory_peak(self, memory_peak: u64) -> Self {
+    pub fn memory_peak(self, memory_peak: ByteSize) -> Self {
         Self {
             memory_peak: Some(memory_peak),
             ..self
@@ -679,7 +661,7 @@ impl FakeBuild {
             &self.rustc_version,
             &self.docsrs_version,
             self.build_status,
-            Some(42),
+            Some(ByteSize::b(42)),
             self.memory_peak,
             None::<&SimpleBuildError>,
         )
@@ -737,7 +719,7 @@ impl Default for FakeBuild {
             rustc_version: "rustc 2.0.0-nightly (000000000 1970-01-01)".into(),
             docsrs_version: "docs.rs 1.0.0 (000000000 1970-01-01)".into(),
             build_status: BuildStatus::Success,
-            memory_peak: Some(23),
+            memory_peak: Some(23u64.into()),
             legacy_build_logs: false,
         }
     }

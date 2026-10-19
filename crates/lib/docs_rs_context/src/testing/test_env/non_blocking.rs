@@ -6,7 +6,8 @@ use docs_rs_config::AppConfig;
 use docs_rs_database::{AsyncPoolClient, Config as DatabaseConfig, testing::TestDatabase};
 use docs_rs_fastly::Cdn;
 use docs_rs_opentelemetry::testing::{CollectedMetrics, TestMetrics};
-use docs_rs_registry_api::RegistryApi;
+use docs_rs_registry_api::testing::TestRegistry;
+use docs_rs_std_replacements::StdReplacements;
 use docs_rs_storage::{Config as StorageConfig, testing::TestStorage};
 use docs_rs_test_fakes::FakeRelease;
 use std::{ops::Deref, sync::Arc};
@@ -20,6 +21,7 @@ pub struct TestEnvironment<C> {
     storage: TestStorage,
     #[allow(dead_code)] // we need to keep the storage so it can be cleaned up.
     db: TestDatabase,
+    registry: TestRegistry,
 }
 
 impl<C: AppConfig> Deref for TestEnvironment<C> {
@@ -42,9 +44,10 @@ impl<C: AppConfig> TestEnvironment<C> {
     #[builder(finish_fn = build)]
     pub async fn builder(
         config: Option<C>,
-        registry_api_config: Option<docs_rs_registry_api::Config>,
         storage_config: Option<StorageConfig>,
         build_queue_config: Option<docs_rs_build_queue::Config>,
+        rustsec: Option<Arc<docs_rs_rustsec::RustsecClient>>,
+        std_replacements_config: Option<docs_rs_std_replacements::Config>,
     ) -> Result<Self> {
         docs_rs_logging::testing::init();
 
@@ -54,14 +57,7 @@ impl<C: AppConfig> TestEnvironment<C> {
             C::test_config()?
         });
 
-        let registry_api_config =
-            Arc::new(if let Some(registry_api_config) = registry_api_config {
-                registry_api_config
-            } else {
-                docs_rs_registry_api::Config::from_environment()?
-            });
-
-        let registry_api = RegistryApi::from_config(&registry_api_config)?;
+        let test_registry = TestRegistry::new().await?;
 
         let metrics = TestMetrics::new();
 
@@ -83,6 +79,12 @@ impl<C: AppConfig> TestEnvironment<C> {
             docs_rs_build_queue::Config::from_environment()?
         });
 
+        let std_replacements = if let Some(config) = std_replacements_config {
+            Some(Arc::new(StdReplacements::from_config(&config).await?))
+        } else {
+            None
+        };
+
         let build_queue = Arc::new(AsyncBuildQueue::new(
             db.pool().clone(),
             build_queue_config.clone(),
@@ -98,17 +100,23 @@ impl<C: AppConfig> TestEnvironment<C> {
                 .pool(db_config.into(), db.pool().clone())
                 .storage(storage_config.clone(), test_storage.storage())
                 .build_queue(build_queue_config, build_queue)
-                .registry_api(registry_api_config, registry_api.into())
+                .registry_api(
+                    test_registry.test_config().clone(),
+                    test_registry.api().clone(),
+                )
                 .with_repository_stats()?
                 .maybe_cdn(
                     Arc::new(docs_rs_fastly::Config::test_config()?),
                     Some(Cdn::mock().into()),
                 )
+                .maybe_std_replacements(std_replacements)
+                .maybe_rustsec(rustsec)
                 .with_build_limits()?
                 .build()?
                 .into(),
             db,
             storage: test_storage,
+            registry: test_registry,
             metrics,
         })
     }
@@ -125,6 +133,10 @@ impl<C: AppConfig> TestEnvironment<C> {
         self.context
             .cdn()
             .expect("we always have a CDN in test environments")
+    }
+
+    pub fn test_registry(&self) -> &TestRegistry {
+        &self.registry
     }
 
     pub async fn async_conn(&self) -> Result<AsyncPoolClient> {

@@ -1,10 +1,9 @@
-mod cleanup_s3;
 mod rebuilds;
 #[cfg(test)]
 pub(crate) mod testing;
 
 use anyhow::{Context as _, Result, bail};
-use chrono::NaiveDate;
+use chrono::{NaiveDate, Utc};
 use clap::{Parser, Subcommand};
 use docs_rs_build_limits::{Overrides, blacklist};
 use docs_rs_build_queue::priority::{
@@ -14,12 +13,12 @@ use docs_rs_build_queue::priority::{
 use docs_rs_context::Context;
 use docs_rs_database::{
     crate_details,
-    service_config::{Abnormality, ConfigName, remove_config, set_config},
+    service_config::{Abnormality, Alert, ConfigName, remove_config, set_config},
 };
 use docs_rs_fastly::CdnBehaviour as _;
 use docs_rs_headers::SurrogateKey;
 use docs_rs_repository_stats::workspaces;
-use docs_rs_types::{CrateId, KrateName, Version};
+use docs_rs_types::{ByteSize, CrateId, Duration, KrateName, Version};
 use docs_rs_uri::EscapedURI;
 use futures_util::StreamExt;
 use rebuilds::queue_rebuilds_faulty_rustdoc;
@@ -80,7 +79,8 @@ impl CommandLine {
             .await?
             .with_build_queue()?
             .with_repository_stats()?
-            .with_registry_api()?
+            .with_registry_api()
+            .await?
             .with_maybe_cdn()?
             .build()?;
 
@@ -360,6 +360,12 @@ enum DatabaseSubcommand {
         version: Option<i64>,
     },
 
+    /// Manage the alert popup shown to the users.
+    Alert {
+        #[command(subcommand)]
+        command: AlertSubcommand,
+    },
+
     /// Manage the abnormality shown in the site header
     Abnormality {
         #[command(subcommand)]
@@ -371,12 +377,6 @@ enum DatabaseSubcommand {
 
     /// Updates GitHub/GitLab stats for crates.
     UpdateRepositoryFields,
-
-    /// Clean up the s3 bucket from non-archive storage files.
-    CleanS3Bucket {
-        #[arg(long)]
-        dry_run: bool,
-    },
 
     /// Backfill GitHub/GitLab stats for crates.
     BackfillRepositoryStats,
@@ -411,6 +411,8 @@ impl DatabaseSubcommand {
 
             Self::Abnormality { command } => command.handle_args(ctx).await?,
 
+            Self::Alert { command } => command.handle_args(ctx).await?,
+
             Self::UpdateLatestVersionId => {
                 let pool = ctx.pool()?;
                 let mut list_conn = pool.get_async().await?;
@@ -441,14 +443,6 @@ impl DatabaseSubcommand {
                 ctx.repository_stats()?.update_all_crates().await?;
             }
 
-            Self::CleanS3Bucket { dry_run } => {
-                println!("clean up s3 bucket...");
-                let mut conn = ctx.pool()?.get_async().await?;
-                let storage = ctx.storage()?;
-
-                cleanup_s3::cleanup_s3_bucket(&mut conn, storage, dry_run).await?;
-            }
-
             Self::BackfillRepositoryStats => {
                 println!("backfill repositories...");
                 ctx.repository_stats()?.backfill_repositories().await?;
@@ -477,6 +471,46 @@ impl DatabaseSubcommand {
 
             Self::Limits { command } => command.handle_args(ctx).await?,
         }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Subcommand)]
+enum AlertSubcommand {
+    /// Set the alert shown to users as popup.
+    Set {
+        /// Identifier used to remember dismissals; defaults to the current Unix timestamp.
+        #[arg(long, default_value_t = Utc::now().timestamp() as usize)]
+        alert_id: usize,
+        /// HTML text that will be shown as popup to the users.
+        text: String,
+    },
+
+    /// Remove the alert popup.
+    Remove,
+}
+
+impl AlertSubcommand {
+    async fn handle_args(self, ctx: Context) -> Result<()> {
+        let mut conn = ctx
+            .pool()?
+            .get_async()
+            .await
+            .context("failed to get a database connection")?;
+
+        match self {
+            Self::Set { alert_id, text } => {
+                set_config(&mut conn, ConfigName::Alert, Alert { alert_id, text })
+                    .await
+                    .context("failed to set alert in database")?;
+            }
+            Self::Remove => {
+                remove_config(&mut conn, ConfigName::Alert)
+                    .await
+                    .context("failed to remove alert from database")?;
+            }
+        }
+
         Ok(())
     }
 }
@@ -547,11 +581,11 @@ enum LimitsSubcommand {
     Set {
         crate_name: KrateName,
         #[arg(long)]
-        memory: Option<usize>,
+        memory: Option<ByteSize>,
         #[arg(long)]
         targets: Option<usize>,
         #[arg(long)]
-        timeout: Option<usize>,
+        timeout: Option<Duration>,
     },
 
     /// Remove sandbox limits overrides for a crate
@@ -585,7 +619,7 @@ impl LimitsSubcommand {
                 let overrides = Overrides {
                     memory,
                     targets,
-                    timeout: timeout.map(|timeout| std::time::Duration::from_secs(timeout as _)),
+                    timeout,
                 };
                 Overrides::save(&mut conn, &crate_name, overrides).await?;
                 let overrides = Overrides::for_crate(&mut conn, &crate_name).await?;

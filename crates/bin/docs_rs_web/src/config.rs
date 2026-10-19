@@ -1,7 +1,9 @@
 use anyhow::Result;
 use docs_rs_config::AppConfig;
 use docs_rs_env_vars::maybe_env;
-use std::time::Duration;
+use docs_rs_types::{ByteSize, Duration};
+use tracing::warn;
+use url::Url;
 
 #[derive(Debug, bon::Builder)]
 #[builder(on(_, overwritable))]
@@ -11,7 +13,6 @@ pub struct Config {
     pub(crate) cratesio_token: Option<String>,
 
     // request timeout in seconds
-    #[builder(with = |secs: u64| Duration::from_secs(secs))]
     pub(crate) request_timeout: Option<Duration>,
     #[builder(default)]
     pub(crate) report_request_timeouts: bool,
@@ -19,8 +20,8 @@ pub struct Config {
     // The most memory that can be used to parse an HTML file
     // LOL HTML only uses as much memory as the size of the start tag!
     // https://github.com/rust-lang/docs.rs/pull/930#issuecomment-667729380
-    #[builder(default = 5 * 1024 * 1024usize)]
-    pub(crate) max_parse_memory: usize,
+    #[builder(default = ByteSize::mib(5))]
+    pub(crate) max_parse_memory: ByteSize,
 
     /// amount of threads for CPU intensive rendering
     #[builder(default = num_cpus::get())]
@@ -40,10 +41,14 @@ pub struct Config {
     #[builder(default)]
     pub(crate) csp_report_only: bool,
 
+    /// Graph embed URLs, displayed in order. An empty list hides the metrics column.
+    #[builder(default, with=FromIterator::from_iter)]
+    pub(crate) build_queue_graph_urls: Vec<Url>,
+
     // Cache-Control header, for versioned URLs.
     // If both are absent, don't generate the header. If only one is present,
-    // generate just that directive. Values are in seconds.
-    pub(crate) cache_control_stale_while_revalidate: Option<u32>,
+    // generate just that directive.
+    pub(crate) cache_control_stale_while_revalidate: Option<Duration>,
 
     // Activate full page caching.
     // When disabled, we still cache static assets.
@@ -57,6 +62,18 @@ use config_builder::State;
 impl<S: State> ConfigBuilder<S> {
     pub(crate) fn load_environment(self) -> Result<ConfigBuilder<S>> {
         Ok(self
+            .build_queue_graph_urls(
+                maybe_env::<String>("DOCSRS_BUILD_QUEUE_GRAPH_URLS")?
+                    .unwrap_or_default()
+                    .split_whitespace()
+                    .filter_map(|value| {
+                        Url::parse(value)
+                            .inspect_err(|err| {
+                                warn!(value, ?err, "ignoring invalid build queue graph url")
+                            })
+                            .ok()
+                    }),
+            )
             .maybe_cratesio_token(maybe_env("DOCSRS_CRATESIO_TOKEN")?)
             .maybe_max_parse_memory(maybe_env("DOCSRS_MAX_PARSE_MEMORY")?)
             .maybe_render_threads(maybe_env("DOCSRS_RENDER_THREADS")?)
@@ -79,7 +96,7 @@ impl<S: State> ConfigBuilder<S> {
             .load_environment()?
             // set stale content serving so Cache::ForeverInCdn and Cache::ForeverInCdnAndStaleInBrowser
             // are actually different.
-            .cache_control_stale_while_revalidate(86400))
+            .cache_control_stale_while_revalidate(Duration::from_days(1)))
     }
 }
 

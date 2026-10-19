@@ -80,7 +80,8 @@ impl BuildQueue {
                     name as "name: KrateName",
                     version as "version: Version",
                     priority,
-                    attempt
+                    attempt,
+                    enqueued_at
                  FROM queue
                  WHERE
                     last_attempt IS NULL OR last_attempt < NOW() - make_interval(secs => $1)
@@ -94,6 +95,15 @@ impl BuildQueue {
             Some(krate) => krate,
             None => return Ok(None),
         };
+
+        if to_process.attempt == 0
+            && let Some(enqueued_at) = to_process.enqueued_at
+            && let Ok(elapsed) = (chrono::Utc::now() - enqueued_at).to_std()
+        {
+            self.inner
+                .queue_metrics
+                .record_queue_time(elapsed.into(), to_process.priority);
+        }
 
         let res = f(&to_process);
 
@@ -177,11 +187,45 @@ mod tests {
     const BAZ: KrateName = KrateName::from_static("baz");
 
     #[test]
+    fn queue_time_is_recorded_before_build_and_excludes_retries() -> Result<()> {
+        let env = BlockingTestEnv::new()?;
+        let queue = env.queue_with_config(Config {
+            delay_between_build_attempts: Duration::ZERO.into(),
+            ..Default::default()
+        });
+        queue.add_crate(&KRATE, &V1, -5)?;
+        env.block_on_async_with_conn(async |conn| {
+            sqlx::query("UPDATE queue SET enqueued_at = clock_timestamp() - INTERVAL '10 minutes'")
+                .execute(conn)
+                .await?;
+            Ok(())
+        })?;
+        queue.process_next_crate(|_| {
+            let metrics = env.collected_metrics();
+            let metric = metrics.get_metric("build_queue", "docsrs.build_queue.queue_time")?;
+            let point = metric.get_f64_histogram();
+            assert_eq!(point.count(), 1);
+            assert!(point.sum() >= 600. && point.sum() < 660.);
+            assert!(
+                point
+                    .attributes()
+                    .any(|kv| kv == &opentelemetry::KeyValue::new("priority", "-5"))
+            );
+            anyhow::bail!("retry this build");
+        })?;
+        queue.process_next_crate(|_| Ok(BuildPackageSummary::default()))?;
+        let metrics = env.collected_metrics();
+        let metric = metrics.get_metric("build_queue", "docsrs.build_queue.queue_time")?;
+        assert_eq!(metric.get_f64_histogram().count(), 1);
+        Ok(())
+    }
+
+    #[test]
     fn test_wait_between_build_attempts() -> Result<()> {
         let env = BlockingTestEnv::new()?;
         let queue = env.queue_with_config(Config {
             build_attempts: 99,
-            delay_between_build_attempts: Duration::from_secs(1),
+            delay_between_build_attempts: Duration::from_secs(1).into(),
             ..Default::default()
         });
 
@@ -229,7 +273,7 @@ mod tests {
         let env = BlockingTestEnv::new()?;
         let queue = env.queue_with_config(Config {
             build_attempts: MAX_ATTEMPTS,
-            delay_between_build_attempts: Duration::ZERO,
+            delay_between_build_attempts: Duration::ZERO.into(),
             ..Default::default()
         });
 
@@ -376,7 +420,7 @@ mod tests {
         let env = BlockingTestEnv::new()?;
         let queue = env.queue_with_config(Config {
             build_attempts: MAX_ATTEMPTS,
-            delay_between_build_attempts: Duration::ZERO,
+            delay_between_build_attempts: Duration::ZERO.into(),
             ..Default::default()
         });
 
@@ -413,7 +457,7 @@ mod tests {
         let env = BlockingTestEnv::new()?;
         let queue = env.queue_with_config(Config {
             build_attempts: MAX_ATTEMPTS,
-            delay_between_build_attempts: Duration::ZERO,
+            delay_between_build_attempts: Duration::ZERO.into(),
             ..Default::default()
         });
 

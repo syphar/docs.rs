@@ -33,8 +33,10 @@ pub fn init_from_environment() -> anyhow::Result<Guard> {
 
 pub fn init_with_config(config: &Config) -> anyhow::Result<Guard> {
     let log_formatter = match config.format {
+        LogFormat::Full => tracing_subscriber::fmt::layer().boxed(),
+        LogFormat::Compact => tracing_subscriber::fmt::layer().compact().boxed(),
+        LogFormat::Pretty => tracing_subscriber::fmt::layer().pretty().boxed(),
         LogFormat::Json => tracing_subscriber::fmt::layer().json().boxed(),
-        LogFormat::Pretty => tracing_subscriber::fmt::layer().boxed(),
     };
 
     let tracing_registry = tracing_subscriber::registry()
@@ -42,15 +44,21 @@ pub fn init_with_config(config: &Config) -> anyhow::Result<Guard> {
         .with(config.filter.clone());
 
     let sentry_guard = if let Some(sentry_config) = &config.sentry {
-        tracing::subscriber::set_global_default(tracing_registry.with(
-            sentry_tracing::layer().event_filter(|md| {
-                if md.fields().field("reported_to_sentry").is_some() {
-                    sentry_tracing::EventFilter::Ignore
-                } else {
-                    sentry_tracing::default_event_filter(md)
-                }
-            }),
-        ))?;
+        tracing::subscriber::set_global_default(
+            tracing_registry.with(
+                sentry_tracing::layer()
+                    // Include HTTP trace-span fields (route, path, and response status) on child
+                    // error events, making failures reported by tower-http actionable in Sentry.
+                    .enable_span_attributes()
+                    .event_filter(|md| {
+                        if md.fields().field("reported_to_sentry").is_some() {
+                            sentry_tracing::EventFilter::Ignore
+                        } else {
+                            sentry_tracing::default_event_filter(md)
+                        }
+                    }),
+            ),
+        )?;
 
         let sample_rate = sentry_config.traces_sample_rate;
         let traces_sampler = move |ctx: &TransactionContext| -> f32 {
