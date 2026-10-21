@@ -319,11 +319,17 @@ div.recent-releases-container {
         // Leave room for the table's horizontal margins inside the queue column.
         width: calc(100% - 2em);
         box-sizing: border-box;
-        table-layout: fixed;
+        table-layout: auto;
         overflow-wrap: anywhere;
 
         th, td {
             padding: 4px 0.5em;
+            text-align: left;
+        }
+
+        th:not(:first-child), td:not(:first-child) {
+            width: fit-content;
+            white-space: nowrap;
         }
     }
 
