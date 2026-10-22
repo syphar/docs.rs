@@ -109,13 +109,14 @@ impl<S: State> ContextBuilder<S> {
         Ok(self.runtime(runtime::Handle::try_current()?))
     }
 
-    pub fn with_meter_provider(self) -> Result<ContextBuilder<SetMeterProvider<S>>>
+    pub async fn with_meter_provider(self) -> Result<ContextBuilder<SetMeterProvider<S>>>
     where
+        S::Runtime: IsSet,
         S::MeterProvider: IsUnset,
     {
-        Ok(self.meter_provider(get_meter_provider(
-            &docs_rs_opentelemetry::Config::from_environment()?,
-        )?))
+        Ok(self.meter_provider(
+            get_meter_provider(&docs_rs_opentelemetry::Config::from_environment()?).await?,
+        ))
     }
 
     pub fn pool(

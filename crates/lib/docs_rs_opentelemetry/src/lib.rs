@@ -1,12 +1,11 @@
 mod config;
 mod traces;
-use tokio::runtime;
 pub use traces::{TraceGuard, get_tracer_provider};
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 pub use config::Config;
 
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 use opentelemetry::{
     InstrumentationScope,
     metrics::{InstrumentProvider, Meter, MeterProvider},
@@ -80,11 +79,8 @@ fn resource() -> Resource {
 /// opentelemetry metric provider setup,
 /// if no endpoint is configured, use a no-op provider.
 /// An entered Tokio runtime is required when an endpoint is configured.
-pub fn get_meter_provider(config: &config::Config) -> Result<AnyMeterProvider> {
+pub async fn get_meter_provider(config: &config::Config) -> Result<AnyMeterProvider> {
     if let Some(ref endpoint) = config.endpoint {
-        runtime::Handle::try_current()
-            .context("OpenTelemetry metrics exporter requires an entered Tokio runtime")?;
-
         let endpoint = endpoint.to_string();
         info!(endpoint, "setting up OpenTelemetry metrics exporter");
 

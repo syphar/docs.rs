@@ -48,7 +48,8 @@ impl CommandLine {
             Context::builder()
                 .with_runtime()
                 .await?
-                .with_meter_provider()?
+                .with_meter_provider()
+                .await?
                 .with_pool()
                 .await?
                 .with_storage()
