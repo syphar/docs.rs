@@ -2345,7 +2345,6 @@ dependencies = [
  "opentelemetry-otlp",
  "opentelemetry-resource-detectors",
  "opentelemetry_sdk",
- "tokio",
  "tracing",
  "url",
 ]
