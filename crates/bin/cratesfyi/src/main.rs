@@ -11,16 +11,11 @@ fn main() {
         .enable_all()
         .build()
         .expect("error creating application runtime");
+    // NOTE: `docs_rs_logging::init_from_environment` might need an active runtime if otel
+    // tracing is active.
     let _entered = runtime.enter();
-    let logging_config =
-        docs_rs_logging::Config::from_environment().expect("error loading logging config");
-    // set the global log::logger for backwards compatibility
-    // through rustwide.
-    docs_rs_rustwide::logging::init(logging_config.log_build_logs);
-    let opentelemetry_config = docs_rs_opentelemetry::Config::from_environment()
-        .expect("error loading OpenTelemetry config");
-    let guard = docs_rs_logging::init_with_config(&logging_config, &opentelemetry_config)
-        .expect("error initializing logging");
+
+    let guard = docs_rs_logging::init_from_environment().context("error initializing logging")?;
 
     if let Err(err) = CommandLine::parse().handle_args(&runtime) {
         eprintln!("error running watcher: {:?}", err);
