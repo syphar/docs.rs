@@ -15,10 +15,6 @@ pub struct Config {
     pub format: LogFormat,
     pub filter: EnvFilter,
     pub sentry: Option<SentryConfig>,
-
-    /// Whether to output the build logs to stdout too,
-    /// or just store them on S3.
-    pub log_build_logs: bool,
 }
 
 impl Config {
@@ -39,7 +35,6 @@ impl AppConfig for Config {
                 dsn,
                 traces_sample_rate: env("SENTRY_TRACES_SAMPLE_RATE", 0.0).unwrap_or(0.0),
             }),
-            log_build_logs: env("DOCSRS_LOG_BUILD_LOGS", true)?,
         })
     }
 
@@ -49,7 +44,6 @@ impl AppConfig for Config {
             format: LogFormat::Pretty,
             filter: Self::filter_from_env("trace")?,
             sentry: None,
-            log_build_logs: true,
         })
     }
 }

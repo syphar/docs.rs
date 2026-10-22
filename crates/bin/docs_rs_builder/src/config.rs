@@ -30,6 +30,10 @@ pub struct Config {
     /// Docker runtime the builder should use.
     pub docker_runtime: DockerRuntime,
 
+    /// Whether to output the build logs to stdout too,
+    /// or just store them on S3.
+    pub log_build_logs: bool,
+
     // other module configs
     pub build_limits: Arc<docs_rs_build_limits::Config>,
 }
@@ -70,6 +74,7 @@ impl AppConfig for Config {
             )?,
             compiler_metrics_collection_path: maybe_env("DOCSRS_COMPILER_METRICS_PATH")?,
             docker_runtime: maybe_env("DOCSRS_DOCKER_RUNTIME")?.unwrap_or_default(),
+            log_build_logs: env("DOCSRS_LOG_BUILD_LOGS", true)?,
             build_limits: Arc::new(docs_rs_build_limits::Config::from_environment()?),
         })
     }
@@ -88,6 +93,7 @@ impl AppConfig for Config {
         config.include_default_targets = true;
         config.rustwide_workspace = docs_rs_rustwide::testing::test_workspace_path();
         config.docker_image = Some(docs_rs_rustwide::testing::test_sandbox_image());
+        config.log_build_logs = true;
 
         Ok(config)
     }
