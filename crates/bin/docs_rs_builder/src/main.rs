@@ -10,11 +10,10 @@ use tokio::runtime;
 
 fn main() -> Result<()> {
     let runtime = runtime::Builder::new_multi_thread().enable_all().build()?;
-    // NOTE: `docs_rs_logging::init_from_environment` might need an active runtime if otel
-    // tracing is active.
-    let _entered = runtime.enter();
 
-    let _guard = docs_rs_logging::init_from_environment().context("error initializing logging")?;
+    let _guard = runtime
+        .block_on(docs_rs_logging::init_from_environment())
+        .context("error initializing logging")?;
 
     if let Err(err) = CommandLine::parse().handle_args(&runtime) {
         eprintln!("error running builder: {:?}", err);

@@ -25,7 +25,7 @@ impl Drop for TraceGuard {
 }
 
 /// Export traces when the shared OpenTelemetry endpoint is configured.
-pub fn get_tracer_provider(config: &Config) -> Result<Option<TraceGuard>> {
+pub async fn get_tracer_provider(config: &Config) -> Result<Option<TraceGuard>> {
     let Some(endpoint) = &config.endpoint else {
         return Ok(None);
     };
