@@ -10,7 +10,9 @@ use docs_rs_types::{KrateName, ReqVersion};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let _guard = docs_rs_logging::init_from_environment().context("error initializing logging")?;
+    let _guard = docs_rs_logging::init_from_environment()
+        .await
+        .context("error initializing logging")?;
 
     if let Err(err) = CommandLine::parse().handle_args().await {
         eprintln!("error importing release: {err:?}");

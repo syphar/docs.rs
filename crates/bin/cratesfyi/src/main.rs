@@ -10,11 +10,10 @@ fn main() {
         .enable_all()
         .build()
         .expect("error creating application runtime");
-    // NOTE: `docs_rs_logging::init_from_environment` might need an active runtime if otel
-    // tracing is active.
-    let _entered = runtime.enter();
 
-    let guard = docs_rs_logging::init_from_environment().expect("error initializing logging");
+    let guard = runtime
+        .block_on(docs_rs_logging::init_from_environment())
+        .expect("error initializing logging");
 
     if let Err(err) = CommandLine::parse().handle_args(&runtime) {
         eprintln!("error running watcher: {:?}", err);
