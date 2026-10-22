@@ -39,6 +39,8 @@ pub fn start_daemon(context: Context) -> Result<(), Error> {
     let watcher_config = Arc::new(docs_rs_watcher::Config::from_environment()?);
     let builder_config = Arc::new(docs_rs_builder::Config::from_environment()?);
 
+    docs_rs_rustwide::logging::init(builder_config.log_build_logs);
+
     // Start the web server before doing anything more expensive
     // Please check with an administrator before changing this (see #1172 for context).
     info!("Starting web server");
