@@ -81,15 +81,53 @@ fn apply_middleware(router: AxumRouter<AppState>, state: AppState) -> AxumRouter
                             let route = request
                                 .extensions()
                                 .get::<MatchedPath>()
-                                .map(|path| path.as_str())
-                                .unwrap_or("unmatched");
-                            tracing::info_span!("http.request",
-                                otel.name = %format!("{} {route}", request.method()),
+                                .map(|path| path.as_str());
+                            let name = match route {
+                                Some(route) => format!("{} {route}", request.method()),
+                                None => request.method().to_string(),
+                            };
+                            // The web listener serves HTTP behind a TLS-terminating proxy.
+                            // Forwarded values are diagnostic metadata, not authorization inputs.
+                            let scheme = request
+                                .headers()
+                                .get("x-forwarded-proto")
+                                .and_then(|value| value.to_str().ok())
+                                .filter(|value| matches!(*value, "http" | "https"))
+                                .or_else(|| request.uri().scheme_str())
+                                .unwrap_or("http");
+                            let user_agent = request
+                                .headers()
+                                .get(http::header::USER_AGENT)
+                                .and_then(|value| value.to_str().ok());
+                            let protocol_version = match request.version() {
+                                http::Version::HTTP_09 => Some("0.9"),
+                                http::Version::HTTP_10 => Some("1.0"),
+                                http::Version::HTTP_11 => Some("1.1"),
+                                http::Version::HTTP_2 => Some("2"),
+                                http::Version::HTTP_3 => Some("3"),
+                                _ => None,
+                            };
+                            let authority = request.uri().authority().cloned().or_else(|| {
+                                request
+                                    .headers()
+                                    .get(http::header::HOST)
+                                    .and_then(|value| value.to_str().ok())
+                                    .and_then(|value| value.parse::<http::uri::Authority>().ok())
+                            });
+                            tracing::info_span!(parent: None, "http.request",
+                                otel.name = name,
                                 otel.kind = "server",
                                 http.request.method = %request.method(),
                                 http.route = route,
                                 http.response.status_code = tracing::field::Empty,
                                 url.path = %request.uri().path(),
+                                url.scheme = scheme,
+                                user_agent.original = user_agent,
+                                network.protocol.version = protocol_version,
+                                server.address = authority.as_ref().map(|value| value.host()),
+                                server.port = authority.as_ref().and_then(|value| value.port_u16())
+                                    .map(i64::from),
+                                error.type = tracing::field::Empty,
                                 otel.status_code = tracing::field::Empty,
                             )
                         })
@@ -103,6 +141,7 @@ fn apply_middleware(router: AxumRouter<AppState>, state: AppState) -> AxumRouter
                                 );
                                 if response.status().is_server_error() {
                                     span.record("otel.status_code", "ERROR");
+                                    span.record("error.type", response.status().as_str());
                                 }
                             },
                         ),
