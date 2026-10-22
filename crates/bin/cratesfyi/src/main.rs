@@ -1,7 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
 use cratesfyi::daemon::start_daemon;
-use docs_rs_config::AppConfig as _;
 use docs_rs_context::Context;
 use std::env;
 use tokio::runtime;
@@ -15,7 +14,7 @@ fn main() {
     // tracing is active.
     let _entered = runtime.enter();
 
-    let guard = docs_rs_logging::init_from_environment().context("error initializing logging")?;
+    let guard = docs_rs_logging::init_from_environment().expect("error initializing logging");
 
     if let Err(err) = CommandLine::parse().handle_args(&runtime) {
         eprintln!("error running watcher: {:?}", err);
