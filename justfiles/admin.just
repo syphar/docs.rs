@@ -19,6 +19,7 @@ admin environment +args:
     # AWS profile instead; never pass those local credentials to AWS.
     unset AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN AWS_SECURITY_TOKEN
     export AWS_PROFILE="docs-rs-$environment" AWS_REGION=us-east-1 AWS_DEFAULT_REGION=us-east-1 AWS_PAGER=""
+
     cluster="docs-rs-$environment"
     workdir=$(mktemp -d)
     trap 'rm -rf "$workdir"' EXIT
