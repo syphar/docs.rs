@@ -18,6 +18,7 @@ export S3_ENDPOINT := env("S3_ENDPOINT", "http://localhost:9000")
 _default:
     @just --list
 
+import 'justfiles/admin.just'
 import 'justfiles/book.just'
 import 'justfiles/cli.just'
 import 'justfiles/docker.just'
