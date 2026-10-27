@@ -49,16 +49,20 @@ _ecs-task environment task_definition service +args:
         exit 1
     fi
     echo "Started $task"
+    # Datadog uses cluster/task-id as the log tag, rather than the full ARN.
+    logs_query="container_name:app task_arn:$cluster/${task##*/}"
+    echo "Datadog log query: $logs_query"
     echo 'Waiting for completion; interrupting this script does not stop the remote task.'
     aws ecs wait tasks-stopped --cluster "$cluster" --tasks "$task"
     aws ecs describe-tasks --cluster "$cluster" --tasks "$task" --output json > "$workdir/task.json"
 
-    # The shared task module uses group /ecs/<task family> and stream app/app/<task ID>.
-    if aws logs get-log-events --log-group-name "/ecs/$task_definition" \
-        --log-stream-name "app/app/${task##*/}" --start-from-head --output json > "$workdir/logs.json"; then
-        jq -r '.events[].message' "$workdir/logs.json"
-    else
-        echo "Could not fetch logs; check CloudWatch /ecs/$task_definition." >&2
+    # Fetch application logs without changing the task's exit status if Datadog
+    # is unavailable. Recently emitted logs may still be awaiting ingestion.
+    if ! pup logs search --query "$logs_query" \
+        --storage indexes --sort asc --limit 1000 --no-envelope |
+        jq -r '.data[].attributes |
+            "\(.timestamp) \(.attributes.fields.message // .message)"'; then
+        echo "Could not fetch logs; search Datadog for: $logs_query" >&2
     fi
     if ! code=$(jq -er '.tasks[0].containers[] | select(.name == "app") | .exitCode // empty' "$workdir/task.json"); then
         jq '{failures, tasks: [.tasks[] | {stopCode, stoppedReason, containers}]}' "$workdir/task.json" >&2
