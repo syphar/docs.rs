@@ -478,8 +478,9 @@ mod tests {
         already_queued: bool,
     ) -> Result<()> {
         let env = TestEnvironment::new().await?;
-        let publish_time =
-            publish_offset_seconds.map(|offset| Utc::now() + chrono::Duration::seconds(offset));
+        // Index publication timestamps have whole-second precision.
+        let publish_time = publish_offset_seconds
+            .map(|offset| DateTime::from_timestamp(Utc::now().timestamp() + offset, 0).unwrap());
         let index_release = crates_index_diff::CrateVersion {
             name: KRATE.to_string().into(),
             version: V1.to_string().into(),
