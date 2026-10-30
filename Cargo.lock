@@ -2060,6 +2060,7 @@ name = "docs_rs_build_queue"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "bon",
  "chrono",
  "docs_rs_config",
  "docs_rs_database",

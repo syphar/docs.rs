@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO queue (name, version, priority, publish_time)\n             VALUES ($1, $2, $3, $4)\n             ON CONFLICT (name, version) DO UPDATE\n                SET priority = EXCLUDED.priority,\n                    publish_time = COALESCE(queue.publish_time, EXCLUDED.publish_time),\n                    attempt = 0,\n                    last_attempt = NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Int4",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1e8b033f778dbbc32e4ce68b17f769f9f063ff701814062843a8da843d38fa55"
+}

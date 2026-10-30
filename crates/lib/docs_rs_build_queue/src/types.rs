@@ -9,6 +9,7 @@ pub struct QueuedCrate {
     pub priority: i32,
     pub attempt: i32,
     pub enqueued_at: Option<DateTime<Utc>>,
+    pub publish_time: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug)]

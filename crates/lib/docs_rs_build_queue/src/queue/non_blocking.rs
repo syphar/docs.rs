@@ -2,6 +2,8 @@ use crate::{
     Config, PRIORITY_MANUAL_FROM_CRATES_IO, QueuedCrate, metrics, priority::PrioritiesCache,
 };
 use anyhow::{Context as _, Result};
+use bon::bon;
+use chrono::{DateTime, Utc};
 use docs_rs_database::{
     Pool,
     service_config::{Abnormality, ConfigName, get_config, set_config},
@@ -20,6 +22,7 @@ pub struct AsyncBuildQueue {
     pub(super) priorities_cache: PrioritiesCache,
 }
 
+#[bon]
 impl AsyncBuildQueue {
     pub fn new(db: Pool, config: Arc<Config>, otel_meter_provider: &AnyMeterProvider) -> Self {
         AsyncBuildQueue {
@@ -86,25 +89,48 @@ impl AsyncBuildQueue {
     }
 
     /// Enqueue a build.
-    /// Duplicate requests preserve the original enqueue time.
+    /// Legacy shortcut
     pub async fn add_crate(
         &self,
         name: &KrateName,
         version: &Version,
         priority: i32,
     ) -> Result<()> {
+        self.enqueue()
+            .name(name)
+            .version(version)
+            .priority(priority)
+            .submit()
+            .await
+    }
+
+    /// Enqueue a build.
+    /// Duplicate requests preserve known publication and enqueue times.
+    #[builder(
+        on(_, into),
+        finish_fn(name = submit),
+    )]
+    pub async fn enqueue(
+        &self,
+        name: &KrateName,
+        version: &Version,
+        #[builder(default = crate::PRIORITY_DEFAULT)] priority: i32,
+        publish_time: Option<DateTime<Utc>>,
+    ) -> Result<()> {
         let mut conn = self.db.get_async().await?;
 
         sqlx::query!(
-            "INSERT INTO queue (name, version, priority)
-             VALUES ($1, $2, $3)
+            "INSERT INTO queue (name, version, priority, publish_time)
+             VALUES ($1, $2, $3, $4)
              ON CONFLICT (name, version) DO UPDATE
                 SET priority = EXCLUDED.priority,
+                    publish_time = COALESCE(queue.publish_time, EXCLUDED.publish_time),
                     attempt = 0,
                     last_attempt = NULL",
             name as _,
             version as _,
             priority,
+            publish_time,
         )
         .execute(&mut *conn)
         .await?;
@@ -160,7 +186,8 @@ impl AsyncBuildQueue {
                 version as "version: Version",
                 priority,
                 attempt,
-                enqueued_at
+                enqueued_at,
+                publish_time
              FROM queue
              ORDER BY priority ASC, attempt ASC, id ASC"#,
         )
@@ -333,9 +360,36 @@ mod tests {
         queue.add_crate(&KRATE, &V1, 0).await?;
         let enqueued_at = queue.queued_crates().await?[0].enqueued_at;
         assert!(enqueued_at.is_some());
+        let publish_time = DateTime::from_timestamp_micros(Utc::now().timestamp_micros()).unwrap()
+            - chrono::Duration::minutes(20);
+
+        queue
+            .enqueue()
+            .name(&KRATE)
+            .version(&V1)
+            .priority(0)
+            .publish_time(publish_time)
+            .submit()
+            .await?;
+
+        assert_eq!(
+            queue.queued_crates().await?[0].publish_time,
+            Some(publish_time)
+        );
+
+        queue
+            .enqueue()
+            .name(&KRATE)
+            .version(&V1)
+            .priority(0)
+            .publish_time(Utc::now())
+            .submit()
+            .await?;
+
         queue.add_crate(&KRATE, &V1, 9).await?;
         let rows = queue.queued_crates().await?;
         assert_eq!(rows[0].enqueued_at, enqueued_at);
+        assert_eq!(rows[0].publish_time, Some(publish_time));
         assert_eq!(rows[0].priority, 9);
         Ok(())
     }

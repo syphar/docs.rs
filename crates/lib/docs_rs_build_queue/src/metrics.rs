@@ -35,6 +35,7 @@ const QUEUE_TIME_BUCKETS: &[Duration; 23] = &[
 #[derive(Debug)]
 pub struct BuildQueueMetrics {
     queue_time: Histogram<f64>,
+    release_build_latency: Histogram<f64>,
     pub(crate) queued_builds: Counter<u64>,
     /// hard errors (= Result::Err from the builder).
     /// Not the same as "normal" build failures = rustc failed compiling.
@@ -57,6 +58,17 @@ impl BuildQueueMetrics {
                 )
                 .with_description("Time from enqueue to first build attempt")
                 .build(),
+            release_build_latency: meter
+                .f64_histogram(format!("{PREFIX}.release_build_latency"))
+                .with_unit("s")
+                .with_boundaries(
+                    QUEUE_TIME_BUCKETS
+                        .iter()
+                        .map(|duration| duration.as_secs_f64())
+                        .collect(),
+                )
+                .with_description("Time from registry publication to first build attempt")
+                .build(),
             queued_builds: meter
                 .u64_counter(format!("{PREFIX}.queued_builds"))
                 .with_unit("1")
@@ -70,6 +82,13 @@ impl BuildQueueMetrics {
 
     pub(crate) fn record_queue_time(&self, elapsed: Duration, priority: i32) {
         self.queue_time.record(
+            elapsed.as_secs_f64(),
+            &[KeyValue::new("priority", priority.to_string())],
+        );
+    }
+
+    pub(crate) fn record_release_build_latency(&self, elapsed: Duration, priority: i32) {
+        self.release_build_latency.record(
             elapsed.as_secs_f64(),
             &[KeyValue::new("priority", priority.to_string())],
         );

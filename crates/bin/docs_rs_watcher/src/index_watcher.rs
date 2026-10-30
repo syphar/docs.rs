@@ -270,7 +270,12 @@ async fn process_version_added(
     let priority = build_queue.find_priority(&release.name).await?;
 
     build_queue
-        .add_crate(&release.name, &release.version, priority)
+        .enqueue()
+        .name(&release.name)
+        .version(&release.version)
+        .priority(priority)
+        .maybe_publish_time(release.publish_time)
+        .submit()
         .await
         .with_context(|| {
             format!(
@@ -473,8 +478,10 @@ mod tests {
         already_queued: bool,
     ) -> Result<()> {
         let env = TestEnvironment::new().await?;
-        let publish_time =
-            publish_offset_seconds.map(|offset| Utc::now() + chrono::Duration::seconds(offset));
+        let publish_time = publish_offset_seconds.map(|offset| {
+            DateTime::from_timestamp_micros(Utc::now().timestamp_micros()).unwrap()
+                + chrono::Duration::seconds(offset)
+        });
         let index_release = crates_index_diff::CrateVersion {
             name: KRATE.to_string().into(),
             version: V1.to_string().into(),
@@ -493,6 +500,10 @@ mod tests {
             assert!(process_change(&env, &change, env.config(), &metrics).await?);
         }
         assert!(env.build_queue()?.has_build_queued(&KRATE, &V1).await?);
+        assert_eq!(
+            env.build_queue()?.queued_crates().await?[0].publish_time,
+            publish_time
+        );
         let collected = env.collected_metrics();
         let metric = collected.get_metric("watcher", "docsrs.watcher.release_enqueue_latency");
         if publish_offset_seconds == Some(-600) {

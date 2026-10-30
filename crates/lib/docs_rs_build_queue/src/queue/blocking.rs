@@ -1,5 +1,7 @@
 use crate::{AsyncBuildQueue, QueuedCrate, types::BuildPackageSummary};
 use anyhow::Result;
+use bon::bon;
+use chrono::{DateTime, Utc};
 use docs_rs_types::{KrateName, Version};
 use docs_rs_utils::Handle;
 use sqlx::Connection as _;
@@ -16,10 +18,33 @@ pub struct BuildQueue {
 }
 
 /// sync versions of async methods
+#[bon]
 impl BuildQueue {
     pub fn add_crate(&self, name: &KrateName, version: &Version, priority: i32) -> Result<()> {
         self.runtime
             .block_on(self.inner.add_crate(name, version, priority))
+    }
+
+    #[builder(
+        on(_, into),
+        finish_fn(name = submit),
+    )]
+    pub fn enqueue(
+        &self,
+        name: &KrateName,
+        version: &Version,
+        #[builder(default = crate::PRIORITY_DEFAULT)] priority: i32,
+        publish_time: Option<DateTime<Utc>>,
+    ) -> Result<()> {
+        self.runtime.block_on(
+            self.inner
+                .enqueue()
+                .name(name)
+                .version(version)
+                .priority(priority)
+                .maybe_publish_time(publish_time)
+                .submit(),
+        )
     }
 
     pub fn is_locked(&self) -> Result<bool> {
@@ -81,7 +106,8 @@ impl BuildQueue {
                     version as "version: Version",
                     priority,
                     attempt,
-                    enqueued_at
+                    enqueued_at,
+                    publish_time
                  FROM queue
                  WHERE
                     last_attempt IS NULL OR last_attempt < NOW() - make_interval(secs => $1)
@@ -96,13 +122,22 @@ impl BuildQueue {
             None => return Ok(None),
         };
 
-        if to_process.attempt == 0
-            && let Some(enqueued_at) = to_process.enqueued_at
-            && let Ok(elapsed) = (chrono::Utc::now() - enqueued_at).to_std()
-        {
-            self.inner
-                .queue_metrics
-                .record_queue_time(elapsed.into(), to_process.priority);
+        if to_process.attempt == 0 {
+            if let Some(enqueued_at) = to_process.enqueued_at
+                && let Ok(elapsed) = (chrono::Utc::now() - enqueued_at).to_std()
+            {
+                self.inner
+                    .queue_metrics
+                    .record_queue_time(elapsed.into(), to_process.priority);
+            }
+
+            if let Some(publish_time) = to_process.publish_time
+                && let Ok(elapsed) = (chrono::Utc::now() - publish_time).to_std()
+            {
+                self.inner
+                    .queue_metrics
+                    .record_release_build_latency(elapsed.into(), to_process.priority);
+            }
         }
 
         let res = f(&to_process);
@@ -185,6 +220,56 @@ mod tests {
     const FOO: KrateName = KrateName::from_static("foo");
     const BAR: KrateName = KrateName::from_static("bar");
     const BAZ: KrateName = KrateName::from_static("baz");
+
+    #[test_case::test_case(Some(-1200); "known publication time")]
+    #[test_case::test_case(None; "missing publication time")]
+    #[test_case::test_case(Some(86400); "future publication time")]
+    fn release_build_latency_is_recorded_before_build_and_excludes_retries(
+        publish_offset_seconds: Option<i64>,
+    ) -> Result<()> {
+        let env = BlockingTestEnv::new()?;
+        let queue = env.queue_with_config(Config {
+            delay_between_build_attempts: Duration::ZERO.into(),
+            ..Default::default()
+        });
+        let publish_time =
+            publish_offset_seconds.map(|offset| Utc::now() + chrono::Duration::seconds(offset));
+
+        queue
+            .enqueue()
+            .name(&KRATE)
+            .version(&V1)
+            .priority(-5)
+            .maybe_publish_time(publish_time)
+            .submit()?;
+
+        let assert_metric = || -> Result<()> {
+            let metrics = env.collected_metrics();
+            let metric =
+                metrics.get_metric("build_queue", "docsrs.build_queue.release_build_latency");
+            if publish_offset_seconds == Some(-1200) {
+                let metric = metric?;
+                let point = metric.get_f64_histogram();
+                assert_eq!(point.count(), 1);
+                assert!(point.sum() >= 1200. && point.sum() < 1260.);
+                assert!(
+                    point
+                        .attributes()
+                        .any(|kv| kv == &opentelemetry::KeyValue::new("priority", "-5"))
+                );
+            } else {
+                assert!(metric.is_err());
+            }
+            Ok(())
+        };
+        queue.process_next_crate(|_| {
+            assert_metric()?;
+            anyhow::bail!("retry this build");
+        })?;
+        queue.process_next_crate(|_| Ok(BuildPackageSummary::default()))?;
+        assert_metric()?;
+        Ok(())
+    }
 
     #[test]
     fn queue_time_is_recorded_before_build_and_excludes_retries() -> Result<()> {
