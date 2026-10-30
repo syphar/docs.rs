@@ -8,11 +8,9 @@ env:
   RUST_BACKTRACE: 1
   RUST_CACHE_KEY: rust-cache-20241114
   DOCSRS_PREFIX: ignored/cratesfyi-prefix
-  DOCSRS_DATABASE_URL: postgresql://cratesfyi:password@localhost:15432
   DOCSRS_LOG: docs_rs=debug,rustwide=info
   AWS_ACCESS_KEY_ID: cratesfyi
   AWS_SECRET_ACCESS_KEY: secret_key
-  S3_ENDPOINT: http://localhost:9000
   DOCSRS_INCLUDE_DEFAULT_TARGETS: false
   DOCSRS_DOCKER_IMAGE: ghcr.io/rust-lang/crates-build-env/linux-micro
   SENTRY_ENVIRONMENT: dev
@@ -38,7 +36,7 @@ jobs:
       - name: Install development tools
         uses: jdx/mise-action@v5
         with:
-          version: 2026.10.14
+          version: 2026.10.19
           install_args: --jobs=1 just cargo:sqlx-cli
 
       - name: restore build & cargo cache

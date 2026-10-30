@@ -21,24 +21,27 @@ prepare-gui-tests:
     just _builder build crate sysinfo 0.23.4
     just _builder build crate sysinfo 0.23.5
     just _builder build crate libtest 0.0.1
+    just _builder build crate gethostname 1.1.0
     just _builder build crate lazy_static 1.5.0
     just _builder build crate owned-alloc 0.2.0
     just _builder build crate zbus 5.15.0
     just _builder build add-essential-files
     just cli database alert set --alert-id 123 'Scheduled <em>maintenance</em>'
 
-# Run browser assertions against an existing web server on localhost:3000.
+# Run browser assertions against DOCSRS_WEB_SERVER_URL (defaults to the local web port).
 [group('testing')]
-run-gui-browser-tests:
+run-gui-browser-tests *args:
     npm install --loglevel verbose
     npx --no-install puppeteer browsers install chrome
-    node ./gui-tests/tester.js
+    node ./gui-tests/tester.js {{ args }}
 
 # Run GUI tests with the web server on the host, reusing existing fixtures.
 [group('testing')]
-run-gui-tests: _ensure_db_migrated
+run-gui-tests *args: _ensure_db_migrated
     #!/usr/bin/env bash
     set -euo pipefail
+
+    export SQLX_OFFLINE=true
 
     cargo build -p docs_rs_web
 
@@ -57,7 +60,7 @@ run-gui-tests: _ensure_db_migrated
 
     # Fail instead of waiting forever if the server fails to start.
     for _ in {1..100}; do
-      if curl --silent --fail http://localhost:3000/ >/dev/null; then
+      if curl --silent --fail "$DOCSRS_WEB_SERVER_URL/" >/dev/null; then
         break
       fi
       if ! kill -0 "$web_pid" 2>/dev/null; then
@@ -66,8 +69,8 @@ run-gui-tests: _ensure_db_migrated
       sleep 0.2
     done
 
-    curl --silent --fail http://localhost:3000/ >/dev/null
-    just run-gui-browser-tests
+    curl --silent --fail "$DOCSRS_WEB_SERVER_URL/" >/dev/null
+    just run-gui-browser-tests {{ args }}
 
 # Run GUI tests against the packaged web-server Compose service.
 [group('testing')]
@@ -86,15 +89,15 @@ run-tests: compose-up-resources _build-test-binaries
     #!/usr/bin/env bash
     set -euo pipefail
 
+    export SQLX_OFFLINE=true
+
     export DOCSRS_INCLUDE_DEFAULT_TARGETS=false
     export DOCSRS_LOG=docs_rs=debug,rustwide=info
     export RUST_BACKTRACE=1
     export DOCSRS_PREFIX=ignored/cratesfyi-prefix
     export DOCSRS_RUSTSEC_ADVISORY_DB=ignored/rustsec-advisory-db
-    export DOCSRS_DATABASE_URL=postgresql://cratesfyi:password@localhost:15432
     export AWS_ACCESS_KEY_ID=cratesfyi
     export AWS_SECRET_ACCESS_KEY=secret_key
-    export S3_ENDPOINT=http://localhost:9000
 
     cargo nextest run --workspace --locked --no-fail-fast
 
@@ -103,13 +106,15 @@ run-tests: compose-up-resources _build-test-binaries
 # Should be migrated to some test-tagging (with nextest?) at some point
 [group('testing')]
 run-stress-tests:
-    cargo test -p docs_rs_storage --features stress-tests archive_index::tests::stress_tests
+    SQLX_OFFLINE=true cargo test -p docs_rs_storage --features stress-tests archive_index::tests::stress_tests
 
 # Run ignored builder integration tests serially.
 [group('testing')]
 run-builder-tests: compose-up-resources
     #!/usr/bin/env bash
     set -euo pipefail
+
+    export SQLX_OFFLINE=true
 
     export DOCSRS_INCLUDE_DEFAULT_TARGETS=true
     export DOCSRS_DOCKER_IMAGE=ghcr.io/rust-lang/crates-build-env/linux-micro

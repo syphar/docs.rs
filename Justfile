@@ -9,10 +9,16 @@ set dotenv-override
 # Typically you will want to create your own `.env` file based on `.env.sample` for
 # easier local development.
 export DOCSRS_PREFIX := env("DOCSRS_PREFIX", "ignored/cratesfyi-prefix")
-export DOCSRS_DATABASE_URL := env("DOCSRS_DATABASE_URL", "postgresql://cratesfyi:password@localhost:15432")
+export DOCSRS_POSTGRES_PORT := env("DOCSRS_POSTGRES_PORT", "15432")
+export DOCSRS_DATABASE_URL := env("DOCSRS_DATABASE_URL", "postgresql://cratesfyi:password@localhost:" + DOCSRS_POSTGRES_PORT)
+export DATABASE_URL := env("DATABASE_URL", DOCSRS_DATABASE_URL)
 export AWS_ACCESS_KEY_ID := env("AWS_ACCESS_KEY_ID", "cratesfyi")
 export AWS_SECRET_ACCESS_KEY := env("AWS_SECRET_ACCESS_KEY", "secret_key")
-export S3_ENDPOINT := env("S3_ENDPOINT", "http://localhost:9000")
+export DOCSRS_S3_PORT := env("DOCSRS_S3_PORT", "9000")
+export DOCSRS_S3_CONSOLE_PORT := env("DOCSRS_S3_CONSOLE_PORT", "9001")
+export S3_ENDPOINT := env("S3_ENDPOINT", "http://localhost:" + DOCSRS_S3_PORT)
+export DOCSRS_WEB_PORT := env("DOCSRS_WEB_PORT", "3000")
+export DOCSRS_WEB_SERVER_URL := env("DOCSRS_WEB_SERVER_URL", "http://127.0.0.1:" + DOCSRS_WEB_PORT)
 
 # List available commands
 _default:

@@ -10,6 +10,10 @@ body.rustdoc-page > .nav-container > .container {
     margin-left: 0;
 }
 
+body.rustdoc-page > .nav-container {
+    position: fixed;
+}
+
 div.container-rustdoc {
     text-align: left;
 }
@@ -43,6 +47,10 @@ div.rustdoc {
 
     @media (max-width: 700px) {
         padding-top: 0;
+    }
+
+    main {
+        margin-top: 32px; /* Offset of the fixed navigation bar */
     }
 
     .sidebar {

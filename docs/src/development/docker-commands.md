@@ -91,8 +91,8 @@ release script instead, using the same database and CDN configuration as the
 admin CLI:
 
 ```console
-$ docker run --rm --env-file .docker.env \
-    --entrypoint /usr/bin/tini docs-rs-admin:ci -- /usr/local/bin/docs_rs_release.sh
+$ docker compose run --rm --entrypoint /usr/bin/tini \
+    cli -- /usr/local/bin/docs_rs_release.sh
 ```
 
 ### Run during ECS deployment
@@ -215,8 +215,9 @@ This does not rebuild fixtures, making it the fast path for changes to
 templates, CSS, JavaScript, and web behavior. `just compose-down` preserves the
 fixtures; `just compose-down-and-wipe` removes them.
 
-If a suitable web server is already listening on port 3000, run only the browser
-assertions with:
+If a suitable web server is already listening on `DOCSRS_WEB_PORT` (default
+`3000`), or at an explicitly configured `DOCSRS_WEB_SERVER_URL`, run only the
+browser assertions with:
 
 ```console
 $ just run-gui-browser-tests

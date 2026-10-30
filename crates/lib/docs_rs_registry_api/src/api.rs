@@ -6,6 +6,7 @@ use crate::{
         ApiErrors, CrateData, CrateOwner, OwnerKind, ReleaseData, Search, SearchCursor,
         SearchResponse,
     },
+    retry::RegistryApiRetryStrategy,
 };
 use anyhow::Context as _;
 use docs_rs_crate_archive::{SourceDir, unpack_crate_archive};
@@ -143,8 +144,9 @@ impl RegistryApi {
                 .gzip(true)
                 .build()?,
         )
-        .with(RetryTransientMiddleware::new_with_policy(
+        .with(RetryTransientMiddleware::new_with_policy_and_strategy(
             ExponentialBackoff::builder().build_with_max_retries(max_retries),
+            RegistryApiRetryStrategy,
         ))
         .build();
 
@@ -445,7 +447,7 @@ mod tests {
     use super::*;
     use crate::{
         models::{ApiError, SearchCrate, SearchMeta, SearchQuery, SearchSort},
-        testing::TestRegistry,
+        testing::{TestRegistry, registry_entry},
     };
     use chrono::{DateTime, Utc};
     use crates_index::IndexConfig;
@@ -455,20 +457,6 @@ mod tests {
     use serde::Serialize;
     use test_case::test_case;
     use tokio::fs;
-
-    const CHECKSUM: &str = "0000000000000000000000000000000000000000000000000000000000000000";
-
-    fn sparse_entry(version: &Version, pubtime: Option<&str>, yanked: bool) -> serde_json::Value {
-        serde_json::json!({
-            "name": KRATE.as_str(),
-            "vers": version.to_string(),
-            "pubtime": pubtime,
-            "deps": [],
-            "cksum": CHECKSUM,
-            "features": {},
-            "yanked": yanked,
-        })
-    }
 
     async fn test_search(body: impl Serialize) -> Result<Search> {
         let env = TestRegistry::new().await?;
@@ -528,7 +516,7 @@ mod tests {
             .crate_names(["foo"])
             .create()
             .await;
-        env.mock_index_response(&KRATE, [sparse_entry(&V1, None, false)])
+        env.mock_index_response(&KRATE, [registry_entry(&KRATE, &V1, None, false)])
             .await;
         env.mock_download(&KRATE, &V1, Vec::new()).await;
 
@@ -834,11 +822,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_search_does_not_retry_rate_limit() -> Result<()> {
+        let env = TestRegistry::builder().retries(2u32).build().await?;
+        env.create_api_mock("/api/v1/crates?q=foo", |mock| {
+            mock.with_status(StatusCode::TOO_MANY_REQUESTS.as_u16().into())
+                .expect(1)
+        })
+        .await;
+
+        assert!(matches!(
+            env.api().search(&SearchQuery::from("foo")).await.unwrap_err(),
+            Error::CrateIoError(status, _) if status == StatusCode::TOO_MANY_REQUESTS
+        ));
+        env.assert_mocks().await;
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_get_release_ok() -> Result<()> {
         let release_data = test_get_release(
             [
-                sparse_entry(&V1, Some("2024-01-01T00:00:00Z"), false),
-                sparse_entry(&V2, Some("2024-01-02T00:00:00Z"), true),
+                registry_entry(&KRATE, &V1, Some("2024-01-01T00:00:00Z"), false),
+                registry_entry(&KRATE, &V2, Some("2024-01-02T00:00:00Z"), true),
             ],
             &V1,
         )
@@ -864,8 +870,8 @@ mod tests {
     async fn test_get_release_without_pubtime() -> Result<()> {
         let release_data = test_get_release(
             [
-                sparse_entry(&V1, None, false),
-                sparse_entry(&V2, Some("2024-01-02T00:00:00Z"), true),
+                registry_entry(&KRATE, &V1, None, false),
+                registry_entry(&KRATE, &V2, Some("2024-01-02T00:00:00Z"), true),
             ],
             &V1,
         )
@@ -887,7 +893,12 @@ mod tests {
     async fn test_get_release_not_found_other_version() -> Result<()> {
         assert!(
             test_get_release(
-                [sparse_entry(&V1, Some("2024-01-01T00:00:00Z"), false)],
+                [registry_entry(
+                    &KRATE,
+                    &V1,
+                    Some("2024-01-01T00:00:00Z"),
+                    false
+                )],
                 &V2,
             )
             .await?
@@ -911,7 +922,12 @@ mod tests {
         let env = TestRegistry::new().await?;
         env.mock_index_response(
             &KRATE,
-            [sparse_entry(&V1, Some("2024-01-01T00:00:00Z"), false)],
+            [registry_entry(
+                &KRATE,
+                &V1,
+                Some("2024-01-01T00:00:00Z"),
+                false,
+            )],
         )
         .await;
 
@@ -972,12 +988,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_release_yanked_and_invalid_pubtime() -> Result<()> {
-        let data = test_get_release([sparse_entry(&V1, Some("invalid"), true)], &V1).await;
+        let data =
+            test_get_release([registry_entry(&KRATE, &V1, Some("invalid"), true)], &V1).await;
         assert!(matches!(data.unwrap_err(), Error::Other(_)));
 
-        let data = test_get_release([sparse_entry(&V1, Some("2024-01-01T00:00:00Z"), true)], &V1)
-            .await?
-            .unwrap();
+        let data = test_get_release(
+            [registry_entry(
+                &KRATE,
+                &V1,
+                Some("2024-01-01T00:00:00Z"),
+                true,
+            )],
+            &V1,
+        )
+        .await?
+        .unwrap();
         assert!(data.yanked);
         Ok(())
     }
