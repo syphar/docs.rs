@@ -22,5 +22,8 @@ They cover point lookups, counting and streaming all entries on a reused
 connection, connection initialization, and fresh connections for concurrent
 lookups and root directory listings. Concurrency levels are 1, 4, 16, and 64;
 reported times for these cases are for the whole batch, with throughput measured
-in requests. The index and filesystem caches are warm; S3 downloads, cache repair,
-and archive payload reads are excluded.
+in requests. These fresh-connection cases create a standalone pool per request;
+the `archive_index_cache` benchmark covers production's shared pools, including
+concurrent warm lookups at the same concurrency levels. The index and filesystem
+caches are warm; S3 downloads, cache repair, and archive payload reads are excluded
+from `archive_index_read`.

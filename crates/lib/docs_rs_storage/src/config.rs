@@ -67,6 +67,13 @@ pub struct ArchiveIndexCacheConfig {
     // We might drop this config once the metrics show which option is better for
     // our workload.
     pub eviction_policy: EvictionPolicy,
+
+    /// Connection pools are cached separately from index files, using LRU and idle expiry.
+    pub pool_cache_capacity: u64,
+    pub pool_cache_tti: Duration,
+    pub pool_min_connections: u32,
+    pub pool_max_connections: u32,
+    pub pool_idle_timeout: Duration,
 }
 
 impl AppConfig for ArchiveIndexCacheConfig {
@@ -77,7 +84,25 @@ impl AppConfig for ArchiveIndexCacheConfig {
             warn!("legacy config for archive index cache size. will be ignored.")
         }
 
+        let pool_min_connections = env("DOCSRS_ARCHIVE_INDEX_POOL_MIN_CONNECTIONS", 1u32)?;
+        let pool_max_connections = env("DOCSRS_ARCHIVE_INDEX_POOL_MAX_CONNECTIONS", 10u32)?;
+        anyhow::ensure!(
+            pool_max_connections > 0 && pool_min_connections <= pool_max_connections,
+            "archive index pool sizes must satisfy min <= max and max > 0"
+        );
+
         Ok(Self {
+            pool_cache_capacity: env("DOCSRS_ARCHIVE_INDEX_POOL_CACHE_CAPACITY", 128u64)?,
+            pool_cache_tti: env(
+                "DOCSRS_ARCHIVE_INDEX_POOL_CACHE_TTI",
+                Duration::from_secs(300),
+            )?,
+            pool_min_connections,
+            pool_max_connections,
+            pool_idle_timeout: env(
+                "DOCSRS_ARCHIVE_INDEX_POOL_IDLE_TIMEOUT",
+                Duration::from_secs(60),
+            )?,
             path: ensure_absolute_path(env(
                 "DOCSRS_ARCHIVE_INDEX_CACHE_PATH",
                 prefix.join("archive_cache"),

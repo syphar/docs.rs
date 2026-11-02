@@ -185,6 +185,25 @@ impl Entry {
 }
 
 type CacheManager = MokaCache<PathBuf, Arc<Entry>>;
+type PoolCache = MokaCache<PathBuf, Arc<CachedPool>>;
+
+struct CachedPool {
+    pool: sqlx::SqlitePool,
+    // Immutable SQLite connections must not be reused after a file is replaced or modified.
+    metadata: std::fs::Metadata,
+}
+
+impl CachedPool {
+    fn matches(&self, metadata: &std::fs::Metadata) -> bool {
+        use std::os::unix::fs::MetadataExt as _;
+        self.metadata.dev() == metadata.dev()
+            && self.metadata.ino() == metadata.ino()
+            && self.metadata.len() == metadata.len()
+            && self.metadata.modified().ok() == metadata.modified().ok()
+            && self.metadata.ctime() == metadata.ctime()
+            && self.metadata.ctime_nsec() == metadata.ctime_nsec()
+    }
+}
 
 /// Local archive index cache.
 ///
@@ -206,6 +225,7 @@ pub(crate) struct Cache {
     config: Arc<ArchiveIndexCacheConfig>,
     /// Tracks locally cached archive indices and coordinates their initialization & invalidation.
     manager: CacheManager,
+    pools: PoolCache,
     metrics: Arc<Metrics>,
     background_tasks: Vec<JoinHandle<()>>,
 }
@@ -265,6 +285,12 @@ impl Cache {
             .await
             .context("failed to create archive index cache directory")?;
 
+        let pools = PoolCache::builder()
+            .max_capacity(config.pool_cache_capacity)
+            .eviction_policy(moka::policy::EvictionPolicy::lru())
+            .time_to_idle(config.pool_cache_tti.into())
+            .build();
+        let pools_for_eviction = pools.clone();
         let metrics = Arc::new(Metrics::new(meter_provider));
         let metrics_for_eviction = metrics.clone();
         let manager = CacheManager::builder()
@@ -288,6 +314,7 @@ impl Cache {
             .async_eviction_listener(move |path, entry, reason| {
                 let path = path.to_path_buf();
                 let metrics = metrics_for_eviction.clone();
+                let pools = pools_for_eviction.clone();
                 Box::pin(async move {
                     metrics.record_evicted_entry(&entry, reason);
 
@@ -297,6 +324,8 @@ impl Cache {
                     if reason == RemovalCause::Explicit {
                         return;
                     }
+
+                    pools.invalidate(&path).await;
 
                     trace!(
                         ?path,
@@ -317,6 +346,7 @@ impl Cache {
 
         let handle = tokio::spawn({
             let manager = manager.clone();
+            let pools = pools.clone();
             let metrics = metrics.clone();
 
             // moka will also run maintenance tasks itself, but I want to force this
@@ -330,6 +360,7 @@ impl Cache {
 
                     debug!("running pending tasks for archive index cache manager");
                     manager.run_pending_tasks().await;
+                    pools.run_pending_tasks().await;
 
                     debug!("collect cache size metrics");
                     metrics.entry_count.record(manager.entry_count(), &[]);
@@ -341,6 +372,7 @@ impl Cache {
         });
 
         let cache = Self {
+            pools,
             manager,
             config,
             metrics,
@@ -353,6 +385,7 @@ impl Cache {
     #[cfg(test)]
     async fn flush(&self) -> Result<()> {
         self.manager.run_pending_tasks().await;
+        self.pools.run_pending_tasks().await;
         Ok(())
     }
 
@@ -446,6 +479,7 @@ impl Cache {
         latest_build_id: Option<BuildId>,
     ) -> Result<()> {
         let local_index_path = self.local_index_path(archive_path, latest_build_id);
+        self.pools.invalidate(&local_index_path).await;
         Self::remove_local_index(&local_index_path).await?;
         self.manager.invalidate(&local_index_path).await;
 
@@ -465,6 +499,15 @@ impl Cache {
         for attempt in 1..=REPAIR_ATTEMPTS {
             match action().await {
                 Ok(value) => return Ok((value, attempt)),
+                // Pool saturation is not evidence of a corrupt index.
+                Err(err)
+                    if matches!(
+                        err.downcast_ref::<sqlx::Error>(),
+                        Some(sqlx::Error::PoolTimedOut)
+                    ) =>
+                {
+                    return Err(err);
+                }
                 Err(err) if attempt == 1 && attempt < REPAIR_ATTEMPTS => {
                     // An unlocked open or query may race with file cleanup. Retry
                     // the whole operation once before purging: another request
@@ -515,7 +558,7 @@ impl Cache {
         let local_index_path = self.local_index_path(archive_path, latest_build_id);
 
         // fast path: try to use whatever is there, no locking
-        match Index::open(&local_index_path).await {
+        match self.open_index(&local_index_path).await {
             Ok(index) => {
                 // Keep moka's recency/frequency view in sync with successful fast-path
                 // file lookups so TTI and admission decisions reflect real usage.
@@ -531,6 +574,14 @@ impl Cache {
 
                 return Ok(index);
             }
+            Err(err)
+                if matches!(
+                    err.downcast_ref::<sqlx::Error>(),
+                    Some(sqlx::Error::PoolTimedOut)
+                ) =>
+            {
+                return Err(err);
+            }
             Err(err) => {
                 debug!(?err, "archive index open failed, will try repair.");
             }
@@ -539,6 +590,35 @@ impl Cache {
         let remote_index_path = format!("{archive_path}.{ARCHIVE_INDEX_FILE_EXTENSION}");
         self.repair_index(&local_index_path, &remote_index_path, downloader)
             .await
+    }
+
+    async fn open_index(&self, path: &Path) -> Result<Index> {
+        Index::from_pool(&self.open_pool(path).await?).await
+    }
+
+    /// Coalesce pool creation for each path without tying open connections to the disk cache size.
+    async fn open_pool(&self, path: &Path) -> Result<sqlx::SqlitePool> {
+        let metadata = fs::metadata(path).await?;
+        if let Some(cached) = self.pools.get(path).await {
+            if cached.matches(&metadata) {
+                return Ok(cached.pool.clone());
+            }
+            self.pools.invalidate(path).await;
+        }
+        let cached = self
+            .pools
+            .get_with_by_ref(path, async {
+                let pool = sqlite_pool_options()
+                    .min_connections(self.config.pool_min_connections)
+                    .max_connections(self.config.pool_max_connections)
+                    .idle_timeout(Some(self.config.pool_idle_timeout.into()))
+                    // Acquire below validates the file and returns concrete SQLx errors;
+                    // sharing initialization errors through Moka would erase their types.
+                    .connect_lazy_with(sqlite_connect_options(path));
+                Arc::new(CachedPool { pool, metadata })
+            })
+            .await;
+        Ok(cached.pool.clone())
     }
 
     async fn repair_index<D: Downloader + Sync>(
@@ -562,6 +642,7 @@ impl Cache {
         // Recheck the file inside the initializer before deciding to replace it,
         // so a delayed request can reuse another request's repair. This still does
         // not make the whole open/invalidate/repair sequence atomic.
+        self.pools.invalidate(local_index_path).await;
         self.manager.invalidate(local_index_path).await;
 
         // moka will coalesce all concurrent calls to try_get_with_by_ref with the same key
@@ -620,7 +701,7 @@ impl Cache {
 
         // Final open for this retry attempt. If it fails, the caller's retry loop
         // purges the cache entry and tries again.
-        Index::open(local_index_path).await
+        self.open_index(local_index_path).await
     }
 
     /// Find the file metadata needed to fetch a certain path inside a remote archive.
@@ -745,10 +826,7 @@ async fn sqlite_create<P: AsRef<Path>>(path: P) -> Result<sqlx::SqliteConnection
         .map_err(Into::into)
 }
 
-/// open existing SQLite database, return a configured connection pool
-/// to connect to the DB.
-/// Will error when the database doesn't exist at that path.
-async fn sqlite_open<P: AsRef<Path>>(path: P) -> Result<sqlx::SqliteConnection> {
+fn sqlite_connect_options(path: impl AsRef<Path>) -> sqlx::sqlite::SqliteConnectOptions {
     sqlx::sqlite::SqliteConnectOptions::new()
         .filename(path)
         .read_only(true)
@@ -760,6 +838,20 @@ async fn sqlite_open<P: AsRef<Path>>(path: P) -> Result<sqlx::SqliteConnection> 
         .pragma("cache_size", "-4096") // 4 MiB
         .serialized(false) // same as OPEN_NOMUTEX
         .create_if_missing(false)
+}
+
+fn sqlite_pool_options() -> sqlx::sqlite::SqlitePoolOptions {
+    sqlx::sqlite::SqlitePoolOptions::new()
+        .min_connections(1)
+        .max_connections(10)
+        .idle_timeout(Some(Duration::from_secs(60)))
+        // Expire by idle time rather than retiring frequently used connections by age.
+        .max_lifetime(None)
+}
+
+#[cfg(test)]
+async fn sqlite_open(path: impl AsRef<Path>) -> Result<sqlx::SqliteConnection> {
+    sqlite_connect_options(path)
         .connect()
         .await
         .map_err(Into::into)
@@ -857,8 +949,9 @@ where
     Ok(zipfile)
 }
 
+/// A connection leased from an archive's pool. Dropping it returns the connection to the pool.
 pub struct Index {
-    conn: sqlx::SqliteConnection,
+    conn: sqlx::pool::PoolConnection<Sqlite>,
 }
 
 impl Index {
@@ -866,15 +959,22 @@ impl Index {
     where
         P: AsRef<Path>,
     {
-        let archive_index_path = archive_index_path.as_ref().to_path_buf();
-        let conn = sqlite_open(&archive_index_path).await?;
-        Ok(Self { conn })
+        let pool = sqlite_pool_options()
+            .connect_with(sqlite_connect_options(archive_index_path))
+            .await?;
+        Self::from_pool(&pool).await
+    }
+
+    async fn from_pool(pool: &sqlx::SqlitePool) -> Result<Self> {
+        Ok(Self {
+            conn: pool.acquire().await?,
+        })
     }
 
     /// Number of files stored in the archive.
     pub async fn file_count(&mut self) -> Result<u64> {
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM files")
-            .fetch_one(&mut self.conn)
+            .fetch_one(&mut *self.conn)
             .await?;
         Ok(count.try_into()?)
     }
@@ -901,7 +1001,7 @@ impl Index {
                 WHERE path = ?",
         )
         .bind(search_str)
-        .fetch_optional(&mut self.conn)
+        .fetch_optional(&mut *self.conn)
         .await
         .context("error fetching SQLite data")?;
 
@@ -929,7 +1029,7 @@ impl Index {
             let mut rows = sqlx::query(
                 "SELECT path, start, end, compression FROM files"
             )
-            .fetch(&mut self.conn);
+            .fetch(&mut *self.conn);
 
             while let Some(row) = rows.try_next().await.context("error fetching SQLite data")? {
                 let path: String = row.try_get(0)?;
@@ -996,13 +1096,13 @@ impl Index {
                 .bind(start)
                 .bind(prefix)
                 .bind(upper_bound)
-                .fetch(&mut self.conn)
+                .fetch(&mut *self.conn)
             } else {
                 sqlx::query(
                     "SELECT DISTINCT substr(path, 1, instr(path || '/', '/')) AS child
                      FROM files"
                 )
-                .fetch(&mut self.conn)
+                .fetch(&mut *self.conn)
             };
             while let Some(row) = rows.try_next().await.context("error fetching entries from SQLite")? {
                 let child: String = row.try_get(0)?;
@@ -1299,6 +1399,156 @@ mod tests {
 
         assert_eq!(row.get::<i64, _>(0), 100_000);
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn concurrent_lookups_share_a_bounded_pool() -> Result<()> {
+        let cache = test_cache().await?;
+        let path = cache.local_index_path("pooled.zip", None);
+        fs::write(&path, create_index_bytes(1).await?).await?;
+        let downloader = FakeDownloader::new();
+
+        // Concurrent initialization must publish a single pool for this archive.
+        let pools =
+            futures_util::future::try_join_all((0..16).map(|_| cache.open_pool(&path))).await?;
+        let pool = &pools[0];
+        assert_eq!(pool.options().get_min_connections(), 1);
+        assert_eq!(pool.options().get_max_connections(), 10);
+        let mut leases = Vec::new();
+        for pool in &pools[..10] {
+            leases.push(Index::from_pool(pool).await?);
+        }
+        assert_eq!(pool.size(), 10);
+        assert!(pool.try_acquire().is_none());
+
+        // The eleventh request waits for a lease rather than opening another pool.
+        let request = cache.find_index("pooled.zip", None, &downloader);
+        tokio::pin!(request);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut request)
+                .await
+                .is_err()
+        );
+        drop(leases.pop());
+        let mut index = tokio::time::timeout(Duration::from_secs(2), request).await??;
+        assert!(index.find("testfile0").await?.is_some());
+        assert_eq!(pool.size(), 10);
+        assert_eq!(downloader.download_count("pooled.zip.index"), 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pool_acquire_timeout_does_not_purge_index() -> Result<()> {
+        let cache = test_cache().await?;
+        let path = cache.local_index_path("busy.zip", None);
+        fs::write(&path, create_index_bytes(1).await?).await?;
+        let mut attempts = 0;
+        let result = cache
+            .retry_with_purge("busy.zip", None, || {
+                attempts += 1;
+                async { Err::<(), _>(anyhow!(sqlx::Error::PoolTimedOut)) }
+            })
+            .await;
+        assert!(result.is_err());
+        assert_eq!(attempts, 1);
+        assert!(fs::try_exists(&path).await?);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pools_expire_without_removing_index_files() -> Result<()> {
+        let mut config = ArchiveIndexCacheConfig::test_config()?;
+        config.pool_cache_tti = docs_rs_types::Duration::from_millis(100);
+        let metrics = TestMetrics::new();
+        let cache = Cache::new_inner(Arc::new(config), metrics.provider()).await?;
+        let path = cache.local_index_path("idle.zip", None);
+        fs::write(&path, create_index_bytes(1).await?).await?;
+        let mut lease = Index::from_pool(&cache.open_pool(&path).await?).await?;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        cache.flush().await?;
+        assert!(cache.pools.get(&path).await.is_none());
+        assert!(fs::try_exists(&path).await?);
+        // Eviction releases cached ownership without interrupting an active reader.
+        assert!(lease.find("testfile0").await?.is_some());
+        let downloader = FakeDownloader::new();
+        assert!(
+            cache
+                .find("idle.zip", None, "testfile0", &downloader)
+                .await?
+                .is_some()
+        );
+        assert_eq!(downloader.download_count("idle.zip.index"), 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pool_cache_retains_recently_used_indexes() -> Result<()> {
+        let mut config = ArchiveIndexCacheConfig::test_config()?;
+        config.pool_cache_capacity = 2;
+        config.pool_max_connections = 2;
+        let metrics = TestMetrics::new();
+        let cache = Cache::new_inner(Arc::new(config), metrics.provider()).await?;
+        let bytes = create_index_bytes(1).await?;
+        let paths =
+            ["one.zip", "two.zip", "three.zip"].map(|name| cache.local_index_path(name, None));
+        for path in &paths {
+            fs::write(path, &bytes).await?;
+        }
+        cache.open_pool(&paths[0]).await?;
+        cache.flush().await?;
+        cache.open_pool(&paths[1]).await?;
+        cache.flush().await?;
+        cache.open_pool(&paths[0]).await?;
+        cache.flush().await?;
+        cache.open_pool(&paths[2]).await?;
+        cache.flush().await?;
+        assert!(cache.pools.get(&paths[0]).await.is_some());
+        assert!(cache.pools.get(&paths[1]).await.is_none());
+        assert!(cache.pools.get(&paths[2]).await.is_some());
+        assert_eq!(
+            cache
+                .open_pool(&paths[0])
+                .await?
+                .options()
+                .get_max_connections(),
+            2
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn replacing_index_file_discards_cached_pool() -> Result<()> {
+        let cache = test_cache().await?;
+        let path = cache.local_index_path("replaced.zip", None);
+        fs::write(&path, create_index_bytes(1).await?).await?;
+        let mut old_reader = cache.open_index(&path).await?;
+        let replacement = create_index(2).await?;
+        // The SQLite files have the same size; identity must detect the replacement.
+        assert_eq!(
+            fs::metadata(&path).await?.len(),
+            fs::metadata(&replacement).await?.len()
+        );
+        fs::rename(&replacement, &path).await?;
+        let mut new_reader = cache.open_index(&path).await?;
+        assert_eq!(new_reader.file_count().await?, 2);
+        assert_eq!(old_reader.file_count().await?, 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn purge_replaces_pool_and_preserves_active_reader() -> Result<()> {
+        let cache = test_cache().await?;
+        let path = cache.local_index_path("purged.zip", None);
+        fs::write(&path, create_index_bytes(1).await?).await?;
+        let old = cache.open_pool(&path).await?;
+        let mut reader = Index::from_pool(&old).await?;
+        cache.purge("purged.zip", None).await?;
+        assert!(cache.pools.get(&path).await.is_none());
+        fs::write(&path, create_index_bytes(2).await?).await?;
+        let mut replacement = Index::from_pool(&cache.open_pool(&path).await?).await?;
+        assert_eq!(replacement.file_count().await?, 2);
+        assert_eq!(reader.file_count().await?, 1);
         Ok(())
     }
 
@@ -1668,7 +1918,9 @@ mod tests {
         let shm = local_index.with_extension(format!("{ARCHIVE_INDEX_FILE_EXTENSION}-shm"));
 
         fs::create_dir_all(local_index.parent().unwrap()).await?;
-        fs::write(&local_index, b"index").await?;
+        fs::write(&local_index, create_index_bytes(1).await?).await?;
+        cache.open_index(&local_index).await?;
+        assert!(cache.pools.get(&local_index).await.is_some());
         fs::write(&wal, b"wal").await?;
         fs::write(&shm, b"shm").await?;
 
@@ -1684,6 +1936,7 @@ mod tests {
 
         cache.flush().await?;
 
+        assert!(cache.pools.get(&local_index).await.is_none());
         assert!(!fs::try_exists(&local_index).await?);
         assert!(!fs::try_exists(&wal).await?);
         assert!(!fs::try_exists(&shm).await?);

@@ -64,9 +64,10 @@ fn archive_index_read(c: &mut Criterion) {
     group.finish();
     drop(index);
 
-    // Production opens a connection per lookup. Include open, PRAGMAs, query,
-    // result consumption, and dropping the connection in each timed request.
-    // This is a local-index benchmark: no S3 downloads or cache repairs occur.
+    // Measure standalone pools without the production pool cache. Include pool
+    // initialization, acquisition, PRAGMAs, query, and dropping the connection.
+    // The archive_index_cache bench covers production's shared pools.
+    // No S3 downloads or cache repairs occur here.
     let mut group = c.benchmark_group("archive_index_read/fresh_connection");
     group.throughput(Throughput::Elements(1));
     group.bench_function("open", |b| {

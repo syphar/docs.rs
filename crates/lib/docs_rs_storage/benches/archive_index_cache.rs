@@ -1,5 +1,5 @@
 use anyhow::Result;
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use docs_rs_opentelemetry::testing::TestMetrics;
 use docs_rs_storage::{StorageKind, testing::TestStorage};
 use docs_rs_types::BuildId;
@@ -131,6 +131,21 @@ pub fn archive_index_cache(c: &mut Criterion) {
         },
     );
 
+    group.finish();
+
+    let mut group = c.benchmark_group("archive_index_cache/hot_local_index_concurrent");
+    for readers in [1, 4, 16, 64] {
+        group.throughput(Throughput::Elements(readers));
+        group.bench_function(BenchmarkId::new("exists_in_archive", readers), |b| {
+            b.to_async(&runtime).iter(|| async {
+                let requests = (0..readers).map(|_| {
+                    storage.exists_in_archive(ARCHIVE_PATH, Some(BuildId(1)), FILE_IN_ARCHIVE)
+                });
+                let results = try_join_all(requests).await.unwrap();
+                assert!(results.into_iter().all(std::convert::identity));
+            });
+        });
+    }
     group.finish();
 }
 
