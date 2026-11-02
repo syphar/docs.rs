@@ -76,6 +76,11 @@ harness = false
 required-features = ["testing"]
 
 [[bench]]
+name = "archive_index_read"
+harness = false
+required-features = ["testing"]
+
+[[bench]]
 name = "crc32"
 harness = false
 
