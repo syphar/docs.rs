@@ -44,6 +44,9 @@ pub struct ArchiveIndexCacheConfig {
     // maximum disk space for the local archive index cache.
     pub max_size: ByteSize,
 
+    /// Maximum simultaneous SQLite readers, including opening and closing connections.
+    pub max_connections: usize,
+
     // TTL for the local index cache
     pub ttl: Duration,
 
@@ -83,6 +86,7 @@ impl AppConfig for ArchiveIndexCacheConfig {
                 prefix.join("archive_cache"),
             )?)?,
             max_size: env("DOCSRS_ARCHIVE_INDEX_CACHE_MAX_SIZE", ByteSize::gib(50))?,
+            max_connections: env("DOCSRS_ARCHIVE_INDEX_CACHE_MAX_CONNECTIONS", 64usize)?,
             ttl: env("DOCSRS_ARCHIVE_INDEX_CACHE_TTL", Duration::from_days(1))?,
             eviction_policy: maybe_env("DOCSRS_ARCHIVE_INDEX_CACHE_EVICTION_POLICY")?
                 .unwrap_or_default(),

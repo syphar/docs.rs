@@ -8,5 +8,7 @@ pub use utils::check_archive_consistency;
 pub async fn open_archive_index(
     index_path: &std::path::Path,
 ) -> anyhow::Result<crate::archive_index::Index> {
-    crate::archive_index::Index::open(index_path).await
+    let slots = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
+    let permit = slots.acquire_owned().await?;
+    crate::archive_index::Index::open(index_path, permit).await
 }

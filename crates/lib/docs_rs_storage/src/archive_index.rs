@@ -13,7 +13,7 @@ use opentelemetry::{
     KeyValue,
     metrics::{Counter, Gauge, Histogram},
 };
-use sqlx::{ConnectOptions as _, Connection as _, QueryBuilder, Row as _, Sqlite};
+use sqlx::{ConnectOptions as _, Connection as _, Executor as _, QueryBuilder, Row as _, Sqlite};
 use std::{
     fmt,
     future::Future,
@@ -28,11 +28,12 @@ use std::{
 use tokio::{
     fs,
     io::{self, AsyncRead, AsyncSeek, AsyncWriteExt as _},
-    sync::mpsc,
+    runtime::Handle,
+    sync::{OwnedSemaphorePermit, Semaphore, mpsc},
     task::JoinHandle,
 };
 use tokio_util::io::SyncIoBridge;
-use tracing::{debug, error, info, instrument, trace, warn};
+use tracing::{Instrument as _, debug, error, info, instrument, trace, warn};
 
 pub(crate) const ARCHIVE_INDEX_FILE_EXTENSION: &str = "index";
 
@@ -208,6 +209,8 @@ pub(crate) struct Cache {
     manager: CacheManager,
     metrics: Arc<Metrics>,
     background_tasks: Vec<JoinHandle<()>>,
+    /// Shared by all readers of this cache, independently of the cached file count.
+    connection_slots: Arc<Semaphore>,
 }
 
 pub(crate) trait Downloader {
@@ -261,6 +264,11 @@ impl Cache {
         config: Arc<ArchiveIndexCacheConfig>,
         meter_provider: &AnyMeterProvider,
     ) -> Result<Self> {
+        anyhow::ensure!(
+            config.max_connections > 0 && config.max_connections <= Semaphore::MAX_PERMITS,
+            "archive index cache max_connections must be between 1 and {}",
+            Semaphore::MAX_PERMITS,
+        );
         fs::create_dir_all(&config.path)
             .await
             .context("failed to create archive index cache directory")?;
@@ -341,12 +349,28 @@ impl Cache {
         });
 
         let cache = Self {
+            connection_slots: Arc::new(Semaphore::new(config.max_connections)),
             manager,
             config,
             metrics,
             background_tasks: vec![handle],
         };
         Ok(cache)
+    }
+
+    #[instrument(skip(self, path), fields(path = %path.as_ref().display()))]
+    async fn open_index(&self, path: impl AsRef<Path>) -> Result<Index> {
+        let permit = self
+            .connection_slots
+            .clone()
+            .acquire_owned()
+            .instrument(tracing::info_span!("sqlite_connection_wait"))
+            .await?;
+        let path = path.as_ref().to_path_buf();
+
+        // Detaching this task on request cancellation lets initialization finish.
+        // Its result is then dropped and closed with the permit still attached.
+        tokio::spawn(Index::open(path, permit).instrument(tracing::Span::current())).await?
     }
 
     /// run any pending tasks, like evictions that need to delete local files.
@@ -515,7 +539,7 @@ impl Cache {
         let local_index_path = self.local_index_path(archive_path, latest_build_id);
 
         // fast path: try to use whatever is there, no locking
-        match Index::open(&local_index_path).await {
+        match self.open_index(&local_index_path).await {
             Ok(index) => {
                 // Keep moka's recency/frequency view in sync with successful fast-path
                 // file lookups so TTI and admission decisions reflect real usage.
@@ -574,7 +598,7 @@ impl Cache {
                 // The initializer's filesystem operations can still overlap eviction
                 // cleanup. The final open validates the file after initialization;
                 // the caller's bounded retry loop handles any remaining race.
-                let entry = match Index::open(local_index_path).await {
+                let entry = match self.open_index(local_index_path).await {
                     Ok(_index) => Entry::from_path(local_index_path).await,
                     Err(err) => {
                         // Base cleanup on the current failure, not the original
@@ -620,7 +644,7 @@ impl Cache {
 
         // Final open for this retry attempt. If it fails, the caller's retry loop
         // purges the cache entry and tries again.
-        Index::open(local_index_path).await
+        self.open_index(local_index_path).await
     }
 
     /// Find the file metadata needed to fetch a certain path inside a remote archive.
@@ -745,19 +769,14 @@ async fn sqlite_create<P: AsRef<Path>>(path: P) -> Result<sqlx::SqliteConnection
         .map_err(Into::into)
 }
 
-/// open existing SQLite database, return a configured connection pool
-/// to connect to the DB.
-/// Will error when the database doesn't exist at that path.
+/// Open an existing read-only database without loading its schema yet.
+/// The Index must own the permit before applying schema-reading PRAGMAs.
 async fn sqlite_open<P: AsRef<Path>>(path: P) -> Result<sqlx::SqliteConnection> {
     sqlx::sqlite::SqliteConnectOptions::new()
         .filename(path)
         .read_only(true)
         .immutable(true)
-        .pragma("synchronous", "off") // not needed for readonly db
-        .pragma("temp_store", "MEMORY")
-        .pragma("query_only", "ON")
-        .pragma("mmap_size", "536870912") // 512 MiB
-        .pragma("cache_size", "-4096") // 4 MiB
+        .foreign_keys(false)
         .serialized(false) // same as OPEN_NOMUTEX
         .create_if_missing(false)
         .connect()
@@ -858,17 +877,38 @@ where
 }
 
 pub struct Index {
-    conn: sqlx::SqliteConnection,
+    conn: Option<sqlx::SqliteConnection>,
+    permit: Option<OwnedSemaphorePermit>,
+    runtime: Handle,
 }
 
 impl Index {
-    pub(crate) async fn open<P>(archive_index_path: P) -> Result<Self>
+    pub(crate) async fn open<P>(archive_index_path: P, permit: OwnedSemaphorePermit) -> Result<Self>
     where
         P: AsRef<Path>,
     {
         let archive_index_path = archive_index_path.as_ref().to_path_buf();
         let conn = sqlite_open(&archive_index_path).await?;
-        Ok(Self { conn })
+        let mut index = Self {
+            conn: Some(conn),
+            permit: Some(permit),
+            runtime: Handle::current(),
+        };
+
+        // Retain the connection and permit if schema loading or initialization fails.
+        index
+            .connection()
+            .execute(sqlx::AssertSqlSafe(
+                "PRAGMA foreign_keys = ON; PRAGMA synchronous = off; \
+             PRAGMA temp_store = MEMORY; PRAGMA query_only = ON; \
+             PRAGMA mmap_size = 536870912; PRAGMA cache_size = -4096;",
+            ))
+            .await?;
+        Ok(index)
+    }
+
+    fn connection(&mut self) -> &mut sqlx::SqliteConnection {
+        self.conn.as_mut().expect("index connection already closed")
     }
 
     #[instrument(skip(self))]
@@ -893,7 +933,7 @@ impl Index {
                 WHERE path = ?",
         )
         .bind(search_str)
-        .fetch_optional(&mut self.conn)
+        .fetch_optional(self.connection())
         .await
         .context("error fetching SQLite data")?;
 
@@ -921,7 +961,7 @@ impl Index {
             let mut rows = sqlx::query(
                 "SELECT path, start, end, compression FROM files"
             )
-            .fetch(&mut self.conn);
+            .fetch(self.connection());
 
             while let Some(row) = rows.try_next().await.context("error fetching SQLite data")? {
                 let path: String = row.try_get(0)?;
@@ -988,18 +1028,32 @@ impl Index {
                 .bind(start)
                 .bind(prefix)
                 .bind(upper_bound)
-                .fetch(&mut self.conn)
+                .fetch(self.connection())
             } else {
                 sqlx::query(
                     "SELECT DISTINCT substr(path, 1, instr(path || '/', '/')) AS child
                      FROM files"
                 )
-                .fetch(&mut self.conn)
+                .fetch(self.connection())
             };
             while let Some(row) = rows.try_next().await.context("error fetching entries from SQLite")? {
                 let child: String = row.try_get(0)?;
                 yield FolderEntry::from_path(&child);
             }
+        }
+    }
+}
+
+impl Drop for Index {
+    fn drop(&mut self) {
+        if let Some(conn) = self.conn.take() {
+            let permit = self.permit.take();
+            self.runtime.spawn(async move {
+                if let Err(err) = conn.close().await {
+                    warn!(?err, "failed to close archive index SQLite connection");
+                }
+                drop(permit);
+            });
         }
     }
 }
@@ -1215,7 +1269,13 @@ mod tests {
     }
 
     async fn test_cache() -> Result<TestEnv> {
-        let config = Arc::new(ArchiveIndexCacheConfig::test_config()?);
+        test_cache_with_limit(64).await
+    }
+
+    async fn test_cache_with_limit(max_connections: usize) -> Result<TestEnv> {
+        let mut config = ArchiveIndexCacheConfig::test_config()?;
+        config.max_connections = max_connections;
+        let config = Arc::new(config);
         let meter_provider = TestMetrics::new();
         let cache = Cache::new_with_backfill(config.clone(), meter_provider.provider()).await?;
 
@@ -1226,6 +1286,94 @@ mod tests {
         })
     }
 
+    async fn open_test_index(path: impl AsRef<Path>) -> Result<Index> {
+        let permit = Arc::new(Semaphore::new(1)).acquire_owned().await?;
+        Index::open(path, permit).await
+    }
+
+    #[tokio::test]
+    async fn connection_limit_waits_for_index_shutdown() -> Result<()> {
+        let cache = test_cache_with_limit(1).await?;
+        let first_path = create_index(1).await?;
+        let second_path = create_index(1).await?;
+        let first = cache.open_index(&first_path).await?;
+        assert_eq!(cache.connection_slots.available_permits(), 0);
+
+        let second = cache.open_index(&second_path);
+        tokio::pin!(second);
+        assert!(futures_util::poll!(&mut second).is_pending());
+
+        drop(first);
+        // Dropping the Index schedules shutdown; it must not release the slot yet.
+        assert_eq!(cache.connection_slots.available_permits(), 0);
+        let mut second = tokio::time::timeout(Duration::from_secs(5), second).await??;
+        assert!(second.find("testfile0").await?.is_some());
+        drop(second);
+        let _permit = tokio::time::timeout(
+            Duration::from_secs(5),
+            cache.connection_slots.clone().acquire_owned(),
+        )
+        .await??;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn failed_initialization_releases_connection_slot() -> Result<()> {
+        let cache = test_cache_with_limit(1).await?;
+        let corrupt = tempfile::NamedTempFile::new()?.into_temp_path();
+        fs::write(&corrupt, CORRUPT_SQLITE_INDEX).await?;
+        assert!(cache.open_index(&corrupt).await.is_err());
+
+        let valid = create_index(1).await?;
+        let mut index =
+            tokio::time::timeout(Duration::from_secs(5), cache.open_index(&valid)).await??;
+        assert!(index.find("testfile0").await?.is_some());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancelled_open_closes_connection_and_releases_slot() -> Result<()> {
+        let cache = test_cache_with_limit(1).await?;
+        let path = create_index(1).await?;
+        {
+            let open = cache.open_index(&path);
+            tokio::pin!(open);
+            // On the current-thread runtime, this spawns initialization but
+            // cannot poll it until we yield. Drop the caller first.
+            assert!(futures_util::poll!(&mut open).is_pending());
+            assert_eq!(cache.connection_slots.available_permits(), 0);
+        }
+
+        let _permit = tokio::time::timeout(
+            Duration::from_secs(5),
+            cache.connection_slots.clone().acquire_owned(),
+        )
+        .await??;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn repair_completes_with_one_connection_slot() -> Result<()> {
+        let cache = test_cache_with_limit(1).await?;
+        let archive = "limited-repair.zip";
+        let local = cache.local_index_path(archive, None);
+        fs::write(&local, CORRUPT_SQLITE_INDEX).await?;
+        let mut downloader = FakeDownloader::new();
+        let remote = format!("{archive}.{ARCHIVE_INDEX_FILE_EXTENSION}");
+        downloader
+            .indices
+            .insert(remote.clone(), create_index_bytes(1).await?);
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            cache.find(archive, None, "testfile0", &downloader),
+        )
+        .await??;
+        assert!(result.is_some());
+        assert_eq!(downloader.download_count(&remote), 1);
+        Ok(())
+    }
+
     #[tokio::test]
     async fn index_create_save_load_sqlite() -> Result<()> {
         let tf = create_test_archive(1).await?;
@@ -1233,7 +1381,7 @@ mod tests {
         let tempfile = tempfile::NamedTempFile::new()?.into_temp_path();
         create(tf, &tempfile).await?;
 
-        let mut index = Index::open(&tempfile).await?;
+        let mut index = open_test_index(&tempfile).await?;
         let fi = index.find("testfile0").await?.unwrap();
 
         assert_eq!(fi.compression, CompressionAlgorithm::Deflate);
@@ -1249,7 +1397,7 @@ mod tests {
         let tempfile = tempfile::NamedTempFile::new()?.into_temp_path();
         create(tf, &tempfile).await?;
 
-        let mut index = Index::open(&tempfile).await?;
+        let mut index = open_test_index(&tempfile).await?;
         let fi = index.find("testfile0").await?.unwrap();
 
         assert_eq!(fi.compression, CompressionAlgorithm::Bzip2);
@@ -1408,7 +1556,7 @@ mod tests {
         // Pause request B after its failed fast-path open, then let request A
         // complete a repair before B enters the slow path. Ordering these steps
         // explicitly exercises the race without relying on scheduler timing.
-        assert!(Index::open(&local_index).await.is_err());
+        assert!(open_test_index(&local_index).await.is_err());
         let mut downloader = FakeDownloader::new();
         downloader
             .indices
@@ -1496,7 +1644,7 @@ mod tests {
                 let downloader = &downloader;
                 async move {
                     if first_call {
-                        let err = Index::open(local_index)
+                        let err = open_test_index(local_index)
                             .await
                             .err()
                             .context("initial open should fail")?;
@@ -1896,7 +2044,7 @@ mod tests {
         let temp_path = tempfile::NamedTempFile::new()?.into_temp_path();
         fs::write(&temp_path, CORRUPT_SQLITE_INDEX).await?;
 
-        assert!(Index::open(&temp_path).await.is_err());
+        assert!(open_test_index(&temp_path).await.is_err());
 
         Ok(())
     }
@@ -1951,7 +2099,7 @@ mod tests {
         let tmp = tempfile::NamedTempFile::new()?.into_temp_path();
         create(archive, &tmp).await?;
 
-        Index::open(&tmp).await
+        open_test_index(&tmp).await
     }
 
     async fn collect_folder_contents(
@@ -2298,7 +2446,7 @@ mod tests {
         async fn concurrent_archive_fixture() -> Result<Arc<ConcurrentArchive>> {
             let path = create_index(2).await?;
 
-            let mut index = Index::open(&path).await?;
+            let mut index = open_test_index(&path).await?;
 
             let expected: Vec<_> = index.list().try_collect().await?;
 
@@ -2460,7 +2608,7 @@ mod tests {
             let temp_path = tempfile::NamedTempFile::new()?.into_temp_path();
             fs::write(&temp_path, CORRUPT_SQLITE_INDEX).await?;
 
-            assert!(Index::open(&temp_path).await.is_err());
+            assert!(open_test_index(&temp_path).await.is_err());
 
             Ok(())
         }
