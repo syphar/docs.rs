@@ -1036,7 +1036,7 @@ impl Index {
     ) -> Result<ConnectionPool> {
         Self::run_in_threadpool(threadpool, move || {
             let initial = Self::sqlite_open(&path)?;
-            Ok(r2d2::Pool::builder()
+            let pool = r2d2::Pool::builder()
                 .max_size(max_connections)
                 .min_idle(Some(0))
                 .idle_timeout(Some(idle_timeout))
@@ -1046,7 +1046,11 @@ impl Index {
                 .build_unchecked(IndexConnectionManager {
                     path,
                     initial: Mutex::new(Some(initial)),
-                }))
+                });
+            // Register the validated connection with r2d2 immediately, so its
+            // idle timeout applies even when this Index is never queried.
+            drop(pool.get()?);
+            Ok(pool)
         })
         .await
     }
