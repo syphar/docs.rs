@@ -4,7 +4,7 @@ use docs_rs_env_vars::{env, maybe_env, require_env};
 use docs_rs_types::{ByteSize, Duration};
 use std::{
     io,
-    num::NonZeroUsize,
+    num::{NonZeroU32, NonZeroUsize},
     path::{self, Path, PathBuf},
     sync::Arc,
 };
@@ -48,6 +48,15 @@ pub struct ArchiveIndexCacheConfig {
     /// Number of dedicated Rayon workers for opening and reading cached indexes.
     pub sqlite_threads: NonZeroUsize,
 
+    /// Number of per-index connection pools retained independently of the disk cache.
+    pub sqlite_pool_cache_capacity: u64,
+    /// Expire pool handles after this period without an index lookup.
+    pub sqlite_pool_cache_tti: Duration,
+    /// Close individual connections after this period without a checkout.
+    pub sqlite_connection_idle_timeout: Duration,
+    /// Defaults to the SQLite worker count, so a hot index can serve every worker.
+    pub sqlite_pool_max_connections: Option<NonZeroU32>,
+
     // TTL for the local index cache
     pub ttl: Duration,
 
@@ -81,7 +90,7 @@ impl AppConfig for ArchiveIndexCacheConfig {
             warn!("legacy config for archive index cache size. will be ignored.")
         }
 
-        Ok(Self {
+        let config = Self {
             path: ensure_absolute_path(env(
                 "DOCSRS_ARCHIVE_INDEX_CACHE_PATH",
                 prefix.join("archive_cache"),
@@ -91,11 +100,26 @@ impl AppConfig for ArchiveIndexCacheConfig {
                 "DOCSRS_ARCHIVE_INDEX_THREADS",
                 NonZeroUsize::new(32).unwrap(),
             )?,
+            sqlite_pool_cache_capacity: env("DOCSRS_ARCHIVE_INDEX_POOL_CACHE_CAPACITY", 256)?,
+            sqlite_pool_cache_tti: env(
+                "DOCSRS_ARCHIVE_INDEX_POOL_CACHE_TTI",
+                Duration::from_mins(5),
+            )?,
+            sqlite_connection_idle_timeout: env(
+                "DOCSRS_ARCHIVE_INDEX_CONNECTION_IDLE_TIMEOUT",
+                Duration::from_mins(1),
+            )?,
+            sqlite_pool_max_connections: maybe_env("DOCSRS_ARCHIVE_INDEX_POOL_MAX_CONNECTIONS")?,
             ttl: env("DOCSRS_ARCHIVE_INDEX_CACHE_TTL", Duration::from_days(1))?,
             eviction_policy: maybe_env("DOCSRS_ARCHIVE_INDEX_CACHE_EVICTION_POLICY")?
                 .unwrap_or_default(),
             expected_count: env("DOCSRS_ARCHIVE_INDEX_EXPECTED_COUNT", 100_000usize)?,
-        })
+        };
+        anyhow::ensure!(
+            !std::time::Duration::from(config.sqlite_connection_idle_timeout).is_zero(),
+            "DOCSRS_ARCHIVE_INDEX_CONNECTION_IDLE_TIMEOUT must be greater than zero"
+        );
+        Ok(config)
     }
 
     #[cfg(any(feature = "testing", test))]

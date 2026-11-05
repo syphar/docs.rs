@@ -18,10 +18,11 @@ use std::{
     fmt,
     future::Future,
     mem,
+    os::unix::fs::MetadataExt as _,
     path::{self, Path, PathBuf},
     pin::Pin,
     sync::{
-        Arc,
+        Arc, LazyLock, Mutex,
         atomic::{AtomicU64, Ordering},
     },
     time::Duration,
@@ -29,7 +30,7 @@ use std::{
 use tokio::{
     fs,
     io::{self, AsyncRead, AsyncSeek, AsyncWriteExt as _},
-    sync::{Mutex, mpsc, oneshot},
+    sync::{mpsc, oneshot},
     task::JoinHandle,
 };
 use tokio_util::io::SyncIoBridge;
@@ -189,6 +190,72 @@ impl Entry {
 type CacheManager = MokaCache<PathBuf, Arc<Entry>>;
 type SqliteThreadPool = Arc<rayon_core::ThreadPool>;
 
+type ConnectionPool = r2d2::Pool<IndexConnectionManager>;
+
+// r2d2 otherwise creates three maintenance threads for every per-index pool.
+static POOL_MAINTENANCE: LazyLock<Arc<scheduled_thread_pool::ScheduledThreadPool>> =
+    LazyLock::new(|| {
+        Arc::new(
+            scheduled_thread_pool::ScheduledThreadPool::builder()
+                .num_threads(2)
+                .thread_name_pattern("docsrs-sqlite-pool-{}")
+                .build(),
+        )
+    });
+
+/// Identify the file behind a path, including replacements and in-place corruption.
+/// Connections to an unlinked index may remain usable, but must not serve its replacement.
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+struct PoolKey {
+    path: PathBuf,
+    device: u64,
+    inode: u64,
+    modified: (i64, i64),
+    size: u64,
+}
+
+impl PoolKey {
+    fn for_path(path: &Path) -> Result<Self> {
+        let metadata = std::fs::metadata(path)?;
+        Ok(Self {
+            path: path.to_owned(),
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            modified: (metadata.mtime(), metadata.mtime_nsec()),
+            size: metadata.len(),
+        })
+    }
+}
+
+/// Adapter for r2d2; connection lending and idle maintenance are handled by the crate.
+struct IndexConnectionManager {
+    path: PathBuf,
+    // Validate the initial open on a Rayon worker, preserving its typed error for
+    // cache repair. r2d2 receives that connection on its first checkout.
+    initial: Mutex<Option<Connection>>,
+}
+
+impl r2d2::ManageConnection for IndexConnectionManager {
+    type Connection = Connection;
+    type Error = std::io::Error;
+
+    fn connect(&self) -> std::result::Result<Connection, Self::Error> {
+        if let Some(conn) = self.initial.lock().unwrap().take() {
+            return Ok(conn);
+        }
+        Index::sqlite_open(&self.path).map_err(std::io::Error::other)
+    }
+
+    fn is_valid(&self, _conn: &mut Connection) -> std::result::Result<(), Self::Error> {
+        // Immutable local databases do not need a health-check query on checkout.
+        Ok(())
+    }
+
+    fn has_broken(&self, _conn: &mut Connection) -> bool {
+        std::thread::panicking()
+    }
+}
+
 pub fn new_threadpool(num_threads: usize) -> Result<SqliteThreadPool> {
     anyhow::ensure!(
         num_threads > 0,
@@ -232,6 +299,7 @@ pub(crate) struct Cache {
     manager: CacheManager,
     /// Dedicated workers shared by all archive-index readers in this cache.
     threadpool: SqliteThreadPool,
+    connection_pools: MokaCache<PoolKey, ConnectionPool>,
     metrics: Arc<Metrics>,
     background_tasks: Vec<JoinHandle<()>>,
 }
@@ -293,6 +361,12 @@ impl Cache {
 
         let threadpool = new_threadpool(config.sqlite_threads.get())?;
 
+        let connection_pools = MokaCache::builder()
+            .max_capacity(config.sqlite_pool_cache_capacity)
+            .time_to_idle(config.sqlite_pool_cache_tti.into())
+            .support_invalidation_closures()
+            .build();
+
         let metrics = Arc::new(Metrics::new(meter_provider));
         let metrics_for_eviction = metrics.clone();
         let manager = CacheManager::builder()
@@ -346,6 +420,7 @@ impl Cache {
         let handle = tokio::spawn({
             let manager = manager.clone();
             let metrics = metrics.clone();
+            let connection_pools = connection_pools.clone();
 
             // moka will also run maintenance tasks itself, but I want to force this
             // at least every 30 seconds.
@@ -358,6 +433,7 @@ impl Cache {
 
                     debug!("running pending tasks for archive index cache manager");
                     manager.run_pending_tasks().await;
+                    connection_pools.run_pending_tasks().await;
 
                     debug!("collect cache size metrics");
                     metrics.entry_count.record(manager.entry_count(), &[]);
@@ -370,6 +446,7 @@ impl Cache {
 
         let cache = Self {
             threadpool,
+            connection_pools,
             manager,
             config,
             metrics,
@@ -475,6 +552,9 @@ impl Cache {
         latest_build_id: Option<BuildId>,
     ) -> Result<()> {
         let local_index_path = self.local_index_path(archive_path, latest_build_id);
+        let path = local_index_path.clone();
+        self.connection_pools
+            .invalidate_entries_if(move |key, _| key.path == path)?;
         Self::remove_local_index(&local_index_path).await?;
         self.manager.invalidate(&local_index_path).await;
 
@@ -533,6 +613,34 @@ impl Cache {
         Ok(index)
     }
 
+    async fn open_index(&self, path: &Path) -> Result<Index> {
+        let key = Index::run_in_threadpool(&self.threadpool, {
+            let path = path.to_owned();
+            move || PoolKey::for_path(&path)
+        })
+        .await?;
+        let pool = self
+            .connection_pools
+            .try_get_with(key, async {
+                Index::new_pool(
+                    path.to_owned(),
+                    &self.threadpool,
+                    self.config
+                        .sqlite_pool_max_connections
+                        .map(|n| n.get())
+                        .unwrap_or(u32::try_from(self.threadpool.current_num_threads())?),
+                    self.config.sqlite_connection_idle_timeout.into(),
+                )
+                .await
+            })
+            .await
+            .map_err(shared_index_error)?;
+        Ok(Index {
+            pool,
+            threadpool: self.threadpool.clone(),
+        })
+    }
+
     async fn find_index_inner<D: Downloader + Sync>(
         &self,
         archive_path: &str,
@@ -542,7 +650,7 @@ impl Cache {
         let local_index_path = self.local_index_path(archive_path, latest_build_id);
 
         // fast path: try to use whatever is there, no locking
-        match Index::open(&local_index_path, self.threadpool.clone()).await {
+        match self.open_index(&local_index_path).await {
             Ok(index) => {
                 // Keep moka's recency/frequency view in sync with successful fast-path
                 // file lookups so TTI and admission decisions reflect real usage.
@@ -601,8 +709,13 @@ impl Cache {
                 // The initializer's filesystem operations can still overlap eviction
                 // cleanup. The final open validates the file after initialization;
                 // the caller's bounded retry loop handles any remaining race.
-                let entry = match Index::open(local_index_path, self.threadpool.clone()).await {
-                    Ok(_index) => Entry::from_path(local_index_path).await,
+                let probe = Index::run_in_threadpool(&self.threadpool, {
+                    let path = local_index_path.to_owned();
+                    move || Index::sqlite_open(&path).map(|_| ())
+                })
+                .await;
+                let entry = match probe {
+                    Ok(()) => Entry::from_path(local_index_path).await,
                     Err(err) => {
                         // Base cleanup on the current failure, not the original
                         // fast-path error: another request may have repaired the
@@ -647,7 +760,7 @@ impl Cache {
 
         // Final open for this retry attempt. If it fails, the caller's retry loop
         // purges the cache entry and tries again.
-        Index::open(local_index_path, self.threadpool.clone()).await
+        self.open_index(local_index_path).await
     }
 
     /// Find the file metadata needed to fetch a certain path inside a remote archive.
@@ -755,6 +868,19 @@ impl FileInfo {
 
 const ROW_BATCH_SIZE: usize = 1024;
 
+fn shared_index_error(err: Arc<anyhow::Error>) -> anyhow::Error {
+    match Arc::try_unwrap(err) {
+        Ok(err) => err,
+        Err(err) => {
+            if let Some(rusqlite::Error::SqliteFailure(code, message)) = err.downcast_ref() {
+                anyhow!(rusqlite::Error::SqliteFailure(*code, message.clone()))
+            } else {
+                anyhow!(err)
+            }
+        }
+    }
+}
+
 fn cannot_open_index(err: &anyhow::Error) -> bool {
     err.downcast_ref::<rusqlite::Error>()
         .and_then(rusqlite::Error::sqlite_error_code)
@@ -824,9 +950,9 @@ where
 }
 
 pub struct Index {
-    // An owned guard can cross into the SQLite workers without requiring Connection
-    // to be Sync. If a read is cancelled, the next read waits for its guard.
-    conn: Arc<Mutex<Connection>>,
+    // Jobs own connection leases, so cancellation cannot return a connection
+    // before its synchronous SQLite work has finished.
+    pool: ConnectionPool,
     threadpool: SqliteThreadPool,
 }
 
@@ -892,12 +1018,37 @@ impl Index {
     where
         P: AsRef<Path>,
     {
-        let path = archive_index_path.as_ref().to_path_buf();
-        let conn = Self::run_in_threadpool(&threadpool, move || Self::sqlite_open(&path)).await?;
-        Ok(Self {
-            conn: Arc::new(Mutex::new(conn)),
-            threadpool,
+        let pool = Self::new_pool(
+            archive_index_path.as_ref().to_owned(),
+            &threadpool,
+            u32::try_from(threadpool.current_num_threads())?,
+            Duration::from_secs(60),
+        )
+        .await?;
+        Ok(Self { pool, threadpool })
+    }
+
+    async fn new_pool(
+        path: PathBuf,
+        threadpool: &SqliteThreadPool,
+        max_connections: u32,
+        idle_timeout: Duration,
+    ) -> Result<ConnectionPool> {
+        Self::run_in_threadpool(threadpool, move || {
+            let initial = Self::sqlite_open(&path)?;
+            Ok(r2d2::Pool::builder()
+                .max_size(max_connections)
+                .min_idle(Some(0))
+                .idle_timeout(Some(idle_timeout))
+                .max_lifetime(None)
+                .test_on_check_out(false)
+                .thread_pool(POOL_MAINTENANCE.clone())
+                .build_unchecked(IndexConnectionManager {
+                    path,
+                    initial: Mutex::new(Some(initial)),
+                }))
         })
+        .await
     }
 
     async fn read<T, F>(&mut self, read: F) -> Result<T>
@@ -905,8 +1056,12 @@ impl Index {
         T: Send + 'static,
         F: FnOnce(&mut Connection) -> Result<T> + Send + 'static,
     {
-        let mut conn = Arc::clone(&self.conn).lock_owned().await;
-        Self::run_in_threadpool(&self.threadpool, move || read(&mut conn)).await
+        let pool = self.pool.clone();
+        Self::run_in_threadpool(&self.threadpool, move || {
+            let mut conn = pool.get()?;
+            read(&mut conn)
+        })
+        .await
     }
 
     /// Number of files stored in the archive.
@@ -966,10 +1121,11 @@ impl Index {
         // This span lives with the stream, rather than timing only its construction.
         // Never hold an entered span across a yield or await.
         try_stream! {
-            let conn = Arc::clone(&self.conn).lock_owned().await;
+            let pool = self.pool.clone();
             let (tx, mut rx) = mpsc::channel(2);
             // Bound memory and cross the thread boundary once per batch, not per row.
             let task = stream_span.in_scope(|| Self::run_in_threadpool(&self.threadpool, move || {
+                let conn = pool.get()?;
                 let mut stmt = conn.prepare_cached(sql)?;
                 let mut rows = stmt.query(rusqlite::params_from_iter(values))?;
                 let mut batch = Vec::with_capacity(ROW_BATCH_SIZE);
@@ -1100,13 +1256,111 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cancelled_running_read_keeps_connection_until_worker_finishes() -> Result<()> {
+    async fn requests_reuse_an_idle_connection() -> Result<()> {
+        let cache = test_cache().await?;
+        let path = cache.local_index_path("reused.zip", None);
+        fs::write(&path, create_index_bytes(1).await?).await?;
+        let mut first = cache.open_index(&path).await?;
+        first
+            .read(|conn| {
+                // This connection-local setting identifies the reused connection.
+                conn.pragma_update(None, "cache_size", -123)?;
+                Ok(())
+            })
+            .await?;
+        drop(first);
+
+        let mut second = cache.open_index(&path).await?;
+        let cache_size: i32 = second
+            .read(|conn| Ok(conn.pragma_query_value(None, "cache_size", |row| row.get(0))?))
+            .await?;
+        assert_eq!(cache_size, -123);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn panicking_read_discards_its_connection() -> Result<()> {
         let path = tempfile::NamedTempFile::new()?.into_temp_path();
         create(create_test_archive(1).await?, &path).await?;
-        // Leave a worker free so a subsequent read waits for the connection,
-        // rather than merely waiting for the pool's only worker.
-        let pool = new_threadpool(2)?;
-        let mut index = Index::open(&path, pool).await?;
+        let mut index = open_archive_index(&path).await?;
+        let result = index
+            .read(|conn| -> Result<()> {
+                conn.pragma_update(None, "cache_size", -123)?;
+                panic!("test panic with a checked-out connection");
+            })
+            .await;
+        assert!(result.is_err());
+        let cache_size: i32 = index
+            .read(|conn| Ok(conn.pragma_query_value(None, "cache_size", |row| row.get(0))?))
+            .await?;
+        assert_eq!(cache_size, -4096);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pool_eviction_does_not_interrupt_a_running_read() -> Result<()> {
+        let cache = test_cache().await?;
+        let path = cache.local_index_path("evicted-pool.zip", None);
+        fs::write(&path, create_index_bytes(1).await?).await?;
+        let mut index = cache.open_index(&path).await?;
+        let (started_tx, started_rx) = oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let (finished_tx, finished_rx) = oneshot::channel();
+        let mut read = Box::pin(index.read(move |conn| {
+            let _ = started_tx.send(());
+            release_rx.recv()?;
+            let count: u64 = conn.query_row("SELECT COUNT(*) FROM files", [], |row| row.get(0))?;
+            let _ = finished_tx.send(count);
+            Ok(())
+        }));
+        assert!(futures_util::poll!(&mut read).is_pending());
+        tokio::time::timeout(Duration::from_secs(5), started_rx).await??;
+        drop(read);
+        drop(index);
+        cache.connection_pools.invalidate_all();
+        cache.connection_pools.run_pending_tasks().await;
+        assert!(
+            cache
+                .connection_pools
+                .get(&PoolKey::for_path(&path)?)
+                .await
+                .is_none()
+        );
+
+        let mut replacement = cache.open_index(&path).await?;
+        assert!(replacement.find("testfile0").await?.is_some());
+        release_tx.send(())?;
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), finished_rx).await??,
+            1
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn replaced_index_gets_a_new_connection_pool() -> Result<()> {
+        let cache = test_cache().await?;
+        let path = cache.local_index_path("replaced.zip", None);
+        fs::write(&path, create_index_bytes(1).await?).await?;
+        let mut old = cache.open_index(&path).await?;
+        assert_eq!(old.file_count().await?, 1);
+
+        let replacement = path.with_extension("replacement");
+        fs::write(&replacement, create_index_bytes(2).await?).await?;
+        fs::rename(replacement, &path).await?;
+        let mut new = cache.open_index(&path).await?;
+        assert_eq!(new.file_count().await?, 2);
+        // Existing borrowers can finish against the old, unlinked file.
+        assert_eq!(old.file_count().await?, 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancelled_running_read_keeps_connection_checked_out() -> Result<()> {
+        let path = tempfile::NamedTempFile::new()?.into_temp_path();
+        create(create_test_archive(1).await?, &path).await?;
+        let mut index = Index::open(&path, new_threadpool(2)?).await?;
+        let pool = index.pool.clone();
         let (started_tx, started_rx) = oneshot::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
         let mut first = Box::pin(index.read(move |_| {
@@ -1117,19 +1371,20 @@ mod tests {
         assert!(futures_util::poll!(&mut first).is_pending());
         tokio::time::timeout(Duration::from_secs(5), started_rx).await??;
         drop(first);
-        assert!(
-            index.conn.try_lock().is_err(),
-            "cancelling the caller must not release the running worker's connection"
-        );
+        let state = pool.state();
+        assert_eq!(state.connections - state.idle_connections, 1);
 
-        let mut next = Box::pin(index.find("testfile0"));
-        assert!(futures_util::poll!(&mut next).is_pending());
-        release_tx.send(())?;
+        // The next read uses a different connection while the cancelled job
+        // still owns its lease. There is no connection mutex on Index anymore.
         assert!(
-            tokio::time::timeout(Duration::from_secs(5), next)
+            tokio::time::timeout(Duration::from_secs(5), index.find("testfile0"))
                 .await??
                 .is_some()
         );
+        let state = pool.state();
+        assert_eq!(state.connections, 2);
+        assert_eq!(state.idle_connections, 1);
+        release_tx.send(())?;
         Ok(())
     }
 

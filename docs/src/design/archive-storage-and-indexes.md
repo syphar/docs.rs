@@ -81,6 +81,31 @@ When a request asks for a single file:
 - If index lookup/decompression fails (for example stale offsets causing
   decompression errors), docs.rs purges local cached index files and retries.
 
+## SQLite connection reuse
+
+The archive-index cache keeps a separate Moka cache of per-index r2d2 connection
+pools. An `Index` holds a pool handle; each synchronous Rayon job checks out its
+own connection and returns it when the job finishes. Cancelling an asynchronous
+request does not return a connection still used by its worker.
+
+Pools start with a validated connection and grow on demand, without maintaining
+any minimum number of idle connections. All pools share two r2d2 maintenance
+threads for connection creation and idle cleanup. Query execution still uses the
+bounded archive-index Rayon pool.
+
+| Environment variable | Default | Meaning |
+| --- | --- | --- |
+| `DOCSRS_ARCHIVE_INDEX_POOL_CACHE_CAPACITY` | `256` | Number of per-index pools retained by Moka; `0` disables retention. |
+| `DOCSRS_ARCHIVE_INDEX_POOL_CACHE_TTI` | `5m` | Expire pool handles after this period without a cache lookup. |
+| `DOCSRS_ARCHIVE_INDEX_CONNECTION_IDLE_TIMEOUT` | `1m` | Close individual idle connections; r2d2 maintenance can delay cleanup by up to 30 seconds. |
+| `DOCSRS_ARCHIVE_INDEX_POOL_MAX_CONNECTIONS` | SQLite worker count | Maximum connections per index. A lower value can make Rayon workers wait for a hot index's connections. |
+
+The pool key includes the local file's identity and modification metadata, so an
+atomically replaced index gets a new pool. Explicit purges invalidate cached pool
+handles too. Existing borrowers can finish after a pool is evicted; therefore
+Moka capacity multiplied by the per-pool maximum is not a hard global connection
+limit. Pool eviction does not delete the downloaded index file.
+
 ## Key properties
 
 - Efficient network usage: fetches only bytes for the requested file.
