@@ -8,7 +8,7 @@ use docs_rs_opentelemetry::AnyMeterProvider;
 use docs_rs_types::{BuildId, ByteSize, CompressionAlgorithm};
 use docs_rs_utils::spawn_blocking;
 use futures_util::{Stream, TryStreamExt as _};
-use moka::{future::Cache as MokaCache, notification::RemovalCause};
+use moka::{future::Cache as MokaCache, notification::RemovalCause, ops::compute::Op};
 use opentelemetry::{
     KeyValue,
     metrics::{Counter, Gauge, Histogram},
@@ -18,7 +18,6 @@ use std::{
     fmt,
     future::Future,
     mem,
-    os::unix::fs::MetadataExt as _,
     path::{self, Path, PathBuf},
     pin::Pin,
     sync::{
@@ -191,6 +190,7 @@ type CacheManager = MokaCache<PathBuf, Arc<Entry>>;
 type SqliteThreadPool = Arc<rayon_core::ThreadPool>;
 
 type ConnectionPool = r2d2::Pool<IndexConnectionManager>;
+type ConnectionPools = MokaCache<PathBuf, ConnectionPool>;
 
 // r2d2 otherwise creates three maintenance threads for every per-index pool.
 static POOL_MAINTENANCE: LazyLock<Arc<scheduled_thread_pool::ScheduledThreadPool>> =
@@ -202,30 +202,6 @@ static POOL_MAINTENANCE: LazyLock<Arc<scheduled_thread_pool::ScheduledThreadPool
                 .build(),
         )
     });
-
-/// Identify the file behind a path, including replacements and in-place corruption.
-/// Connections to an unlinked index may remain usable, but must not serve its replacement.
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
-struct PoolKey {
-    path: PathBuf,
-    device: u64,
-    inode: u64,
-    modified: (i64, i64),
-    size: u64,
-}
-
-impl PoolKey {
-    fn for_path(path: &Path) -> Result<Self> {
-        let metadata = std::fs::metadata(path)?;
-        Ok(Self {
-            path: path.to_owned(),
-            device: metadata.dev(),
-            inode: metadata.ino(),
-            modified: (metadata.mtime(), metadata.mtime_nsec()),
-            size: metadata.len(),
-        })
-    }
-}
 
 /// Adapter for r2d2; connection lending and idle maintenance are handled by the crate.
 struct IndexConnectionManager {
@@ -299,7 +275,7 @@ pub(crate) struct Cache {
     manager: CacheManager,
     /// Dedicated workers shared by all archive-index readers in this cache.
     threadpool: SqliteThreadPool,
-    connection_pools: MokaCache<PoolKey, ConnectionPool>,
+    connection_pools: ConnectionPools,
     metrics: Arc<Metrics>,
     background_tasks: Vec<JoinHandle<()>>,
 }
@@ -364,11 +340,11 @@ impl Cache {
         let connection_pools = MokaCache::builder()
             .max_capacity(config.sqlite_pool_cache_capacity)
             .time_to_idle(config.sqlite_pool_cache_tti.into())
-            .support_invalidation_closures()
             .build();
 
         let metrics = Arc::new(Metrics::new(meter_provider));
         let metrics_for_eviction = metrics.clone();
+        let pools_for_eviction = connection_pools.clone();
         let manager = CacheManager::builder()
             .initial_capacity(config.expected_count)
             // configured eviction policy
@@ -390,6 +366,7 @@ impl Cache {
             .async_eviction_listener(move |path, entry, reason| {
                 let path = path.to_path_buf();
                 let metrics = metrics_for_eviction.clone();
+                let connection_pools = pools_for_eviction.clone();
                 Box::pin(async move {
                     metrics.record_evicted_entry(&entry, reason);
 
@@ -405,7 +382,7 @@ impl Cache {
                         ?reason,
                         "evicting local archive index file from cache"
                     );
-                    if let Err(err) = Self::remove_local_index(&path).await {
+                    if let Err(err) = Self::remove_local_index(&connection_pools, &path).await {
                         error!(
                             ?err,
                             ?path,
@@ -518,24 +495,51 @@ impl Cache {
         Ok(())
     }
 
-    async fn remove_local_index(index_path: impl AsRef<Path>) -> Result<()> {
-        let index_path = index_path.as_ref();
-        let wal = index_path.with_extension(format!("{ARCHIVE_INDEX_FILE_EXTENSION}-wal"));
-        let shm = index_path.with_extension(format!("{ARCHIVE_INDEX_FILE_EXTENSION}-shm"));
+    /// Serialize file changes with pool initialization for this path. Invalidate
+    /// before changing the file so cancellation or an I/O error cannot retain an
+    /// old pool. The owned task completes even if its caller is cancelled.
+    async fn change_index_file(
+        connection_pools: &ConnectionPools,
+        path: PathBuf,
+        change: impl Future<Output = Result<()>> + Send + 'static,
+    ) -> Result<()> {
+        let connection_pools = connection_pools.clone();
+        tokio::spawn(async move {
+            connection_pools
+                .entry(path.clone())
+                .and_try_compute_with(|_| async {
+                    connection_pools.invalidate(&path).await;
+                    change.await?;
+                    Ok::<_, anyhow::Error>(Op::Remove)
+                })
+                .await?;
+            Ok::<_, anyhow::Error>(())
+        })
+        .await?
+    }
 
-        let (_, _, index_result) = tokio::join!(
-            fs::remove_file(wal),
-            fs::remove_file(shm),
-            fs::remove_file(index_path),
-        );
-
-        if let Err(err) = index_result
-            && err.kind() != io::ErrorKind::NotFound
-        {
-            Err(err.into())
-        } else {
-            Ok(())
-        }
+    async fn remove_local_index(
+        connection_pools: &ConnectionPools,
+        index_path: impl AsRef<Path>,
+    ) -> Result<()> {
+        let index_path = index_path.as_ref().to_owned();
+        Self::change_index_file(connection_pools, index_path.clone(), async move {
+            let wal = index_path.with_extension(format!("{ARCHIVE_INDEX_FILE_EXTENSION}-wal"));
+            let shm = index_path.with_extension(format!("{ARCHIVE_INDEX_FILE_EXTENSION}-shm"));
+            let (_, _, index_result) = tokio::join!(
+                fs::remove_file(wal),
+                fs::remove_file(shm),
+                fs::remove_file(index_path),
+            );
+            if let Err(err) = index_result
+                && err.kind() != io::ErrorKind::NotFound
+            {
+                Err(err.into())
+            } else {
+                Ok(())
+            }
+        })
+        .await
     }
 
     fn local_index_path(&self, archive_path: &str, latest_build_id: Option<BuildId>) -> PathBuf {
@@ -552,10 +556,7 @@ impl Cache {
         latest_build_id: Option<BuildId>,
     ) -> Result<()> {
         let local_index_path = self.local_index_path(archive_path, latest_build_id);
-        let path = local_index_path.clone();
-        self.connection_pools
-            .invalidate_entries_if(move |key, _| key.path == path)?;
-        Self::remove_local_index(&local_index_path).await?;
+        Self::remove_local_index(&self.connection_pools, &local_index_path).await?;
         self.manager.invalidate(&local_index_path).await;
 
         Ok(())
@@ -614,27 +615,32 @@ impl Cache {
     }
 
     async fn open_index(&self, path: &Path) -> Result<Index> {
-        let key = Index::run_in_threadpool(&self.threadpool, {
-            let path = path.to_owned();
-            move || PoolKey::for_path(&path)
-        })
-        .await?;
-        let pool = self
-            .connection_pools
-            .try_get_with(key, async {
-                Index::new_pool(
-                    path.to_owned(),
-                    &self.threadpool,
-                    self.config
-                        .sqlite_pool_max_connections
-                        .map(|n| n.get())
-                        .unwrap_or(u32::try_from(self.threadpool.current_num_threads())?),
-                    self.config.sqlite_connection_idle_timeout.into(),
-                )
-                .await
-            })
-            .await
-            .map_err(shared_index_error)?;
+        let pool = if let Some(pool) = self.connection_pools.get(path).await {
+            pool
+        } else {
+            self.connection_pools
+                .entry_by_ref(path)
+                .and_try_compute_with(|entry| async move {
+                    if entry.is_some() {
+                        return Ok(Op::Nop);
+                    }
+                    let pool = Index::new_pool(
+                        path.to_owned(),
+                        &self.threadpool,
+                        self.config
+                            .sqlite_pool_max_connections
+                            .map(|n| n.get())
+                            .unwrap_or(u32::try_from(self.threadpool.current_num_threads())?),
+                        self.config.sqlite_connection_idle_timeout.into(),
+                    )
+                    .await?;
+                    Ok::<_, anyhow::Error>(Op::Put(pool))
+                })
+                .await?
+                .into_entry()
+                .expect("pool initialization always retains or inserts a pool")
+                .into_value()
+        };
         Ok(Index {
             pool,
             threadpool: self.threadpool.clone(),
@@ -721,7 +727,8 @@ impl Cache {
                         // fast-path error: another request may have repaired the
                         // file while this request was waiting to initialize it.
                         if !err.is::<PathNotFoundError>() && !cannot_open_index(&err) {
-                            Self::remove_local_index(local_index_path).await?;
+                            Self::remove_local_index(&self.connection_pools, local_index_path)
+                                .await?;
                         }
                         Entry::from_size(
                             self.download_archive_index(
@@ -839,9 +846,17 @@ impl Cache {
 
         // Publish atomically.
         // Will replace any existing file.
-        fs::rename(&temp_path, local_index_path).await?;
-
-        temp_path.disable_cleanup(true);
+        let local_index_path = local_index_path.to_owned();
+        Self::change_index_file(
+            &self.connection_pools,
+            local_index_path.clone(),
+            async move {
+                fs::rename(&temp_path, local_index_path).await?;
+                temp_path.disable_cleanup(true);
+                Ok(())
+            },
+        )
+        .await?;
 
         self.metrics.record_download(copied.into());
 
@@ -867,19 +882,6 @@ impl FileInfo {
 }
 
 const ROW_BATCH_SIZE: usize = 1024;
-
-fn shared_index_error(err: Arc<anyhow::Error>) -> anyhow::Error {
-    match Arc::try_unwrap(err) {
-        Ok(err) => err,
-        Err(err) => {
-            if let Some(rusqlite::Error::SqliteFailure(code, message)) = err.downcast_ref() {
-                anyhow!(rusqlite::Error::SqliteFailure(*code, message.clone()))
-            } else {
-                anyhow!(err)
-            }
-        }
-    }
-}
 
 fn cannot_open_index(err: &anyhow::Error) -> bool {
     err.downcast_ref::<rusqlite::Error>()
@@ -1323,13 +1325,7 @@ mod tests {
         drop(index);
         cache.connection_pools.invalidate_all();
         cache.connection_pools.run_pending_tasks().await;
-        assert!(
-            cache
-                .connection_pools
-                .get(&PoolKey::for_path(&path)?)
-                .await
-                .is_none()
-        );
+        assert!(cache.connection_pools.get(&path).await.is_none());
 
         let mut replacement = cache.open_index(&path).await?;
         assert!(replacement.find("testfile0").await?.is_some());
@@ -1349,12 +1345,52 @@ mod tests {
         let mut old = cache.open_index(&path).await?;
         assert_eq!(old.file_count().await?, 1);
 
-        let replacement = path.with_extension("replacement");
-        fs::write(&replacement, create_index_bytes(2).await?).await?;
-        fs::rename(replacement, &path).await?;
+        let mut downloader = FakeDownloader::new();
+        downloader.indices.insert(
+            "replaced.zip.index".to_owned(),
+            create_index_bytes(2).await?,
+        );
+        cache
+            .download_archive_index(&downloader, &path, "replaced.zip.index")
+            .await?;
         let mut new = cache.open_index(&path).await?;
         assert_eq!(new.file_count().await?, 2);
         // Existing borrowers can finish against the old, unlinked file.
+        assert_eq!(old.file_count().await?, 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cancelled_file_replacement_finishes_before_pool_initialization() -> Result<()> {
+        let cache = test_cache().await?;
+        let path = cache.local_index_path("cancelled-replacement.zip", None);
+        fs::write(&path, create_index_bytes(1).await?).await?;
+        let mut old = cache.open_index(&path).await?;
+        assert_eq!(old.file_count().await?, 1);
+        let replacement = path.with_extension("replacement");
+        fs::write(&replacement, create_index_bytes(2).await?).await?;
+        let (started_tx, started_rx) = oneshot::channel();
+        let (release_tx, release_rx) = oneshot::channel();
+        let published_path = path.clone();
+        let mut change = Box::pin(Cache::change_index_file(
+            &cache.connection_pools,
+            path.clone(),
+            async move {
+                let _ = started_tx.send(());
+                release_rx.await?;
+                fs::rename(replacement, published_path).await?;
+                Ok(())
+            },
+        ));
+        assert!(futures_util::poll!(&mut change).is_pending());
+        tokio::time::timeout(Duration::from_secs(5), started_rx).await??;
+        drop(change);
+
+        let mut next = Box::pin(cache.open_index(&path));
+        assert!(futures_util::poll!(&mut next).is_pending());
+        let _ = release_tx.send(());
+        let mut new = tokio::time::timeout(Duration::from_secs(5), next).await??;
+        assert_eq!(new.file_count().await?, 2);
         assert_eq!(old.file_count().await?, 1);
         Ok(())
     }
@@ -1802,7 +1838,10 @@ mod tests {
         assert!(fs::try_exists(&cache_file).await?);
         assert_eq!(downloader.download_count(&remote_index_path), 1);
 
-        // Simulate local cache corruption and ensure Cache::find repairs it.
+        // After pool expiration, a fresh open detects external corruption and
+        // Cache::find repairs it. Open immutable connections cannot be used to
+        // detect external modifications to their mapped file.
+        cache.connection_pools.invalidate(&cache_file).await;
         fs::write(&cache_file, CORRUPT_SQLITE_INDEX).await?;
         assert!(
             cache
@@ -1862,6 +1901,9 @@ mod tests {
         assert_eq!(downloader.download_count(&remote_index_path), 0);
         assert!(cache.manager.get(&local_index).await.is_some());
 
+        // Once a pool expires, the next connection must notice a stale or corrupt
+        // file even if the disk-cache manager still retains its entry.
+        cache.connection_pools.invalidate(&local_index).await;
         if corrupt {
             fs::write(&local_index, CORRUPT_SQLITE_INDEX).await?;
         } else {
@@ -2166,7 +2208,9 @@ mod tests {
         let shm = local_index.with_extension(format!("{ARCHIVE_INDEX_FILE_EXTENSION}-shm"));
 
         fs::create_dir_all(local_index.parent().unwrap()).await?;
-        fs::write(&local_index, b"index").await?;
+        fs::write(&local_index, create_index_bytes(1).await?).await?;
+        let mut index = cache.open_index(&local_index).await?;
+        assert!(index.find("testfile0").await?.is_some());
         fs::write(&wal, b"wal").await?;
         fs::write(&shm, b"shm").await?;
 
@@ -2182,6 +2226,7 @@ mod tests {
 
         cache.flush().await?;
 
+        assert!(cache.connection_pools.get(&local_index).await.is_none());
         assert!(!fs::try_exists(&local_index).await?);
         assert!(!fs::try_exists(&wal).await?);
         assert!(!fs::try_exists(&shm).await?);

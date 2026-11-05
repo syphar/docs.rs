@@ -100,9 +100,13 @@ bounded archive-index Rayon pool.
 | `DOCSRS_ARCHIVE_INDEX_CONNECTION_IDLE_TIMEOUT` | `1m` | Close individual idle connections; r2d2 maintenance can delay cleanup by up to 30 seconds. |
 | `DOCSRS_ARCHIVE_INDEX_POOL_MAX_CONNECTIONS` | SQLite worker count | Maximum connections per index. A lower value can make Rayon workers wait for a hot index's connections. |
 
-The pool key includes the local file's identity and modification metadata, so an
-atomically replaced index gets a new pool. Explicit purges invalidate cached pool
-handles too. Existing borrowers can finish after a pool is evicted; therefore
+Pools are keyed by the local index path. File deletion and atomic replacement
+invalidate that path's pool, including disk-cache eviction and repair. Moka's
+per-key compute operations serialize these changes with pool initialization;
+normal cached lookups do not check filesystem metadata. Errors from fresh
+connections still go through the existing repair path.
+
+Existing borrowers can finish after a pool is evicted; therefore
 Moka capacity multiplied by the per-pool maximum is not a hard global connection
 limit. Pool eviction does not delete the downloaded index file.
 
