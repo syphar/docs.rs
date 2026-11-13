@@ -980,7 +980,7 @@ mod tests {
             finish_build(
                 &mut conn,
                 build_id,
-                "rustc-version",
+                &"rustc 1.0.0-nightly (blabla 2022-01-01)".parse()?,
                 "docs.rs 4.0.0",
                 BuildStatus::Success,
                 None,

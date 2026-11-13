@@ -2539,6 +2539,7 @@ dependencies = [
  "docs_rs_rustdoc_json",
  "docs_rs_storage",
  "docs_rs_types",
+ "docs_rs_utils",
  "serde_json",
  "sqlx",
  "tempfile",

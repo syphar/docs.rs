@@ -194,14 +194,11 @@ mod tests {
     async fn metadata_without_rustc_nightly_date_has_no_css_file() -> Result<()> {
         let env = TestEnvironment::new().await?;
 
-        // unparseable version => `rustc_nightly_date` is stored as NULL
         env.fake_release()
             .await
             .name("foo")
             .version("0.1.0")
-            .builds(vec![
-                FakeBuild::default().rustc_version("not a rustc version"),
-            ])
+            .builds(vec![FakeBuild::default().without_rustc_version()])
             .create()
             .await?;
 

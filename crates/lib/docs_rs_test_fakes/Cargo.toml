@@ -16,6 +16,7 @@ docs_rs_registry_api = { path = "../docs_rs_registry_api" }
 docs_rs_rustdoc_json = { path = "../../lib/docs_rs_rustdoc_json" }
 docs_rs_storage = { path = "../docs_rs_storage" }
 docs_rs_types = { path = "../docs_rs_types" }
+docs_rs_utils = { path = "../docs_rs_utils" }
 serde_json = { workspace = true }
 sqlx = { workspace = true }
 tempfile = { workspace = true }

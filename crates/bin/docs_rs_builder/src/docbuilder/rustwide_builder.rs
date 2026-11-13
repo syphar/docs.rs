@@ -425,7 +425,7 @@ impl RustwideBuilder {
         self.runtime.block_on(finish_build(
             &mut async_conn,
             build_id,
-            rustc_version.as_str(),
+            &rustc_version,
             &docsrs_version,
             if build_succeeded {
                 BuildStatus::Success
@@ -1070,7 +1070,7 @@ mod tests {
             finish_build(
                 &mut *conn,
                 build_id,
-                "some-version",
+                &"rustc 1.84.0-nightly (e7c0d2750 2024-10-15)".parse()?,
                 "other-version",
                 BuildStatus::Success,
                 None,
