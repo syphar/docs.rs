@@ -1,5 +1,6 @@
 use anyhow::{Context as _, Error, Result, anyhow};
 use chrono::prelude::*;
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::{fmt, str::FromStr};
 
 /// A parsed one-line `rustc --version` string, e.g.
@@ -95,6 +96,21 @@ impl fmt::Display for RustcVersion {
     }
 }
 
+/// Serialized as the raw version string, compatible with plain `String` values.
+impl Serialize for RustcVersion {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.raw)
+    }
+}
+
+impl<'de> Deserialize<'de> for RustcVersion {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(|err| de::Error::custom(format!("{err:#}")))
+    }
+}
+
 impl AsRef<str> for RustcVersion {
     fn as_ref(&self) -> &str {
         &self.raw
@@ -167,6 +183,19 @@ mod tests {
             version.resource_suffix(),
             "29991229-1.9999.0-nightly-0123456789abcdef"
         );
+    }
+
+    #[test]
+    fn serde_roundtrips_as_plain_string() {
+        let raw = "rustc 1.10.0-nightly (57ef01513 2016-05-23)";
+        let version: RustcVersion = raw.parse().unwrap();
+        let json = serde_json::to_value(&version).unwrap();
+        assert_eq!(json, serde_json::Value::String(raw.into()));
+        assert_eq!(
+            serde_json::from_value::<RustcVersion>(json).unwrap(),
+            version
+        );
+        assert!(serde_json::from_value::<RustcVersion>("outdated".into()).is_err());
     }
 
     #[test_case(""; "empty")]

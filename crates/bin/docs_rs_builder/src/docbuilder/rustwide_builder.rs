@@ -29,7 +29,9 @@ use docs_rs_storage::{
 use docs_rs_types::{
     BuildId, BuildStatus, CompressionAlgorithm, CrateId, KrateName, ReleaseId, Version,
 };
-use docs_rs_utils::{Handle, RUSTDOC_STATIC_STORAGE_PREFIX, spawn_blocking};
+use docs_rs_utils::{
+    Handle, RUSTDOC_STATIC_STORAGE_PREFIX, rustc_version::RustcVersion, spawn_blocking,
+};
 use futures_util::future::try_join_all;
 use regex::Regex;
 use rustwide::{Crate, SandboxStatistics, Toolchain};
@@ -160,17 +162,17 @@ impl RustwideBuilder {
         let rustc_version = self.environment.rustc_version()?;
         let published_version = self.runtime.block_on(async {
             let mut conn = self.db.get_async().await?;
-            get_config::<String>(&mut conn, ConfigName::RustcVersion).await
+            get_config::<RustcVersion>(&mut conn, ConfigName::RustcVersion).await
         })?;
 
         // A toolchain update can succeed while publishing its essential files fails.
         // The next check then reports no update, so also compare against the version
         // recorded only after successful publication. This retries failed uploads
         // across maintenance passes and restarts, and handles first publication.
-        if toolchain_updated || published_version.as_deref() != Some(rustc_version.as_str()) {
+        if toolchain_updated || published_version.as_ref() != Some(&rustc_version) {
             debug!(
                 toolchain_updated,
-                ?published_version,
+                published_version = ?published_version.as_ref().map(RustcVersion::as_str),
                 %rustc_version,
                 "publishing essential files"
             );
@@ -203,7 +205,7 @@ impl RustwideBuilder {
                 .await?;
 
             let mut conn = self.db.get_async().await?;
-            set_config(&mut conn, ConfigName::RustcVersion, rustc_version.as_str()).await
+            set_config(&mut conn, ConfigName::RustcVersion, &rustc_version).await
         })?;
         Ok(())
     }
