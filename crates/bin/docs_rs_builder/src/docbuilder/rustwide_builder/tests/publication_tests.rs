@@ -326,7 +326,7 @@ fn essential_files_are_published_only_when_needed() -> Result<()> {
     let pool = env.pool()?;
     let storage = env.storage()?;
     let mut builder = env.build_builder()?;
-    let published = || -> Result<Option<RustcVersion>> {
+    let published = || -> Result<Option<String>> {
         runtime.block_on(async {
             let mut conn = pool.get_async().await?;
             get_config(&mut conn, ConfigName::RustcVersion).await
@@ -338,7 +338,7 @@ fn essential_files_are_published_only_when_needed() -> Result<()> {
     assert_eq!(published()?, None);
     storage.reject_uploads_for_testing(None);
     builder.publish_essential_files_if_needed(false)?;
-    let version = builder.environment.rustc_version()?;
+    let version = builder.environment.rustc_version()?.as_str().to_owned();
     assert_eq!(published()?, Some(version.clone()));
     assert!(
         env.blocking_storage()?
@@ -348,7 +348,7 @@ fn essential_files_are_published_only_when_needed() -> Result<()> {
     );
     storage.reject_uploads_for_testing(Some(|p| p.starts_with(RUSTDOC_STATIC_STORAGE_PREFIX)));
     // A matching version must skip uploading; an update must still publish.
-    let outdated: RustcVersion = "rustc 1.10.0-nightly (57ef01513 2016-05-23)".parse()?;
+    let outdated = "rustc 1.10.0-nightly (57ef01513 2016-05-23)".to_owned();
     builder.publish_essential_files_if_needed(false)?;
     assert!(builder.publish_essential_files_if_needed(true).is_err());
     runtime.block_on(async {
@@ -360,6 +360,14 @@ fn essential_files_are_published_only_when_needed() -> Result<()> {
     storage.reject_uploads_for_testing(None);
     builder.publish_essential_files_if_needed(false)?;
     assert_eq!(published()?, Some(version.clone()));
+
+    // An unparseable stored version must not block maintenance; it gets republished.
+    runtime.block_on(async {
+        let mut conn = pool.get_async().await?;
+        set_config(&mut conn, ConfigName::RustcVersion, "not a rustc version").await
+    })?;
+    builder.publish_essential_files_if_needed(false)?;
+    assert_eq!(published()?, Some(version));
     Ok(())
 }
 

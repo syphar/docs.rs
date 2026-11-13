@@ -8,7 +8,7 @@ use std::{fmt, str::FromStr};
 ///
 /// The original line is kept as-is, since it is what we persist & compare.
 /// (De)serialized as the raw version string, compatible with plain `String` values.
-#[derive(Debug, Clone, PartialEq, Eq, SerializeDisplay, DeserializeFromStr)]
+#[derive(Clone, PartialEq, Eq, SerializeDisplay, DeserializeFromStr)]
 pub struct RustcVersion {
     raw: String,
     release: String,
@@ -97,9 +97,10 @@ impl fmt::Display for RustcVersion {
     }
 }
 
-impl AsRef<str> for RustcVersion {
-    fn as_ref(&self) -> &str {
-        &self.raw
+/// Only the raw string; the other fields are derived from it.
+impl fmt::Debug for RustcVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("RustcVersion").field(&self.raw).finish()
     }
 }
 

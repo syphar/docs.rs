@@ -184,9 +184,7 @@ impl CrateDetails {
             default_target: krate.default_target,
             doc_targets: krate.doc_targets.map(parse_doc_targets),
             yanked: krate.yanked,
-            rustdoc_css_file: krate
-                .rustc_nightly_date
-                .map(|date| get_correct_docsrs_style_file(date).to_owned()),
+            rustdoc_css_file: krate.rustc_nightly_date.map(get_correct_docsrs_style_file),
         };
 
         // When documentation_url points to docs.rs itself, then we don't need to
@@ -1205,6 +1203,28 @@ mod tests {
                 "binary-0.1.0 is not a library"
             );
 
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn pages_render_without_rustc_nightly_date() {
+        async_wrapper(|env| async move {
+            // unparseable version => `rustc_nightly_date` is stored as NULL,
+            // so there is no rustdoc CSS file to pick.
+            env.fake_release()
+                .await
+                .name("foo")
+                .version("0.1.0")
+                .builds(vec![
+                    FakeBuild::default().rustc_version("not a rustc version"),
+                ])
+                .create()
+                .await?;
+
+            let web = env.web_app().await;
+            web.assert_success("/crate/foo/0.1.0").await?;
+            web.assert_success("/foo/0.1.0/foo/").await?;
             Ok(())
         });
     }

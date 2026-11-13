@@ -23,7 +23,7 @@ pub(crate) struct MetaData {
     pub(crate) yanked: Option<bool>,
     /// CSS file to use depending on the rustdoc version used to generate this version of this
     /// crate.
-    pub(crate) rustdoc_css_file: Option<String>,
+    pub(crate) rustdoc_css_file: Option<&'static str>,
 }
 
 impl MetaData {
@@ -70,9 +70,7 @@ impl MetaData {
             default_target: row.default_target,
             doc_targets: row.doc_targets.map(parse_doc_targets),
             yanked: row.yanked,
-            rustdoc_css_file: row
-                .rustc_nightly_date
-                .map(|date| get_correct_docsrs_style_file(date).to_owned()),
+            rustdoc_css_file: row.rustc_nightly_date.map(get_correct_docsrs_style_file),
         })
     }
 }
@@ -82,6 +80,7 @@ mod tests {
     use crate::testing::TestEnvironment;
 
     use super::*;
+    use docs_rs_test_fakes::FakeBuild;
     use docs_rs_types::testing::{FOO, V0_1};
     use serde_json::json;
 
@@ -100,7 +99,7 @@ mod tests {
                 "arm64-unknown-linux-gnu".to_string(),
             ]),
             yanked: Some(false),
-            rustdoc_css_file: Some("rustdoc.css".to_string()),
+            rustdoc_css_file: Some("rustdoc.css"),
         };
 
         let correct_json = json!({
@@ -185,9 +184,30 @@ mod tests {
                 default_target: Some("x86_64-unknown-linux-gnu".to_string()),
                 doc_targets: Some(vec!["x86_64-unknown-linux-gnu".to_string()]),
                 yanked: Some(false),
-                rustdoc_css_file: Some("rustdoc.css".to_string()),
+                rustdoc_css_file: Some("rustdoc.css"),
             },
         );
+        Ok(())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn metadata_without_rustc_nightly_date_has_no_css_file() -> Result<()> {
+        let env = TestEnvironment::new().await?;
+
+        // unparseable version => `rustc_nightly_date` is stored as NULL
+        env.fake_release()
+            .await
+            .name("foo")
+            .version("0.1.0")
+            .builds(vec![
+                FakeBuild::default().rustc_version("not a rustc version"),
+            ])
+            .create()
+            .await?;
+
+        let mut conn = env.async_conn().await?;
+        let metadata = MetaData::from_crate(&mut conn, &FOO, &V0_1, None).await?;
+        assert_eq!(metadata.rustdoc_css_file, None);
         Ok(())
     }
 }
