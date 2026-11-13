@@ -6,7 +6,7 @@ use docs_rs_types::{
     BuildError, BuildId, BuildStatus, ByteSize, CompressionAlgorithm, CrateId, DocCoverage,
     Feature, KrateName, ReleaseId, Version,
 };
-use docs_rs_utils::rustc_version::parse_rustc_date;
+use docs_rs_utils::rustc_version::RustcVersion;
 use std::{
     fmt, fs,
     io::{BufRead, BufReader},
@@ -231,8 +231,8 @@ where
         .transpose()
         .context("documentation file count exceeds PostgreSQL BIGINT range")?;
 
-    let rustc_date = match parse_rustc_date(rustc_version) {
-        Ok(date) => Some(date),
+    let rustc_date = match rustc_version.parse::<RustcVersion>() {
+        Ok(version) => Some(version.date()),
         Err(err) => {
             // in the database we see cases where the rustc version is missing
             // in the builds-table. In this case & if we can't parse the version

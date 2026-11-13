@@ -1046,7 +1046,7 @@ mod tests {
                 .builds(vec![
                     FakeBuild::default()
                         .build_status(BuildStatus::InProgress)
-                        .rustc_version("rustc (blabla 2022-01-01)")
+                        .rustc_version("rustc 1.0.0-nightly (blabla 2022-01-01)")
                         .docsrs_version("docs.rs 4.0.0"),
                 ])
                 .create()
@@ -1495,7 +1495,7 @@ mod tests {
             .builds(vec![
                 FakeBuild::default()
                     .build_status(BuildStatus::InProgress)
-                    .rustc_version("rustc (blabla 2022-01-01)")
+                    .rustc_version("rustc 1.0.0-nightly (blabla 2022-01-01)")
                     .docsrs_version("docs.rs 4.0.0"),
             ])
             .create()
@@ -1940,7 +1940,7 @@ mod tests {
                 .builds(vec![
                     FakeBuild::default()
                         .build_status(BuildStatus::InProgress)
-                        .rustc_version("rustc (blabla 2022-01-01)")
+                        .rustc_version("rustc 1.0.0-nightly (blabla 2022-01-01)")
                         .docsrs_version("docs.rs 4.0.0"),
                 ])
                 .create()

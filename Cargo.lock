@@ -2584,7 +2584,6 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "chrono",
- "regex",
  "test-case",
  "time",
  "tokio",

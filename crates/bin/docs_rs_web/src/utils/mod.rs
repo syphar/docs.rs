@@ -14,7 +14,7 @@ use askama::filters::Safe;
 use chrono::{DateTime, NaiveDate, Utc};
 use docs_rs_mimes as mimes;
 use docs_rs_storage::FolderEntry;
-use docs_rs_utils::rustc_version::parse_rustc_date;
+use docs_rs_utils::rustc_version::RustcVersion;
 
 pub fn folder_entry_icon(entry: &FolderEntry) -> Safe<String> {
     if entry.is_dir() {
@@ -42,7 +42,7 @@ pub fn folder_entry_icon(entry: &FolderEntry) -> Safe<String> {
 /// Picks the correct "rustdoc.css" static file depending on which rustdoc version was used to
 /// generate this version of this crate.
 pub(crate) fn get_correct_docsrs_style_file(version: &str) -> Result<String> {
-    let date = parse_rustc_date(version)?;
+    let date = version.parse::<RustcVersion>()?.date();
     // This is the date where https://github.com/rust-lang/rust/pull/144476 was merged.
     if NaiveDate::from_ymd_opt(2025, 8, 20).unwrap() < date {
         Ok("rustdoc-2025-08-20.css".to_owned())

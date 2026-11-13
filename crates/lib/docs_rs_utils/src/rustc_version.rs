@@ -1,7 +1,6 @@
 use anyhow::{Context as _, Error, Result, anyhow};
 use chrono::prelude::*;
-use regex::Regex;
-use std::{fmt, str::FromStr, sync::LazyLock};
+use std::{fmt, str::FromStr};
 
 /// A parsed one-line `rustc --version` string, e.g.
 /// `rustc 1.10.0-nightly (57ef01513 2016-05-23)`.
@@ -102,26 +101,6 @@ impl AsRef<str> for RustcVersion {
     }
 }
 
-/// Leniently extract the date from a stored rustc version string.
-pub fn parse_rustc_date<S: AsRef<str>>(version: S) -> Result<NaiveDate> {
-    static RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r" (\d+)-(\d+)-(\d+)\)$").unwrap());
-
-    let cap = RE
-        .captures(version.as_ref())
-        .with_context(|| anyhow!("Failed to parse rustc date"))?;
-
-    let year = cap.get(1).unwrap().as_str();
-    let month = cap.get(2).unwrap().as_str();
-    let day = cap.get(3).unwrap().as_str();
-
-    NaiveDate::from_ymd_opt(
-        year.parse::<i32>().unwrap(),
-        month.parse::<u32>().unwrap(),
-        day.parse::<u32>().unwrap(),
-    )
-    .ok_or_else(|| anyhow!("date out of range"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,13 +177,5 @@ mod tests {
     #[test_case("rustc (blabla 2019-01-01)"; "missing release")]
     fn rejects(input: &str) {
         assert!(input.parse::<RustcVersion>().is_err());
-    }
-
-    #[test]
-    fn parse_rustc_date_is_lenient() {
-        assert_eq!(
-            parse_rustc_date("rustc (blabla 2019-01-01)").unwrap(),
-            NaiveDate::from_ymd_opt(2019, 1, 1).unwrap()
-        );
     }
 }
