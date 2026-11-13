@@ -134,10 +134,10 @@ impl CrateDetails {
                 releases.default_target,
                 releases.source_size as "source_size?: ByteSize",
                 builds.documentation_size as "documentation_size?: ByteSize",
-                -- we're using the rustc version here to set the correct CSS file
+                -- we're using the rustc nightly date here to set the correct CSS file
                 -- in the metadata.
                 -- So we're only interested in successful builds here.
-                builds.rustc_version as "rustc_version?",
+                builds.rustc_nightly_date as "rustc_nightly_date?",
                 doc_coverage.total_items,
                 doc_coverage.documented_items,
                 doc_coverage.total_items_needing_examples,
@@ -148,7 +148,7 @@ impl CrateDetails {
             LEFT JOIN doc_coverage ON doc_coverage.release_id = releases.id
             LEFT JOIN repositories ON releases.repository_id = repositories.id
             LEFT JOIN LATERAL (
-                 SELECT rustc_version, documentation_size, id
+                 SELECT rustc_nightly_date, documentation_size, id
                  FROM builds
                  WHERE
                     builds.rid = releases.id AND
@@ -185,10 +185,8 @@ impl CrateDetails {
             doc_targets: krate.doc_targets.map(parse_doc_targets),
             yanked: krate.yanked,
             rustdoc_css_file: krate
-                .rustc_version
-                .as_deref()
-                .map(get_correct_docsrs_style_file)
-                .transpose()?,
+                .rustc_nightly_date
+                .map(|date| get_correct_docsrs_style_file(date).to_owned()),
         };
 
         // When documentation_url points to docs.rs itself, then we don't need to

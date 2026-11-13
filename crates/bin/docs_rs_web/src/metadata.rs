@@ -43,7 +43,7 @@ impl MetaData {
                 releases.default_target,
                 releases.doc_targets,
                 releases.yanked,
-                builds.rustc_version as "rustc_version?"
+                builds.rustc_nightly_date as "rustc_nightly_date?"
             FROM releases
             INNER JOIN crates ON crates.id = releases.crate_id
             LEFT JOIN LATERAL (
@@ -71,10 +71,8 @@ impl MetaData {
             doc_targets: row.doc_targets.map(parse_doc_targets),
             yanked: row.yanked,
             rustdoc_css_file: row
-                .rustc_version
-                .as_deref()
-                .map(get_correct_docsrs_style_file)
-                .transpose()?,
+                .rustc_nightly_date
+                .map(|date| get_correct_docsrs_style_file(date).to_owned()),
         })
     }
 }
