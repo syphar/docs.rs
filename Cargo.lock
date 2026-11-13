@@ -2584,8 +2584,8 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "chrono",
- "serde",
  "serde_json",
+ "serde_with",
  "test-case",
  "time",
  "tokio",

@@ -11,7 +11,7 @@ testing = []
 [dependencies]
 anyhow = { workspace = true }
 chrono = { workspace = true }
-serde = { workspace = true }
+serde_with = { workspace = true }
 tokio = { workspace = true, features = ["time"] }
 tracing = { workspace = true }
 

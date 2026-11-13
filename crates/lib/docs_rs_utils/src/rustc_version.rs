@@ -1,13 +1,14 @@
 use anyhow::{Context as _, Error, Result, anyhow};
 use chrono::prelude::*;
-use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
+use serde_with::{DeserializeFromStr, SerializeDisplay};
 use std::{fmt, str::FromStr};
 
 /// A parsed one-line `rustc --version` string, e.g.
 /// `rustc 1.10.0-nightly (57ef01513 2016-05-23)`.
 ///
 /// The original line is kept as-is, since it is what we persist & compare.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// (De)serialized as the raw version string, compatible with plain `String` values.
+#[derive(Debug, Clone, PartialEq, Eq, SerializeDisplay, DeserializeFromStr)]
 pub struct RustcVersion {
     raw: String,
     release: String,
@@ -93,21 +94,6 @@ impl FromStr for RustcVersion {
 impl fmt::Display for RustcVersion {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.raw)
-    }
-}
-
-/// Serialized as the raw version string, compatible with plain `String` values.
-impl Serialize for RustcVersion {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&self.raw)
-    }
-}
-
-impl<'de> Deserialize<'de> for RustcVersion {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        String::deserialize(deserializer)?
-            .parse()
-            .map_err(|err| de::Error::custom(format!("{err:#}")))
     }
 }
 
