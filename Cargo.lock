@@ -2430,6 +2430,7 @@ version = "0.6.0"
 dependencies = [
  "anyhow",
  "bon",
+ "chrono",
  "clap",
  "docs_rs_build_limits",
  "docs_rs_cargo_metadata",
@@ -2584,6 +2585,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "regex",
+ "test-case",
  "time",
  "tokio",
  "tracing",

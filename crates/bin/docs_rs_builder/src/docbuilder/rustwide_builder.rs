@@ -167,11 +167,11 @@ impl RustwideBuilder {
         // The next check then reports no update, so also compare against the version
         // recorded only after successful publication. This retries failed uploads
         // across maintenance passes and restarts, and handles first publication.
-        if toolchain_updated || published_version.as_ref() != Some(&rustc_version) {
+        if toolchain_updated || published_version.as_deref() != Some(rustc_version.as_str()) {
             debug!(
                 toolchain_updated,
                 ?published_version,
-                rustc_version,
+                %rustc_version,
                 "publishing essential files"
             );
             self.add_essential_files()
@@ -203,7 +203,7 @@ impl RustwideBuilder {
                 .await?;
 
             let mut conn = self.db.get_async().await?;
-            set_config(&mut conn, ConfigName::RustcVersion, &rustc_version).await
+            set_config(&mut conn, ConfigName::RustcVersion, rustc_version.as_str()).await
         })?;
         Ok(())
     }
@@ -423,7 +423,7 @@ impl RustwideBuilder {
         self.runtime.block_on(finish_build(
             &mut async_conn,
             build_id,
-            &rustc_version,
+            rustc_version.as_str(),
             &docsrs_version,
             if build_succeeded {
                 BuildStatus::Success

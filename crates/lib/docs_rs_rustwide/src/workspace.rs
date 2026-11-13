@@ -6,7 +6,7 @@ use anyhow::{Context as _, Result, bail};
 use bon::bon;
 use docs_rs_build_limits::Limits;
 use docs_rs_types::ByteSize;
-use docs_rs_utils::{APP_USER_AGENT, retry};
+use docs_rs_utils::{APP_USER_AGENT, retry, rustc_version::RustcVersion};
 use rustwide::{
     Crate, Toolchain, Workspace, WorkspaceBuilder,
     cmd::{CommandError, DockerRuntime, SandboxBuilder, SandboxImage},
@@ -495,7 +495,7 @@ impl BuildEnvironment {
     /// CI toolchains use a stable synthetic version because rustup's normal
     /// `+toolchain` invocation cannot address CI artifacts.
     #[instrument(skip_all)]
-    pub fn rustc_version(&self) -> Result<String> {
+    pub fn rustc_version(&self) -> Result<RustcVersion> {
         self.toolchain.rustc_version(self.workspace())
     }
 

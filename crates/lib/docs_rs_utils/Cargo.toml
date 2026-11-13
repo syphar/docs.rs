@@ -15,6 +15,9 @@ regex = { workspace = true }
 tokio = { workspace = true, features = ["time"] }
 tracing = { workspace = true }
 
+[dev-dependencies]
+test-case = { workspace = true }
+
 [build-dependencies]
 anyhow = { workspace = true }
 chrono = { workspace = true }

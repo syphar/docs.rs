@@ -339,7 +339,7 @@ fn essential_files_are_published_only_when_needed() -> Result<()> {
     storage.reject_uploads_for_testing(None);
     builder.publish_essential_files_if_needed(false)?;
     let version = builder.environment.rustc_version()?;
-    assert_eq!(published()?, Some(version.clone()));
+    assert_eq!(published()?, Some(version.as_str().to_owned()));
     assert!(
         env.blocking_storage()?
             .list_prefix(RUSTDOC_STATIC_STORAGE_PREFIX)
@@ -358,7 +358,7 @@ fn essential_files_are_published_only_when_needed() -> Result<()> {
     assert_eq!(published()?, Some("outdated".into()));
     storage.reject_uploads_for_testing(None);
     builder.publish_essential_files_if_needed(false)?;
-    assert_eq!(published()?, Some(version));
+    assert_eq!(published()?, Some(version.as_str().to_owned()));
     Ok(())
 }
 
