@@ -114,6 +114,24 @@ impl AsyncBuildQueue {
         Ok(())
     }
 
+    /// Count jobs matching the priority limit whose retry cooldown has elapsed.
+    pub async fn processable_count(&self) -> Result<usize> {
+        let mut conn = self.db.get_async().await?;
+        let eligible = sqlx::query_scalar!(
+            r#"SELECT COUNT(*) as "count!"
+               FROM queue
+               WHERE
+                   (last_attempt IS NULL OR last_attempt < NOW() - $1::interval)
+                   AND priority <= $2
+            "#,
+            self.config.delay_between_build_attempts as _,
+            self.config.max_process_priority.unwrap_or(i32::MAX),
+        )
+        .fetch_one(&mut *conn)
+        .await?;
+        Ok(usize::try_from(eligible)?)
+    }
+
     pub async fn pending_count(&self) -> Result<usize> {
         Ok(self
             .pending_count_by_priority()
@@ -288,7 +306,7 @@ impl AsyncBuildQueue {
 
 /// Locking functions.
 impl AsyncBuildQueue {
-    /// Checks for the lock and returns whether it currently exists.
+    /// Whether registry polling is paused. Missing configuration defaults to unlocked.
     pub async fn is_locked(&self) -> Result<bool> {
         let mut conn = self.db.get_async().await?;
 
@@ -297,16 +315,36 @@ impl AsyncBuildQueue {
             .unwrap_or(false))
     }
 
-    /// lock the queue. Daemon will check this lock and stop operating if it exists.
+    /// Pause registry polling for new crates.
     pub async fn lock(&self) -> Result<()> {
         let mut conn = self.db.get_async().await?;
         set_config(&mut conn, ConfigName::QueueLocked, true).await
     }
 
-    /// unlock the queue.
+    /// Resume registry polling for new crates.
     pub async fn unlock(&self) -> Result<()> {
         let mut conn = self.db.get_async().await?;
         set_config(&mut conn, ConfigName::QueueLocked, false).await
+    }
+
+    /// Whether builders are paused. Missing configuration defaults to unlocked.
+    pub async fn builds_locked(&self) -> Result<bool> {
+        let mut conn = self.db.get_async().await?;
+        Ok(get_config::<bool>(&mut conn, ConfigName::BuildsLocked)
+            .await?
+            .unwrap_or(false))
+    }
+
+    /// Prevent builders from starting new builds. Running builds can finish.
+    pub async fn lock_builds(&self) -> Result<()> {
+        let mut conn = self.db.get_async().await?;
+        set_config(&mut conn, ConfigName::BuildsLocked, true).await
+    }
+
+    /// Allow builders to start new builds.
+    pub async fn unlock_builds(&self) -> Result<()> {
+        let mut conn = self.db.get_async().await?;
+        set_config(&mut conn, ConfigName::BuildsLocked, false).await
     }
 }
 

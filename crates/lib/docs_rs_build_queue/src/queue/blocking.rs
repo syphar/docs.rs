@@ -32,6 +32,21 @@ impl BuildQueue {
         self.runtime.block_on(self.inner.unlock())
     }
 
+    /// Count jobs matching the priority limit whose retry cooldown has elapsed.
+    pub fn processable_count(&self) -> Result<usize> {
+        self.runtime.block_on(self.inner.processable_count())
+    }
+
+    pub fn builds_locked(&self) -> Result<bool> {
+        self.runtime.block_on(self.inner.builds_locked())
+    }
+    pub fn lock_builds(&self) -> Result<()> {
+        self.runtime.block_on(self.inner.lock_builds())
+    }
+    pub fn unlock_builds(&self) -> Result<()> {
+        self.runtime.block_on(self.inner.unlock_builds())
+    }
+
     #[cfg(test)]
     pub(crate) fn pending_count(&self) -> Result<usize> {
         self.runtime.block_on(self.inner.pending_count())
@@ -63,6 +78,7 @@ impl BuildQueue {
         &self,
         f: impl FnOnce(&QueuedCrate) -> Result<BuildPackageSummary>,
     ) -> Result<Option<i32>> {
+        let max_priority = self.inner.config.max_process_priority.unwrap_or(i32::MAX);
         let mut conn = self.runtime.block_on(self.inner.db.get_async())?;
         let mut transaction = self.runtime.block_on(conn.begin())?;
 
@@ -84,11 +100,13 @@ impl BuildQueue {
                     enqueued_at
                  FROM queue
                  WHERE
-                    last_attempt IS NULL OR last_attempt < NOW() - make_interval(secs => $1)
+                    (last_attempt IS NULL OR last_attempt < NOW() - $1::interval)
+                    AND priority <= $2
                  ORDER BY priority ASC, attempt ASC, id ASC
                  LIMIT 1
                  FOR UPDATE SKIP LOCKED"#,
-                self.inner.config.delay_between_build_attempts.as_secs_f64(),
+                self.inner.config.delay_between_build_attempts as _,
+                max_priority,
             )
             .fetch_optional(&mut *transaction),
         )? {
@@ -178,13 +196,27 @@ mod tests {
     use super::*;
     use crate::{Config, testing::test_env::BlockingTestEnv};
     use chrono::Utc;
-    use docs_rs_types::testing::{KRATE, V1, V2};
+    use docs_rs_types::testing::{BAR, BAZ, FOO, KRATE, V1, V2};
     use pretty_assertions::assert_eq;
     use std::time::Duration;
 
-    const FOO: KrateName = KrateName::from_static("foo");
-    const BAR: KrateName = KrateName::from_static("bar");
-    const BAZ: KrateName = KrateName::from_static("baz");
+    #[test]
+    fn processable_count_excludes_deferred_retries() -> Result<()> {
+        let env = BlockingTestEnv::new()?;
+        let queue = env.queue();
+        queue.add_crate(&FOO, &V1, 0)?;
+        queue.process_next_crate(|_| anyhow::bail!("retry later"))?;
+        queue.add_crate(&BAR, &V1, 0)?;
+
+        assert_eq!(queue.pending_count()?, 2);
+        assert_eq!(queue.processable_count()?, 1);
+        queue.process_next_crate(|krate| {
+            assert_eq!(krate.name, BAR);
+            Ok(BuildPackageSummary::default())
+        })?;
+        assert_eq!(queue.processable_count()?, 0);
+        Ok(())
+    }
 
     #[test]
     fn queue_time_is_recorded_before_build_and_excludes_retries() -> Result<()> {
@@ -507,18 +539,34 @@ mod tests {
     }
 
     #[test]
-    fn test_queue_lock() -> Result<()> {
+    fn test_queue_and_build_locks_are_independent() -> Result<()> {
         let env = BlockingTestEnv::new()?;
         let queue = env.queue();
 
         // unlocked without config
         assert!(!queue.is_locked()?);
+        assert!(!queue.builds_locked()?);
 
         queue.lock()?;
         assert!(queue.is_locked()?);
+        assert!(!queue.builds_locked()?);
+
+        queue.lock_builds()?;
+        assert!(queue.is_locked()?);
+        assert!(queue.builds_locked()?);
 
         queue.unlock()?;
         assert!(!queue.is_locked()?);
+        assert!(queue.builds_locked()?);
+
+        queue.lock()?;
+        queue.unlock_builds()?;
+        assert!(queue.is_locked()?);
+        assert!(!queue.builds_locked()?);
+
+        queue.unlock()?;
+        assert!(!queue.is_locked()?);
+        assert!(!queue.builds_locked()?);
 
         Ok(())
     }
